@@ -1,0 +1,205 @@
+openapi: 3.0.3
+info:
+  title: DoodhDirect API
+  version: 1.0.0
+  description: Farm-to-home dairy platform API.
+servers:
+  - url: https://api.example.com/api/v1
+paths:
+  /auth/send-otp:
+    post:
+      summary: Send OTP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mobile]
+              properties:
+                mobile:
+                  type: string
+                  example: "+919876543210"
+      responses:
+        '202':
+          description: OTP request accepted
+  /products:
+    get:
+      summary: List available products
+      security: []
+      responses:
+        '200':
+          description: Product list
+  /branches/serviceability:
+    get:
+      summary: Check serviceability and eligible branches
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: latitude
+          in: query
+          required: true
+          schema: { type: number, format: double }
+        - name: longitude
+          in: query
+          required: true
+          schema: { type: number, format: double }
+      responses:
+        '200':
+          description: Serviceability result
+  /orders:
+    post:
+      summary: Create order
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Order created
+        '409':
+          description: Duplicate/idempotency conflict
+        '422':
+          description: Business validation error
+    get:
+      summary: List current customer's orders
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Orders
+  /orders/{orderId}:
+    get:
+      summary: Get order
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/orderId'
+      responses:
+        '200': { description: Order }
+        '404': { description: Not found }
+  /orders/{orderId}/complaints:
+    post:
+      summary: Create complaint for delivered order
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/orderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateComplaintRequest'
+      responses:
+        '201': { description: Complaint created }
+        '422': { description: Complaint window/business rule failure }
+  /subscriptions:
+    post:
+      summary: Create prepaid subscription
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string }
+      responses:
+        '201': { description: Subscription created }
+  /delivery/{deliveryId}/verify-otp:
+    post:
+      summary: Verify delivery OTP
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: deliveryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [otp]
+              properties:
+                otp: { type: string, minLength: 4, maxLength: 8 }
+      responses:
+        '200': { description: OTP verified }
+        '422': { description: Invalid/expired OTP }
+  /webhooks/razorpay:
+    post:
+      summary: Razorpay webhook
+      security: []
+      responses:
+        '200': { description: Webhook accepted }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    orderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required: [addressId, orderType, items]
+      properties:
+        addressId:
+          type: string
+          format: uuid
+        orderType:
+          type: string
+          enum: [ONE_TIME, SUBSCRIPTION, REPLACEMENT]
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [productId, quantity]
+            properties:
+              productId:
+                type: string
+                format: uuid
+              quantity:
+                type: number
+                format: double
+                minimum: 0.001
+        couponCode:
+          type: string
+          nullable: true
+        walletAmount:
+          type: number
+          format: double
+          minimum: 0
+        paymentMethod:
+          type: string
+          nullable: true
+    CreateComplaintRequest:
+      type: object
+      required: [categoryId, description]
+      properties:
+        categoryId:
+          type: string
+          format: uuid
+        description:
+          type: string
+          minLength: 5
+          maxLength: 2000
