@@ -21,33 +21,41 @@ void main() {
     expect(roleFromCodes(['OWNER', 'CUSTOMER']).label, 'Owner');
   });
 
-  testWidgets('password login routes to server-derived workspace and logs out',
-      (tester) async {
-    final repository = _FakeAuthRepository();
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [authRepositoryProvider.overrideWithValue(repository)],
-        child: const DoodhDirectApp(),
-      ),
-    );
-    await tester.pumpAndSettle();
+  testWidgets(
+    'password login routes to server-derived workspace and logs out',
+    (tester) async {
+      final repository = _FakeAuthRepository();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [authRepositoryProvider.overrideWithValue(repository)],
+          child: const DoodhDirectApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('Sign in to your account'), findsOneWidget);
-    await tester.enterText(find.byType(EditableText).at(0), 'delivery@example.test');
-    await tester.enterText(find.byType(EditableText).at(1), 'correct-password');
-    await tester.tap(find.text('Sign in'));
-    await tester.pumpAndSettle();
+      expect(find.text('Sign in to your account'), findsOneWidget);
+      await tester.enterText(
+        find.byType(EditableText).at(0),
+        'delivery@example.test',
+      );
+      await tester.enterText(
+        find.byType(EditableText).at(1),
+        'correct-password',
+      );
+      await tester.tap(find.text('Sign in'));
+      await tester.pumpAndSettle();
 
-    expect(repository.lastLogin, 'delivery@example.test');
-    expect(find.text('Delivery workspace'), findsOneWidget);
-    expect(find.text('Delivery workspace ready'), findsOneWidget);
+      expect(repository.lastLogin, 'delivery@example.test');
+      expect(find.text('Delivery workspace'), findsOneWidget);
+      expect(find.text('Delivery workspace ready'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Sign out'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Sign out'));
+      await tester.pumpAndSettle();
 
-    expect(repository.loggedOut, isTrue);
-    expect(find.text('Sign in to your account'), findsOneWidget);
-  });
+      expect(repository.loggedOut, isTrue);
+      expect(find.text('Sign in to your account'), findsOneWidget);
+    },
+  );
 }
 
 class _FakeAuthRepository extends AuthRepository {

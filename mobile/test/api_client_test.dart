@@ -15,10 +15,7 @@ void main() {
         headers: {'content-type': 'application/json'},
       );
     });
-    final api = ApiClient(
-      client: client,
-      baseUrl: 'https://api.example.test',
-    );
+    final api = ApiClient(client: client, baseUrl: 'https://api.example.test');
 
     final body = await api.get('/health', accessToken: 'access-token');
 
@@ -29,7 +26,10 @@ void main() {
   test('POST sends JSON body and bearer token', () async {
     final client = MockClient((request) async {
       expect(request.method, 'POST');
-      expect(request.url.toString(), 'https://api.example.test/api/v1/auth/logout');
+      expect(
+        request.url.toString(),
+        'https://api.example.test/api/v1/auth/logout',
+      );
       expect(request.headers['Authorization'], 'Bearer access-token');
       expect(request.headers['Content-Type'], 'application/json');
       expect(request.body, '{"deviceIdentifier":"device-1"}');
@@ -39,10 +39,7 @@ void main() {
         headers: {'content-type': 'application/json'},
       );
     });
-    final api = ApiClient(
-      client: client,
-      baseUrl: 'https://api.example.test',
-    );
+    final api = ApiClient(client: client, baseUrl: 'https://api.example.test');
 
     final body = await api.post(
       '/api/v1/auth/logout',
@@ -53,16 +50,56 @@ void main() {
     expect(body['success'], isTrue);
   });
 
-  test('POST decodes standard API error envelope', () async {
-    final client = MockClient((request) async => http.Response(
-          '{"success":false,"message":"Access denied.","errors":[{"code":"FORBIDDEN","field":null,"message":"Access denied."}]}',
-          403,
-          headers: {'content-type': 'application/json'},
-        ));
-    final api = ApiClient(
-      client: client,
-      baseUrl: 'https://api.example.test',
+  test('PATCH sends JSON body and bearer token', () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'PATCH');
+      expect(request.url.toString(), 'https://api.example.test/profile');
+      expect(request.headers['Authorization'], 'Bearer access-token');
+      expect(request.body, '{"firstName":"Asha"}');
+      return http.Response(
+        '{"success":true,"data":null,"errors":[]}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final api = ApiClient(client: client, baseUrl: 'https://api.example.test');
+
+    final body = await api.patch(
+      '/profile',
+      body: {'firstName': 'Asha'},
+      accessToken: 'access-token',
     );
+
+    expect(body['success'], isTrue);
+  });
+
+  test('DELETE sends bearer token', () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'DELETE');
+      expect(request.url.toString(), 'https://api.example.test/address');
+      expect(request.headers['Authorization'], 'Bearer access-token');
+      return http.Response(
+        '{"success":true,"data":null,"errors":[]}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final api = ApiClient(client: client, baseUrl: 'https://api.example.test');
+
+    final body = await api.delete('/address', accessToken: 'access-token');
+
+    expect(body['success'], isTrue);
+  });
+
+  test('POST decodes standard API error envelope', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        '{"success":false,"message":"Access denied.","errors":[{"code":"FORBIDDEN","field":null,"message":"Access denied."}]}',
+        403,
+        headers: {'content-type': 'application/json'},
+      ),
+    );
+    final api = ApiClient(client: client, baseUrl: 'https://api.example.test');
 
     await expectLater(
       api.post('/protected'),
@@ -75,25 +112,28 @@ void main() {
     );
   });
 
-  test('GET uses standard fallback when an error has no structured details', () async {
-    final client = MockClient((request) async => http.Response('', 500));
-    final api = ApiClient(
-      client: client,
-      baseUrl: 'https://api.example.test',
-    );
+  test(
+    'GET uses standard fallback when an error has no structured details',
+    () async {
+      final client = MockClient((request) async => http.Response('', 500));
+      final api = ApiClient(
+        client: client,
+        baseUrl: 'https://api.example.test',
+      );
 
-    await expectLater(
-      api.get('/health'),
-      throwsA(
-        isA<ApiException>()
-            .having((error) => error.statusCode, 'statusCode', 500)
-            .having((error) => error.code, 'code', 'HTTP_ERROR')
-            .having(
-              (error) => error.message,
-              'message',
-              'The request could not be completed.',
-            ),
-      ),
-    );
-  });
+      await expectLater(
+        api.get('/health'),
+        throwsA(
+          isA<ApiException>()
+              .having((error) => error.statusCode, 'statusCode', 500)
+              .having((error) => error.code, 'code', 'HTTP_ERROR')
+              .having(
+                (error) => error.message,
+                'message',
+                'The request could not be completed.',
+              ),
+        ),
+      );
+    },
+  );
 }

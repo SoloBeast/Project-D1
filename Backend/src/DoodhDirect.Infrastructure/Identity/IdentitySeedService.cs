@@ -44,7 +44,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.ProfileReadOwn,
                 AuthorizationCodes.ProfileUpdateOwn,
                 AuthorizationCodes.SessionsManageOwn,
-                AuthorizationCodes.UsersRead
+                AuthorizationCodes.UsersRead,
+                AuthorizationCodes.CustomerProfilesRead
             ],
             [AuthorizationCodes.Accountant] =
             [
@@ -60,7 +61,9 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.UsersRead,
                 AuthorizationCodes.UsersManage,
                 AuthorizationCodes.RolesRead,
-                AuthorizationCodes.RolesManage
+                AuthorizationCodes.RolesManage,
+                AuthorizationCodes.CustomerProfilesRead,
+                AuthorizationCodes.CustomerProfilesManage
             ],
             [AuthorizationCodes.Owner] = AuthorizationCodes.Permissions.Keys.ToArray()
         };

@@ -14,7 +14,8 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({http.Client? client, required this.baseUrl}) : _client = client ?? http.Client();
+  ApiClient({http.Client? client, required this.baseUrl})
+    : _client = client ?? http.Client();
 
   final http.Client _client;
   final String baseUrl;
@@ -40,11 +41,35 @@ class ApiClient {
     return _decode(response);
   }
 
+  Future<Map<String, dynamic>> patch(
+    String path, {
+    Map<String, dynamic> body = const <String, dynamic>{},
+    String? accessToken,
+  }) async {
+    final response = await _client.patch(
+      Uri.parse('$baseUrl$path'),
+      headers: _headers(accessToken),
+      body: jsonEncode(body),
+    );
+    return _decode(response);
+  }
+
+  Future<Map<String, dynamic>> delete(
+    String path, {
+    String? accessToken,
+  }) async {
+    final response = await _client.delete(
+      Uri.parse('$baseUrl$path'),
+      headers: _headers(accessToken),
+    );
+    return _decode(response);
+  }
+
   Map<String, String> _headers(String? accessToken) => {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-        if (accessToken != null) 'Authorization': 'Bearer $accessToken',
-      };
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+    if (accessToken != null) 'Authorization': 'Bearer $accessToken',
+  };
 
   Map<String, dynamic> _decode(http.Response response) {
     final body = response.body.isEmpty

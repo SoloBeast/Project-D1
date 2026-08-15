@@ -16,24 +16,28 @@ class StatePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 48, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(height: 16),
-                Text(title, style: Theme.of(context).textTheme.titleLarge, textAlign: TextAlign.center),
-                const SizedBox(height: 8),
-                Text(message, textAlign: TextAlign.center),
-                if (action != null) ...[const SizedBox(height: 20), action!],
-              ],
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 420),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 48, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleLarge,
+              textAlign: TextAlign.center,
             ),
-          ),
+            const SizedBox(height: 8),
+            Text(message, textAlign: TextAlign.center),
+            if (action != null) ...[const SizedBox(height: 20), action!],
+          ],
         ),
-      );
+      ),
+    ),
+  );
 }
 
 class LoadingStatePanel extends StatelessWidget {
@@ -43,9 +47,9 @@ class LoadingStatePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Semantics(
-        label: message,
-        child: const Center(child: CircularProgressIndicator()),
-      );
+    label: message,
+    child: const Center(child: CircularProgressIndicator()),
+  );
 }
 
 class EmptyStatePanel extends StatelessWidget {
@@ -62,11 +66,11 @@ class EmptyStatePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => StatePanel(
-        icon: Icons.inbox_outlined,
-        title: title,
-        message: message,
-        action: action,
-      );
+    icon: Icons.inbox_outlined,
+    title: title,
+    message: message,
+    action: action,
+  );
 }
 
 class ErrorStatePanel extends StatelessWidget {
@@ -81,15 +85,15 @@ class ErrorStatePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => StatePanel(
-        icon: Icons.error_outline,
-        title: 'Something went wrong',
-        message: message,
-        action: FilledButton.icon(
-          onPressed: onRetry,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Retry'),
-        ),
-      );
+    icon: Icons.error_outline,
+    title: 'Something went wrong',
+    message: message,
+    action: FilledButton.icon(
+      onPressed: onRetry,
+      icon: const Icon(Icons.refresh),
+      label: const Text('Retry'),
+    ),
+  );
 }
 
 class UnauthorizedStatePanel extends StatelessWidget {
@@ -97,10 +101,10 @@ class UnauthorizedStatePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const StatePanel(
-        icon: Icons.lock_outline,
-        title: 'Access denied',
-        message: 'Your account does not have permission to view this content.',
-      );
+    icon: Icons.lock_outline,
+    title: 'Access denied',
+    message: 'Your account does not have permission to view this content.',
+  );
 }
 
 class OfflineStatePanel extends StatelessWidget {
@@ -110,13 +114,13 @@ class OfflineStatePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => StatePanel(
-        icon: Icons.cloud_off_outlined,
-        title: 'You are offline',
-        message: 'Check your connection and try again.',
-        action: FilledButton.icon(
-          onPressed: onRetry,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Retry'),
-        ),
-      );
+    icon: Icons.cloud_off_outlined,
+    title: 'You are offline',
+    message: 'Check your connection and try again.',
+    action: FilledButton.icon(
+      onPressed: onRetry,
+      icon: const Icon(Icons.refresh),
+      label: const Text('Retry'),
+    ),
+  );
 }

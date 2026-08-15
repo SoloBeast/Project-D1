@@ -85,7 +85,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         prefixIcon: Icon(Icons.person_outline),
                         border: OutlineInputBorder(),
                       ),
-                      validator: (value) => value == null || value.trim().isEmpty
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
                           ? 'Enter your email or mobile number.'
                           : null,
                     ),
@@ -151,9 +152,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    await ref.read(sessionControllerProvider.notifier).login(
-          _loginController.text,
-          _passwordController.text,
-        );
+    await ref
+        .read(sessionControllerProvider.notifier)
+        .login(_loginController.text, _passwordController.text);
   }
 }

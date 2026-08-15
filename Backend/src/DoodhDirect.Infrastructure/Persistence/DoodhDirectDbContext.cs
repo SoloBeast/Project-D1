@@ -1,5 +1,6 @@
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Configuration;
+using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -18,6 +19,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<SystemConfiguration> SystemConfigurations => Set<SystemConfiguration>();
+    public DbSet<CustomerProfile> CustomerProfiles => Set<CustomerProfile>();
+    public DbSet<CustomerAddress> CustomerAddresses => Set<CustomerAddress>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -32,6 +35,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigureRefreshToken(modelBuilder);
         ConfigureAuditLog(modelBuilder);
         ConfigureSystemConfiguration(modelBuilder);
+        ConfigureCustomerProfile(modelBuilder);
+        ConfigureCustomerAddress(modelBuilder);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -199,6 +204,48 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.UserAgent).HasMaxLength(1000);
         entity.Property(x => x.Reason).HasMaxLength(1000);
         entity.HasIndex(x => new { x.EntityType, x.EntityId, x.CreatedAtUtc });
+    }
+
+    private static void ConfigureCustomerProfile(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<CustomerProfile>();
+        entity.ToTable("CustomerProfile");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.HasIndex(x => x.UserId).IsUnique();
+        entity.Property(x => x.FirstName).HasMaxLength(100);
+        entity.Property(x => x.LastName).HasMaxLength(100);
+        entity.Property(x => x.Gender).HasMaxLength(40);
+        entity.Property(x => x.AlternateMobile).HasMaxLength(20);
+        entity.HasOne(x => x.User).WithOne().HasForeignKey<CustomerProfile>(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureCustomerAddress(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<CustomerAddress>();
+        entity.ToTable("CustomerAddress");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Label).HasMaxLength(80).IsRequired();
+        entity.Property(x => x.AddressLine1).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.AddressLine2).HasMaxLength(200);
+        entity.Property(x => x.Locality).HasMaxLength(120).IsRequired();
+        entity.Property(x => x.City).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.State).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.PinCode).HasMaxLength(6).IsRequired();
+        entity.Property(x => x.Landmark).HasMaxLength(160);
+        entity.Property(x => x.DeliveryInstructions).HasMaxLength(500);
+        entity.Property(x => x.ContactName).HasMaxLength(160).IsRequired();
+        entity.Property(x => x.ContactMobile).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.Latitude).HasPrecision(9, 6).IsRequired();
+        entity.Property(x => x.Longitude).HasPrecision(9, 6).IsRequired();
+        entity.HasIndex(x => new { x.UserId, x.IsActive, x.IsDefault })
+            .IsUnique()
+            .HasFilter("[IsActive] = 1 AND [IsDefault] = 1");
+        entity.HasIndex(x => new { x.UserId, x.IsActive });
+        entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureSystemConfiguration(ModelBuilder modelBuilder)

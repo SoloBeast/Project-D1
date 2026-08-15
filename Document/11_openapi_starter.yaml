@@ -6,6 +6,183 @@ info:
 servers:
   - url: https://api.example.com/api/v1
 paths:
+  /customers/me:
+    get:
+      summary: Get the authenticated customer's profile
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { description: Customer profile envelope }
+        '401': { description: Authentication required }
+    patch:
+      summary: Update the authenticated customer's profile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerProfileRequest'
+      responses:
+        '200': { description: Updated customer profile envelope }
+        '400': { description: Validation error }
+  /customers/me/addresses:
+    get:
+      summary: List the authenticated customer's active addresses
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { description: Address list envelope }
+    post:
+      summary: Create an address for the authenticated customer
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerAddressRequest'
+      responses:
+        '200': { description: Created address envelope }
+        '400': { description: Validation error }
+  /customers/me/addresses/{addressId}:
+    get:
+      summary: Get one owned customer address
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/addressId'
+      responses:
+        '200': { description: Address envelope }
+        '404': { description: Address not found }
+    patch:
+      summary: Update one owned customer address
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/addressId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerAddressRequest'
+      responses:
+        '200': { description: Updated address envelope }
+        '400': { description: Validation error }
+        '404': { description: Address not found }
+    delete:
+      summary: Deactivate one owned customer address
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/addressId'
+      responses:
+        '200': { description: Address deactivated }
+        '404': { description: Address not found }
+  /customers/me/address-lookup/reverse:
+    get:
+      summary: Reverse geocode a map pin for address entry
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: latitude
+          in: query
+          required: true
+          schema: { type: number, format: double, minimum: -90, maximum: 90 }
+        - name: longitude
+          in: query
+          required: true
+          schema: { type: number, format: double, minimum: -180, maximum: 180 }
+      responses:
+        '200': { description: Optional provider lookup result }
+        '400': { description: Invalid coordinates }
+  /admin/customers/{customerId}/profile:
+    get:
+      summary: Read a customer profile
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/customerId'
+      responses:
+        '200': { description: Customer profile envelope }
+        '403': { description: Missing customer read permission }
+    patch:
+      summary: Manage a customer profile
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/customerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerProfileRequest'
+      responses:
+        '200': { description: Updated customer profile envelope }
+        '403': { description: Missing customer manage permission }
+  /admin/customers/{customerId}/addresses:
+    get:
+      summary: Read customer addresses
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/customerId'
+      responses:
+        '200': { description: Address list envelope }
+    post:
+      summary: Create a customer address
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/customerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerAddressRequest'
+      responses:
+        '200': { description: Created address envelope }
+  /admin/customers/{customerId}/addresses/{addressId}:
+    get:
+      summary: Read one customer address
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/customerId'
+        - $ref: '#/components/parameters/addressId'
+      responses:
+        '200': { description: Address envelope }
+    patch:
+      summary: Update one customer address
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/customerId'
+        - $ref: '#/components/parameters/addressId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerAddressRequest'
+      responses:
+        '200': { description: Updated address envelope }
+    delete:
+      summary: Deactivate one customer address
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/customerId'
+        - $ref: '#/components/parameters/addressId'
+      responses:
+        '200': { description: Address deactivated }
+=======
+paths:
   /auth/send-otp:
     post:
       summary: Send OTP
@@ -150,6 +327,16 @@ components:
       scheme: bearer
       bearerFormat: JWT
   parameters:
+    customerId:
+      name: customerId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    addressId:
+      name: addressId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     orderId:
       name: orderId
       in: path
@@ -158,6 +345,43 @@ components:
         type: string
         format: uuid
   schemas:
+    UpdateCustomerProfileRequest:
+      type: object
+      properties:
+        firstName: { type: string, maxLength: 100, nullable: true }
+        lastName: { type: string, maxLength: 100, nullable: true }
+        dateOfBirth: { type: string, format: date, nullable: true }
+        gender: { type: string, maxLength: 40, nullable: true }
+        alternateMobile: { type: string, maxLength: 20, nullable: true }
+    CustomerAddressRequest:
+      type: object
+      required: [label, addressLine1, locality, city, state, pinCode, contactName, contactMobile, latitude, longitude, isDefault]
+      properties:
+        label: { type: string, maxLength: 80 }
+        addressLine1: { type: string, maxLength: 200 }
+        addressLine2: { type: string, maxLength: 200, nullable: true }
+        locality: { type: string, maxLength: 120 }
+        city: { type: string, maxLength: 100 }
+        state: { type: string, maxLength: 100 }
+        pinCode: { type: string, pattern: '^[1-9][0-9]{5}$' }
+        landmark: { type: string, maxLength: 160, nullable: true }
+        deliveryInstructions: { type: string, maxLength: 500, nullable: true }
+        contactName: { type: string, maxLength: 160 }
+        contactMobile: { type: string, maxLength: 20 }
+        latitude: { type: number, format: double, minimum: -90, maximum: 90 }
+        longitude: { type: number, format: double, minimum: -180, maximum: 180 }
+        isDefault: { type: boolean }
+    AddressLookupResult:
+      type: object
+      nullable: true
+      properties:
+        addressLine1: { type: string, nullable: true }
+        locality: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        state: { type: string, nullable: true }
+        pinCode: { type: string, nullable: true }
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
     CreateOrderRequest:
       type: object
       required: [addressId, orderType, items]

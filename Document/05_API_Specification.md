@@ -157,11 +157,35 @@ The following routes remain specification placeholders and are not implemented i
 
 ## 3. Customer APIs
 
+All identifiers in customer API paths and responses are public UUIDs. Internal database IDs are never exposed.
+
+### Profile
+
 `GET /customers/me`
+
+Returns the authenticated customer's profile. A profile is created on first access when one does not exist.
 
 `PATCH /customers/me`
 
+Request:
+
+```json
+{
+  "firstName": "Asha",
+  "lastName": "Sharma",
+  "dateOfBirth": "1994-08-20",
+  "gender": "Female",
+  "alternateMobile": "+919876543211"
+}
+```
+
+All fields are optional. A future date of birth and invalid mobile format are rejected.
+
+### Addresses
+
 `GET /customers/me/addresses`
+
+Returns active addresses only, with the default address first.
 
 `POST /customers/me/addresses`
 
@@ -170,6 +194,53 @@ The following routes remain specification placeholders and are not implemented i
 `PATCH /customers/me/addresses/{addressId}`
 
 `DELETE /customers/me/addresses/{addressId}`
+
+Delete deactivates the address; it does not remove historical data. Customers can access only addresses owned by their authenticated user. Cross-customer address IDs return not found.
+
+Create/update request:
+
+```json
+{
+  "label": "Home",
+  "addressLine1": "12 Lake Road",
+  "addressLine2": null,
+  "locality": "Ballygunge",
+  "city": "Kolkata",
+  "state": "West Bengal",
+  "pinCode": "700019",
+  "landmark": "Near the post office",
+  "deliveryInstructions": "Call on arrival",
+  "contactName": "Asha Sharma",
+  "contactMobile": "+919876543210",
+  "latitude": 22.5279,
+  "longitude": 88.3643,
+  "isDefault": true
+}
+```
+
+Coordinates are required and must be in valid latitude/longitude ranges. PIN code must be a valid six-digit Indian PIN. At most one active address can be the default; setting a new default clears the previous default atomically.
+
+`GET /customers/me/address-lookup/reverse?latitude=&longitude=`
+
+Performs provider-neutral reverse lookup for map-pin selection. A configured provider may return address fields; otherwise the response data is null and no provider secret is required.
+
+### Customer administration
+
+The following routes use `CUSTOMERS.PROFILES.READ` for reads and `CUSTOMERS.PROFILES.MANAGE` for writes:
+
+`GET /admin/customers/{customerId}/profile`
+
+`PATCH /admin/customers/{customerId}/profile`
+
+`GET /admin/customers/{customerId}/addresses`
+
+`POST /admin/customers/{customerId}/addresses`
+
+`GET /admin/customers/{customerId}/addresses/{addressId}`
+
+`PATCH /admin/customers/{customerId}/addresses/{addressId}`
+
+`DELETE /admin/customers/{customerId}/addresses/{addressId}`
 
 ---
 

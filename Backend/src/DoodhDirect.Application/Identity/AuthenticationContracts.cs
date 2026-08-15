@@ -73,6 +73,8 @@ public static class AuthorizationCodes
     public const string Owner = "OWNER";
 
     public const string GlobalAccess = "ACCESS.GLOBAL";
+    public const string CustomerProfilesRead = "CUSTOMERS.PROFILES.READ";
+    public const string CustomerProfilesManage = "CUSTOMERS.PROFILES.MANAGE";
     public const string ProfileReadOwn = "IDENTITY.PROFILE.READ_OWN";
     public const string ProfileUpdateOwn = "IDENTITY.PROFILE.UPDATE_OWN";
     public const string SessionsManageOwn = "IDENTITY.SESSIONS.MANAGE_OWN";
@@ -100,6 +102,8 @@ public static class AuthorizationCodes
     public static readonly IReadOnlyDictionary<string, string> Permissions = new Dictionary<string, string>
     {
         [GlobalAccess] = "Global access",
+        [CustomerProfilesRead] = "Read customer profiles and addresses",
+        [CustomerProfilesManage] = "Manage customer profiles and addresses",
         [ProfileReadOwn] = "Read own identity profile",
         [ProfileUpdateOwn] = "Update own identity profile",
         [SessionsManageOwn] = "Manage own sessions",

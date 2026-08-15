@@ -1,5 +1,7 @@
 using DoodhDirect.Application.Abstractions;
+using DoodhDirect.Application.Customer;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Infrastructure.Customer;
 using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -43,6 +45,8 @@ public static class DependencyInjection
         services.AddSingleton<ITokenService, JwtTokenService>();
         services.AddScoped<IAuthenticationService, AuthenticationService>();
         services.AddScoped<IOtpService, OtpService>();
+        services.AddScoped<ICustomerService, CustomerService>();
+        services.AddSingleton<IAddressLocationLookup, UnconfiguredAddressLocationLookup>();
         services.AddScoped<IdentitySeedService>();
         services.AddSingleton<IOtpDeliveryService, UnconfiguredOtpDeliveryService>();
 

@@ -10,33 +10,27 @@ const apiBaseUrl = String.fromEnvironment(
   defaultValue: 'https://localhost:7213',
 );
 
-enum UserRole {
-  customer,
-  delivery,
-  dairy,
-  owner,
-  admin,
-  support,
-  accountant,
-}
+enum UserRole { customer, delivery, dairy, owner, admin, support, accountant }
 
 extension UserRoleLabel on UserRole {
   String get label => switch (this) {
-        UserRole.customer => 'Customer',
-        UserRole.delivery => 'Delivery',
-        UserRole.dairy => 'Dairy',
-        UserRole.owner => 'Owner',
-        UserRole.admin => 'Admin',
-        UserRole.support => 'Customer support',
-        UserRole.accountant => 'Accountant',
-      };
+    UserRole.customer => 'Customer',
+    UserRole.delivery => 'Delivery',
+    UserRole.dairy => 'Dairy',
+    UserRole.owner => 'Owner',
+    UserRole.admin => 'Admin',
+    UserRole.support => 'Customer support',
+    UserRole.accountant => 'Accountant',
+  };
 }
 
 UserRole roleFromCodes(List<String> codes) {
   if (codes.contains('OWNER')) return UserRole.owner;
   if (codes.contains('SYSTEM_ADMIN')) return UserRole.admin;
   if (codes.contains('DAIRY_MANAGER')) return UserRole.dairy;
-  if (codes.any((code) => code == 'DELIVERY_STAFF' || code == 'DELIVERY_MANAGER')) {
+  if (codes.any(
+    (code) => code == 'DELIVERY_STAFF' || code == 'DELIVERY_MANAGER',
+  )) {
     return UserRole.delivery;
   }
   if (codes.contains('CUSTOMER_SUPPORT')) return UserRole.support;
@@ -56,14 +50,17 @@ class AuthUser {
   });
 
   factory AuthUser.fromJson(Map<String, dynamic> json) => AuthUser(
-        publicUserId: json['publicUserId'] as String,
-        displayName: json['displayName'] as String?,
-        email: json['email'] as String?,
-        mobile: json['mobile'] as String?,
-        roles: (json['roles'] as List<dynamic>).cast<String>(),
-        permissions: (json['permissions'] as List<dynamic>).cast<String>(),
-        branchIds: (json['branchIds'] as List<dynamic>).cast<num>().map((id) => id.toInt()).toList(),
-      );
+    publicUserId: json['publicUserId'] as String,
+    displayName: json['displayName'] as String?,
+    email: json['email'] as String?,
+    mobile: json['mobile'] as String?,
+    roles: (json['roles'] as List<dynamic>).cast<String>(),
+    permissions: (json['permissions'] as List<dynamic>).cast<String>(),
+    branchIds: (json['branchIds'] as List<dynamic>)
+        .cast<num>()
+        .map((id) => id.toInt())
+        .toList(),
+  );
 
   final String publicUserId;
   final String? displayName;
@@ -76,14 +73,14 @@ class AuthUser {
   UserRole get primaryRole => roleFromCodes(roles);
 
   Map<String, dynamic> toJson() => {
-        'publicUserId': publicUserId,
-        'displayName': displayName,
-        'email': email,
-        'mobile': mobile,
-        'roles': roles,
-        'permissions': permissions,
-        'branchIds': branchIds,
-      };
+    'publicUserId': publicUserId,
+    'displayName': displayName,
+    'email': email,
+    'mobile': mobile,
+    'roles': roles,
+    'permissions': permissions,
+    'branchIds': branchIds,
+  };
 }
 
 class AuthSession {
@@ -101,18 +98,26 @@ class AuthSession {
       user: AuthUser.fromJson(json['user'] as Map<String, dynamic>),
       accessToken: tokens['accessToken'] as String,
       refreshToken: tokens['refreshToken'] as String,
-      accessTokenExpiresAtUtc: DateTime.parse(tokens['accessTokenExpiresAtUtc'] as String).toUtc(),
-      refreshTokenExpiresAtUtc: DateTime.parse(tokens['refreshTokenExpiresAtUtc'] as String).toUtc(),
+      accessTokenExpiresAtUtc: DateTime.parse(
+        tokens['accessTokenExpiresAtUtc'] as String,
+      ).toUtc(),
+      refreshTokenExpiresAtUtc: DateTime.parse(
+        tokens['refreshTokenExpiresAtUtc'] as String,
+      ).toUtc(),
     );
   }
 
   factory AuthSession.fromStorage(Map<String, dynamic> json) => AuthSession(
-        user: AuthUser.fromJson(json['user'] as Map<String, dynamic>),
-        accessToken: json['accessToken'] as String,
-        refreshToken: json['refreshToken'] as String,
-        accessTokenExpiresAtUtc: DateTime.parse(json['accessTokenExpiresAtUtc'] as String).toUtc(),
-        refreshTokenExpiresAtUtc: DateTime.parse(json['refreshTokenExpiresAtUtc'] as String).toUtc(),
-      );
+    user: AuthUser.fromJson(json['user'] as Map<String, dynamic>),
+    accessToken: json['accessToken'] as String,
+    refreshToken: json['refreshToken'] as String,
+    accessTokenExpiresAtUtc: DateTime.parse(
+      json['accessTokenExpiresAtUtc'] as String,
+    ).toUtc(),
+    refreshTokenExpiresAtUtc: DateTime.parse(
+      json['refreshTokenExpiresAtUtc'] as String,
+    ).toUtc(),
+  );
 
   final AuthUser user;
   final String accessToken;
@@ -121,18 +126,18 @@ class AuthSession {
   final DateTime refreshTokenExpiresAtUtc;
 
   Map<String, dynamic> toJson() => {
-        'user': user.toJson(),
-        'accessToken': accessToken,
-        'refreshToken': refreshToken,
-        'accessTokenExpiresAtUtc': accessTokenExpiresAtUtc.toIso8601String(),
-        'refreshTokenExpiresAtUtc': refreshTokenExpiresAtUtc.toIso8601String(),
-      };
+    'user': user.toJson(),
+    'accessToken': accessToken,
+    'refreshToken': refreshToken,
+    'accessTokenExpiresAtUtc': accessTokenExpiresAtUtc.toIso8601String(),
+    'refreshTokenExpiresAtUtc': refreshTokenExpiresAtUtc.toIso8601String(),
+  };
 }
 
 class AuthRepository {
   AuthRepository({ApiClient? api, FlutterSecureStorage? storage})
-      : _api = api ?? ApiClient(baseUrl: apiBaseUrl),
-        _storage = storage ?? const FlutterSecureStorage();
+    : _api = api ?? ApiClient(baseUrl: apiBaseUrl),
+      _storage = storage ?? const FlutterSecureStorage();
 
   static const _sessionKey = 'identity.session.v1';
   static const _deviceKey = 'identity.device-id.v1';
@@ -140,56 +145,52 @@ class AuthRepository {
   final ApiClient _api;
   final FlutterSecureStorage _storage;
 
-  Future<AuthSession> login(String login, String password) async => _authenticate(
-        '/api/v1/auth/login',
-        {'login': login.trim(), 'password': password, 'device': await _device()},
-      );
+  Future<AuthSession> login(String login, String password) async =>
+      _authenticate('/api/v1/auth/login', {
+        'login': login.trim(),
+        'password': password,
+        'device': await _device(),
+      });
 
   Future<AuthSession> register({
     required String displayName,
     required String? email,
     required String? mobile,
     required String password,
-  }) async =>
-      _authenticate(
-        '/api/v1/auth/register',
-        {
-          'displayName': displayName.trim(),
-          'email': _optional(email),
-          'mobile': _optional(mobile),
-          'password': password,
-          'device': await _device(),
-        },
-      );
+  }) async => _authenticate('/api/v1/auth/register', {
+    'displayName': displayName.trim(),
+    'email': _optional(email),
+    'mobile': _optional(mobile),
+    'password': password,
+    'device': await _device(),
+  });
 
   Future<void> sendOtp(String mobile, {required bool registration}) async {
-    await _api.post('/api/v1/auth/send-otp', body: {
-      'mobile': mobile.trim(),
-      'purpose': registration ? 1 : 0,
-    });
+    await _api.post(
+      '/api/v1/auth/send-otp',
+      body: {'mobile': mobile.trim(), 'purpose': registration ? 1 : 0},
+    );
   }
 
   Future<AuthSession> verifyOtp(
     String mobile,
     String code, {
     required bool registration,
-  }) async =>
-      _authenticate(
-        '/api/v1/auth/verify-otp',
-        {
-          'mobile': mobile.trim(),
-          'code': code.trim(),
-          'purpose': registration ? 1 : 0,
-          'device': await _device(),
-        },
-      );
+  }) async => _authenticate('/api/v1/auth/verify-otp', {
+    'mobile': mobile.trim(),
+    'code': code.trim(),
+    'purpose': registration ? 1 : 0,
+    'device': await _device(),
+  });
 
   Future<AuthSession?> restore() async {
     final encoded = await _storage.read(key: _sessionKey);
     if (encoded == null) return null;
 
     try {
-      final session = AuthSession.fromStorage(jsonDecode(encoded) as Map<String, dynamic>);
+      final session = AuthSession.fromStorage(
+        jsonDecode(encoded) as Map<String, dynamic>,
+      );
       if (!session.refreshTokenExpiresAtUtc.isAfter(DateTime.now().toUtc())) {
         await clear();
         return null;
@@ -202,11 +203,13 @@ class AuthRepository {
   }
 
   Future<AuthSession> refresh(AuthSession session) async {
-    final response = await _api.post('/api/v1/auth/refresh', body: {
-      'refreshToken': session.refreshToken,
-      'device': await _device(),
-    });
-    final refreshed = AuthSession.fromJson(response['data'] as Map<String, dynamic>);
+    final response = await _api.post(
+      '/api/v1/auth/refresh',
+      body: {'refreshToken': session.refreshToken, 'device': await _device()},
+    );
+    final refreshed = AuthSession.fromJson(
+      response['data'] as Map<String, dynamic>,
+    );
     await _save(refreshed);
     return refreshed;
   }
@@ -221,10 +224,7 @@ class AuthRepository {
 
   Future<void> logout(AuthSession session) async {
     try {
-      await _api.post(
-        '/api/v1/auth/logout',
-        accessToken: session.accessToken,
-      );
+      await _api.post('/api/v1/auth/logout', accessToken: session.accessToken);
     } finally {
       await clear();
     }
@@ -232,23 +232,29 @@ class AuthRepository {
 
   Future<void> clear() => _storage.delete(key: _sessionKey);
 
-  Future<AuthSession> _authenticate(String path, Map<String, dynamic> body) async {
+  Future<AuthSession> _authenticate(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
     final response = await _api.post(path, body: body);
-    final session = AuthSession.fromJson(response['data'] as Map<String, dynamic>);
+    final session = AuthSession.fromJson(
+      response['data'] as Map<String, dynamic>,
+    );
     await _save(session);
     return session;
   }
 
-  Future<void> _save(AuthSession session) => _storage.write(
-        key: _sessionKey,
-        value: jsonEncode(session.toJson()),
-      );
+  Future<void> _save(AuthSession session) =>
+      _storage.write(key: _sessionKey, value: jsonEncode(session.toJson()));
 
   Future<Map<String, dynamic>> _device() async {
     var identifier = await _storage.read(key: _deviceKey);
     if (identifier == null) {
       final random = Random.secure();
-      identifier = List.generate(32, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+      identifier = List.generate(
+        32,
+        (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+      ).join();
       await _storage.write(key: _deviceKey, value: identifier);
     }
     return {

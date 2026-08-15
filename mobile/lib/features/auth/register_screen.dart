@@ -52,12 +52,16 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 8),
-                    const Text('Use an email address or mobile number to sign in later.'),
+                    const Text(
+                      'Use an email address or mobile number to sign in later.',
+                    ),
                     if (session.errorMessage != null) ...[
                       const SizedBox(height: 16),
                       Text(
                         session.errorMessage!,
-                        style: TextStyle(color: Theme.of(context).colorScheme.error),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
                       ),
                     ],
                     const SizedBox(height: 24),
@@ -70,7 +74,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         prefixIcon: Icon(Icons.badge_outlined),
                         border: OutlineInputBorder(),
                       ),
-                      validator: (value) => value == null || value.trim().length < 2
+                      validator: (value) =>
+                          value == null || value.trim().length < 2
                           ? 'Enter your name.'
                           : null,
                     ),
@@ -86,7 +91,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       ),
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) return null;
-                        return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value.trim())
+                        return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+                                .hasMatch(value.trim())
                             ? null
                             : 'Enter a valid email address.';
                       },
@@ -103,7 +109,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       ),
                       validator: (value) {
                         final mobile = value?.trim() ?? '';
-                        if (mobile.isEmpty && _emailController.text.trim().isEmpty) {
+                        if (mobile.isEmpty &&
+                            _emailController.text.trim().isEmpty) {
                           return 'Enter an email address or mobile number.';
                         }
                         return mobile.isEmpty || mobile.length >= 8
@@ -121,11 +128,17 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         prefixIcon: const Icon(Icons.lock_outline),
                         border: const OutlineInputBorder(),
                         suffixIcon: IconButton(
-                          tooltip: _obscurePassword ? 'Show password' : 'Hide password',
-                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                          icon: Icon(_obscurePassword
-                              ? Icons.visibility_outlined
-                              : Icons.visibility_off_outlined),
+                          tooltip: _obscurePassword
+                              ? 'Show password'
+                              : 'Hide password',
+                          onPressed: () => setState(
+                            () => _obscurePassword = !_obscurePassword,
+                          ),
+                          icon: Icon(
+                            _obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
                         ),
                       ),
                       validator: (value) => value == null || value.length < 8
@@ -173,7 +186,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
-    await ref.read(sessionControllerProvider.notifier).register(
+    await ref
+        .read(sessionControllerProvider.notifier)
+        .register(
           displayName: _nameController.text,
           email: _emailController.text,
           mobile: _mobileController.text,

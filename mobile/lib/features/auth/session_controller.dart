@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'auth_repository.dart';
 import 'session_state.dart';
 
-final authRepositoryProvider = Provider<AuthRepository>((ref) => AuthRepository());
+final authRepositoryProvider = Provider<AuthRepository>(
+  (ref) => AuthRepository(),
+);
 
 final sessionControllerProvider =
     NotifierProvider<SessionController, SessionState>(SessionController.new);
@@ -25,24 +27,22 @@ class SessionController extends Notifier<SessionState> {
         : SessionState.authenticated(session);
   }
 
-  Future<bool> login(String login, String password) => _run(
-        () => _repository.login(login, password),
-      );
+  Future<bool> login(String login, String password) =>
+      _run(() => _repository.login(login, password));
 
   Future<bool> register({
     required String displayName,
     required String? email,
     required String? mobile,
     required String password,
-  }) =>
-      _run(
-        () => _repository.register(
-          displayName: displayName,
-          email: email,
-          mobile: mobile,
-          password: password,
-        ),
-      );
+  }) => _run(
+    () => _repository.register(
+      displayName: displayName,
+      email: email,
+      mobile: mobile,
+      password: password,
+    ),
+  );
 
   Future<void> sendOtp(String mobile, {required bool registration}) =>
       _repository.sendOtp(mobile, registration: registration);
@@ -51,14 +51,9 @@ class SessionController extends Notifier<SessionState> {
     String mobile,
     String code, {
     required bool registration,
-  }) =>
-      _run(
-        () => _repository.verifyOtp(
-          mobile,
-          code,
-          registration: registration,
-        ),
-      );
+  }) => _run(
+    () => _repository.verifyOtp(mobile, code, registration: registration),
+  );
 
   Future<void> refresh() async {
     final current = state.session;
@@ -110,7 +105,8 @@ class SessionController extends Notifier<SessionState> {
       return false;
     } on Object {
       state = const SessionState.unauthenticated(
-        errorMessage: 'Unable to reach DoodhDirect. Check your connection and try again.',
+        errorMessage:
+            'Unable to reach DoodhDirect. Check your connection and try again.',
       );
       return false;
     }

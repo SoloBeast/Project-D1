@@ -48,7 +48,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 8),
-                    const Text('A one-time code will be sent to your mobile number.'),
+                    const Text(
+                      'A one-time code will be sent to your mobile number.',
+                    ),
                     const SizedBox(height: 24),
                     SegmentedButton<bool>(
                       segments: const [
@@ -67,15 +69,17 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                       onSelectionChanged: busy
                           ? null
                           : (selection) => setState(() {
-                                _registration = selection.first;
-                                _codeSent = false;
-                              }),
+                              _registration = selection.first;
+                              _codeSent = false;
+                            }),
                     ),
                     if (session.errorMessage != null) ...[
                       const SizedBox(height: 16),
                       Text(
                         session.errorMessage!,
-                        style: TextStyle(color: Theme.of(context).colorScheme.error),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
                       ),
                     ],
                     const SizedBox(height: 24),
@@ -88,7 +92,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                         prefixIcon: Icon(Icons.phone_outlined),
                         border: OutlineInputBorder(),
                       ),
-                      validator: (value) => value == null || value.trim().length < 8
+                      validator: (value) =>
+                          value == null || value.trim().length < 8
                           ? 'Enter a valid mobile number.'
                           : null,
                     ),
@@ -105,7 +110,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                           border: OutlineInputBorder(),
                           counterText: '',
                         ),
-                        validator: (value) => value == null || value.trim().length != 6
+                        validator: (value) =>
+                            value == null || value.trim().length != 6
                             ? 'Enter the 6-digit code.'
                             : null,
                       ),
@@ -118,7 +124,11 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                               dimension: 18,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : Icon(_codeSent ? Icons.verified_outlined : Icons.sms_outlined),
+                          : Icon(
+                              _codeSent
+                                  ? Icons.verified_outlined
+                                  : Icons.sms_outlined,
+                            ),
                       label: Text(_codeSent ? 'Verify code' : 'Send code'),
                     ),
                     if (_codeSent)
@@ -145,10 +155,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _sending = true);
     try {
-      await ref.read(sessionControllerProvider.notifier).sendOtp(
-            _mobileController.text,
-            registration: _registration,
-          );
+      await ref
+          .read(sessionControllerProvider.notifier)
+          .sendOtp(_mobileController.text, registration: _registration);
       if (mounted) {
         setState(() => _codeSent = true);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -157,9 +166,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
       }
     } on Object catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error.toString())),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
       }
     } finally {
       if (mounted) setState(() => _sending = false);
@@ -168,7 +176,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
 
   Future<void> _verify() async {
     if (!_formKey.currentState!.validate()) return;
-    await ref.read(sessionControllerProvider.notifier).verifyOtp(
+    await ref
+        .read(sessionControllerProvider.notifier)
+        .verifyOtp(
           _mobileController.text,
           _codeController.text,
           registration: _registration,
