@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DoodhDirect.Api/DoodhDirect.Api.csproj" />
+    <Project Path="src/DoodhDirect.Application/DoodhDirect.Application.csproj" />
+    <Project Path="src/DoodhDirect.Domain/DoodhDirect.Domain.csproj" />
+    <Project Path="src/DoodhDirect.Infrastructure/DoodhDirect.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DoodhDirect.Api.IntegrationTests/DoodhDirect.Api.IntegrationTests.csproj" />
+    <Project Path="tests/DoodhDirect.Domain.Tests/DoodhDirect.Domain.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,28 @@
+# Build output
+**/bin/
+**/obj/
+**/TestResults/
+**/coverage/
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins-dependencies
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+**/appsettings.Local.json
+**/appsettings.*.Local.json
+secrets.json
+
+# Generated migration validation output
+artifacts/
+
+# IDE and OS metadata
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db

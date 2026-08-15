@@ -1,0 +1,88 @@
+name: Phase 0 CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend build, test, and migration validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore local tools
+        run: dotnet tool restore
+
+      - name: Restore backend
+        run: dotnet restore Backend/DoodhDirect.slnx
+
+      - name: Build backend
+        run: dotnet build Backend/DoodhDirect.slnx --configuration Release --no-restore
+
+      - name: Test backend
+        run: dotnet test Backend/DoodhDirect.slnx --configuration Release --no-build --no-restore
+
+      - name: Generate idempotent migration script
+        run: >-
+          dotnet ef migrations script --idempotent --no-build
+          --project Backend/src/DoodhDirect.Infrastructure/DoodhDirect.Infrastructure.csproj
+          --startup-project Backend/src/DoodhDirect.Api/DoodhDirect.Api.csproj
+          --configuration Release
+          --output artifacts/sql/DoodhDirect.sql
+
+      - name: Validate migration script
+        shell: bash
+        run: test -s artifacts/sql/DoodhDirect.sql
+
+      - name: Upload migration script
+        uses: actions/upload-artifact@v4
+        with:
+          name: doodhdirect-sql-migration
+          path: artifacts/sql/DoodhDirect.sql
+          if-no-files-found: error
+
+  flutter:
+    name: Flutter analyze, test, and web build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.0
+          channel: stable
+          cache: true
+
+      - name: Resolve Flutter packages
+        run: flutter pub get
+
+      - name: Analyze Flutter
+        run: flutter analyze
+
+      - name: Test Flutter
+        run: flutter test
+
+      - name: Build Flutter web
+        run: flutter build web --release

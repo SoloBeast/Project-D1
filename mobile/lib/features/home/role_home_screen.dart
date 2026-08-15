@@ -1,0 +1,47 @@
+import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/auth/session_state.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+class RoleHomeScreen extends ConsumerWidget {
+  const RoleHomeScreen({super.key, required this.role});
+
+  final UserRole role;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Scaffold(
+        appBar: AppBar(
+          title: Text('${role.label} workspace'),
+          actions: [
+            IconButton(
+              tooltip: 'Sign out',
+              onPressed: () => ref.read(sessionControllerProvider.notifier).signOut(),
+              icon: const Icon(Icons.logout),
+            ),
+          ],
+        ),
+        body: switch (role) {
+          UserRole.customer => const StatePanel(
+              icon: Icons.local_drink_outlined,
+              title: 'Customer workspace ready',
+              message: 'Products, orders, subscriptions, and wallet workflows arrive in their roadmap phases.',
+            ),
+          UserRole.delivery => const StatePanel(
+              icon: Icons.route_outlined,
+              title: 'Delivery workspace ready',
+              message: 'Delivery operations are reserved for the delivery phase.',
+            ),
+          UserRole.dairy => const StatePanel(
+              icon: Icons.agriculture_outlined,
+              title: 'Dairy workspace ready',
+              message: 'Dairy operations are reserved for the dairy operations phase.',
+            ),
+          UserRole.owner || UserRole.admin => const StatePanel(
+              icon: Icons.dashboard_outlined,
+              title: 'Administration workspace ready',
+              message: 'Management, reports, and settings are reserved for the admin phase.',
+            ),
+        },
+      );
+}
