@@ -1,14 +1,17 @@
 using System.Text;
 using System.Text.Json.Serialization;
-using DoodhDirect.Api.Authentication;
+using DoodhDirect.Api.Authorization;
 using DoodhDirect.Api.Middleware;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Infrastructure;
+using DoodhDirect.Infrastructure.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization.Policy;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 using Serilog;
 
@@ -19,12 +22,6 @@ builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Services(services)
     .Enrich.FromLogContext()
     .Enrich.WithProperty("Application", "DoodhDirect.Api"));
-
-builder.Services
-    .AddOptions<JwtOptions>()
-    .Bind(builder.Configuration.GetSection(JwtOptions.SectionName))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
 
 var jwtOptions = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>()
     ?? throw new InvalidOperationException($"Configuration section '{JwtOptions.SectionName}' is required.");
@@ -53,16 +50,49 @@ builder.Services.AddAuthorizationBuilder()
     .SetFallbackPolicy(new AuthorizationPolicyBuilder()
         .RequireAuthenticatedUser()
         .Build());
+builder.Services.AddSingleton<IAuthorizationPolicyProvider, DoodhDirectAuthorizationPolicyProvider>();
+builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
+builder.Services.AddSingleton<IAuthorizationHandler, BranchScopeAuthorizationHandler>();
+builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AuditingAuthorizationMiddlewareResultHandler>();
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddProblemDetails();
-builder.Services.AddOpenApi(options => options.AddDocumentTransformer((document, _, _) =>
+builder.Services.AddOpenApi(options =>
 {
-    document.Info.Title = "DoodhDirect API";
-    document.Info.Version = "v1";
-    document.Info.Description = "Farm-to-home dairy platform API.";
-    return Task.CompletedTask;
-}));
+    options.AddDocumentTransformer((document, _, _) =>
+    {
+        document.Info.Title = "DoodhDirect API";
+        document.Info.Version = "v1";
+        document.Info.Description = "Phase 1 identity, authentication, session, and RBAC API.";
+        document.Components ??= new OpenApiComponents();
+        document.Components.SecuritySchemes ??=
+            new Dictionary<string, IOpenApiSecurityScheme>(StringComparer.Ordinal);
+        document.Components.SecuritySchemes["bearerAuth"] = new OpenApiSecurityScheme
+        {
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            Description = "Enter a DoodhDirect access token."
+        };
+        return Task.CompletedTask;
+    });
+    options.AddOperationTransformer((operation, context, _) =>
+    {
+        var endpointMetadata = context.Description.ActionDescriptor.EndpointMetadata;
+        if (endpointMetadata.OfType<IAllowAnonymous>().Any())
+        {
+            operation.Security = [];
+            return Task.CompletedTask;
+        }
+
+        operation.Security ??= [];
+        operation.Security.Add(new OpenApiSecurityRequirement
+        {
+            [new OpenApiSecuritySchemeReference("bearerAuth", context.Document, null)] = []
+        });
+        return Task.CompletedTask;
+    });
+});
 builder.Services.AddControllers(options =>
     {
         options.Filters.Add(new ProducesAttribute("application/json"));
@@ -88,6 +118,13 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 });
 
 var app = builder.Build();
+
+await using (var scope = app.Services.CreateAsyncScope())
+{
+    await scope.ServiceProvider
+        .GetRequiredService<IdentitySeedService>()
+        .SeedAsync(CancellationToken.None);
+}
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseSerilogRequestLogging(options =>

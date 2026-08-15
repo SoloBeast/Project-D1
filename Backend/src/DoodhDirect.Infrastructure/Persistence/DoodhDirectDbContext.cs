@@ -13,6 +13,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     public DbSet<Permission> Permissions => Set<Permission>();
     public DbSet<UserRole> UserRoles => Set<UserRole>();
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+    public DbSet<OtpChallenge> OtpChallenges => Set<OtpChallenge>();
+    public DbSet<UserSession> UserSessions => Set<UserSession>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<SystemConfiguration> SystemConfigurations => Set<SystemConfiguration>();
@@ -25,6 +27,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigurePermission(modelBuilder);
         ConfigureUserRole(modelBuilder);
         ConfigureRolePermission(modelBuilder);
+        ConfigureOtpChallenge(modelBuilder);
+        ConfigureUserSession(modelBuilder);
         ConfigureRefreshToken(modelBuilder);
         ConfigureAuditLog(modelBuilder);
         ConfigureSystemConfiguration(modelBuilder);
@@ -75,6 +79,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasIndex(x => x.Mobile).IsUnique().HasFilter("[Mobile] IS NOT NULL");
         entity.HasIndex(x => x.Email).IsUnique().HasFilter("[Email] IS NOT NULL");
         entity.Property(x => x.UserType).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.DisplayName).HasMaxLength(160);
         entity.Property(x => x.Mobile).HasMaxLength(20);
         entity.Property(x => x.Email).HasMaxLength(320);
         entity.Property(x => x.PasswordHash).HasMaxLength(500);
@@ -131,6 +136,39 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasOne(x => x.Permission).WithMany(x => x.RolePermissions).HasForeignKey(x => x.PermissionId).OnDelete(DeleteBehavior.Restrict);
     }
 
+    private static void ConfigureOtpChallenge(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<OtpChallenge>();
+        entity.ToTable("OtpChallenge");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Destination).HasMaxLength(320).IsRequired();
+        entity.Property(x => x.Purpose).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.CodeHash).HasMaxLength(128).IsRequired();
+        entity.Property(x => x.RequestedFromIp).HasMaxLength(64);
+        entity.HasIndex(x => new { x.Destination, x.Purpose, x.CreatedAtUtc });
+        entity.HasIndex(x => new { x.ExpiresAtUtc, x.ConsumedAtUtc });
+    }
+
+    private static void ConfigureUserSession(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<UserSession>();
+        entity.ToTable("UserSession");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.DeviceIdentifierHash).HasMaxLength(128).IsRequired();
+        entity.Property(x => x.DeviceName).HasMaxLength(160);
+        entity.Property(x => x.Platform).HasMaxLength(40);
+        entity.Property(x => x.IPAddress).HasMaxLength(64);
+        entity.Property(x => x.UserAgent).HasMaxLength(1000);
+        entity.Property(x => x.RevocationReason).HasMaxLength(200);
+        entity.HasIndex(x => new { x.UserId, x.RevokedAtUtc, x.LastSeenAtUtc });
+        entity.HasIndex(x => new { x.UserId, x.DeviceIdentifierHash, x.RevokedAtUtc });
+        entity.HasOne(x => x.User).WithMany(x => x.Sessions).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
     private static void ConfigureRefreshToken(ModelBuilder modelBuilder)
     {
         var entity = modelBuilder.Entity<RefreshToken>();
@@ -141,7 +179,9 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.ReplacedByTokenHash).HasMaxLength(128);
         entity.HasIndex(x => x.TokenHash).IsUnique();
         entity.HasIndex(x => new { x.UserId, x.ExpiresAtUtc });
+        entity.HasIndex(x => new { x.SessionId, x.ExpiresAtUtc });
         entity.HasOne(x => x.User).WithMany(x => x.RefreshTokens).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Session).WithMany(x => x.RefreshTokens).HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureAuditLog(ModelBuilder modelBuilder)

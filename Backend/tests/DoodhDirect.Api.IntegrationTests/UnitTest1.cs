@@ -1,4 +1,5 @@
 ﻿using System.Net;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Infrastructure;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -60,5 +61,29 @@ public sealed class ApiFoundationTests : IClassFixture<WebApplicationFactory<Pro
         Assert.NotNull(policy);
         Assert.Contains(policy.Requirements, requirement =>
             requirement is DenyAnonymousAuthorizationRequirement);
+    }
+
+    [Fact]
+    public async Task OpenApiDocument_DescribesBearerSecurityAndAnonymousAuthOperations()
+    {
+        using var client = _factory.CreateClient();
+
+        using var response = await client.GetAsync("/openapi/v1.json", CancellationToken.None);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStreamAsync());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var root = document.RootElement;
+        var bearer = root.GetProperty("components").GetProperty("securitySchemes").GetProperty("bearerAuth");
+        Assert.Equal("http", bearer.GetProperty("type").GetString());
+        Assert.Equal("bearer", bearer.GetProperty("scheme").GetString());
+        Assert.Equal("JWT", bearer.GetProperty("bearerFormat").GetString());
+
+        var paths = root.GetProperty("paths");
+        var register = paths.GetProperty("/api/v1/auth/register").GetProperty("post");
+        Assert.Equal(0, register.GetProperty("security").GetArrayLength());
+
+        var me = paths.GetProperty("/api/v1/auth/me").GetProperty("get");
+        var requirement = me.GetProperty("security")[0];
+        Assert.True(requirement.TryGetProperty("bearerAuth", out _));
     }
 }

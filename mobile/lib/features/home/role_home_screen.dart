@@ -16,7 +16,9 @@ class RoleHomeScreen extends ConsumerWidget {
           actions: [
             IconButton(
               tooltip: 'Sign out',
-              onPressed: () => ref.read(sessionControllerProvider.notifier).signOut(),
+              onPressed: () async {
+                await ref.read(sessionControllerProvider.notifier).signOut();
+              },
               icon: const Icon(Icons.logout),
             ),
           ],
@@ -41,6 +43,16 @@ class RoleHomeScreen extends ConsumerWidget {
               icon: Icons.dashboard_outlined,
               title: 'Administration workspace ready',
               message: 'Management, reports, and settings are reserved for the admin phase.',
+            ),
+          UserRole.support => const StatePanel(
+              icon: Icons.support_agent_outlined,
+              title: 'Customer support workspace ready',
+              message: 'Customer support workflows remain outside the Identity and RBAC phase.',
+            ),
+          UserRole.accountant => const StatePanel(
+              icon: Icons.account_balance_outlined,
+              title: 'Accounting workspace ready',
+              message: 'Accounting workflows remain outside the Identity and RBAC phase.',
             ),
         },
       );

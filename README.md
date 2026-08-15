@@ -1,8 +1,8 @@
-# DoodhDirect Phase 0
+# DoodhDirect Phase 1
 
-DoodhDirect is a farm-to-home dairy platform. This repository contains the Phase 0 foundation only: a layered ASP.NET Core API, SQL Server/EF Core persistence scaffolding, and one role-aware Flutter application for Android, iOS, and web.
+DoodhDirect is a farm-to-home dairy platform. This repository contains the accepted Phase 0 foundation and the Phase 1 identity and role-based access control implementation: a layered ASP.NET Core API, SQL Server/EF Core persistence, and one authenticated, role-aware Flutter application for Android, iOS, and web.
 
-The specifications in `Document/01_PRD.md` through `Document/09_Development_Roadmap.md` are authoritative. No Phase 0 conflict was identified among them. EF Core migrations are authoritative for the implemented schema; the SQL starter document remains conceptual.
+The specifications in `Document/01_PRD.md` through `Document/09_Development_Roadmap.md` are authoritative. EF Core migrations are authoritative for the implemented schema; the SQL starter document remains conceptual. Phase 2 customer and address workflows and all later business workflows remain out of scope.
 
 ## Repository layout
 
@@ -50,19 +50,24 @@ Development endpoints:
 
 - `GET /health/live`: anonymous, dependency-free process liveness
 - `GET /health/ready`: anonymous SQL Server readiness
-- `GET /openapi/v1.json`: development-only OpenAPI document
+- `GET /openapi/v1.json`: development-only OpenAPI document with JWT bearer metadata
 - `/scalar/v1`: development-only Scalar API reference
 
-All future API endpoints are protected by the fallback authorization policy unless explicitly marked anonymous. Working OTP, login, user management, role assignment, and permission management belong to Phase 1 and are intentionally not exposed in Phase 0.
+Phase 1 authentication endpoints:
+
+- Anonymous: `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/send-otp`, `POST /api/v1/auth/verify-otp`, and `POST /api/v1/auth/refresh`
+- Authenticated: `POST /api/v1/auth/logout` and `GET /api/v1/auth/me`
+
+The fallback authorization policy protects every endpoint unless it is explicitly anonymous. JWTs carry user, session, role, permission, and branch claims. Dynamic policies enforce exact permissions and branch assignments; `ACCESS.GLOBAL` is the explicit owner bypass for branch scope. Canonical roles and permissions are seeded idempotently at API startup. Phase 1 does not expose role, permission, employee, or account-administration CRUD endpoints.
 
 ## Database migrations
 
-The initial migration has been applied and verified against the development database on `DESKTOP-6LU1CLD\\SQLEXPRESS`:
+The Phase 0 migration was applied and verified against the development database on `DESKTOP-6LU1CLD\\SQLEXPRESS`. The repository now contains two migrations:
 
-- Database: `DoodhDirect`
-- Migration history: `20260815190759_InitialPhase0Foundation` with EF Core `10.0.11`
-- Tables: `User`, `Role`, `Permission`, `UserRole`, `RolePermission`, `RefreshToken`, `AuditLog`, `SystemConfiguration`, and `__EFMigrationsHistory`
-- Verification: expected indexes, filtered branch/global uniqueness indexes, `NEWSEQUENTIALID()` public-ID defaults, bounded token-hash columns, foreign keys, and `NO_ACTION` delete behavior were confirmed
+- `20260815190759_InitialPhase0Foundation`
+- `20260815201425_Phase1IdentitySessions`
+
+The Phase 1 migration adds OTP challenges and device-bound user sessions and expands refresh-token persistence for rotation and reuse detection. The configured SQL Server Express database is current through `20260815201425_Phase1IdentitySessions`; `dotnet ef database update` reported that no migrations were pending.
 
 Generate the idempotent SQL script without connecting to SQL Server:
 
@@ -76,19 +81,19 @@ Apply migrations only after configuring a reachable SQL Server connection:
 dotnet ef database update --project Backend\src\DoodhDirect.Infrastructure\DoodhDirect.Infrastructure.csproj --startup-project Backend\src\DoodhDirect.Api\DoodhDirect.Api.csproj
 ```
 
-The initial migration creates Phase 0 identity, role, permission, refresh-token, audit-log, and system-configuration storage. It uses `bigint` identity keys, GUID public IDs, UTC `datetime2` timestamps, filtered role-assignment uniqueness, restrictive identity/RBAC deletes, and bounded token hashes.
+The migrations use `bigint` identity keys, GUID public IDs, UTC `datetime2` timestamps, filtered role-assignment uniqueness, restrictive identity/RBAC deletes, and bounded token hashes. Refresh tokens are stored only as hashes and are linked to device-bound sessions.
 
 ## Flutter application
 
-Resolve packages and run a target from `mobile`:
+The Flutter app implements registration, password login, OTP login/registration, secure session persistence, refresh-based restoration, logout, expired-session handling, and server-derived role navigation. Configure the API URL at build or run time:
 
 ```powershell
 cd mobile
 flutter pub get
-flutter run -d chrome
+flutter run -d chrome --dart-define=DOOHDIRECT_API_URL=https://localhost:7213
 ```
 
-Use an Android emulator/device or an iOS simulator/device instead of `chrome` for mobile targets. The Phase 0 role picker demonstrates role-aware routing locally; it is explicitly not an authentication implementation.
+Use an Android emulator/device or an iOS simulator/device instead of `chrome` for mobile targets. Android emulators generally require an API URL reachable from the emulator rather than the host-only `localhost` address. Session and device identifiers are stored with `flutter_secure_storage`.
 
 ## Acceptance commands
 
@@ -108,15 +113,14 @@ flutter build web --release
 
 CI performs the same backend build/tests, migration-script generation, Flutter analysis/tests, and Flutter web release build. Database application is intentionally excluded from CI because CI has no controlled SQL Server test service and credentials.
 
-## Phase 0 limitations
+## Phase 1 security defaults and limitations
 
-- No real OTP or credential login endpoints
-- No token issuance or refresh endpoint; JWT bearer validation is only the API security foundation
-- No user registration or user-management API
-- No role or permission administration API
-- No branch authorization enforcement; branch-scoped persistence indexes are foundation-only
-- No production identity provider integration
-- No customer, ordering, payment, subscription, delivery, complaint, dairy, notification, or reporting workflows
-- No external provider integration; later phases must follow the integration specification
-
-Phase 0 is complete after local SQL Server Express connectivity and migration verification. Phase 1 must implement real identity, authentication, token issuance, user management, RBAC administration, permission administration, and branch authorization before those capabilities are treated as production functionality.
+- Access tokens expire after 15 minutes; refresh tokens expire after 30 days.
+- Refresh tokens rotate on use. Reuse of a revoked token revokes the complete session.
+- OTPs expire after 5 minutes, allow 5 failed attempts, and are limited to 3 requests per mobile/purpose in a 15-minute window.
+- Passwords use PBKDF2 with 120,000 iterations.
+- Authentication events and authorization challenges/denials are persisted in the audit log.
+- `UnconfiguredOtpDeliveryService` does not send SMS. A production `IOtpDeliveryService` integration is required before OTP can be used outside controlled testing.
+- The checked-in JWT signing key is a placeholder and must be supplied from a deployment secret store.
+- Role and permission administration APIs, password reset, external identity providers, and production account-management workflows are not implemented in Phase 1.
+- No customer/address, ordering, payment, subscription, delivery, complaint, dairy, notification, or reporting workflows are implemented.

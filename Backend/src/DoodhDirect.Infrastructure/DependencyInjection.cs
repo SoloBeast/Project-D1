@@ -1,4 +1,6 @@
 using DoodhDirect.Application.Abstractions;
+using DoodhDirect.Application.Identity;
+using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -24,9 +26,25 @@ public static class DependencyInjection
                 sql.CommandTimeout(30);
             }));
 
+        services.AddOptions<JwtOptions>()
+            .Bind(configuration.GetSection(JwtOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+        services.AddOptions<IdentityOptions>()
+            .Bind(configuration.GetSection(IdentityOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
         services.AddHealthChecks()
             .AddDbContextCheck<DoodhDirectDbContext>("sql-server", tags: ["ready"]);
         services.AddSingleton<IClock, SystemClock>();
+        services.AddSingleton<SecureTokenGenerator>();
+        services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
+        services.AddSingleton<ITokenService, JwtTokenService>();
+        services.AddScoped<IAuthenticationService, AuthenticationService>();
+        services.AddScoped<IOtpService, OtpService>();
+        services.AddScoped<IdentitySeedService>();
+        services.AddSingleton<IOtpDeliveryService, UnconfiguredOtpDeliveryService>();
 
         return services;
     }

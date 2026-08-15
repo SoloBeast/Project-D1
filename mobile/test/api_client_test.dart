@@ -26,7 +26,34 @@ void main() {
     expect((body['data'] as Map<String, dynamic>)['status'], 'healthy');
   });
 
-  test('GET decodes standard API error envelope', () async {
+  test('POST sends JSON body and bearer token', () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(request.url.toString(), 'https://api.example.test/api/v1/auth/logout');
+      expect(request.headers['Authorization'], 'Bearer access-token');
+      expect(request.headers['Content-Type'], 'application/json');
+      expect(request.body, '{"deviceIdentifier":"device-1"}');
+      return http.Response(
+        '{"success":true,"data":null,"errors":[]}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final api = ApiClient(
+      client: client,
+      baseUrl: 'https://api.example.test',
+    );
+
+    final body = await api.post(
+      '/api/v1/auth/logout',
+      body: {'deviceIdentifier': 'device-1'},
+      accessToken: 'access-token',
+    );
+
+    expect(body['success'], isTrue);
+  });
+
+  test('POST decodes standard API error envelope', () async {
     final client = MockClient((request) async => http.Response(
           '{"success":false,"message":"Access denied.","errors":[{"code":"FORBIDDEN","field":null,"message":"Access denied."}]}',
           403,
@@ -37,15 +64,35 @@ void main() {
       baseUrl: 'https://api.example.test',
     );
 
-    final invocation = api.get('/protected');
-
     await expectLater(
-      invocation,
+      api.post('/protected'),
       throwsA(
         isA<ApiException>()
             .having((error) => error.statusCode, 'statusCode', 403)
             .having((error) => error.code, 'code', 'FORBIDDEN')
             .having((error) => error.message, 'message', 'Access denied.'),
+      ),
+    );
+  });
+
+  test('GET uses standard fallback when an error has no structured details', () async {
+    final client = MockClient((request) async => http.Response('', 500));
+    final api = ApiClient(
+      client: client,
+      baseUrl: 'https://api.example.test',
+    );
+
+    await expectLater(
+      api.get('/health'),
+      throwsA(
+        isA<ApiException>()
+            .having((error) => error.statusCode, 'statusCode', 500)
+            .having((error) => error.code, 'code', 'HTTP_ERROR')
+            .having(
+              (error) => error.message,
+              'message',
+              'The request could not be completed.',
+            ),
       ),
     );
   });

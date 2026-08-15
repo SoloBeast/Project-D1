@@ -1,31 +1,29 @@
-enum UserRole {
-  customer,
-  delivery,
-  dairy,
-  owner,
-  admin,
-}
+export 'auth_repository.dart' show UserRole, UserRoleLabel;
 
-extension UserRoleLabel on UserRole {
-  String get label => switch (this) {
-        UserRole.customer => 'Customer',
-        UserRole.delivery => 'Delivery',
-        UserRole.dairy => 'Dairy',
-        UserRole.owner => 'Owner',
-        UserRole.admin => 'Admin',
-      };
-}
+import 'auth_repository.dart';
 
 class SessionState {
-  const SessionState.unauthenticated()
-      : isAuthenticated = false,
-        role = null,
-        publicUserId = null;
+  const SessionState.loading()
+      : status = SessionStatus.loading,
+        session = null,
+        errorMessage = null;
 
-  const SessionState.authenticated({required this.role, required this.publicUserId})
-      : isAuthenticated = true;
+  const SessionState.unauthenticated({this.errorMessage})
+      : status = SessionStatus.unauthenticated,
+        session = null;
 
-  final bool isAuthenticated;
-  final UserRole? role;
-  final String? publicUserId;
+  const SessionState.authenticated(this.session)
+      : status = SessionStatus.authenticated,
+        errorMessage = null;
+
+  final SessionStatus status;
+  final AuthSession? session;
+  final String? errorMessage;
+
+  bool get isLoading => status == SessionStatus.loading;
+  bool get isAuthenticated => session != null && status == SessionStatus.authenticated;
+  UserRole? get role => session?.user.primaryRole;
+  String? get publicUserId => session?.user.publicUserId;
 }
+
+enum SessionStatus { loading, unauthenticated, authenticated }

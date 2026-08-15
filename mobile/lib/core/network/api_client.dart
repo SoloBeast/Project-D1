@@ -27,6 +27,19 @@ class ApiClient {
     return _decode(response);
   }
 
+  Future<Map<String, dynamic>> post(
+    String path, {
+    Map<String, dynamic> body = const <String, dynamic>{},
+    String? accessToken,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl$path'),
+      headers: _headers(accessToken),
+      body: jsonEncode(body),
+    );
+    return _decode(response);
+  }
+
   Map<String, String> _headers(String? accessToken) => {
         'Accept': 'application/json',
         'Content-Type': 'application/json',

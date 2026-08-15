@@ -52,25 +52,106 @@ Query:
 
 ## 2. Authentication APIs
 
-`POST /auth/send-otp`
+The following Phase 1 routes are implemented under `/api/v1`:
 
-`POST /auth/verify-otp`
+### `POST /auth/register` (anonymous)
 
-`POST /auth/login`
+```json
+{
+  "displayName": "Asha Khan",
+  "email": "asha@example.test",
+  "mobile": "919876543210",
+  "password": "correct horse battery staple",
+  "device": {
+    "deviceIdentifier": "device-1",
+    "deviceName": "DoodhDirect Flutter",
+    "platform": "android"
+  }
+}
+```
 
-`POST /auth/refresh`
+Registration creates a customer identity, assigns the `CUSTOMER` role, creates a device-bound session, and returns an `AuthSessionResult` containing `user` and `tokens`.
 
-`POST /auth/logout`
+### `POST /auth/login` (anonymous)
 
-`POST /auth/forgot-password`
+```json
+{
+  "login": "asha@example.test",
+  "password": "correct horse battery staple",
+  "device": {
+    "deviceIdentifier": "device-1",
+    "deviceName": "DoodhDirect Flutter",
+    "platform": "android"
+  }
+}
+```
 
-`POST /auth/reset-password`
+`login` accepts the normalized email or mobile identifier. Successful login returns the same session shape as registration.
 
-`GET /auth/me`
+### `POST /auth/send-otp` (anonymous)
 
-`POST /auth/external/google`
+```json
+{
+  "mobile": "919876543210",
+  "purpose": 0
+}
+```
 
-`POST /auth/external/apple`
+`purpose` is the `OtpPurpose` enum value: `0` for login and `1` for registration. Requests are limited to 3 per mobile/purpose in 15 minutes by default. The configured default delivery service currently throws because no SMS provider is configured.
+
+### `POST /auth/verify-otp` (anonymous)
+
+```json
+{
+  "mobile": "919876543210",
+  "code": "123456",
+  "purpose": 0,
+  "device": {
+    "deviceIdentifier": "device-1",
+    "deviceName": "DoodhDirect Flutter",
+    "platform": "android"
+  }
+}
+```
+
+Codes expire after 5 minutes and permit 5 failed attempts by default. Successful verification returns a new authenticated session.
+
+### `POST /auth/refresh` (anonymous)
+
+```json
+{
+  "refreshToken": "opaque-refresh-token",
+  "device": {
+    "deviceIdentifier": "device-1",
+    "deviceName": "DoodhDirect Flutter",
+    "platform": "android"
+  }
+}
+```
+
+A valid refresh rotates the token. A reused revoked token revokes the complete device session.
+
+### `POST /auth/logout` (authenticated)
+
+The access token identifies the user and session. The request has no body. The current session is revoked and the standard success envelope is returned.
+
+### `GET /auth/me` (authenticated)
+
+Returns the current user profile and server-derived authorization data:
+
+```json
+{
+  "publicUserId": "uuid",
+  "displayName": "Asha Khan",
+  "email": "asha@example.test",
+  "mobile": "919876543210",
+  "roles": ["CUSTOMER"],
+  "permissions": ["IDENTITY.PROFILE.READ_OWN"],
+  "branchIds": []
+}
+```
+
+The following routes remain specification placeholders and are not implemented in Phase 1: `POST /auth/forgot-password`, `POST /auth/reset-password`, `POST /auth/external/google`, and `POST /auth/external/apple`.
 
 ---
 
