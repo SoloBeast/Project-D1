@@ -16,14 +16,14 @@ The `mobile` project is the DoodhDirect client for Android, iOS, and web. It imp
 
 ## Configuration
 
-The API base URL is supplied with the `DOOHDIRECT_API_URL` Dart define. The default is `https://localhost:7213`. `DOOHDIRECT_ENABLE_DEV_TOOLS=true` exposes the quick customer login, wallet top-up, and mock payment controls; do not set it for distributable builds.
+The centralized Development web API base URL defaults to `http://localhost:5209`. The `DOOHDIRECT_API_URL` Dart define can override it for Production and other deployment-specific endpoints. `DOOHDIRECT_ENABLE_DEV_TOOLS=true` exposes the quick customer login, wallet top-up, and mock payment controls; do not set it for distributable builds.
 
 ```powershell
 flutter pub get
-flutter run --dart-define=DOOHDIRECT_API_URL=https://localhost:7213 --dart-define=DOOHDIRECT_ENABLE_DEV_TOOLS=true
+flutter run -d chrome --dart-define=DOOHDIRECT_API_URL=http://localhost:5209 --dart-define=DOOHDIRECT_ENABLE_DEV_TOOLS=true
 ```
 
-For an Android emulator, use an API hostname reachable from the emulator, commonly `https://10.0.2.2:7213`. A physical device must use the development machine's reachable LAN hostname or address and trust its development certificate.
+For an Android emulator connecting to the Development HTTP profile, use an API hostname reachable from the emulator, commonly `http://10.0.2.2:5209`. A physical device must use the development machine's reachable LAN hostname or address.
 
 ## Local payment and wallet workflow
 
@@ -33,10 +33,10 @@ For an Android emulator, use an API hostname reachable from the emulator, common
    dotnet ef database update --project Backend/src/DoodhDirect.Infrastructure --startup-project Backend/src/DoodhDirect.Api
    ```
 
-2. Start the API in Development. `appsettings.Development.json` selects the Mock payment provider, and startup creates the checkout-ready development customer, default address, branch, and product:
+2. Start the API with its Development HTTP profile at `http://localhost:5209`. `appsettings.Development.json` selects the Mock payment provider, and startup creates the checkout-ready development customer, default address, branch, and product:
 
    ```powershell
-   dotnet run --project Backend/src/DoodhDirect.Api --launch-profile https
+   dotnet run --project Backend/src/DoodhDirect.Api --launch-profile http
    ```
 
 3. Run Flutter with development tools enabled using the command above, then choose **Sign in as development customer**. Manual credentials are `customer@doodhdirect.local` and `DoodhDirect@123`.

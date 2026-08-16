@@ -1,10 +1,14 @@
 import 'dart:convert';
 
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
+import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/payments/payment_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_models.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_repository.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_models.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_repository.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -156,19 +160,20 @@ void main() {
       },
     );
 
-    test('preserves backend financial error code and message', () async {
+    test('preserves insufficient-wallet code and friendly message', () async {
+      const message =
+          'Insufficient wallet balance. Please add ₹460 to your wallet or '
+          'choose another payment method.';
       final client = MockClient(
         (_) async => http.Response(
           jsonEncode({
             'success': false,
+            'message': message,
             'errors': [
-              {
-                'code': 'INSUFFICIENT_WALLET_BALANCE',
-                'message': 'Wallet balance is insufficient for this order.',
-              },
+              {'code': 'INSUFFICIENT_WALLET_BALANCE', 'message': message},
             ],
           }),
-          409,
+          422,
           headers: {'content-type': 'application/json'},
         ),
       );
@@ -185,18 +190,57 @@ void main() {
         ),
         throwsA(
           isA<ApiException>()
+              .having((error) => error.statusCode, 'statusCode', 422)
               .having(
                 (error) => error.code,
                 'code',
                 'INSUFFICIENT_WALLET_BALANCE',
               )
+              .having((error) => error.message, 'message', message)
               .having(
                 (error) => error.message,
-                'message',
-                'Wallet balance is insufficient for this order.',
+                'does not expose generic server failure text',
+                allOf(
+                  isNot(contains('Internal Server Error')),
+                  isNot(contains('500')),
+                ),
               ),
         ),
       );
+    });
+  });
+
+  group('payment controller', () {
+    test('shows the server-provided insufficient-wallet message', () async {
+      const message =
+          'Insufficient wallet balance. Please add ₹460 to your wallet or '
+          'choose another payment method.';
+      final container = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            _AuthenticatedAuthRepository(),
+          ),
+          paymentRepositoryProvider.overrideWithValue(
+            _InsufficientWalletPaymentRepository(message),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(sessionControllerProvider);
+      await Future<void>.delayed(Duration.zero);
+
+      final created = await container
+          .read(paymentControllerProvider.notifier)
+          .createForOrder('order-1');
+      final state = container.read(paymentControllerProvider);
+
+      expect(created, isFalse);
+      expect(state.isLoading, isFalse);
+      expect(state.payment, isNull);
+      expect(state.errorMessage, message);
+      expect(state.errorMessage, isNot(contains('Internal Server Error')));
+      expect(state.errorMessage, isNot(contains('500')));
     });
   });
 
@@ -269,4 +313,50 @@ void main() {
       expect(transaction.isReconciled, isTrue);
     });
   });
+}
+
+final _authenticatedSession = AuthSession(
+  user: const AuthUser(
+    publicUserId: 'customer-1',
+    displayName: 'Test Customer',
+    email: 'customer@example.test',
+    mobile: null,
+    roles: ['CUSTOMER'],
+    permissions: [],
+    branchIds: [],
+  ),
+  accessToken: 'customer-token',
+  refreshToken: 'refresh-token',
+  accessTokenExpiresAtUtc: DateTime.utc(2026, 8, 16, 6),
+  refreshTokenExpiresAtUtc: DateTime.utc(2026, 9, 16),
+);
+
+class _AuthenticatedAuthRepository extends AuthRepository {
+  @override
+  Future<AuthSession?> restore() async => _authenticatedSession;
+}
+
+class _InsufficientWalletPaymentRepository extends PaymentRepository {
+  _InsufficientWalletPaymentRepository(this.message)
+    : super(
+        api: ApiClient(
+          client: MockClient((_) async => http.Response('', 500)),
+          baseUrl: 'https://api.example.test',
+        ),
+      );
+
+  final String message;
+
+  @override
+  Future<PaymentDetails> create({
+    required String token,
+    required String orderId,
+    required PaymentMethod method,
+    required String idempotencyKey,
+  }) async {
+    expect(token, 'customer-token');
+    expect(orderId, 'order-1');
+    expect(method, PaymentMethod.wallet);
+    throw ApiException(422, 'INSUFFICIENT_WALLET_BALANCE', message);
+  }
 }

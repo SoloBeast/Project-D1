@@ -130,18 +130,29 @@ public sealed class WalletService(
         ValidateIdempotencyKey(idempotencyKey);
         await EnsurePaymentReferenceAsync(customerId, orderId, paymentId, cancellationToken);
 
-        return await MutateAsync(
-            customerId,
-            idempotencyKey,
-            wallet => wallet.DebitOrder(
-                amount,
-                orderId,
-                paymentId,
+        try
+        {
+            return await MutateAsync(
+                customerId,
                 idempotencyKey,
-                "One-time order payment",
-                clock.UtcNow),
-            null,
-            cancellationToken);
+                wallet => wallet.DebitOrder(
+                    amount,
+                    orderId,
+                    paymentId,
+                    idempotencyKey,
+                    "One-time order payment",
+                    clock.UtcNow),
+                null,
+                cancellationToken);
+        }
+        catch (WalletBalanceInsufficientException exception)
+        {
+            throw new InsufficientWalletBalanceException(
+                exception.AvailableBalance,
+                exception.RequiredAmount,
+                exception.Shortfall,
+                exception.Currency);
+        }
     }
 
     public async Task<WalletTransactionResult> CreditRefundAsync(

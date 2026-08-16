@@ -28,14 +28,14 @@ class _CustomerOverviewScreenState
     final state = ref.watch(customerControllerProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('My account')),
-      body: state.isLoading && state.profile == null
-          ? const LoadingStatePanel(message: 'Loading your account...')
-          : state.errorMessage != null && state.profile == null
-          ? ErrorStatePanel(
-              message: state.errorMessage!,
-              onRetry: () =>
-                  ref.read(customerControllerProvider.notifier).load(),
-            )
+      body: state.profile == null
+          ? state.errorMessage == null
+                ? const LoadingStatePanel(message: 'Loading your account...')
+                : ErrorStatePanel(
+                    message: state.errorMessage!,
+                    onRetry: () =>
+                        ref.read(customerControllerProvider.notifier).load(),
+                  )
           : RefreshIndicator(
               onRefresh: () =>
                   ref.read(customerControllerProvider.notifier).load(),

@@ -8,21 +8,26 @@ using DoodhDirect.Domain.Wallets;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
 using DoodhDirect.Infrastructure.Wallets;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Options;
 
 namespace DoodhDirect.Api.IntegrationTests;
 
 public sealed class PaymentWalletServiceTests
 {
-    [Fact]
-    public async Task WalletPayment_DebitsLedgerConfirmsOrderAndReplaysIdempotently()
+    [Theory]
+    [InlineData(500, 160, 340)]
+    [InlineData(160, 160, 0)]
+    public async Task WalletPayment_WithSufficientOrExactBalance_DebitsLedgerAndConfirmsOrder(
+        decimal startingBalance,
+        decimal payableAmount,
+        decimal expectedBalance)
     {
-        await using var harness = await PaymentHarness.CreateAsync();
+        await using var harness = await PaymentHarness.CreateAsync(payableAmount);
         await harness.WalletService.TopUpAsync(
             harness.Customer.Id,
-            new WalletTopUpRequest(200m, "topup-1"),
+            new WalletTopUpRequest(startingBalance, "topup-1"),
             CancellationToken.None);
 
         var created = await harness.PaymentService.CreateAsync(
@@ -42,12 +47,69 @@ public sealed class PaymentWalletServiceTests
 
         var wallet = await harness.Db.Wallets.SingleAsync();
         var entries = await harness.Db.WalletTransactions.OrderBy(x => x.Id).ToListAsync();
-        Assert.Equal(100m, wallet.Balance);
+        Assert.Equal(expectedBalance, wallet.Balance);
         Assert.Equal(2, entries.Count);
         Assert.Equal(WalletTransactionType.OrderDebit, entries[1].Type);
-        Assert.Equal(200m, entries[1].BalanceBefore);
-        Assert.Equal(-100m, entries[1].Amount);
-        Assert.Equal(100m, entries[1].BalanceAfter);
+        Assert.Equal(startingBalance, entries[1].BalanceBefore);
+        Assert.Equal(-payableAmount, entries[1].Amount);
+        Assert.Equal(expectedBalance, entries[1].BalanceAfter);
+    }
+
+    [Theory]
+    [InlineData(340, 800, 460)]
+    [InlineData(0, 100, 100)]
+    public async Task WalletPayment_WithInsufficientBalance_ReturnsBusinessErrorWithoutFinancialSideEffects(
+        decimal startingBalance,
+        decimal payableAmount,
+        decimal expectedShortfall)
+    {
+        await using var harness = await PaymentHarness.CreateAsync(payableAmount);
+        if (startingBalance > 0)
+        {
+            await harness.WalletService.TopUpAsync(
+                harness.Customer.Id,
+                new WalletTopUpRequest(startingBalance, "topup-1"),
+                CancellationToken.None);
+        }
+
+        var exception = await Assert.ThrowsAsync<InsufficientWalletBalanceException>(() =>
+            harness.PaymentService.CreateAsync(
+                harness.Customer.Id,
+                new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Wallet),
+                "payment-insufficient-1",
+                CancellationToken.None));
+
+        Assert.Equal("INSUFFICIENT_WALLET_BALANCE", exception.Code);
+        Assert.Equal(422, exception.StatusCode);
+        Assert.Equal(startingBalance, exception.AvailableBalance);
+        Assert.Equal(payableAmount, exception.RequiredAmount);
+        Assert.Equal(expectedShortfall, exception.Shortfall);
+        Assert.Contains($"₹{expectedShortfall:0.##}", exception.Message);
+
+        await harness.AssertInsufficientAttemptDidNotPersistAsync(startingBalance);
+    }
+
+    [Fact]
+    public async Task WalletPayment_RepeatedInsufficientAttempts_CreateNoFinancialRecords()
+    {
+        await using var harness = await PaymentHarness.CreateAsync(payableAmount: 800m);
+        await harness.WalletService.TopUpAsync(
+            harness.Customer.Id,
+            new WalletTopUpRequest(340m, "topup-1"),
+            CancellationToken.None);
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var exception = await Assert.ThrowsAsync<InsufficientWalletBalanceException>(() =>
+                harness.PaymentService.CreateAsync(
+                    harness.Customer.Id,
+                    new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Wallet),
+                    $"payment-insufficient-{attempt}",
+                    CancellationToken.None));
+
+            Assert.Equal(460m, exception.Shortfall);
+            await harness.AssertInsufficientAttemptDidNotPersistAsync(expectedBalance: 340m);
+        }
     }
 
     [Fact]
@@ -156,7 +218,10 @@ public sealed class PaymentWalletServiceTests
 
     private sealed class PaymentHarness : IAsyncDisposable
     {
+        private readonly SqliteConnection connection;
+
         private PaymentHarness(
+            SqliteConnection connection,
             DoodhDirectDbContext db,
             User customer,
             User otherCustomer,
@@ -165,6 +230,7 @@ public sealed class PaymentWalletServiceTests
             PaymentService paymentService,
             WalletService walletService)
         {
+            this.connection = connection;
             Db = db;
             Customer = customer;
             OtherCustomer = otherCustomer;
@@ -182,13 +248,17 @@ public sealed class PaymentWalletServiceTests
         public PaymentService PaymentService { get; }
         public WalletService WalletService { get; }
 
-        public static async Task<PaymentHarness> CreateAsync()
+        public static async Task<PaymentHarness> CreateAsync(decimal payableAmount = 100m)
         {
+            var connection = new SqliteConnection("Data Source=:memory:");
+            await connection.OpenAsync();
             var options = new DbContextOptionsBuilder<DoodhDirectDbContext>()
-                .UseInMemoryDatabase($"payment-wallet-tests-{Guid.NewGuid():N}")
-                .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+                .UseSqlite(connection)
                 .Options;
             var db = new DoodhDirectDbContext(options);
+            await db.Database.EnsureCreatedAsync();
+            await db.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = OFF;");
+            await db.Database.ExecuteSqlRawAsync("PRAGMA ignore_check_constraints = ON;");
             var customer = new User(UserType.Customer);
             customer.SetProfile("Customer");
             var otherCustomer = new User(UserType.Customer);
@@ -200,7 +270,7 @@ public sealed class PaymentWalletServiceTests
 
             var order = new Order(
                 customer.Id, 1, 1, "checkout-1", "DD-20260816020000-PAYMENT",
-                subtotal: 100m, discountAmount: 0m,
+                subtotal: payableAmount, discountAmount: 0m,
                 branchCode: "MAIN", branchName: "Main Branch", addressLabel: "Home",
                 addressLine1: "1 Main Road", addressLine2: null, locality: "Central",
                 city: "Bengaluru", state: "Karnataka", pinCode: "560001", landmark: null,
@@ -221,9 +291,38 @@ public sealed class PaymentWalletServiceTests
             var paymentService = new PaymentService(
                 db, new MockPaymentGateway(paymentOptions), walletService, clock, paymentOptions);
             return new PaymentHarness(
-                db, customer, otherCustomer, administrator, order, paymentService, walletService);
+                connection, db, customer, otherCustomer, administrator, order, paymentService, walletService);
         }
 
-        public ValueTask DisposeAsync() => Db.DisposeAsync();
+        public async Task AssertInsufficientAttemptDidNotPersistAsync(decimal expectedBalance)
+        {
+            Db.ChangeTracker.Clear();
+
+            Assert.Empty(await Db.Payments.AsNoTracking().ToListAsync());
+            Assert.Equal(
+                OrderStatus.PendingPayment,
+                (await Db.Orders.AsNoTracking().SingleAsync()).Status);
+
+            var wallet = await Db.Wallets.AsNoTracking().SingleOrDefaultAsync();
+            if (expectedBalance == 0)
+            {
+                Assert.Null(wallet);
+                Assert.Empty(await Db.WalletTransactions.AsNoTracking().ToListAsync());
+                return;
+            }
+
+            Assert.NotNull(wallet);
+            Assert.Equal(expectedBalance, wallet.Balance);
+            var entries = await Db.WalletTransactions.AsNoTracking().ToListAsync();
+            var topUp = Assert.Single(entries);
+            Assert.Equal(WalletTransactionType.TopUp, topUp.Type);
+            Assert.Equal(expectedBalance, topUp.Amount);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Db.DisposeAsync();
+            await connection.DisposeAsync();
+        }
     }
 }

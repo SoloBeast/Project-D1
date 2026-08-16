@@ -77,7 +77,10 @@ class PaymentController extends Notifier<PaymentState> {
       state = state.copyWith(payment: payment, isLoading: false);
       return true;
     } on ApiException catch (error) {
-      state = state.copyWith(isLoading: false, errorMessage: error.message);
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: _paymentErrorMessage(error),
+      );
     } on Object {
       state = state.copyWith(isLoading: false, errorMessage: _offlineMessage);
     }
@@ -165,6 +168,14 @@ class PaymentController extends Notifier<PaymentState> {
     }
     return false;
   }
+}
+
+String _paymentErrorMessage(ApiException error) {
+  if (error.code == 'INSUFFICIENT_WALLET_BALANCE') {
+    return error.message;
+  }
+
+  return error.message;
 }
 
 const _offlineMessage =

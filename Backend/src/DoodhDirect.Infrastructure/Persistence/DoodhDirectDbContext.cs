@@ -61,7 +61,9 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigurePayment(modelBuilder);
         ConfigurePaymentWebhook(modelBuilder);
         ConfigureRefund(modelBuilder);
-        ConfigureWallet(modelBuilder);
+        ConfigureWallet(
+            modelBuilder,
+            Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite");
         ConfigureWalletTransaction(modelBuilder);
     }
 
@@ -224,8 +226,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.Action).HasMaxLength(100).IsRequired();
         entity.Property(x => x.EntityType).HasMaxLength(100).IsRequired();
         entity.Property(x => x.EntityId).HasMaxLength(100).IsRequired();
-        entity.Property(x => x.OldValueJson).HasColumnType("nvarchar(max)");
-        entity.Property(x => x.NewValueJson).HasColumnType("nvarchar(max)");
+        entity.Property(x => x.OldValueJson);
+        entity.Property(x => x.NewValueJson);
         entity.Property(x => x.IPAddress).HasMaxLength(64);
         entity.Property(x => x.UserAgent).HasMaxLength(1000);
         entity.Property(x => x.Reason).HasMaxLength(1000);
@@ -487,7 +489,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasOne(x => x.RequestedByUser).WithMany().HasForeignKey(x => x.RequestedByUserId).OnDelete(DeleteBehavior.Restrict);
     }
 
-    private static void ConfigureWallet(ModelBuilder modelBuilder)
+    private static void ConfigureWallet(ModelBuilder modelBuilder, bool usesSqlite)
     {
         var entity = modelBuilder.Entity<Wallet>();
         entity.ToTable("Wallet", table =>
@@ -497,7 +499,17 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigurePublicEntity(entity);
         entity.Property(x => x.Balance).HasPrecision(18, 2).IsRequired();
         entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
-        entity.Property(x => x.RowVersion).IsRowVersion();
+
+        var rowVersion = entity.Property(x => x.RowVersion);
+        if (usesSqlite)
+        {
+            rowVersion.IsConcurrencyToken().ValueGeneratedNever();
+        }
+        else
+        {
+            rowVersion.IsRowVersion();
+        }
+
         entity.HasIndex(x => x.CustomerId).IsUnique();
         entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
     }

@@ -14,6 +14,17 @@ public enum WalletTransactionType
     AdminAdjustment
 }
 
+public sealed class WalletBalanceInsufficientException(
+    decimal availableBalance,
+    decimal requiredAmount,
+    string currency) : Exception("Wallet balance is insufficient for this operation.")
+{
+    public decimal AvailableBalance { get; } = availableBalance;
+    public decimal RequiredAmount { get; } = requiredAmount;
+    public decimal Shortfall { get; } = requiredAmount - availableBalance;
+    public string Currency { get; } = currency;
+}
+
 public sealed class Wallet : AuditableEntity
 {
     private Wallet() { }
@@ -133,7 +144,10 @@ public sealed class Wallet : AuditableEntity
         var balanceAfter = decimal.Round(balanceBefore + signedAmount, 2, MidpointRounding.AwayFromZero);
         if (balanceAfter < 0)
         {
-            throw new InvalidOperationException("Wallet balance is insufficient for this operation.");
+            throw new WalletBalanceInsufficientException(
+                balanceBefore,
+                decimal.Abs(signedAmount),
+                Currency);
         }
 
         var transaction = new WalletTransaction(

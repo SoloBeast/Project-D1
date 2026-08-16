@@ -1,4 +1,5 @@
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,99 +8,146 @@ import 'package:go_router/go_router.dart';
 import 'payment_controller.dart';
 import 'payment_models.dart';
 
-class PaymentMethodScreen extends ConsumerWidget {
-  const PaymentMethodScreen({super.key, required this.order});
+class PaymentMethodScreen extends ConsumerStatefulWidget {
+  const PaymentMethodScreen({
+    super.key,
+    required this.orderId,
+    this.initialOrder,
+  });
 
-  final OrderSummary order;
+  final String orderId;
+  final OrderSummary? initialOrder;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(paymentControllerProvider);
+  ConsumerState<PaymentMethodScreen> createState() =>
+      _PaymentMethodScreenState();
+}
+
+class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
+  OrderSummary? _order;
+
+  @override
+  void initState() {
+    super.initState();
+    _order = widget.initialOrder;
+    if (_order == null) {
+      Future.microtask(_loadOrder);
+    }
+  }
+
+  Future<void> _loadOrder() async {
+    await ref.read(orderControllerProvider.notifier).loadOrder(widget.orderId);
+    if (!mounted) return;
+    final loaded = ref.read(orderControllerProvider).selectedOrder;
+    if (loaded?.publicId == widget.orderId) {
+      setState(() => _order = loaded);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final paymentState = ref.watch(paymentControllerProvider);
+    final orderState = ref.watch(orderControllerProvider);
+    final order = _order;
     return Scaffold(
       appBar: AppBar(title: const Text('Payment')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            order.orderNumber,
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          const SizedBox(height: 4),
-          Text('Amount due: ${order.formattedTotal}'),
-          const SizedBox(height: 24),
-          Text(
-            'Payment method',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          RadioGroup<PaymentMethod>(
-            groupValue: state.selectedMethod,
-            onChanged: (value) {
-              if (!state.isLoading && value != null) {
-                ref
-                    .read(paymentControllerProvider.notifier)
-                    .selectMethod(value);
-              }
-            },
-            child: const Column(
+      body: order == null
+          ? orderState.isLoading
+                ? const LoadingStatePanel(message: 'Loading order...')
+                : ErrorStatePanel(
+                    message:
+                        orderState.errorMessage ?? 'Order could not be loaded.',
+                    onRetry: _loadOrder,
+                  )
+          : ListView(
+              padding: const EdgeInsets.all(16),
               children: [
-                _PaymentMethodTile(
-                  method: PaymentMethod.wallet,
-                  icon: Icons.account_balance_wallet_outlined,
-                  subtitle: 'Pay securely from your DoodhDirect balance',
+                Text(
+                  order.orderNumber,
+                  style: Theme.of(context).textTheme.titleLarge,
                 ),
-                _PaymentMethodTile(
-                  method: PaymentMethod.razorpay,
-                  icon: Icons.payments_outlined,
-                  subtitle: 'UPI, cards, netbanking, and supported wallets',
+                const SizedBox(height: 4),
+                Text('Amount due: ${order.formattedTotal}'),
+                const SizedBox(height: 24),
+                Text(
+                  'Payment method',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                RadioGroup<PaymentMethod>(
+                  groupValue: paymentState.selectedMethod,
+                  onChanged: (value) {
+                    if (!paymentState.isLoading && value != null) {
+                      ref
+                          .read(paymentControllerProvider.notifier)
+                          .selectMethod(value);
+                    }
+                  },
+                  child: const Column(
+                    children: [
+                      _PaymentMethodTile(
+                        method: PaymentMethod.wallet,
+                        icon: Icons.account_balance_wallet_outlined,
+                        subtitle: 'Pay securely from your DoodhDirect balance',
+                      ),
+                      _PaymentMethodTile(
+                        method: PaymentMethod.razorpay,
+                        icon: Icons.payments_outlined,
+                        subtitle:
+                            'UPI, cards, netbanking, and supported wallets',
+                      ),
+                    ],
+                  ),
+                ),
+                if (paymentState.errorMessage != null) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    paymentState.errorMessage!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: paymentState.isLoading
+                      ? null
+                      : () async {
+                          final created = await ref
+                              .read(paymentControllerProvider.notifier)
+                              .createForOrder(order.publicId);
+                          if (!context.mounted || !created) return;
+
+                          final payment = ref
+                              .read(paymentControllerProvider)
+                              .payment;
+                          if (payment == null) return;
+                          if (payment.method == PaymentMethod.razorpay &&
+                              !payment.usesMockGateway &&
+                              payment.status.isPending) {
+                            await ref
+                                .read(paymentControllerProvider.notifier)
+                                .openRazorpayAndVerify();
+                          }
+                          if (context.mounted) {
+                            context.go('/payments/${payment.publicId}/result');
+                          }
+                        },
+                  icon: paymentState.isLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.lock_outline),
+                  label: Text(
+                    paymentState.isLoading
+                        ? 'Processing...'
+                        : 'Pay ${order.formattedTotal}',
+                  ),
                 ),
               ],
             ),
-          ),
-          if (state.errorMessage != null) ...[
-            const SizedBox(height: 16),
-            Text(
-              state.errorMessage!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: state.isLoading
-                ? null
-                : () async {
-                    final created = await ref
-                        .read(paymentControllerProvider.notifier)
-                        .createForOrder(order.publicId);
-                    if (!context.mounted || !created) return;
-
-                    final payment = ref
-                        .read(paymentControllerProvider)
-                        .payment!;
-                    if (payment.method == PaymentMethod.razorpay &&
-                        !payment.usesMockGateway &&
-                        payment.status.isPending) {
-                      await ref
-                          .read(paymentControllerProvider.notifier)
-                          .openRazorpayAndVerify();
-                    }
-                    if (context.mounted) {
-                      context.go('/payments/${payment.publicId}/result');
-                    }
-                  },
-            icon: state.isLoading
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.lock_outline),
-            label: Text(
-              state.isLoading ? 'Processing...' : 'Pay ${order.formattedTotal}',
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

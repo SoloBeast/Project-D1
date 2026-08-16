@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace DoodhDirect.Application.Common;
 
 public sealed record ApiError(string Code, string? Field, string Message);
@@ -31,6 +33,32 @@ public sealed class ValidationAppException(string message, string? field = null)
 
 public sealed class BusinessRuleException(string message)
     : AppException(message, "BUSINESS_RULE", 422);
+
+public sealed class InsufficientWalletBalanceException(
+    decimal availableBalance,
+    decimal requiredAmount,
+    decimal shortfall,
+    string currency)
+    : AppException(
+        CreateMessage(shortfall, currency),
+        "INSUFFICIENT_WALLET_BALANCE",
+        422)
+{
+    public decimal AvailableBalance { get; } = availableBalance;
+    public decimal RequiredAmount { get; } = requiredAmount;
+    public decimal Shortfall { get; } = shortfall;
+    public string Currency { get; } = currency;
+
+    private static string CreateMessage(decimal shortfall, string currency)
+    {
+        var normalizedCurrency = currency.Trim().ToUpperInvariant();
+        var amount = shortfall.ToString("0.##", CultureInfo.InvariantCulture);
+        var formattedAmount = normalizedCurrency == "INR"
+            ? $"₹{amount}"
+            : $"{normalizedCurrency} {amount}";
+        return $"Insufficient wallet balance. Please add {formattedAmount} to your wallet or choose another payment method.";
+    }
+}
 
 public sealed class NotFoundException(string message)
     : AppException(message, "NOT_FOUND", 404);

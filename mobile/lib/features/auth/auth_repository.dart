@@ -7,7 +7,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 const apiBaseUrl = String.fromEnvironment(
   'DOOHDIRECT_API_URL',
-  defaultValue: 'https://localhost:7213',
+  defaultValue: 'http://localhost:5209',
 );
 
 enum UserRole { customer, delivery, dairy, owner, admin, support, accountant }

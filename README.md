@@ -38,12 +38,12 @@ Authentication__Jwt__SigningKey=<at-least-32-random-characters>
 
 The checked-in signing key is a non-production placeholder. Never deploy with it. Production should inject secrets from Azure Key Vault or the target platform's secret manager.
 
-Restore and run the API from the repository root:
+Restore and run the API from the repository root. The Development HTTP launch profile listens on `http://localhost:5209`:
 
 ```powershell
 dotnet tool restore
 dotnet restore Backend\DoodhDirect.slnx
-dotnet run --project Backend\src\DoodhDirect.Api\DoodhDirect.Api.csproj
+dotnet run --project Backend\src\DoodhDirect.Api\DoodhDirect.Api.csproj --launch-profile http
 ```
 
 Development endpoints:
@@ -85,15 +85,15 @@ The migrations use `bigint` identity keys, GUID public IDs, UTC `datetime2` time
 
 ## Flutter application
 
-The Flutter app implements registration, password login, OTP login/registration, secure session persistence, refresh-based restoration, logout, expired-session handling, and server-derived role navigation. Configure the API URL at build or run time:
+The Flutter app implements registration, password login, OTP login/registration, secure session persistence, refresh-based restoration, logout, expired-session handling, and server-derived role navigation. Development web defaults centrally to `http://localhost:5209`; the optional `DOOHDIRECT_API_URL` Dart define remains available for Production and other deployment-specific endpoints:
 
 ```powershell
 cd mobile
 flutter pub get
-flutter run -d chrome --dart-define=DOOHDIRECT_API_URL=https://localhost:7213
+flutter run -d chrome --dart-define=DOOHDIRECT_API_URL=http://localhost:5209
 ```
 
-Use an Android emulator/device or an iOS simulator/device instead of `chrome` for mobile targets. Android emulators generally require an API URL reachable from the emulator rather than the host-only `localhost` address. Session and device identifiers are stored with `flutter_secure_storage`.
+Use an Android emulator/device or an iOS simulator/device instead of `chrome` for mobile targets. An Android emulator connecting to the Development HTTP profile commonly uses `http://10.0.2.2:5209` because emulator `localhost` refers to the emulator itself. Physical devices require the development machine's reachable LAN hostname or address. Session and device identifiers are stored with `flutter_secure_storage`.
 
 ## Acceptance commands
 

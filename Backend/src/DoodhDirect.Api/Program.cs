@@ -17,6 +17,7 @@ using Scalar.AspNetCore;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+const string corsPolicyName = "DoodhDirectWeb";
 
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
@@ -55,6 +56,30 @@ builder.Services.AddSingleton<IAuthorizationPolicyProvider, DoodhDirectAuthoriza
 builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
 builder.Services.AddSingleton<IAuthorizationHandler, BranchScopeAuthorizationHandler>();
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AuditingAuthorizationMiddlewareResultHandler>();
+
+var configuredCorsOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? [];
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(corsPolicyName, policy =>
+    {
+        if (builder.Environment.IsDevelopment())
+        {
+            policy.SetIsOriginAllowed(origin =>
+                Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+                && uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
+        }
+        else if (configuredCorsOrigins.Length > 0)
+        {
+            policy.WithOrigins(configuredCorsOrigins);
+        }
+
+        policy.AllowAnyMethod();
+        policy.AllowAnyHeader();
+    });
+});
 
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddProblemDetails();
@@ -154,6 +179,8 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseRouting();
+app.UseCors(corsPolicyName);
 app.UseAuthentication();
 app.UseAuthorization();
 

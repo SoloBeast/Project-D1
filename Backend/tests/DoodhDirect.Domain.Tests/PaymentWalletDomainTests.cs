@@ -123,9 +123,13 @@ public sealed class PaymentWalletDomainTests
         var wallet = new Wallet(customerId: 5, currency: "INR");
         wallet.Credit(WalletTransactionType.TopUp, 25m, "topup-1", "Top-up", Now);
 
-        Assert.Throws<InvalidOperationException>(() =>
+        var exception = Assert.Throws<WalletBalanceInsufficientException>(() =>
             wallet.DebitOrder(25.01m, 11, 12, "debit-1", "Order", Now.AddMinutes(1)));
 
+        Assert.Equal(25m, exception.AvailableBalance);
+        Assert.Equal(25.01m, exception.RequiredAmount);
+        Assert.Equal(0.01m, exception.Shortfall);
+        Assert.Equal("INR", exception.Currency);
         Assert.Equal(25m, wallet.Balance);
         Assert.Single(wallet.Transactions);
     }
@@ -139,7 +143,7 @@ public sealed class PaymentWalletDomainTests
         Assert.Equal(WalletTransactionType.AdminAdjustment, credit.Type);
         Assert.Equal(9, credit.PerformedByUserId);
         Assert.Equal(40m, wallet.Balance);
-        Assert.Throws<InvalidOperationException>(() =>
+        Assert.Throws<WalletBalanceInsufficientException>(() =>
             wallet.Adjust(-40.01m, 9, "adjust-2", "Correction", Now.AddMinutes(1)));
     }
 

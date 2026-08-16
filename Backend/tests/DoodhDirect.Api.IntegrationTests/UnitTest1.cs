@@ -10,6 +10,7 @@ namespace DoodhDirect.Api.IntegrationTests;
 public sealed class ApiFoundationTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private const string CorrelationHeader = "X-Correlation-Id";
+    private const string AllowedDevelopmentOrigin = "http://localhost:54187";
     private readonly WebApplicationFactory<Program> _factory;
 
     public ApiFoundationTests(WebApplicationFactory<Program> factory)
@@ -49,6 +50,45 @@ public sealed class ApiFoundationTests : IClassFixture<WebApplicationFactory<Pro
         using var response = await client.SendAsync(request, CancellationToken.None);
 
         Assert.Equal(correlationId, Assert.Single(response.Headers.GetValues(CorrelationHeader)));
+    }
+
+    [Fact]
+    public async Task CorsPreflight_AllowsDevelopmentLocalhostOriginWithDynamicPort()
+    {
+        using var client = _factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Options, "/api/v1/auth/login");
+        request.Headers.Add("Origin", AllowedDevelopmentOrigin);
+        request.Headers.Add("Access-Control-Request-Method", "POST");
+        request.Headers.Add("Access-Control-Request-Headers", "authorization,content-type");
+
+        using var response = await client.SendAsync(request, CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(
+            AllowedDevelopmentOrigin,
+            Assert.Single(response.Headers.GetValues("Access-Control-Allow-Origin")));
+        Assert.Contains(
+            "POST",
+            Assert.Single(response.Headers.GetValues("Access-Control-Allow-Methods")));
+        var allowedHeaders = Assert.Single(
+            response.Headers.GetValues("Access-Control-Allow-Headers"));
+        Assert.Contains("authorization", allowedHeaders, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("content-type", allowedHeaders, StringComparison.OrdinalIgnoreCase);
+        Assert.False(response.Headers.Contains("Access-Control-Allow-Credentials"));
+    }
+
+    [Fact]
+    public async Task CorsPreflight_RejectsNonLocalDevelopmentOrigin()
+    {
+        using var client = _factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Options, "/api/v1/auth/login");
+        request.Headers.Add("Origin", "https://untrusted.example");
+        request.Headers.Add("Access-Control-Request-Method", "POST");
+        request.Headers.Add("Access-Control-Request-Headers", "content-type");
+
+        using var response = await client.SendAsync(request, CancellationToken.None);
+
+        Assert.False(response.Headers.Contains("Access-Control-Allow-Origin"));
     }
 
     [Fact]

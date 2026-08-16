@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/login_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/otp_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/register_screen.dart';
@@ -74,9 +75,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) {
           final extra = state.extra;
           final payload = extra is Map<String, dynamic> ? extra : null;
+          final product = payload?['product'];
+          final quantity = payload?['quantity'];
           return CheckoutScreen(
-            initialProduct: payload?['product'] as CatalogueProduct?,
-            initialQuantity: payload?['quantity'] as double?,
+            initialProduct: product is CatalogueProduct ? product : null,
+            initialQuantity: quantity is num ? quantity.toDouble() : null,
           );
         },
       ),
@@ -86,18 +89,37 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/orders/:orderId',
-        builder: (context, state) =>
-            OrderDetailScreen(orderId: state.pathParameters['orderId']!),
+        builder: (context, state) {
+          final orderId = _requiredPathParameter(state, 'orderId');
+          return orderId == null
+              ? const _RouteErrorScreen(resource: 'order')
+              : OrderDetailScreen(orderId: orderId);
+        },
       ),
       GoRoute(
         path: '/orders/:orderId/payment',
-        builder: (context, state) =>
-            PaymentMethodScreen(order: state.extra! as OrderSummary),
+        builder: (context, state) {
+          final orderId = _requiredPathParameter(state, 'orderId');
+          if (orderId == null) {
+            return const _RouteErrorScreen(resource: 'order');
+          }
+          final extra = state.extra;
+          final initialOrder =
+              extra is OrderSummary && extra.publicId == orderId ? extra : null;
+          return PaymentMethodScreen(
+            orderId: orderId,
+            initialOrder: initialOrder,
+          );
+        },
       ),
       GoRoute(
         path: '/payments/:paymentId/result',
-        builder: (context, state) =>
-            PaymentResultScreen(paymentId: state.pathParameters['paymentId']!),
+        builder: (context, state) {
+          final paymentId = _requiredPathParameter(state, 'paymentId');
+          return paymentId == null
+              ? const _RouteErrorScreen(resource: 'payment')
+              : PaymentResultScreen(paymentId: paymentId);
+        },
       ),
       GoRoute(
         path: '/wallet',
@@ -105,8 +127,12 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/catalogue/products/:productId',
-        builder: (context, state) =>
-            ProductDetailScreen(productId: state.pathParameters['productId']!),
+        builder: (context, state) {
+          final productId = _requiredPathParameter(state, 'productId');
+          return productId == null
+              ? const _RouteErrorScreen(resource: 'product')
+              : ProductDetailScreen(productId: productId);
+        },
       ),
       GoRoute(
         path: '/admin/catalogue',
@@ -115,6 +141,32 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+String? _requiredPathParameter(GoRouterState state, String name) {
+  final value = state.pathParameters[name]?.trim();
+  return value == null || value.isEmpty ? null : value;
+}
+
+class _RouteErrorScreen extends StatelessWidget {
+  const _RouteErrorScreen({required this.resource});
+
+  final String resource;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('Invalid link')),
+    body: StatePanel(
+      icon: Icons.link_off_outlined,
+      title:
+          'Invalid ${resource[0].toUpperCase()}${resource.substring(1)} link',
+      message: 'The required $resource identifier is missing.',
+      action: FilledButton(
+        onPressed: () => context.go('/home'),
+        child: const Text('Return home'),
+      ),
+    ),
+  );
+}
 
 class _SessionRestoreScreen extends StatelessWidget {
   const _SessionRestoreScreen();

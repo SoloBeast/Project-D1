@@ -1,4 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
+import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -21,6 +22,24 @@ void main() {
 
     expect(body['success'], isTrue);
     expect((body['data'] as Map<String, dynamic>)['status'], 'healthy');
+  });
+
+  test('Development registration uses the centralized API URL', () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(
+        request.url.toString(),
+        'http://localhost:5209/api/v1/auth/register',
+      );
+      return http.Response(
+        '{"success":true,"data":null,"errors":[]}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final api = ApiClient(client: client, baseUrl: apiBaseUrl);
+
+    await api.post('/api/v1/auth/register', body: const {});
   });
 
   test('POST sends JSON body and bearer token', () async {
