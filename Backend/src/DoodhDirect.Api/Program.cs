@@ -64,7 +64,7 @@ builder.Services.AddOpenApi(options =>
     {
         document.Info.Title = "DoodhDirect API";
         document.Info.Version = "v1";
-        document.Info.Description = "Phase 1 identity/RBAC, Phase 2 customer profile/address, and Phase 3 product catalogue API.";
+        document.Info.Description = "Identity/RBAC, customer profile/address, product catalogue, and Phase 4 one-time ordering API.";
         document.Components ??= new OpenApiComponents();
         document.Components.SecuritySchemes ??=
             new Dictionary<string, IOpenApiSecurityScheme>(StringComparer.Ordinal);

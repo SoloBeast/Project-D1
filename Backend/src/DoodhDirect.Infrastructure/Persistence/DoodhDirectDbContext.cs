@@ -3,6 +3,7 @@ using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Configuration;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.Orders;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 
@@ -26,6 +27,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<ProductBranch> ProductBranches => Set<ProductBranch>();
+    public DbSet<Order> Orders => Set<Order>();
+    public DbSet<OrderItem> OrderItems => Set<OrderItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -46,6 +49,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigureProduct(modelBuilder);
         ConfigureBranch(modelBuilder);
         ConfigureProductBranch(modelBuilder);
+        ConfigureOrder(modelBuilder);
+        ConfigureOrderItem(modelBuilder);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -331,6 +336,73 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasIndex(x => new { x.BranchId, x.IsAvailable });
         entity.HasOne(x => x.Product).WithMany(x => x.ProductBranches).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Branch).WithMany(x => x.ProductBranches).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureOrder(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<Order>();
+        entity.ToTable("Order", table =>
+        {
+            table.HasCheckConstraint("CK_Order_Subtotal", "[Subtotal] >= 0");
+            table.HasCheckConstraint("CK_Order_DiscountAmount", "[DiscountAmount] >= 0 AND [DiscountAmount] <= [Subtotal]");
+            table.HasCheckConstraint("CK_Order_PayableAmount", "[PayableAmount] >= 0");
+            table.HasCheckConstraint("CK_Order_Latitude", "[LatitudeSnapshot] >= -90 AND [LatitudeSnapshot] <= 90");
+            table.HasCheckConstraint("CK_Order_Longitude", "[LongitudeSnapshot] >= -180 AND [LongitudeSnapshot] <= 180");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.OrderNumber).HasMaxLength(40).IsRequired();
+        entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Subtotal).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.DiscountAmount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.PayableAmount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.BranchCodeSnapshot).HasMaxLength(50).IsRequired();
+        entity.Property(x => x.BranchNameSnapshot).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.AddressLabelSnapshot).HasMaxLength(80).IsRequired();
+        entity.Property(x => x.AddressLine1Snapshot).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.AddressLine2Snapshot).HasMaxLength(200);
+        entity.Property(x => x.LocalitySnapshot).HasMaxLength(120).IsRequired();
+        entity.Property(x => x.CitySnapshot).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.StateSnapshot).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.PinCodeSnapshot).HasMaxLength(10).IsRequired();
+        entity.Property(x => x.LandmarkSnapshot).HasMaxLength(160);
+        entity.Property(x => x.DeliveryInstructionsSnapshot).HasMaxLength(500);
+        entity.Property(x => x.ContactNameSnapshot).HasMaxLength(160).IsRequired();
+        entity.Property(x => x.ContactMobileSnapshot).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.LatitudeSnapshot).HasPrecision(9, 6).IsRequired();
+        entity.Property(x => x.LongitudeSnapshot).HasPrecision(9, 6).IsRequired();
+        entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
+        entity.HasIndex(x => new { x.CustomerId, x.CreatedAtUtc });
+        entity.HasIndex(x => new { x.BranchId, x.Status, x.CreatedAtUtc });
+        entity.HasIndex(x => x.OrderNumber).IsUnique();
+        entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.CustomerAddress).WithMany().HasForeignKey(x => x.CustomerAddressId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureOrderItem(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<OrderItem>();
+        entity.ToTable("OrderItem", table =>
+        {
+            table.HasCheckConstraint("CK_OrderItem_Quantity", "[Quantity] > 0");
+            table.HasCheckConstraint("CK_OrderItem_UnitPrice", "[UnitPrice] >= 0");
+            table.HasCheckConstraint("CK_OrderItem_LineTotal", "[LineTotal] >= 0");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.Quantity).HasPrecision(18, 3).IsRequired();
+        entity.Property(x => x.UnitPrice).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.LineTotal).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.SkuSnapshot).HasColumnName("SKU_Snapshot").HasMaxLength(50).IsRequired();
+        entity.Property(x => x.ProductNameSnapshot).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.UnitOfMeasureSnapshot).HasMaxLength(20).IsRequired();
+        entity.HasIndex(x => new { x.OrderId, x.ProductId }).IsUnique();
+        entity.HasOne(x => x.Order).WithMany(x => x.Items).HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureSystemConfiguration(ModelBuilder modelBuilder)

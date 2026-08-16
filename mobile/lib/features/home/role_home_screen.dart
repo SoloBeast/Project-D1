@@ -85,6 +85,17 @@ class _CustomerHomeActions extends StatelessWidget {
           onTap: () => context.push('/catalogue'),
         ),
       ),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.receipt_long_outlined),
+          title: const Text('My orders'),
+          subtitle: const Text(
+            'View order history and manage confirmed orders',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/orders'),
+        ),
+      ),
     ],
   );
 }

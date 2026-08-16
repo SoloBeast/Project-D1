@@ -1,0 +1,209 @@
+using DoodhDirect.Application.Common;
+using DoodhDirect.Application.Orders;
+using DoodhDirect.Domain.Catalogue;
+using DoodhDirect.Domain.Customer;
+using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.Orders;
+using DoodhDirect.Infrastructure.Orders;
+using DoodhDirect.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+
+namespace DoodhDirect.Api.IntegrationTests;
+
+public sealed class OrderServiceTests
+{
+    [Fact]
+    public async Task PreviewAsync_UsesBackendPriceAndNearestEligibleBranch()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        var request = harness.Request(harness.Address.PublicId, harness.Product.PublicId, 2.5m);
+
+        var result = await harness.Service.PreviewAsync(harness.Customer.Id, request, CancellationToken.None);
+
+        Assert.Equal(harness.NearBranch.PublicId, result.BranchId);
+        Assert.Equal("NEAR", result.BranchCode);
+        Assert.Equal(200m, result.Subtotal);
+        Assert.Equal(0m, result.DiscountAmount);
+        Assert.Equal(200m, result.PayableAmount);
+        var line = Assert.Single(result.Items);
+        Assert.Equal(80m, line.UnitPrice);
+        Assert.Equal(200m, line.LineTotal);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_RejectsAddressOwnedByAnotherCustomer()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        var otherCustomer = new User(UserType.Customer);
+        otherCustomer.SetProfile("Other Customer");
+        harness.Db.Users.Add(otherCustomer);
+        await harness.Db.SaveChangesAsync();
+
+        var request = harness.Request(harness.Address.PublicId, harness.Product.PublicId, 1m);
+
+        var exception = await Assert.ThrowsAsync<NotFoundException>(() =>
+            harness.Service.PreviewAsync(otherCustomer.Id, request, CancellationToken.None));
+
+        Assert.Contains("address", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_RejectsQuantityAboveBranchCapacity()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        harness.NearAvailability.Update(isAvailable: true, maxDailyQuantity: 1.5m);
+        harness.FarAvailability.Update(isAvailable: true, maxDailyQuantity: 1.5m);
+        await harness.Db.SaveChangesAsync();
+
+        var request = harness.Request(harness.Address.PublicId, harness.Product.PublicId, 2m);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.Service.PreviewAsync(harness.Customer.Id, request, CancellationToken.None));
+
+        Assert.Contains("branch", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_RejectsInactiveProduct()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        harness.Product.Deactivate();
+        await harness.Db.SaveChangesAsync();
+
+        var request = harness.Request(harness.Address.PublicId, harness.Product.PublicId, 1m);
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.Service.PreviewAsync(harness.Customer.Id, request, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CreateAsync_PersistsConfirmedOrderAndHistoricalSnapshots()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        var request = harness.Request(harness.Address.PublicId, harness.Product.PublicId, 1.25m);
+
+        var result = await harness.Service.CreateAsync(
+            harness.Customer.Id, request, " checkout-key ", CancellationToken.None);
+
+        Assert.Equal(harness.NearBranch.PublicId, result.BranchId);
+        Assert.Equal(OrderStatus.Confirmed, result.Status);
+        Assert.Equal(100m, result.Subtotal);
+        Assert.Equal("Home", result.AddressLabel);
+        Assert.Equal("Fresh Milk", Assert.Single(result.Items).ProductName);
+
+        var stored = await harness.Db.Orders
+            .Include(order => order.Items)
+            .SingleAsync();
+        Assert.Equal("checkout-key", stored.IdempotencyKey);
+        Assert.Equal("Home", stored.AddressLabelSnapshot);
+        Assert.Equal(80m, stored.Items.Single().UnitPrice);
+        Assert.Equal(100m, stored.Items.Single().LineTotal);
+    }
+
+    [Fact]
+    public async Task CustomerReadsAndCancellationAreOwnershipScoped()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        var request = harness.Request(harness.Address.PublicId, harness.Product.PublicId, 1m);
+        var order = await harness.Service.CreateAsync(
+            harness.Customer.Id, request, "ownership-key", CancellationToken.None);
+
+        Assert.Single(await harness.Service.GetForCustomerAsync(harness.Customer.Id, CancellationToken.None));
+        Assert.Empty(await harness.Service.GetForCustomerAsync(harness.OtherCustomer.Id, CancellationToken.None));
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            harness.Service.GetAsync(harness.OtherCustomer.Id, order.PublicId, false, CancellationToken.None));
+
+        var cancelled = await harness.Service.CancelAsync(
+            harness.Customer.Id, order.PublicId, CancellationToken.None);
+        Assert.Equal(OrderStatus.Cancelled, cancelled.Status);
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.Service.CancelAsync(harness.Customer.Id, order.PublicId, CancellationToken.None));
+    }
+
+    private sealed class OrderHarness : IAsyncDisposable
+    {
+        private OrderHarness(
+            DoodhDirectDbContext db,
+            User customer,
+            User otherCustomer,
+            CustomerAddress address,
+            Product product,
+            Branch nearBranch,
+            ProductBranch nearAvailability,
+            ProductBranch farAvailability,
+            OrderService service)
+        {
+            Db = db;
+            Customer = customer;
+            OtherCustomer = otherCustomer;
+            Address = address;
+            Product = product;
+            NearBranch = nearBranch;
+            NearAvailability = nearAvailability;
+            FarAvailability = farAvailability;
+            Service = service;
+        }
+
+        public DoodhDirectDbContext Db { get; }
+        public User Customer { get; }
+        public User OtherCustomer { get; }
+        public CustomerAddress Address { get; }
+        public Product Product { get; }
+        public Branch NearBranch { get; }
+        public ProductBranch NearAvailability { get; }
+        public ProductBranch FarAvailability { get; }
+        public OrderService Service { get; }
+
+        public CheckoutRequest Request(Guid addressId, Guid productId, decimal quantity) =>
+            new(addressId, [new OrderItemRequest(productId, quantity)]);
+
+        public static async Task<OrderHarness> CreateAsync()
+        {
+            var options = new DbContextOptionsBuilder<DoodhDirectDbContext>()
+                .UseInMemoryDatabase($"order-tests-{Guid.NewGuid():N}")
+                .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+                .Options;
+            var db = new DoodhDirectDbContext(options);
+
+            var customer = new User(UserType.Customer);
+            customer.SetProfile("Customer");
+            var otherCustomer = new User(UserType.Customer);
+            otherCustomer.SetProfile("Other Customer");
+            db.Users.AddRange(customer, otherCustomer);
+            await db.SaveChangesAsync();
+
+            var category = new ProductCategory("MILK", "Milk");
+            var product = new Product(0, "MILK-001", "Fresh Milk", null, "litre", 80m);
+            category.Products.Add(product);
+            var address = new CustomerAddress(
+                customer.Id, "Home", "1 Main Road", "Central", "Bengaluru", "Karnataka",
+                "560001", "Customer", "9999999999", 12.9716m, 77.5946m);
+            var nearBranch = new Branch("NEAR", "Near Branch", "Bengaluru", "Karnataka", 12.9717m, 77.5947m);
+            var farBranch = new Branch("FAR", "Far Branch", "Bengaluru", "Karnataka", 13.1000m, 77.7000m);
+
+            db.ProductCategories.Add(category);
+            db.CustomerAddresses.Add(address);
+            db.Branches.AddRange(nearBranch, farBranch);
+            await db.SaveChangesAsync();
+
+            var nearAvailability = new ProductBranch(product.Id, nearBranch.Id, true, null);
+            var farAvailability = new ProductBranch(product.Id, farBranch.Id, true, null);
+            product.ProductBranches.Add(nearAvailability);
+            nearBranch.ProductBranches.Add(nearAvailability);
+            product.ProductBranches.Add(farAvailability);
+            farBranch.ProductBranches.Add(farAvailability);
+            db.ProductBranches.AddRange(nearAvailability, farAvailability);
+            await db.SaveChangesAsync();
+
+            var allocation = new BranchAllocationService(db);
+            return new OrderHarness(
+                db, customer, otherCustomer, address, product, nearBranch, nearAvailability,
+                farAvailability, new OrderService(db, allocation));
+        }
+
+        public ValueTask DisposeAsync() => Db.DisposeAsync();
+    }
+}

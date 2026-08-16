@@ -20,7 +20,9 @@ class _ProductCatalogueScreenState
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => ref.read(catalogueControllerProvider.notifier).load());
+    Future.microtask(
+      () => ref.read(catalogueControllerProvider.notifier).load(),
+    );
   }
 
   @override
@@ -33,14 +35,12 @@ class _ProductCatalogueScreenState
           : state.errorMessage != null && state.products.isEmpty
           ? ErrorStatePanel(
               message: state.errorMessage!,
-              onRetry: () => ref
-                  .read(catalogueControllerProvider.notifier)
-                  .load(),
+              onRetry: () =>
+                  ref.read(catalogueControllerProvider.notifier).load(),
             )
           : RefreshIndicator(
-              onRefresh: () => ref
-                  .read(catalogueControllerProvider.notifier)
-                  .load(),
+              onRefresh: () =>
+                  ref.read(catalogueControllerProvider.notifier).load(),
               child: CustomScrollView(
                 slivers: [
                   SliverToBoxAdapter(child: _CategoryFilter(state: state)),
@@ -89,7 +89,10 @@ class _CategoryFilter extends ConsumerWidget {
         border: OutlineInputBorder(),
       ),
       items: [
-        const DropdownMenuItem<String?>(value: null, child: Text('All categories')),
+        const DropdownMenuItem<String?>(
+          value: null,
+          child: Text('All categories'),
+        ),
         ...state.categories.map(
           (category) => DropdownMenuItem<String?>(
             value: category.publicId,
@@ -97,9 +100,8 @@ class _CategoryFilter extends ConsumerWidget {
           ),
         ),
       ],
-      onChanged: (value) => ref
-          .read(catalogueControllerProvider.notifier)
-          .selectCategory(value),
+      onChanged: (value) =>
+          ref.read(catalogueControllerProvider.notifier).selectCategory(value),
     ),
   );
 }
@@ -188,21 +190,55 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   color: Theme.of(context).colorScheme.primary,
                 ),
                 const SizedBox(height: 16),
-                Text(product.name, style: Theme.of(context).textTheme.headlineSmall),
+                Text(
+                  product.name,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
                 const SizedBox(height: 8),
                 Text(product.description ?? 'Fresh dairy product.'),
                 const SizedBox(height: 8),
-                Text(product.formattedPrice, style: Theme.of(context).textTheme.titleLarge),
+                Text(
+                  product.formattedPrice,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
                 const SizedBox(height: 24),
                 TextFormField(
                   controller: _quantityController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: InputDecoration(
                     labelText: 'Quantity (${product.unitLabel})',
                     border: const OutlineInputBorder(),
                     helperText: 'Up to three decimal places',
                   ),
                   validator: (value) => _validateQuantity(value),
+                ),
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: () {
+                    final quantity = double.tryParse(_quantityController.text);
+                    final validation = _validateQuantity(
+                      _quantityController.text,
+                    );
+                    if (quantity == null || validation != null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(validation ?? 'Enter a valid quantity'),
+                        ),
+                      );
+                      return;
+                    }
+                    context.push(
+                      '/checkout',
+                      extra: <String, dynamic>{
+                        'product': product,
+                        'quantity': quantity,
+                      },
+                    );
+                  },
+                  icon: const Icon(Icons.shopping_cart_outlined),
+                  label: const Text('Continue to checkout'),
                 ),
                 const SizedBox(height: 12),
                 Text(
@@ -216,7 +252,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     title: Text(branch.branchName),
                     subtitle: branch.maxDailyQuantity == null
                         ? const Text('Available')
-                        : Text('Daily limit: ${formatQuantity(branch.maxDailyQuantity!)} ${product.unitLabel}'),
+                        : Text(
+                            'Daily limit: ${formatQuantity(branch.maxDailyQuantity!)} ${product.unitLabel}',
+                          ),
                     trailing: const Icon(Icons.check_circle_outline),
                   ),
                 ),
@@ -247,7 +285,9 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => ref.read(adminCatalogueControllerProvider.notifier).load());
+    Future.microtask(
+      () => ref.read(adminCatalogueControllerProvider.notifier).load(),
+    );
   }
 
   @override
@@ -274,98 +314,168 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
           : state.errorMessage != null && state.products.isEmpty
           ? ErrorStatePanel(
               message: state.errorMessage!,
-              onRetry: () => ref
-                  .read(adminCatalogueControllerProvider.notifier)
-                  .load(),
+              onRetry: () =>
+                  ref.read(adminCatalogueControllerProvider.notifier).load(),
             )
           : RefreshIndicator(
-              onRefresh: () => ref
-                  .read(adminCatalogueControllerProvider.notifier)
-                  .load(),
+              onRefresh: () =>
+                  ref.read(adminCatalogueControllerProvider.notifier).load(),
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
                   if (state.errorMessage != null)
-                    Text(state.errorMessage!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                  Text('Products', style: Theme.of(context).textTheme.titleLarge),
+                    Text(
+                      state.errorMessage!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  Text(
+                    'Products',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
                   const SizedBox(height: 8),
                   if (state.products.isEmpty)
-                    const EmptyStatePanel(title: 'No products', message: 'Create the first catalogue product.')
+                    const EmptyStatePanel(
+                      title: 'No products',
+                      message: 'Create the first catalogue product.',
+                    )
                   else
-                    ...state.products.map((product) => Card(
-                      child: ListTile(
-                        title: Text(product.name),
-                        subtitle: Text('${product.sku} · ${product.formattedPrice}'),
-                        leading: Icon(product.isActive ? Icons.check_circle : Icons.pause_circle),
-                        trailing: PopupMenuButton<String>(
-                          onSelected: (action) async {
-                            if (action == 'toggle') {
-                              await ref.read(adminCatalogueControllerProvider.notifier).setProductActive(product.publicId, !product.isActive);
-                            } else if (action == 'edit') {
-                              _editProduct(context, product);
-                            } else if (action == 'branch') {
-                              _editAvailability(context, product);
-                            }
-                          },
-                          itemBuilder: (_) => [
-                            PopupMenuItem(value: 'edit', child: Text('Edit product')),
-                            PopupMenuItem(value: 'branch', child: Text('Branch availability')),
-                            PopupMenuItem(value: 'toggle', child: Text(product.isActive ? 'Deactivate' : 'Activate')),
-                          ],
+                    ...state.products.map(
+                      (product) => Card(
+                        child: ListTile(
+                          title: Text(product.name),
+                          subtitle: Text(
+                            '${product.sku} · ${product.formattedPrice}',
+                          ),
+                          leading: Icon(
+                            product.isActive
+                                ? Icons.check_circle
+                                : Icons.pause_circle,
+                          ),
+                          trailing: PopupMenuButton<String>(
+                            onSelected: (action) async {
+                              if (action == 'toggle') {
+                                await ref
+                                    .read(
+                                      adminCatalogueControllerProvider.notifier,
+                                    )
+                                    .setProductActive(
+                                      product.publicId,
+                                      !product.isActive,
+                                    );
+                              } else if (action == 'edit') {
+                                _editProduct(context, product);
+                              } else if (action == 'branch') {
+                                _editAvailability(context, product);
+                              }
+                            },
+                            itemBuilder: (_) => [
+                              PopupMenuItem(
+                                value: 'edit',
+                                child: Text('Edit product'),
+                              ),
+                              PopupMenuItem(
+                                value: 'branch',
+                                child: Text('Branch availability'),
+                              ),
+                              PopupMenuItem(
+                                value: 'toggle',
+                                child: Text(
+                                  product.isActive ? 'Deactivate' : 'Activate',
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    )),
-                  const SizedBox(height: 24),
-                  Text('Categories', style: Theme.of(context).textTheme.titleLarge),
-                  const SizedBox(height: 8),
-                  ...state.categories.map((category) => ListTile(
-                    title: Text(category.name),
-                    subtitle: Text(category.code),
-                    leading: Icon(category.isActive ? Icons.check_circle : Icons.pause_circle),
-                    trailing: IconButton(
-                      tooltip: category.isActive ? 'Deactivate category' : 'Activate category',
-                      icon: Icon(category.isActive ? Icons.pause : Icons.play_arrow),
-                      onPressed: () => ref.read(adminCatalogueControllerProvider.notifier).setCategoryActive(category.publicId, !category.isActive),
                     ),
-                    onTap: () => _editCategory(context, category),
-                  )),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Categories',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  ...state.categories.map(
+                    (category) => ListTile(
+                      title: Text(category.name),
+                      subtitle: Text(category.code),
+                      leading: Icon(
+                        category.isActive
+                            ? Icons.check_circle
+                            : Icons.pause_circle,
+                      ),
+                      trailing: IconButton(
+                        tooltip: category.isActive
+                            ? 'Deactivate category'
+                            : 'Activate category',
+                        icon: Icon(
+                          category.isActive ? Icons.pause : Icons.play_arrow,
+                        ),
+                        onPressed: () => ref
+                            .read(adminCatalogueControllerProvider.notifier)
+                            .setCategoryActive(
+                              category.publicId,
+                              !category.isActive,
+                            ),
+                      ),
+                      onTap: () => _editCategory(context, category),
+                    ),
+                  ),
                 ],
               ),
             ),
     );
   }
 
-  Future<void> _editProduct(BuildContext context, [CatalogueProduct? product]) async {
+  Future<void> _editProduct(
+    BuildContext context, [
+    CatalogueProduct? product,
+  ]) async {
     final state = ref.read(adminCatalogueControllerProvider);
     final result = await showDialog<ProductDraft>(
       context: context,
-      builder: (_) => _ProductDialog(categories: state.categories, product: product),
+      builder: (_) =>
+          _ProductDialog(categories: state.categories, product: product),
     );
     if (result != null && context.mounted) {
-      await ref.read(adminCatalogueControllerProvider.notifier).saveProduct(product?.publicId, result);
+      await ref
+          .read(adminCatalogueControllerProvider.notifier)
+          .saveProduct(product?.publicId, result);
     }
   }
 
-  Future<void> _editCategory(BuildContext context, [ProductCategory? category]) async {
+  Future<void> _editCategory(
+    BuildContext context, [
+    ProductCategory? category,
+  ]) async {
     final result = await showDialog<CategoryDraft>(
       context: context,
       builder: (_) => _CategoryDialog(category: category),
     );
     if (result != null && context.mounted) {
-      await ref.read(adminCatalogueControllerProvider.notifier).saveCategory(category?.publicId, result);
+      await ref
+          .read(adminCatalogueControllerProvider.notifier)
+          .saveCategory(category?.publicId, result);
     }
   }
 
-  Future<void> _editAvailability(BuildContext context, CatalogueProduct product) async {
+  Future<void> _editAvailability(
+    BuildContext context,
+    CatalogueProduct product,
+  ) async {
     final state = ref.read(adminCatalogueControllerProvider);
     final branch = product.branchAvailability.firstOrNull;
     if (state.branches.isEmpty) return;
     final draft = await showDialog<BranchAvailabilityDraft>(
       context: context,
-      builder: (_) => _AvailabilityDialog(branches: state.branches, current: branch),
+      builder: (_) =>
+          _AvailabilityDialog(branches: state.branches, current: branch),
     );
     if (draft != null && context.mounted) {
-      await ref.read(adminCatalogueControllerProvider.notifier).setBranchAvailability(product.publicId, draft);
+      await ref
+          .read(adminCatalogueControllerProvider.notifier)
+          .setBranchAvailability(product.publicId, draft);
     }
   }
 }
@@ -380,20 +490,53 @@ class _CategoryDialog extends StatefulWidget {
 class _CategoryDialogState extends State<_CategoryDialog> {
   late final _code = TextEditingController(text: widget.category?.code);
   late final _name = TextEditingController(text: widget.category?.name);
-  late final _description = TextEditingController(text: widget.category?.description);
+  late final _description = TextEditingController(
+    text: widget.category?.description,
+  );
   @override
-  void dispose() { _code.dispose(); _name.dispose(); _description.dispose(); super.dispose(); }
+  void dispose() {
+    _code.dispose();
+    _name.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: Text(widget.category == null ? 'New category' : 'Edit category'),
-    content: Column(mainAxisSize: MainAxisSize.min, children: [
-      TextField(controller: _code, decoration: const InputDecoration(labelText: 'Code')),
-      TextField(controller: _name, decoration: const InputDecoration(labelText: 'Name')),
-      TextField(controller: _description, decoration: const InputDecoration(labelText: 'Description')),
-    ]),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextField(
+          controller: _code,
+          decoration: const InputDecoration(labelText: 'Code'),
+        ),
+        TextField(
+          controller: _name,
+          decoration: const InputDecoration(labelText: 'Name'),
+        ),
+        TextField(
+          controller: _description,
+          decoration: const InputDecoration(labelText: 'Description'),
+        ),
+      ],
+    ),
     actions: [
-      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-      FilledButton(onPressed: () => Navigator.pop(context, CategoryDraft(code: _code.text, name: _name.text, description: _description.text)), child: const Text('Save')),
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(
+          context,
+          CategoryDraft(
+            code: _code.text,
+            name: _name.text,
+            description: _description.text,
+          ),
+        ),
+        child: const Text('Save'),
+      ),
     ],
   );
 }
@@ -409,26 +552,98 @@ class _ProductDialog extends StatefulWidget {
 class _ProductDialogState extends State<_ProductDialog> {
   late final _sku = TextEditingController(text: widget.product?.sku);
   late final _name = TextEditingController(text: widget.product?.name);
-  late final _description = TextEditingController(text: widget.product?.description);
-  late final _price = TextEditingController(text: widget.product?.price.toString());
-  late String? _categoryId = widget.product?.category.publicId ?? widget.categories.firstOrNull?.publicId;
+  late final _description = TextEditingController(
+    text: widget.product?.description,
+  );
+  late final _price = TextEditingController(
+    text: widget.product?.price.toString(),
+  );
+  late String? _categoryId =
+      widget.product?.category.publicId ??
+      widget.categories.firstOrNull?.publicId;
   late String _unit = widget.product?.unitOfMeasure ?? 'litre';
   @override
-  void dispose() { _sku.dispose(); _name.dispose(); _description.dispose(); _price.dispose(); super.dispose(); }
+  void dispose() {
+    _sku.dispose();
+    _name.dispose();
+    _description.dispose();
+    _price.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: Text(widget.product == null ? 'New product' : 'Edit product'),
-    content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      TextField(controller: _sku, decoration: const InputDecoration(labelText: 'SKU')),
-      TextField(controller: _name, decoration: const InputDecoration(labelText: 'Name')),
-      TextField(controller: _description, decoration: const InputDecoration(labelText: 'Description')),
-      DropdownButtonFormField<String>(initialValue: _categoryId, decoration: const InputDecoration(labelText: 'Category'), items: widget.categories.map((c) => DropdownMenuItem(value: c.publicId, child: Text(c.name))).toList(), onChanged: (value) => setState(() => _categoryId = value)),
-      DropdownButtonFormField<String>(initialValue: _unit, decoration: const InputDecoration(labelText: 'Unit'), items: const ['litre', 'kilogram', 'gram', 'piece'].map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(), onChanged: (value) => setState(() => _unit = value!)),
-      TextField(controller: _price, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Price')),
-    ])),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _sku,
+            decoration: const InputDecoration(labelText: 'SKU'),
+          ),
+          TextField(
+            controller: _name,
+            decoration: const InputDecoration(labelText: 'Name'),
+          ),
+          TextField(
+            controller: _description,
+            decoration: const InputDecoration(labelText: 'Description'),
+          ),
+          DropdownButtonFormField<String>(
+            initialValue: _categoryId,
+            decoration: const InputDecoration(labelText: 'Category'),
+            items: widget.categories
+                .map(
+                  (c) =>
+                      DropdownMenuItem(value: c.publicId, child: Text(c.name)),
+                )
+                .toList(),
+            onChanged: (value) => setState(() => _categoryId = value),
+          ),
+          DropdownButtonFormField<String>(
+            initialValue: _unit,
+            decoration: const InputDecoration(labelText: 'Unit'),
+            items: const [
+              'litre',
+              'kilogram',
+              'gram',
+              'piece',
+            ].map((u) => DropdownMenuItem(value: u, child: Text(u))).toList(),
+            onChanged: (value) => setState(() => _unit = value!),
+          ),
+          TextField(
+            controller: _price,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Price'),
+          ),
+        ],
+      ),
+    ),
     actions: [
-      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-      FilledButton(onPressed: () { final price = double.tryParse(_price.text); if (_categoryId != null && price != null) Navigator.pop(context, ProductDraft(sku: _sku.text, name: _name.text, description: _description.text, categoryId: _categoryId!, unitOfMeasure: _unit, price: price)); }, child: const Text('Save')),
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () {
+          final price = double.tryParse(_price.text);
+          if (_categoryId != null && price != null) {
+            Navigator.pop(
+              context,
+              ProductDraft(
+                sku: _sku.text,
+                name: _name.text,
+                description: _description.text,
+                categoryId: _categoryId!,
+                unitOfMeasure: _unit,
+                price: price,
+              ),
+            );
+          }
+        },
+        child: const Text('Save'),
+      ),
     ],
   );
 }
@@ -440,23 +655,65 @@ class _AvailabilityDialog extends StatefulWidget {
   @override
   State<_AvailabilityDialog> createState() => _AvailabilityDialogState();
 }
+
 class _AvailabilityDialogState extends State<_AvailabilityDialog> {
-  late String _branchId = widget.current?.branchId ?? widget.branches.first.publicId;
+  late String _branchId =
+      widget.current?.branchId ?? widget.branches.first.publicId;
   late bool _available = widget.current?.isAvailable ?? true;
-  late final _limit = TextEditingController(text: widget.current?.maxDailyQuantity?.toString());
+  late final _limit = TextEditingController(
+    text: widget.current?.maxDailyQuantity?.toString(),
+  );
   @override
-  void dispose() { _limit.dispose(); super.dispose(); }
+  void dispose() {
+    _limit.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: const Text('Branch availability'),
-    content: Column(mainAxisSize: MainAxisSize.min, children: [
-      DropdownButtonFormField<String>(initialValue: _branchId, items: widget.branches.map((b) => DropdownMenuItem(value: b.publicId, child: Text(b.name))).toList(), onChanged: (value) => setState(() => _branchId = value!)),
-      SwitchListTile(title: const Text('Available'), value: _available, onChanged: (value) => setState(() => _available = value)),
-      TextField(controller: _limit, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Maximum daily quantity')),
-    ]),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DropdownButtonFormField<String>(
+          initialValue: _branchId,
+          items: widget.branches
+              .map(
+                (b) => DropdownMenuItem(value: b.publicId, child: Text(b.name)),
+              )
+              .toList(),
+          onChanged: (value) => setState(() => _branchId = value!),
+        ),
+        SwitchListTile(
+          title: const Text('Available'),
+          value: _available,
+          onChanged: (value) => setState(() => _available = value),
+        ),
+        TextField(
+          controller: _limit,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            labelText: 'Maximum daily quantity',
+          ),
+        ),
+      ],
+    ),
     actions: [
-      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-      FilledButton(onPressed: () => Navigator.pop(context, BranchAvailabilityDraft(branchId: _branchId, isAvailable: _available, maxDailyQuantity: double.tryParse(_limit.text))), child: const Text('Save')),
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(
+          context,
+          BranchAvailabilityDraft(
+            branchId: _branchId,
+            isAvailable: _available,
+            maxDailyQuantity: double.tryParse(_limit.text),
+          ),
+        ),
+        child: const Text('Save'),
+      ),
     ],
   );
 }

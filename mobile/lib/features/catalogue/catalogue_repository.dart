@@ -11,13 +11,17 @@ class CatalogueRepository {
 
   Future<List<ProductCategory>> getCategories() async {
     final response = await api.get('/api/v1/product-categories');
-    return _list(response).map(ProductCategory.fromJson).toList(growable: false);
+    return _list(response)
+        .map(ProductCategory.fromJson)
+        .toList(growable: false);
   }
 
   Future<List<CatalogueProduct>> getProducts({String? categoryId}) async {
     final query = categoryId == null ? '' : '?categoryId=$categoryId';
     final response = await api.get('/api/v1/products$query');
-    return _list(response).map(CatalogueProduct.fromJson).toList(growable: false);
+    return _list(response)
+        .map(CatalogueProduct.fromJson)
+        .toList(growable: false);
   }
 
   Future<CatalogueProduct> getProduct(String productId) async {
@@ -30,7 +34,9 @@ class CatalogueRepository {
       '/api/v1/admin/products',
       accessToken: accessToken,
     );
-    return _list(response).map(CatalogueProduct.fromJson).toList(growable: false);
+    return _list(response)
+        .map(CatalogueProduct.fromJson)
+        .toList(growable: false);
   }
 
   Future<CatalogueProduct> getAdminProduct(
@@ -99,7 +105,9 @@ class CatalogueRepository {
       '/api/v1/admin/product-categories',
       accessToken: accessToken,
     );
-    return _list(response).map(ProductCategory.fromJson).toList(growable: false);
+    return _list(response)
+        .map(ProductCategory.fromJson)
+        .toList(growable: false);
   }
 
   Future<ProductCategory> createCategory(
@@ -144,12 +152,13 @@ class CatalogueRepository {
       '/api/v1/admin/branches',
       accessToken: accessToken,
     );
-    return _list(response).map(CatalogueBranch.fromJson).toList(growable: false);
+    return _list(response)
+        .map(CatalogueBranch.fromJson)
+        .toList(growable: false);
   }
 
   List<Map<String, dynamic>> _list(Map<String, dynamic> response) =>
-      (response['data'] as List<dynamic>)
-          .cast<Map<String, dynamic>>();
+      (response['data'] as List<dynamic>).cast<Map<String, dynamic>>();
 }
 
 final catalogueRepositoryProvider = Provider<CatalogueRepository>(

@@ -2,9 +2,12 @@ import 'package:doodh_direct_mobile/features/auth/login_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/otp_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/register_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_screens.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_screens.dart';
 import 'package:doodh_direct_mobile/features/home/role_home_screen.dart';
+import 'package:doodh_direct_mobile/features/orders/order_models.dart';
+import 'package:doodh_direct_mobile/features/orders/order_screens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -65,10 +68,34 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const ProductCatalogueScreen(),
       ),
       GoRoute(
+        path: '/checkout',
+        builder: (context, state) {
+          final extra = state.extra;
+          final payload = extra is Map<String, dynamic> ? extra : null;
+          return CheckoutScreen(
+            initialProduct: payload?['product'] as CatalogueProduct?,
+            initialQuantity: payload?['quantity'] as double?,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/orders',
+        builder: (context, state) => const OrderHistoryScreen(),
+      ),
+      GoRoute(
+        path: '/orders/:orderId',
+        builder: (context, state) =>
+            OrderDetailScreen(orderId: state.pathParameters['orderId']!),
+      ),
+      GoRoute(
+        path: '/orders/:orderId/confirmation',
+        builder: (context, state) =>
+            OrderConfirmationScreen(order: state.extra! as OrderSummary),
+      ),
+      GoRoute(
         path: '/catalogue/products/:productId',
-        builder: (context, state) => ProductDetailScreen(
-          productId: state.pathParameters['productId']!,
-        ),
+        builder: (context, state) =>
+            ProductDetailScreen(productId: state.pathParameters['productId']!),
       ),
       GoRoute(
         path: '/admin/catalogue',

@@ -128,8 +128,7 @@ class AdminCatalogueState {
 
 class AdminCatalogueController extends Notifier<AdminCatalogueState> {
   CatalogueRepository get _repository => ref.read(catalogueRepositoryProvider);
-  String get _token =>
-      ref.read(sessionControllerProvider).session!.accessToken;
+  String get _token => ref.read(sessionControllerProvider).session!.accessToken;
 
   @override
   AdminCatalogueState build() => const AdminCatalogueState();
@@ -159,9 +158,8 @@ class AdminCatalogueController extends Notifier<AdminCatalogueState> {
         : _repository.updateProduct(productId, draft, _token),
   );
 
-  Future<bool> setProductActive(String productId, bool isActive) => _save(
-    () => _repository.setProductActive(productId, isActive, _token),
-  );
+  Future<bool> setProductActive(String productId, bool isActive) =>
+      _save(() => _repository.setProductActive(productId, isActive, _token));
 
   Future<bool> saveCategory(String? categoryId, CategoryDraft draft) => _save(
     () => categoryId == null
@@ -169,16 +167,13 @@ class AdminCatalogueController extends Notifier<AdminCatalogueState> {
         : _repository.updateCategory(categoryId, draft, _token),
   );
 
-  Future<bool> setCategoryActive(String categoryId, bool isActive) => _save(
-    () => _repository.setCategoryActive(categoryId, isActive, _token),
-  );
+  Future<bool> setCategoryActive(String categoryId, bool isActive) =>
+      _save(() => _repository.setCategoryActive(categoryId, isActive, _token));
 
   Future<bool> setBranchAvailability(
     String productId,
     BranchAvailabilityDraft draft,
-  ) => _save(
-    () => _repository.setBranchAvailability(productId, draft, _token),
-  );
+  ) => _save(() => _repository.setBranchAvailability(productId, draft, _token));
 
   Future<bool> _save(Future<Object> Function() operation) async {
     state = state.copyWith(isSaving: true, clearError: true);

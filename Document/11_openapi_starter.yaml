@@ -399,46 +399,87 @@ paths:
       responses:
         '200':
           description: Serviceability result
+  /orders/checkout-preview:
+    post:
+      summary: Calculate authoritative checkout totals and allocate the nearest eligible branch
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckoutRequest'
+      responses:
+        '200': { description: Checkout preview with backend prices, totals, and branch allocation }
+        '404': { description: Selected owned active address not found }
+        '422': { description: Product or branch allocation business rule failure }
   /orders:
     post:
-      summary: Create order
+      summary: Create a confirmed one-time order
       security:
         - bearerAuth: []
       parameters:
         - in: header
           name: Idempotency-Key
           required: true
-          schema: { type: string }
+          schema: { type: string, minLength: 1, maxLength: 100 }
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateOrderRequest'
+              $ref: '#/components/schemas/CheckoutRequest'
       responses:
-        '201':
-          description: Order created
-        '409':
-          description: Duplicate/idempotency conflict
-        '422':
-          description: Business validation error
+        '201': { description: Idempotent order result }
+        '404': { description: Selected owned active address not found }
+        '422': { description: Product or branch allocation business rule failure }
     get:
-      summary: List current customer's orders
+      summary: List the authenticated customer's orders
       security:
         - bearerAuth: []
       responses:
-        '200':
-          description: Orders
+        '200': { description: Ownership-scoped order list }
   /orders/{orderId}:
     get:
-      summary: Get order
+      summary: Get an owned order
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/orderId'
       responses:
-        '200': { description: Order }
-        '404': { description: Not found }
+        '200': { description: Historical order snapshot }
+        '404': { description: Owned order not found }
+  /orders/{orderId}/cancel:
+    post:
+      summary: Cancel an owned eligible order
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/orderId'
+      responses:
+        '200': { description: Cancelled order snapshot }
+        '404': { description: Owned order not found }
+        '422': { description: Order status cannot transition to cancelled }
+  /admin/orders:
+    get:
+      summary: List orders for authorized administration
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { description: Administrative order list }
+        '403': { description: Missing ORDERS.READ permission }
+  /admin/orders/{orderId}:
+    get:
+      summary: Get an order for authorized administration
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/orderId'
+      responses:
+        '200': { description: Historical order snapshot }
+        '403': { description: Missing ORDERS.READ permission }
+        '404': { description: Order not found }
   /orders/{orderId}/complaints:
     post:
       summary: Create complaint for delivered order
@@ -639,19 +680,17 @@ components:
         pinCode: { type: string, nullable: true }
         latitude: { type: number, format: double }
         longitude: { type: number, format: double }
-    CreateOrderRequest:
+    CheckoutRequest:
       type: object
-      required: [addressId, orderType, items]
+      required: [addressId, items]
       properties:
         addressId:
           type: string
           format: uuid
-        orderType:
-          type: string
-          enum: [ONE_TIME, SUBSCRIPTION, REPLACEMENT]
         items:
           type: array
           minItems: 1
+          uniqueItems: true
           items:
             type: object
             required: [productId, quantity]
@@ -663,16 +702,7 @@ components:
                 type: number
                 format: double
                 minimum: 0.001
-        couponCode:
-          type: string
-          nullable: true
-        walletAmount:
-          type: number
-          format: double
-          minimum: 0
-        paymentMethod:
-          type: string
-          nullable: true
+                multipleOf: 0.001
     CreateComplaintRequest:
       type: object
       required: [categoryId, description]

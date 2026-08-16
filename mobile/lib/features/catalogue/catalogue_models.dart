@@ -75,9 +75,8 @@ class CatalogueProduct {
         isActive: json['isActive'] as bool,
         branchAvailability: (json['branchAvailability'] as List<dynamic>)
             .map(
-              (item) => BranchAvailability.fromJson(
-                item as Map<String, dynamic>,
-              ),
+              (item) =>
+                  BranchAvailability.fromJson(item as Map<String, dynamic>),
             )
             .toList(growable: false),
       );

@@ -32,10 +32,11 @@ class ApiClient {
     String path, {
     Map<String, dynamic> body = const <String, dynamic>{},
     String? accessToken,
+    Map<String, String> extraHeaders = const <String, String>{},
   }) async {
     final response = await _client.post(
       Uri.parse('$baseUrl$path'),
-      headers: _headers(accessToken),
+      headers: {..._headers(accessToken), ...extraHeaders},
       body: jsonEncode(body),
     );
     return _decode(response);

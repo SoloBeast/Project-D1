@@ -85,6 +85,10 @@ public static class AuthorizationCodes
     public const string BranchAccess = "IDENTITY.BRANCH.ACCESS";
     public const string CatalogueRead = "CATALOGUE.READ";
     public const string CatalogueManage = "CATALOGUE.MANAGE";
+    public const string OrdersCreateOwn = "ORDERS.CREATE_OWN";
+    public const string OrdersReadOwn = "ORDERS.READ_OWN";
+    public const string OrdersCancelOwn = "ORDERS.CANCEL_OWN";
+    public const string OrdersRead = "ORDERS.READ";
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -115,6 +119,10 @@ public static class AuthorizationCodes
         [RolesManage] = "Manage roles and permissions",
         [BranchAccess] = "Access assigned branch",
         [CatalogueRead] = "Read product catalogue",
-        [CatalogueManage] = "Manage products, categories, and branch availability"
+        [CatalogueManage] = "Manage products, categories, and branch availability",
+        [OrdersCreateOwn] = "Preview checkout and create own orders",
+        [OrdersReadOwn] = "Read own orders",
+        [OrdersCancelOwn] = "Cancel own eligible orders",
+        [OrdersRead] = "Read customer orders for administration"
     };
 }
