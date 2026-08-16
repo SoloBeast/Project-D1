@@ -4,6 +4,7 @@ using DoodhDirect.Api.Authorization;
 using DoodhDirect.Api.Middleware;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Infrastructure;
+using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Identity;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -63,7 +64,7 @@ builder.Services.AddOpenApi(options =>
     {
         document.Info.Title = "DoodhDirect API";
         document.Info.Version = "v1";
-        document.Info.Description = "Phase 1 identity/RBAC and Phase 2 customer profile/address API.";
+        document.Info.Description = "Phase 1 identity/RBAC, Phase 2 customer profile/address, and Phase 3 product catalogue API.";
         document.Components ??= new OpenApiComponents();
         document.Components.SecuritySchemes ??=
             new Dictionary<string, IOpenApiSecurityScheme>(StringComparer.Ordinal);
@@ -121,9 +122,13 @@ var app = builder.Build();
 
 await using (var scope = app.Services.CreateAsyncScope())
 {
+    var cancellationToken = CancellationToken.None;
     await scope.ServiceProvider
         .GetRequiredService<IdentitySeedService>()
-        .SeedAsync(CancellationToken.None);
+        .SeedAsync(cancellationToken);
+    await scope.ServiceProvider
+        .GetRequiredService<CatalogueSeedService>()
+        .SeedAsync(cancellationToken);
 }
 
 app.UseMiddleware<CorrelationIdMiddleware>();

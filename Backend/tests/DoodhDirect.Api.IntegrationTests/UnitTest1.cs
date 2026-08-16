@@ -64,6 +64,22 @@ public sealed class ApiFoundationTests : IClassFixture<WebApplicationFactory<Pro
     }
 
     [Fact]
+    public async Task CatalogueEndpoints_AllowPublicReadsAndProtectAdministration()
+    {
+        using var client = _factory.CreateClient();
+
+        using var publicResponse = await client.GetAsync(
+            "/api/v1/products",
+            CancellationToken.None);
+        using var adminResponse = await client.GetAsync(
+            "/api/v1/admin/products",
+            CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.OK, publicResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, adminResponse.StatusCode);
+    }
+
+    [Fact]
     public async Task OpenApiDocument_DescribesBearerSecurityAndAnonymousAuthOperations()
     {
         using var client = _factory.CreateClient();
@@ -85,5 +101,12 @@ public sealed class ApiFoundationTests : IClassFixture<WebApplicationFactory<Pro
         var me = paths.GetProperty("/api/v1/auth/me").GetProperty("get");
         var requirement = me.GetProperty("security")[0];
         Assert.True(requirement.TryGetProperty("bearerAuth", out _));
+
+        var products = paths.GetProperty("/api/v1/products").GetProperty("get");
+        Assert.Equal(0, products.GetProperty("security").GetArrayLength());
+
+        var adminProducts = paths.GetProperty("/api/v1/admin/products").GetProperty("get");
+        var adminRequirement = adminProducts.GetProperty("security")[0];
+        Assert.True(adminRequirement.TryGetProperty("bearerAuth", out _));
     }
 }

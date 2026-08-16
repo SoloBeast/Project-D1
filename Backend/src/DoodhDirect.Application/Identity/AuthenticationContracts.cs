@@ -83,6 +83,8 @@ public static class AuthorizationCodes
     public const string RolesRead = "IDENTITY.ROLES.READ";
     public const string RolesManage = "IDENTITY.ROLES.MANAGE";
     public const string BranchAccess = "IDENTITY.BRANCH.ACCESS";
+    public const string CatalogueRead = "CATALOGUE.READ";
+    public const string CatalogueManage = "CATALOGUE.MANAGE";
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -111,6 +113,8 @@ public static class AuthorizationCodes
         [UsersManage] = "Manage users",
         [RolesRead] = "Read roles and permissions",
         [RolesManage] = "Manage roles and permissions",
-        [BranchAccess] = "Access assigned branch"
+        [BranchAccess] = "Access assigned branch",
+        [CatalogueRead] = "Read product catalogue",
+        [CatalogueManage] = "Manage products, categories, and branch availability"
     };
 }

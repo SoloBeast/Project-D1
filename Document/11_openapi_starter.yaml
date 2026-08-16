@@ -181,8 +181,6 @@ paths:
         - $ref: '#/components/parameters/addressId'
       responses:
         '200': { description: Address deactivated }
-=======
-paths:
   /auth/send-otp:
     post:
       summary: Send OTP
@@ -202,11 +200,188 @@ paths:
           description: OTP request accepted
   /products:
     get:
-      summary: List available products
+      summary: List active catalogue products
+      description: Anonymous catalogue read. Results require an active product, active category, and an available active branch.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/categoryIdQuery'
+      responses:
+        '200': { description: Product list envelope }
+  /products/{productId}:
+    get:
+      summary: Get one active catalogue product
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/productId'
+      responses:
+        '200': { description: Product envelope }
+        '404': { description: Product not found or unavailable }
+  /product-categories:
+    get:
+      summary: List active product categories
       security: []
       responses:
-        '200':
-          description: Product list
+        '200': { description: Category list envelope }
+  /admin/products:
+    get:
+      summary: List products for catalogue administration
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { description: Product list envelope }
+        '403': { description: Missing CATALOGUE.READ permission }
+    post:
+      summary: Create a catalogue product
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertProductRequest'
+      responses:
+        '200': { description: Created product envelope }
+        '400': { description: Validation error }
+        '403': { description: Missing CATALOGUE.MANAGE permission }
+        '409': { description: Duplicate SKU }
+  /admin/products/{productId}:
+    get:
+      summary: Get one product for catalogue administration
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/productId'
+      responses:
+        '200': { description: Product envelope }
+        '403': { description: Missing CATALOGUE.READ permission }
+        '404': { description: Product not found }
+    patch:
+      summary: Update a catalogue product
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/productId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertProductRequest'
+      responses:
+        '200': { description: Updated product envelope }
+        '400': { description: Validation error }
+        '403': { description: Missing CATALOGUE.MANAGE permission }
+        '404': { description: Product not found }
+        '409': { description: Duplicate SKU }
+  /admin/products/{productId}/activate:
+    post:
+      summary: Activate a catalogue product
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/productId'
+      responses:
+        '200': { description: Product envelope }
+        '403': { description: Missing CATALOGUE.MANAGE permission }
+        '422': { description: Active category required }
+  /admin/products/{productId}/deactivate:
+    post:
+      summary: Deactivate a catalogue product
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/productId'
+      responses:
+        '200': { description: Product envelope }
+        '403': { description: Missing CATALOGUE.MANAGE permission }
+  /admin/products/{productId}/branches:
+    put:
+      summary: Set product availability for a branch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/productId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetProductBranchAvailabilityRequest'
+      responses:
+        '200': { description: Updated product envelope }
+        '400': { description: Validation error }
+        '403': { description: Missing CATALOGUE.MANAGE permission }
+        '404': { description: Product or branch not found }
+  /admin/product-categories:
+    get:
+      summary: List all categories for catalogue administration
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { description: Category list envelope }
+        '403': { description: Missing CATALOGUE.READ permission }
+    post:
+      summary: Create a product category
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertProductCategoryRequest'
+      responses:
+        '200': { description: Created category envelope }
+        '400': { description: Validation error }
+        '403': { description: Missing CATALOGUE.MANAGE permission }
+        '409': { description: Duplicate category code }
+  /admin/product-categories/{categoryId}:
+    patch:
+      summary: Update a product category
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/categoryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertProductCategoryRequest'
+      responses:
+        '200': { description: Updated category envelope }
+        '400': { description: Validation error }
+        '403': { description: Missing CATALOGUE.MANAGE permission }
+        '404': { description: Category not found }
+  /admin/product-categories/{categoryId}/activate:
+    post:
+      summary: Activate a product category
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/categoryId'
+      responses:
+        '200': { description: Category envelope }
+        '403': { description: Missing CATALOGUE.MANAGE permission }
+  /admin/product-categories/{categoryId}/deactivate:
+    post:
+      summary: Deactivate a product category
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/categoryId'
+      responses:
+        '200': { description: Category envelope }
+        '403': { description: Missing CATALOGUE.MANAGE permission }
+  /admin/branches:
+    get:
+      summary: List branches for catalogue administration
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { description: Branch list envelope }
+        '403': { description: Missing CATALOGUE.READ permission }
   /branches/serviceability:
     get:
       summary: Check serviceability and eligible branches
@@ -327,6 +502,21 @@ components:
       scheme: bearer
       bearerFormat: JWT
   parameters:
+    categoryIdQuery:
+      name: categoryId
+      in: query
+      required: false
+      schema: { type: string, format: uuid }
+    productId:
+      name: productId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    categoryId:
+      name: categoryId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     customerId:
       name: customerId
       in: path
@@ -345,6 +535,73 @@ components:
         type: string
         format: uuid
   schemas:
+    ProductCategory:
+      type: object
+      required: [publicId, code, name, isActive]
+      properties:
+        publicId: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        isActive: { type: boolean }
+    BranchAvailability:
+      type: object
+      required: [branchId, branchCode, branchName, isAvailable]
+      properties:
+        branchId: { type: string, format: uuid }
+        branchCode: { type: string }
+        branchName: { type: string }
+        isAvailable: { type: boolean }
+        maxDailyQuantity: { type: number, format: double, nullable: true, minimum: 0.001, multipleOf: 0.001 }
+    Product:
+      type: object
+      required: [publicId, sku, name, category, unitOfMeasure, price, isActive, branchAvailability]
+      properties:
+        publicId: { type: string, format: uuid }
+        sku: { type: string }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        category: { $ref: '#/components/schemas/ProductCategory' }
+        unitOfMeasure: { type: string, enum: [litre, kilogram, gram, piece] }
+        price: { type: number, format: double, minimum: 0.01, multipleOf: 0.01 }
+        isActive: { type: boolean }
+        branchAvailability:
+          type: array
+          items: { $ref: '#/components/schemas/BranchAvailability' }
+    Branch:
+      type: object
+      required: [publicId, code, name, city, state, isActive]
+      properties:
+        publicId: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        city: { type: string }
+        state: { type: string }
+        isActive: { type: boolean }
+    UpsertProductRequest:
+      type: object
+      required: [sku, name, categoryId, unitOfMeasure, price]
+      properties:
+        sku: { type: string, maxLength: 80 }
+        name: { type: string, maxLength: 160 }
+        description: { type: string, nullable: true, maxLength: 1000 }
+        categoryId: { type: string, format: uuid }
+        unitOfMeasure: { type: string, enum: [litre, kilogram, gram, piece] }
+        price: { type: number, format: double, exclusiveMinimum: 0, multipleOf: 0.01 }
+    UpsertProductCategoryRequest:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string, maxLength: 40 }
+        name: { type: string, maxLength: 120 }
+        description: { type: string, nullable: true, maxLength: 500 }
+    SetProductBranchAvailabilityRequest:
+      type: object
+      required: [branchId, isAvailable]
+      properties:
+        branchId: { type: string, format: uuid }
+        isAvailable: { type: boolean }
+        maxDailyQuantity: { type: number, format: double, nullable: true, exclusiveMinimum: 0, multipleOf: 0.001 }
     UpdateCustomerProfileRequest:
       type: object
       properties:

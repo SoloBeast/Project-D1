@@ -1,6 +1,8 @@
 using DoodhDirect.Application.Abstractions;
+using DoodhDirect.Application.Catalogue;
 using DoodhDirect.Application.Customer;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Customer;
 using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Persistence;
@@ -46,8 +48,10 @@ public static class DependencyInjection
         services.AddScoped<IAuthenticationService, AuthenticationService>();
         services.AddScoped<IOtpService, OtpService>();
         services.AddScoped<ICustomerService, CustomerService>();
+        services.AddScoped<ICatalogueService, CatalogueService>();
         services.AddSingleton<IAddressLocationLookup, UnconfiguredAddressLocationLookup>();
         services.AddScoped<IdentitySeedService>();
+        services.AddScoped<CatalogueSeedService>();
         services.AddSingleton<IOtpDeliveryService, UnconfiguredOtpDeliveryService>();
 
         return services;

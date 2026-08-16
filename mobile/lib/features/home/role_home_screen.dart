@@ -37,11 +37,7 @@ class RoleHomeScreen extends ConsumerWidget {
         message:
             'Dairy operations are reserved for the dairy operations phase.',
       ),
-      UserRole.owner || UserRole.admin => const StatePanel(
-        icon: Icons.dashboard_outlined,
-        title: 'Administration workspace ready',
-        message: 'Management, reports, and settings are reserved for the admin phase.',
-      ),
+      UserRole.owner || UserRole.admin => const _AdminHomeActions(),
       UserRole.support => const StatePanel(
         icon: Icons.support_agent_outlined,
         title: 'Customer support workspace ready',
@@ -80,10 +76,47 @@ class _CustomerHomeActions extends StatelessWidget {
         ),
       ),
       const SizedBox(height: 20),
-      const StatePanel(
-        icon: Icons.local_drink_outlined,
-        title: 'Ordering is coming next',
-        message: 'Products, orders, subscriptions, and wallet workflows arrive in their roadmap phases.',
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.local_drink_outlined),
+          title: const Text('Browse products'),
+          subtitle: const Text('View active dairy products and prices'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/catalogue'),
+        ),
+      ),
+    ],
+  );
+}
+
+class _AdminHomeActions extends StatelessWidget {
+  const _AdminHomeActions();
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(16),
+    children: [
+      Text('Catalogue', style: Theme.of(context).textTheme.headlineSmall),
+      const SizedBox(height: 8),
+      const Text('Maintain products, categories, and branch availability.'),
+      const SizedBox(height: 16),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.inventory_2_outlined),
+          title: const Text('Manage catalogue'),
+          subtitle: const Text('Create, update, activate, and assign products'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/admin/catalogue'),
+        ),
+      ),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.local_drink_outlined),
+          title: const Text('Preview customer catalogue'),
+          subtitle: const Text('View the active public product list'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/catalogue'),
+        ),
       ),
     ],
   );

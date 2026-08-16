@@ -16,7 +16,7 @@ public static class AuthorizationPolicyNames
 
     internal static bool TryGetPermission(string policyName, out string permission)
     {
-        if (policyName.StartsWith(PermissionPrefix, StringComparison.Ordinal))
+        if (policyName.StartsWith(PermissionPrefix, StringComparison.OrdinalIgnoreCase))
         {
             permission = policyName[PermissionPrefix.Length..];
             return !string.IsNullOrWhiteSpace(permission);
@@ -28,7 +28,7 @@ public static class AuthorizationPolicyNames
 
     internal static bool TryGetBranchPermission(string policyName, out string permission)
     {
-        if (policyName.StartsWith(BranchPrefix, StringComparison.Ordinal))
+        if (policyName.StartsWith(BranchPrefix, StringComparison.OrdinalIgnoreCase))
         {
             permission = policyName[BranchPrefix.Length..];
             return !string.IsNullOrWhiteSpace(permission);

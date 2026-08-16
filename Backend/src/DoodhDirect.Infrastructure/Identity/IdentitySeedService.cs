@@ -63,7 +63,9 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.RolesRead,
                 AuthorizationCodes.RolesManage,
                 AuthorizationCodes.CustomerProfilesRead,
-                AuthorizationCodes.CustomerProfilesManage
+                AuthorizationCodes.CustomerProfilesManage,
+                AuthorizationCodes.CatalogueRead,
+                AuthorizationCodes.CatalogueManage
             ],
             [AuthorizationCodes.Owner] = AuthorizationCodes.Permissions.Keys.ToArray()
         };

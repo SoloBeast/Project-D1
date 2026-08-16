@@ -2,6 +2,7 @@ import 'package:doodh_direct_mobile/features/auth/login_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/otp_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/register_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/catalogue/catalogue_screens.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_screens.dart';
 import 'package:doodh_direct_mobile/features/home/role_home_screen.dart';
 import 'package:flutter/material.dart';
@@ -58,6 +59,20 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => CustomerAddressEditScreen(
           addressId: state.pathParameters['addressId'],
         ),
+      ),
+      GoRoute(
+        path: '/catalogue',
+        builder: (context, state) => const ProductCatalogueScreen(),
+      ),
+      GoRoute(
+        path: '/catalogue/products/:productId',
+        builder: (context, state) => ProductDetailScreen(
+          productId: state.pathParameters['productId']!,
+        ),
+      ),
+      GoRoute(
+        path: '/admin/catalogue',
+        builder: (context, state) => const AdminCatalogueScreen(),
       ),
     ],
   );

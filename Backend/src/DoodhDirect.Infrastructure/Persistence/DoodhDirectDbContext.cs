@@ -1,4 +1,5 @@
 using DoodhDirect.Domain.Auditing;
+using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Configuration;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
@@ -21,6 +22,10 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     public DbSet<SystemConfiguration> SystemConfigurations => Set<SystemConfiguration>();
     public DbSet<CustomerProfile> CustomerProfiles => Set<CustomerProfile>();
     public DbSet<CustomerAddress> CustomerAddresses => Set<CustomerAddress>();
+    public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
+    public DbSet<Product> Products => Set<Product>();
+    public DbSet<Branch> Branches => Set<Branch>();
+    public DbSet<ProductBranch> ProductBranches => Set<ProductBranch>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -37,6 +42,10 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigureSystemConfiguration(modelBuilder);
         ConfigureCustomerProfile(modelBuilder);
         ConfigureCustomerAddress(modelBuilder);
+        ConfigureProductCategory(modelBuilder);
+        ConfigureProduct(modelBuilder);
+        ConfigureBranch(modelBuilder);
+        ConfigureProductBranch(modelBuilder);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -246,6 +255,82 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
             .HasFilter("[IsActive] = 1 AND [IsDefault] = 1");
         entity.HasIndex(x => new { x.UserId, x.IsActive });
         entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureProductCategory(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<ProductCategory>();
+        entity.ToTable("ProductCategory");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Code).HasMaxLength(50).IsRequired();
+        entity.Property(x => x.Name).HasMaxLength(160).IsRequired();
+        entity.Property(x => x.Description).HasMaxLength(500);
+        entity.HasIndex(x => x.Code).IsUnique();
+        entity.HasIndex(x => new { x.IsActive, x.Name });
+    }
+
+    private static void ConfigureProduct(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<Product>();
+        entity.ToTable("Product", table =>
+        {
+            table.HasCheckConstraint("CK_Product_Price", "[Price] > 0");
+            table.HasCheckConstraint("CK_Product_UnitOfMeasure", "[UnitOfMeasure] IN ('litre', 'kilogram', 'gram', 'piece')");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Sku).HasColumnName("SKU").HasMaxLength(50).IsRequired();
+        entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.Description).HasMaxLength(2000);
+        entity.Property(x => x.UnitOfMeasure).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.Price).HasPrecision(18, 2).IsRequired();
+        entity.HasIndex(x => x.Sku).IsUnique();
+        entity.HasIndex(x => new { x.CategoryId, x.IsActive, x.Name });
+        entity.HasOne(x => x.Category).WithMany(x => x.Products).HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureBranch(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<Branch>();
+        entity.ToTable("Branch", table =>
+        {
+            table.HasCheckConstraint("CK_Branch_Latitude", "[Latitude] >= -90 AND [Latitude] <= 90");
+            table.HasCheckConstraint("CK_Branch_Longitude", "[Longitude] >= -180 AND [Longitude] <= 180");
+            table.HasCheckConstraint("CK_Branch_ServiceRadiusKm", "[ServiceRadiusKm] IS NULL OR [ServiceRadiusKm] > 0");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Code).HasMaxLength(50).IsRequired();
+        entity.Property(x => x.Name).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.AddressLine1).HasMaxLength(300);
+        entity.Property(x => x.AddressLine2).HasMaxLength(300);
+        entity.Property(x => x.Locality).HasMaxLength(150);
+        entity.Property(x => x.City).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.State).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.PinCode).HasMaxLength(10);
+        entity.Property(x => x.Latitude).HasPrecision(9, 6).IsRequired();
+        entity.Property(x => x.Longitude).HasPrecision(9, 6).IsRequired();
+        entity.Property(x => x.ServiceRadiusKm).HasPrecision(8, 2);
+        entity.HasIndex(x => x.Code).IsUnique();
+        entity.HasIndex(x => new { x.IsActive, x.Name });
+    }
+
+    private static void ConfigureProductBranch(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<ProductBranch>();
+        entity.ToTable("ProductBranch", table =>
+            table.HasCheckConstraint("CK_ProductBranch_MaxDailyQuantity", "[MaxDailyQuantity] IS NULL OR [MaxDailyQuantity] > 0"));
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.MaxDailyQuantity).HasPrecision(18, 3);
+        entity.HasIndex(x => new { x.ProductId, x.BranchId }).IsUnique();
+        entity.HasIndex(x => new { x.BranchId, x.IsAvailable });
+        entity.HasOne(x => x.Product).WithMany(x => x.ProductBranches).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Branch).WithMany(x => x.ProductBranches).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureSystemConfiguration(ModelBuilder modelBuilder)
