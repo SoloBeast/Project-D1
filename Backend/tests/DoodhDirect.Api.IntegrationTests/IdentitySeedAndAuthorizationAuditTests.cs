@@ -3,6 +3,7 @@ using System.Text.Json;
 using DoodhDirect.Api.Authorization;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Domain.Customer;
 using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -13,6 +14,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 
 namespace DoodhDirect.Api.IntegrationTests;
 
@@ -48,6 +50,38 @@ public sealed class IdentitySeedServiceTests
             AuthorizationCodes.Permissions.Keys.OrderBy(code => code),
             ownerPermissionCodes.OrderBy(code => code));
         Assert.Contains(AuthorizationCodes.GlobalAccess, ownerPermissionCodes);
+    }
+
+    [Fact]
+    public async Task DevelopmentCustomerSeedAsync_IsIdempotent_AndCreatesCheckoutReadyCustomer()
+    {
+        await using var provider = CreateProvider();
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<DoodhDirectDbContext>();
+        var passwordHasher = new Pbkdf2PasswordHasher(Options.Create(new IdentityOptions()));
+        var identitySeed = new IdentitySeedService(db);
+        var developmentSeed = new DevelopmentCustomerSeedService(db, passwordHasher);
+
+        await identitySeed.SeedAsync(CancellationToken.None);
+        await developmentSeed.SeedAsync(CancellationToken.None);
+        await developmentSeed.SeedAsync(CancellationToken.None);
+
+        var user = await db.Users
+            .Include(item => item.UserRoles).ThenInclude(item => item.Role)
+            .SingleAsync(item => item.Email == DevelopmentCustomerSeedService.Email);
+        var address = await db.CustomerAddresses
+            .SingleAsync(item => item.UserId == user.Id);
+
+        Assert.Equal("Development Customer", user.DisplayName);
+        Assert.Contains(user.UserRoles, item => item.Role.Code == AuthorizationCodes.Customer);
+        Assert.True(passwordHasher.Verify(
+            user.PasswordHash!,
+            DevelopmentCustomerSeedService.Password));
+        Assert.Single(await db.CustomerProfiles.Where(item => item.UserId == user.Id).ToListAsync());
+        Assert.True(address.IsActive);
+        Assert.True(address.IsDefault);
+        Assert.Equal(12.9716m, address.Latitude);
+        Assert.Equal(77.5946m, address.Longitude);
     }
 
     private static ServiceProvider CreateProvider()

@@ -17,7 +17,11 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.SessionsManageOwn,
                 AuthorizationCodes.OrdersCreateOwn,
                 AuthorizationCodes.OrdersReadOwn,
-                AuthorizationCodes.OrdersCancelOwn
+                AuthorizationCodes.OrdersCancelOwn,
+                AuthorizationCodes.PaymentsCreateOwn,
+                AuthorizationCodes.PaymentsReadOwn,
+                AuthorizationCodes.WalletReadOwn,
+                AuthorizationCodes.WalletTopUpOwn
             ],
             [AuthorizationCodes.DeliveryStaff] =
             [
@@ -55,7 +59,12 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
             [
                 AuthorizationCodes.ProfileReadOwn,
                 AuthorizationCodes.ProfileUpdateOwn,
-                AuthorizationCodes.SessionsManageOwn
+                AuthorizationCodes.SessionsManageOwn,
+                AuthorizationCodes.UsersRead,
+                AuthorizationCodes.CustomerProfilesRead,
+                AuthorizationCodes.OrdersRead,
+                AuthorizationCodes.PaymentsRefund,
+                AuthorizationCodes.WalletAdjust
             ],
             [AuthorizationCodes.SystemAdmin] =
             [
@@ -70,7 +79,9 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.CustomerProfilesManage,
                 AuthorizationCodes.CatalogueRead,
                 AuthorizationCodes.CatalogueManage,
-                AuthorizationCodes.OrdersRead
+                AuthorizationCodes.OrdersRead,
+                AuthorizationCodes.PaymentsRefund,
+                AuthorizationCodes.WalletAdjust
             ],
             [AuthorizationCodes.Owner] = AuthorizationCodes.Permissions.Keys.ToArray()
         };

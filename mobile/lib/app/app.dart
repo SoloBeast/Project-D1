@@ -8,6 +8,8 @@ import 'package:doodh_direct_mobile/features/customer/customer_screens.dart';
 import 'package:doodh_direct_mobile/features/home/role_home_screen.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/orders/order_screens.dart';
+import 'package:doodh_direct_mobile/features/payments/payment_screens.dart';
+import 'package:doodh_direct_mobile/features/wallet/wallet_screens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -88,9 +90,18 @@ final routerProvider = Provider<GoRouter>((ref) {
             OrderDetailScreen(orderId: state.pathParameters['orderId']!),
       ),
       GoRoute(
-        path: '/orders/:orderId/confirmation',
+        path: '/orders/:orderId/payment',
         builder: (context, state) =>
-            OrderConfirmationScreen(order: state.extra! as OrderSummary),
+            PaymentMethodScreen(order: state.extra! as OrderSummary),
+      ),
+      GoRoute(
+        path: '/payments/:paymentId/result',
+        builder: (context, state) =>
+            PaymentResultScreen(paymentId: state.pathParameters['paymentId']!),
+      ),
+      GoRoute(
+        path: '/wallet',
+        builder: (context, state) => const WalletScreen(),
       ),
       GoRoute(
         path: '/catalogue/products/:productId',

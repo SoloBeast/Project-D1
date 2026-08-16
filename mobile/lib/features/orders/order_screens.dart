@@ -166,7 +166,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                                   .create(preview.addressId);
                               if (context.mounted && order != null) {
                                 context.go(
-                                  '/orders/${order.publicId}/confirmation',
+                                  '/orders/${order.publicId}/payment',
                                   extra: order,
                                 );
                               }
@@ -261,34 +261,6 @@ class _AmountRow extends StatelessWidget {
               : null,
         ),
       ],
-    ),
-  );
-}
-
-class OrderConfirmationScreen extends StatelessWidget {
-  const OrderConfirmationScreen({super.key, required this.order});
-  final OrderSummary order;
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Order confirmed')),
-    body: StatePanel(
-      icon: Icons.check_circle_outline,
-      title: 'Order placed',
-      message:
-          'Order ${order.orderNumber} is confirmed for ₹${order.payableAmount.toStringAsFixed(2)}.',
-      action: Column(
-        children: [
-          FilledButton(
-            onPressed: () => context.go('/orders/${order.publicId}'),
-            child: const Text('View order'),
-          ),
-          TextButton(
-            onPressed: () => context.go('/orders'),
-            child: const Text('View order history'),
-          ),
-        ],
-      ),
     ),
   );
 }
@@ -467,6 +439,17 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.error,
                     ),
+                  ),
+                ],
+                if (order.status == 'PendingPayment') ...[
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: () => context.push(
+                      '/orders/${order.publicId}/payment',
+                      extra: order,
+                    ),
+                    icon: const Icon(Icons.payments_outlined),
+                    label: Text('Pay ${order.formattedTotal}'),
                   ),
                 ],
                 if (order.canCancel) ...[

@@ -75,6 +75,15 @@ class _CustomerHomeActions extends StatelessWidget {
           onTap: () => context.push('/customer/account'),
         ),
       ),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.account_balance_wallet_outlined),
+          title: const Text('Wallet'),
+          subtitle: const Text('View your balance and wallet transactions'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/wallet'),
+        ),
+      ),
       const SizedBox(height: 20),
       Card(
         child: ListTile(

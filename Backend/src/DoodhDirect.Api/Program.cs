@@ -64,7 +64,7 @@ builder.Services.AddOpenApi(options =>
     {
         document.Info.Title = "DoodhDirect API";
         document.Info.Version = "v1";
-        document.Info.Description = "Identity/RBAC, customer profile/address, product catalogue, and Phase 4 one-time ordering API.";
+        document.Info.Description = "Identity/RBAC, customer, catalogue, one-time ordering, payments, refunds, webhooks, and wallet API.";
         document.Components ??= new OpenApiComponents();
         document.Components.SecuritySchemes ??=
             new Dictionary<string, IOpenApiSecurityScheme>(StringComparer.Ordinal);
@@ -126,6 +126,12 @@ await using (var scope = app.Services.CreateAsyncScope())
     await scope.ServiceProvider
         .GetRequiredService<IdentitySeedService>()
         .SeedAsync(cancellationToken);
+    if (app.Environment.IsDevelopment())
+    {
+        await scope.ServiceProvider
+            .GetRequiredService<DevelopmentCustomerSeedService>()
+            .SeedAsync(cancellationToken);
+    }
     await scope.ServiceProvider
         .GetRequiredService<CatalogueSeedService>()
         .SeedAsync(cancellationToken);

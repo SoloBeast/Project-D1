@@ -3,6 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+const _developmentToolsEnabled = bool.fromEnvironment(
+  'DOOHDIRECT_ENABLE_DEV_TOOLS',
+);
+const _developmentCustomerEmail = 'customer@doodhdirect.local';
+const _developmentCustomerPassword = 'DoodhDirect@123';
+
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
@@ -130,6 +136,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           : const Icon(Icons.login),
                       label: const Text('Sign in'),
                     ),
+                    if (_developmentToolsEnabled) ...[
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: busy ? null : _signInAsDevelopmentCustomer,
+                        icon: const Icon(Icons.science_outlined),
+                        label: const Text('Sign in as development customer'),
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
                       onPressed: busy ? null : () => context.go('/otp'),
@@ -155,5 +169,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     await ref
         .read(sessionControllerProvider.notifier)
         .login(_loginController.text, _passwordController.text);
+  }
+
+  Future<void> _signInAsDevelopmentCustomer() async {
+    _loginController.text = _developmentCustomerEmail;
+    _passwordController.text = _developmentCustomerPassword;
+    await ref
+        .read(sessionControllerProvider.notifier)
+        .login(_developmentCustomerEmail, _developmentCustomerPassword);
   }
 }

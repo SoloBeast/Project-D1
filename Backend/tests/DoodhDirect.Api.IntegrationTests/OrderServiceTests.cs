@@ -78,7 +78,7 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
-    public async Task CreateAsync_PersistsConfirmedOrderAndHistoricalSnapshots()
+    public async Task CreateAsync_PersistsPendingPaymentOrderAndHistoricalSnapshots()
     {
         await using var harness = await OrderHarness.CreateAsync();
         var request = harness.Request(harness.Address.PublicId, harness.Product.PublicId, 1.25m);
@@ -87,7 +87,7 @@ public sealed class OrderServiceTests
             harness.Customer.Id, request, " checkout-key ", CancellationToken.None);
 
         Assert.Equal(harness.NearBranch.PublicId, result.BranchId);
-        Assert.Equal(OrderStatus.Confirmed, result.Status);
+        Assert.Equal(OrderStatus.PendingPayment, result.Status);
         Assert.Equal(100m, result.Subtotal);
         Assert.Equal("Home", result.AddressLabel);
         Assert.Equal("Fresh Milk", Assert.Single(result.Items).ProductName);
@@ -108,6 +108,10 @@ public sealed class OrderServiceTests
         var request = harness.Request(harness.Address.PublicId, harness.Product.PublicId, 1m);
         var order = await harness.Service.CreateAsync(
             harness.Customer.Id, request, "ownership-key", CancellationToken.None);
+
+        var storedOrder = await harness.Db.Orders.SingleAsync(x => x.PublicId == order.PublicId);
+        storedOrder.ConfirmPayment();
+        await harness.Db.SaveChangesAsync();
 
         Assert.Single(await harness.Service.GetForCustomerAsync(harness.Customer.Id, CancellationToken.None));
         Assert.Empty(await harness.Service.GetForCustomerAsync(harness.OtherCustomer.Id, CancellationToken.None));

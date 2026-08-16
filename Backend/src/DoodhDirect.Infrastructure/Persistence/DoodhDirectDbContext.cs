@@ -4,6 +4,8 @@ using DoodhDirect.Domain.Configuration;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
+using DoodhDirect.Domain.Payments;
+using DoodhDirect.Domain.Wallets;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 
@@ -29,6 +31,11 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     public DbSet<ProductBranch> ProductBranches => Set<ProductBranch>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<PaymentWebhook> PaymentWebhooks => Set<PaymentWebhook>();
+    public DbSet<Refund> Refunds => Set<Refund>();
+    public DbSet<Wallet> Wallets => Set<Wallet>();
+    public DbSet<WalletTransaction> WalletTransactions => Set<WalletTransaction>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -51,6 +58,11 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigureProductBranch(modelBuilder);
         ConfigureOrder(modelBuilder);
         ConfigureOrderItem(modelBuilder);
+        ConfigurePayment(modelBuilder);
+        ConfigurePaymentWebhook(modelBuilder);
+        ConfigureRefund(modelBuilder);
+        ConfigureWallet(modelBuilder);
+        ConfigureWalletTransaction(modelBuilder);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -403,6 +415,117 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasIndex(x => new { x.OrderId, x.ProductId }).IsUnique();
         entity.HasOne(x => x.Order).WithMany(x => x.Items).HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Cascade);
         entity.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigurePayment(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<Payment>();
+        entity.ToTable("Payment", table =>
+        {
+            table.HasCheckConstraint("CK_Payment_Amount", "[Amount] > 0");
+            table.HasCheckConstraint("CK_Payment_RefundedAmount", "[RefundedAmount] >= 0 AND [RefundedAmount] <= [Amount]");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Method).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Amount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.RefundedAmount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+        entity.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.GatewayOrderId).HasMaxLength(100);
+        entity.Property(x => x.GatewayPaymentId).HasMaxLength(100);
+        entity.Property(x => x.GatewayStatus).HasMaxLength(50);
+        entity.Property(x => x.FailureCode).HasMaxLength(100);
+        entity.Property(x => x.FailureMessage).HasMaxLength(500);
+        entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
+        entity.HasIndex(x => x.OrderId);
+        entity.HasIndex(x => x.GatewayOrderId).IsUnique().HasFilter("[GatewayOrderId] IS NOT NULL");
+        entity.HasIndex(x => x.GatewayPaymentId).IsUnique().HasFilter("[GatewayPaymentId] IS NOT NULL");
+        entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigurePaymentWebhook(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<PaymentWebhook>();
+        entity.ToTable("PaymentWebhook");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Provider).HasMaxLength(30).IsRequired();
+        entity.Property(x => x.EventId).HasMaxLength(150).IsRequired();
+        entity.Property(x => x.EventType).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.PayloadHash).HasMaxLength(64).IsRequired();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.ErrorCode).HasMaxLength(100);
+        entity.Property(x => x.ErrorMessage).HasMaxLength(1000);
+        entity.HasIndex(x => new { x.Provider, x.EventId }).IsUnique();
+        entity.HasIndex(x => new { x.Status, x.ReceivedAtUtc });
+    }
+
+    private static void ConfigureRefund(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<Refund>();
+        entity.ToTable("Refund", table =>
+            table.HasCheckConstraint("CK_Refund_Amount", "[Amount] > 0"));
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Amount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+        entity.Property(x => x.Reason).HasMaxLength(500).IsRequired();
+        entity.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.GatewayRefundId).HasMaxLength(100);
+        entity.Property(x => x.FailureCode).HasMaxLength(100);
+        entity.Property(x => x.FailureMessage).HasMaxLength(500);
+        entity.HasIndex(x => new { x.PaymentId, x.IdempotencyKey }).IsUnique();
+        entity.HasIndex(x => x.GatewayRefundId).IsUnique().HasFilter("[GatewayRefundId] IS NOT NULL");
+        entity.HasOne(x => x.Payment).WithMany(x => x.Refunds).HasForeignKey(x => x.PaymentId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.RequestedByUser).WithMany().HasForeignKey(x => x.RequestedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureWallet(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<Wallet>();
+        entity.ToTable("Wallet", table =>
+            table.HasCheckConstraint("CK_Wallet_Balance", "[Balance] >= 0"));
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Balance).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+        entity.Property(x => x.RowVersion).IsRowVersion();
+        entity.HasIndex(x => x.CustomerId).IsUnique();
+        entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureWalletTransaction(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<WalletTransaction>();
+        entity.ToTable("WalletTransaction", table =>
+        {
+            table.HasCheckConstraint("CK_WalletTransaction_Amount", "[Amount] <> 0");
+            table.HasCheckConstraint("CK_WalletTransaction_Balances", "[BalanceBefore] >= 0 AND [BalanceAfter] >= 0 AND [BalanceAfter] = [BalanceBefore] + [Amount]");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.BalanceBefore).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.Amount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.BalanceAfter).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+        entity.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.Description).HasMaxLength(500).IsRequired();
+        entity.HasIndex(x => new { x.WalletId, x.IdempotencyKey }).IsUnique();
+        entity.HasIndex(x => new { x.WalletId, x.OccurredAtUtc });
+        entity.HasOne(x => x.Wallet).WithMany(x => x.Transactions).HasForeignKey(x => x.WalletId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Payment).WithMany().HasForeignKey(x => x.PaymentId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.PerformedByUser).WithMany().HasForeignKey(x => x.PerformedByUserId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureSystemConfiguration(ModelBuilder modelBuilder)

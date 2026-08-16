@@ -89,6 +89,12 @@ public static class AuthorizationCodes
     public const string OrdersReadOwn = "ORDERS.READ_OWN";
     public const string OrdersCancelOwn = "ORDERS.CANCEL_OWN";
     public const string OrdersRead = "ORDERS.READ";
+    public const string PaymentsCreateOwn = "PAYMENTS.CREATE_OWN";
+    public const string PaymentsReadOwn = "PAYMENTS.READ_OWN";
+    public const string PaymentsRefund = "PAYMENTS.REFUND";
+    public const string WalletReadOwn = "WALLET.READ_OWN";
+    public const string WalletTopUpOwn = "WALLET.TOPUP_OWN";
+    public const string WalletAdjust = "WALLET.ADJUST";
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -123,6 +129,12 @@ public static class AuthorizationCodes
         [OrdersCreateOwn] = "Preview checkout and create own orders",
         [OrdersReadOwn] = "Read own orders",
         [OrdersCancelOwn] = "Cancel own eligible orders",
-        [OrdersRead] = "Read customer orders for administration"
+        [OrdersRead] = "Read customer orders for administration",
+        [PaymentsCreateOwn] = "Create and verify own payments",
+        [PaymentsReadOwn] = "Read own payments",
+        [PaymentsRefund] = "Refund successful payments",
+        [WalletReadOwn] = "Read own wallet and ledger",
+        [WalletTopUpOwn] = "Top up own wallet through an approved development flow",
+        [WalletAdjust] = "Adjust customer wallets"
     };
 }

@@ -63,7 +63,7 @@ public sealed class Order : AuditableEntity
         IdempotencyKey = Required(idempotencyKey, nameof(idempotencyKey));
         OrderNumber = Required(orderNumber, nameof(orderNumber));
         Type = OrderType.OneTime;
-        Status = OrderStatus.Confirmed;
+        Status = OrderStatus.PendingPayment;
         Subtotal = subtotal;
         DiscountAmount = discountAmount;
         PayableAmount = subtotal - discountAmount;
@@ -120,6 +120,38 @@ public sealed class Order : AuditableEntity
     {
         ArgumentNullException.ThrowIfNull(item);
         Items.Add(item);
+    }
+
+    public void ConfirmPayment()
+    {
+        if (Status == OrderStatus.Confirmed)
+        {
+            return;
+        }
+
+        if (Status != OrderStatus.PendingPayment)
+        {
+            throw new InvalidOperationException(
+                $"An order in status '{Status}' cannot be confirmed by payment.");
+        }
+
+        Status = OrderStatus.Confirmed;
+    }
+
+    public void FailPayment()
+    {
+        if (Status == OrderStatus.PaymentFailed)
+        {
+            return;
+        }
+
+        if (Status != OrderStatus.PendingPayment)
+        {
+            throw new InvalidOperationException(
+                $"An order in status '{Status}' cannot be marked as payment failed.");
+        }
+
+        Status = OrderStatus.PaymentFailed;
     }
 
     public void Cancel(DateTime utcNow)

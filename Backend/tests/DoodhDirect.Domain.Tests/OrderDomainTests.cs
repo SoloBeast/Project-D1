@@ -5,12 +5,12 @@ namespace DoodhDirect.Domain.Tests;
 public sealed class OrderDomainTests
 {
     [Fact]
-    public void Constructor_CreatesConfirmedOneTimeOrderWithHistoricalSnapshots()
+    public void Constructor_CreatesPendingPaymentOneTimeOrderWithHistoricalSnapshots()
     {
         var order = CreateOrder(subtotal: 200m, discountAmount: 25m);
 
         Assert.Equal(OrderType.OneTime, order.Type);
-        Assert.Equal(OrderStatus.Confirmed, order.Status);
+        Assert.Equal(OrderStatus.PendingPayment, order.Status);
         Assert.Equal(200m, order.Subtotal);
         Assert.Equal(25m, order.DiscountAmount);
         Assert.Equal(175m, order.PayableAmount);
@@ -51,6 +51,7 @@ public sealed class OrderDomainTests
     public void Cancel_TransitionsConfirmedOrderAndRecordsUtcTimestamp()
     {
         var order = CreateOrder();
+        order.ConfirmPayment();
         var cancelledAt = new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Utc);
 
         order.Cancel(cancelledAt);
@@ -63,6 +64,7 @@ public sealed class OrderDomainTests
     public void Cancel_RejectsRepeatedCancellation()
     {
         var order = CreateOrder();
+        order.ConfirmPayment();
         order.Cancel(new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Utc));
 
         Assert.Throws<InvalidOperationException>(() =>
@@ -73,6 +75,7 @@ public sealed class OrderDomainTests
     public void Cancel_RejectsNonUtcTimestamp()
     {
         var order = CreateOrder();
+        order.ConfirmPayment();
 
         Assert.Throws<ArgumentException>(() =>
             order.Cancel(new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Local)));
