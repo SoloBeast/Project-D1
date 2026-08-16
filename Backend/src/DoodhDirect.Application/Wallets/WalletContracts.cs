@@ -19,7 +19,8 @@ public sealed record WalletTransactionResult(
     string Description,
     DateTime OccurredAtUtc,
     Guid? PaymentId,
-    Guid? OrderId);
+    Guid? OrderId,
+    Guid? SubscriptionId = null);
 
 public sealed record WalletTopUpRequest(
     decimal Amount,
@@ -61,6 +62,15 @@ public interface IWalletService
         string idempotencyKey,
         CancellationToken cancellationToken);
 
+    Task<WalletTransactionResult> DebitSubscriptionAsync(
+        long customerId,
+        long subscriptionId,
+        long paymentId,
+        decimal amount,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Subscription wallet debits are not supported by this implementation.");
+
     Task<WalletTransactionResult> CreditRefundAsync(
         long customerId,
         long orderId,
@@ -68,6 +78,15 @@ public interface IWalletService
         decimal amount,
         string idempotencyKey,
         CancellationToken cancellationToken);
+
+    Task<WalletTransactionResult> CreditSubscriptionRefundAsync(
+        long customerId,
+        long subscriptionId,
+        long paymentId,
+        decimal amount,
+        string idempotencyKey,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Subscription wallet refunds are not supported by this implementation.");
 }
 
 public static class WalletMappings
@@ -89,5 +108,6 @@ public static class WalletMappings
         transaction.Description,
         transaction.OccurredAtUtc,
         transaction.Payment?.PublicId,
-        transaction.Order?.PublicId);
+        transaction.Order?.PublicId,
+        transaction.Subscription?.PublicId);
 }

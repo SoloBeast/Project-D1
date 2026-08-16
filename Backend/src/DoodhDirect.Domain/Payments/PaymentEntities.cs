@@ -1,6 +1,7 @@
 using DoodhDirect.Domain.Common;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
+using DoodhDirect.Domain.Subscriptions;
 
 namespace DoodhDirect.Domain.Payments;
 
@@ -51,13 +52,30 @@ public sealed class Payment : AuditableEntity
         string currency,
         string idempotencyKey,
         DateTime expiresAtUtc)
+        : this(orderId, null, customerId, method, amount, currency, idempotencyKey, expiresAtUtc)
     {
-        if (orderId <= 0) throw new ArgumentOutOfRangeException(nameof(orderId));
+    }
+
+    private Payment(
+        long? orderId,
+        long? subscriptionId,
+        long customerId,
+        PaymentMethod method,
+        decimal amount,
+        string currency,
+        string idempotencyKey,
+        DateTime expiresAtUtc)
+    {
+        if ((orderId is > 0) == (subscriptionId is > 0))
+        {
+            throw new ArgumentException("A payment must reference exactly one order or subscription.");
+        }
         if (customerId <= 0) throw new ArgumentOutOfRangeException(nameof(customerId));
         if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(amount));
         EnsureUtc(expiresAtUtc, nameof(expiresAtUtc));
 
         OrderId = orderId;
+        SubscriptionId = subscriptionId;
         CustomerId = customerId;
         Method = method;
         Amount = decimal.Round(amount, 2, MidpointRounding.AwayFromZero);
@@ -67,7 +85,18 @@ public sealed class Payment : AuditableEntity
         ExpiresAtUtc = expiresAtUtc;
     }
 
-    public long OrderId { get; private set; }
+    public static Payment CreateForSubscription(
+        long subscriptionId,
+        long customerId,
+        PaymentMethod method,
+        decimal amount,
+        string currency,
+        string idempotencyKey,
+        DateTime expiresAtUtc) =>
+        new(null, subscriptionId, customerId, method, amount, currency, idempotencyKey, expiresAtUtc);
+
+    public long? OrderId { get; private set; }
+    public long? SubscriptionId { get; private set; }
     public long CustomerId { get; private set; }
     public PaymentMethod Method { get; private set; }
     public PaymentStatus Status { get; private set; }
@@ -84,7 +113,8 @@ public sealed class Payment : AuditableEntity
     public DateTime? VerifiedAtUtc { get; private set; }
     public DateTime? FailedAtUtc { get; private set; }
 
-    public Order Order { get; private set; } = null!;
+    public Order? Order { get; private set; }
+    public Subscription? Subscription { get; private set; }
     public User Customer { get; private set; } = null!;
     public ICollection<Refund> Refunds { get; private set; } = [];
 

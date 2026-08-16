@@ -2,6 +2,7 @@ using DoodhDirect.Domain.Common;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Payments;
+using DoodhDirect.Domain.Subscriptions;
 
 namespace DoodhDirect.Domain.Wallets;
 
@@ -11,7 +12,8 @@ public enum WalletTransactionType
     OrderDebit,
     RefundCredit,
     PromotionalCredit,
-    AdminAdjustment
+    AdminAdjustment,
+    SubscriptionDebit
 }
 
 public sealed class WalletBalanceInsufficientException(
@@ -53,11 +55,12 @@ public sealed class Wallet : AuditableEntity
         DateTime occurredAtUtc,
         long? paymentId = null,
         long? orderId = null,
-        long? performedByUserId = null)
+        long? performedByUserId = null,
+        long? subscriptionId = null)
     {
-        if (type is WalletTransactionType.OrderDebit)
+        if (type is WalletTransactionType.OrderDebit or WalletTransactionType.SubscriptionDebit)
         {
-            throw new ArgumentException("Order debit is not a credit transaction type.", nameof(type));
+            throw new ArgumentException("A debit transaction type cannot be credited.", nameof(type));
         }
 
         var roundedAmount = NormalizePositiveAmount(amount);
@@ -69,7 +72,8 @@ public sealed class Wallet : AuditableEntity
             occurredAtUtc,
             paymentId,
             orderId,
-            performedByUserId);
+            performedByUserId,
+            subscriptionId);
     }
 
     public WalletTransaction Adjust(
@@ -95,7 +99,8 @@ public sealed class Wallet : AuditableEntity
             occurredAtUtc,
             null,
             null,
-            performedByUserId);
+            performedByUserId,
+            null);
     }
 
     public WalletTransaction DebitOrder(
@@ -117,7 +122,31 @@ public sealed class Wallet : AuditableEntity
             occurredAtUtc,
             paymentId,
             orderId,
+            null,
             null);
+    }
+
+    public WalletTransaction DebitSubscription(
+        decimal amount,
+        long subscriptionId,
+        long paymentId,
+        string idempotencyKey,
+        string description,
+        DateTime occurredAtUtc)
+    {
+        if (subscriptionId <= 0) throw new ArgumentOutOfRangeException(nameof(subscriptionId));
+        if (paymentId <= 0) throw new ArgumentOutOfRangeException(nameof(paymentId));
+
+        return Apply(
+            WalletTransactionType.SubscriptionDebit,
+            -NormalizePositiveAmount(amount),
+            idempotencyKey,
+            description,
+            occurredAtUtc,
+            paymentId,
+            null,
+            null,
+            subscriptionId);
     }
 
     private WalletTransaction Apply(
@@ -128,7 +157,8 @@ public sealed class Wallet : AuditableEntity
         DateTime occurredAtUtc,
         long? paymentId,
         long? orderId,
-        long? performedByUserId)
+        long? performedByUserId,
+        long? subscriptionId)
     {
         if (occurredAtUtc.Kind != DateTimeKind.Utc)
         {
@@ -162,7 +192,8 @@ public sealed class Wallet : AuditableEntity
             occurredAtUtc,
             paymentId,
             orderId,
-            performedByUserId);
+            performedByUserId,
+            subscriptionId);
 
         Balance = balanceAfter;
         Transactions.Add(transaction);
@@ -202,7 +233,8 @@ public sealed class WalletTransaction : PublicEntity
         DateTime occurredAtUtc,
         long? paymentId,
         long? orderId,
-        long? performedByUserId)
+        long? performedByUserId,
+        long? subscriptionId)
     {
         if (walletId < 0) throw new ArgumentOutOfRangeException(nameof(walletId));
         if (amount == 0) throw new ArgumentOutOfRangeException(nameof(amount));
@@ -230,6 +262,7 @@ public sealed class WalletTransaction : PublicEntity
         OccurredAtUtc = occurredAtUtc;
         PaymentId = paymentId;
         OrderId = orderId;
+        SubscriptionId = subscriptionId;
         PerformedByUserId = performedByUserId;
     }
 
@@ -244,11 +277,13 @@ public sealed class WalletTransaction : PublicEntity
     public DateTime OccurredAtUtc { get; private set; }
     public long? PaymentId { get; private set; }
     public long? OrderId { get; private set; }
+    public long? SubscriptionId { get; private set; }
     public long? PerformedByUserId { get; private set; }
 
     public Wallet Wallet { get; private set; } = null!;
     public Payment? Payment { get; private set; }
     public Order? Order { get; private set; }
+    public Subscription? Subscription { get; private set; }
     public User? PerformedByUser { get; private set; }
 
     private static string Required(string value, string parameterName) =>

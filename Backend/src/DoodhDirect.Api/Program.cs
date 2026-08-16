@@ -89,7 +89,7 @@ builder.Services.AddOpenApi(options =>
     {
         document.Info.Title = "DoodhDirect API";
         document.Info.Version = "v1";
-        document.Info.Description = "Identity/RBAC, customer, catalogue, one-time ordering, payments, refunds, webhooks, and wallet API.";
+        document.Info.Description = "Identity/RBAC, customer, catalogue, one-time ordering, prepaid subscriptions, payments, refunds, webhooks, and wallet API.";
         document.Components ??= new OpenApiComponents();
         document.Components.SecuritySchemes ??=
             new Dictionary<string, IOpenApiSecurityScheme>(StringComparer.Ordinal);

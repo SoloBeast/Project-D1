@@ -6,6 +6,7 @@ using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.Wallets;
+using DoodhDirect.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 
@@ -36,9 +37,13 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     public DbSet<Refund> Refunds => Set<Refund>();
     public DbSet<Wallet> Wallets => Set<Wallet>();
     public DbSet<WalletTransaction> WalletTransactions => Set<WalletTransaction>();
+    public DbSet<Subscription> Subscriptions => Set<Subscription>();
+    public DbSet<SubscriptionSchedule> SubscriptionSchedules => Set<SubscriptionSchedule>();
+    public DbSet<SubscriptionDelivery> SubscriptionDeliveries => Set<SubscriptionDelivery>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        var usesSqlite = Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite";
         modelBuilder.HasDefaultSchema("dbo");
         ConfigureUser(modelBuilder);
         ConfigureRole(modelBuilder);
@@ -54,17 +59,18 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigureCustomerAddress(modelBuilder);
         ConfigureProductCategory(modelBuilder);
         ConfigureProduct(modelBuilder);
-        ConfigureBranch(modelBuilder);
+        ConfigureBranch(modelBuilder, usesSqlite);
         ConfigureProductBranch(modelBuilder);
         ConfigureOrder(modelBuilder);
         ConfigureOrderItem(modelBuilder);
         ConfigurePayment(modelBuilder);
         ConfigurePaymentWebhook(modelBuilder);
         ConfigureRefund(modelBuilder);
-        ConfigureWallet(
-            modelBuilder,
-            Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite");
+        ConfigureWallet(modelBuilder, usesSqlite);
         ConfigureWalletTransaction(modelBuilder);
+        ConfigureSubscription(modelBuilder);
+        ConfigureSubscriptionSchedule(modelBuilder);
+        ConfigureSubscriptionDelivery(modelBuilder);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -311,14 +317,17 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasOne(x => x.Category).WithMany(x => x.Products).HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Restrict);
     }
 
-    private static void ConfigureBranch(ModelBuilder modelBuilder)
+    private static void ConfigureBranch(ModelBuilder modelBuilder, bool usesSqlite)
     {
         var entity = modelBuilder.Entity<Branch>();
         entity.ToTable("Branch", table =>
         {
-            table.HasCheckConstraint("CK_Branch_Latitude", "[Latitude] >= -90 AND [Latitude] <= 90");
-            table.HasCheckConstraint("CK_Branch_Longitude", "[Longitude] >= -180 AND [Longitude] <= 180");
-            table.HasCheckConstraint("CK_Branch_ServiceRadiusKm", "[ServiceRadiusKm] IS NULL OR [ServiceRadiusKm] > 0");
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_Branch_Latitude", "[Latitude] >= -90 AND [Latitude] <= 90");
+                table.HasCheckConstraint("CK_Branch_Longitude", "[Longitude] >= -180 AND [Longitude] <= 180");
+                table.HasCheckConstraint("CK_Branch_ServiceRadiusKm", "[ServiceRadiusKm] IS NULL OR [ServiceRadiusKm] > 0");
+            }
         });
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).UseIdentityColumn();
@@ -426,6 +435,10 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         {
             table.HasCheckConstraint("CK_Payment_Amount", "[Amount] > 0");
             table.HasCheckConstraint("CK_Payment_RefundedAmount", "[RefundedAmount] >= 0 AND [RefundedAmount] <= [Amount]");
+            table.HasCheckConstraint(
+                "CK_Payment_Target",
+                "([OrderId] IS NOT NULL AND [SubscriptionId] IS NULL) OR " +
+                "([OrderId] IS NULL AND [SubscriptionId] IS NOT NULL)");
         });
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).UseIdentityColumn();
@@ -442,10 +455,12 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.FailureCode).HasMaxLength(100);
         entity.Property(x => x.FailureMessage).HasMaxLength(500);
         entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
-        entity.HasIndex(x => x.OrderId);
+        entity.HasIndex(x => x.OrderId).HasFilter("[OrderId] IS NOT NULL");
+        entity.HasIndex(x => x.SubscriptionId).HasFilter("[SubscriptionId] IS NOT NULL");
         entity.HasIndex(x => x.GatewayOrderId).IsUnique().HasFilter("[GatewayOrderId] IS NOT NULL");
         entity.HasIndex(x => x.GatewayPaymentId).IsUnique().HasFilter("[GatewayPaymentId] IS NOT NULL");
         entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Subscription).WithMany().HasForeignKey(x => x.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
     }
 
@@ -534,10 +549,79 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.Description).HasMaxLength(500).IsRequired();
         entity.HasIndex(x => new { x.WalletId, x.IdempotencyKey }).IsUnique();
         entity.HasIndex(x => new { x.WalletId, x.OccurredAtUtc });
+        entity.HasIndex(x => x.SubscriptionId).HasFilter("[SubscriptionId] IS NOT NULL");
         entity.HasOne(x => x.Wallet).WithMany(x => x.Transactions).HasForeignKey(x => x.WalletId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Payment).WithMany().HasForeignKey(x => x.PaymentId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Subscription).WithMany().HasForeignKey(x => x.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.PerformedByUser).WithMany().HasForeignKey(x => x.PerformedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureSubscription(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<Subscription>();
+        entity.ToTable("Subscription", table =>
+        {
+            table.HasCheckConstraint("CK_Subscription_Dates", "[EndDate] >= [StartDate]");
+            table.HasCheckConstraint("CK_Subscription_Quantity", "[Quantity] > 0");
+            table.HasCheckConstraint("CK_Subscription_Entitlement", "[TotalEntitlement] > 0 AND [UsedEntitlement] >= 0 AND [UsedEntitlement] <= [TotalEntitlement]");
+            table.HasCheckConstraint("CK_Subscription_PayableAmount", "[PayableAmount] > 0");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
+        entity.Ignore(x => x.RemainingEntitlement);
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.StartDate).HasColumnType("date").IsRequired();
+        entity.Property(x => x.EndDate).HasColumnType("date").IsRequired();
+        entity.Property(x => x.Quantity).HasPrecision(18, 3).IsRequired();
+        entity.Property(x => x.UnitPrice).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.PayableAmount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.ProductSkuSnapshot).HasMaxLength(50).IsRequired();
+        entity.Property(x => x.ProductNameSnapshot).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.UnitOfMeasureSnapshot).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.BranchCodeSnapshot).HasMaxLength(50).IsRequired();
+        entity.Property(x => x.BranchNameSnapshot).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.AddressSnapshot).HasMaxLength(2000).IsRequired();
+        entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
+        entity.HasIndex(x => new { x.CustomerId, x.Status, x.CreatedAtUtc });
+        entity.HasIndex(x => new { x.BranchId, x.Status, x.StartDate });
+        entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.CustomerAddress).WithMany().HasForeignKey(x => x.CustomerAddressId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureSubscriptionSchedule(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<SubscriptionSchedule>();
+        entity.ToTable("SubscriptionSchedule");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.DayOfWeek).HasConversion<string>().HasMaxLength(15).IsRequired();
+        entity.HasIndex(x => new { x.SubscriptionId, x.DayOfWeek }).IsUnique();
+        entity.HasOne(x => x.Subscription).WithMany(x => x.Schedules).HasForeignKey(x => x.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureSubscriptionDelivery(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<SubscriptionDelivery>();
+        entity.ToTable("SubscriptionDelivery", table =>
+            table.HasCheckConstraint("CK_SubscriptionDelivery_Quantity", "[Quantity] > 0"));
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.ScheduledDate).HasColumnType("date").IsRequired();
+        entity.Property(x => x.Quantity).HasPrecision(18, 3).IsRequired();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.BranchCodeSnapshot).HasMaxLength(50).IsRequired();
+        entity.Property(x => x.BranchNameSnapshot).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.AddressSnapshot).HasMaxLength(2000).IsRequired();
+        entity.HasIndex(x => new { x.SubscriptionId, x.ScheduledDate }).IsUnique();
+        entity.HasIndex(x => new { x.Status, x.ScheduledDate });
+        entity.HasOne(x => x.Subscription).WithMany(x => x.Deliveries).HasForeignKey(x => x.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureSystemConfiguration(ModelBuilder modelBuilder)

@@ -50,6 +50,7 @@ class PaymentDetails {
     required this.publicId,
     required this.orderId,
     required this.orderNumber,
+    required this.subscriptionId,
     required this.method,
     required this.status,
     required this.amount,
@@ -67,8 +68,9 @@ class PaymentDetails {
 
   factory PaymentDetails.fromJson(Map<String, dynamic> json) => PaymentDetails(
     publicId: json['publicId'] as String,
-    orderId: json['orderId'] as String,
-    orderNumber: json['orderNumber'] as String,
+    orderId: json['orderId'] as String?,
+    orderNumber: json['orderNumber'] as String?,
+    subscriptionId: json['subscriptionId'] as String?,
     method: _paymentMethod(json['method'] as String),
     status: PaymentStatus.fromApi(json['status'] as String),
     amount: (json['amount'] as num).toDouble(),
@@ -87,8 +89,9 @@ class PaymentDetails {
   );
 
   final String publicId;
-  final String orderId;
-  final String orderNumber;
+  final String? orderId;
+  final String? orderNumber;
+  final String? subscriptionId;
   final PaymentMethod method;
   final PaymentStatus status;
   final double amount;
@@ -103,10 +106,18 @@ class PaymentDetails {
   final DateTime? verifiedAtUtc;
   final DateTime createdAtUtc;
 
+  bool get isOrderPayment => orderId != null && subscriptionId == null;
+  bool get isSubscriptionPayment => subscriptionId != null && orderId == null;
+  bool get hasValidTarget => isOrderPayment || isSubscriptionPayment;
   bool get usesMockGateway =>
       gatewayOrderId?.startsWith('order_mock_') ?? false;
   bool get isExpiredByTime => DateTime.now().toUtc().isAfter(expiresAtUtc);
   String get formattedAmount => '₹${amount.toStringAsFixed(2)}';
+  String get targetLabel => isSubscriptionPayment
+      ? 'subscription'
+      : orderNumber == null
+      ? 'order'
+      : 'order $orderNumber';
 }
 
 PaymentMethod _paymentMethod(String value) => switch (value.toLowerCase()) {

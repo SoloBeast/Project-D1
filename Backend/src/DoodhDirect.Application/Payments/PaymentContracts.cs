@@ -21,8 +21,8 @@ public sealed record RefundPaymentRequest(
 
 public sealed record PaymentResult(
     Guid PublicId,
-    Guid OrderId,
-    string OrderNumber,
+    Guid? OrderId,
+    string? OrderNumber,
     PaymentMethod Method,
     PaymentStatus Status,
     decimal Amount,
@@ -35,7 +35,8 @@ public sealed record PaymentResult(
     string? FailureMessage,
     DateTime ExpiresAtUtc,
     DateTime? VerifiedAtUtc,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAtUtc,
+    Guid? SubscriptionId = null);
 
 public sealed record RefundResult(
     Guid PublicId,
@@ -130,6 +131,13 @@ public interface IPaymentService
         string idempotencyKey,
         CancellationToken cancellationToken);
 
+    Task<PaymentResult> CreateForSubscriptionAsync(
+        long customerId,
+        long subscriptionId,
+        PaymentMethod method,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
     Task<PaymentResult> VerifyAsync(
         long customerId,
         VerifyPaymentRequest request,
@@ -157,8 +165,8 @@ public static class PaymentMappings
 {
     public static PaymentResult ToResult(this Payment payment, string? gatewayKeyId = null) => new(
         payment.PublicId,
-        payment.Order.PublicId,
-        payment.Order.OrderNumber,
+        payment.Order?.PublicId,
+        payment.Order?.OrderNumber,
         payment.Method,
         payment.Status,
         payment.Amount,
@@ -171,7 +179,8 @@ public static class PaymentMappings
         payment.FailureMessage,
         payment.ExpiresAtUtc,
         payment.VerifiedAtUtc,
-        payment.CreatedAtUtc);
+        payment.CreatedAtUtc,
+        payment.Subscription?.PublicId);
 
     public static RefundResult ToResult(this Refund refund) => new(
         refund.PublicId,

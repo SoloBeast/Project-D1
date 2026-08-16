@@ -233,6 +233,14 @@ public sealed class PaymentsWalletControllerTests
         public Task<PaymentResult> CreateAsync(long customerId, CreatePaymentRequest request, string idempotencyKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<PaymentResult> CreateForSubscriptionAsync(
+            long customerId,
+            long subscriptionId,
+            PaymentMethod method,
+            string idempotencyKey,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<PaymentResult> VerifyAsync(long customerId, VerifyPaymentRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

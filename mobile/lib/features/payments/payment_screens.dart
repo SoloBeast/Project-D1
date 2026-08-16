@@ -238,11 +238,15 @@ class _PaymentResultBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final status = payment.status;
+    final targetRoute = payment.isSubscriptionPayment
+        ? '/subscriptions/${payment.subscriptionId}'
+        : '/orders/${payment.orderId}';
+    final targetName = payment.isSubscriptionPayment ? 'subscription' : 'order';
     final (icon, title, message) = status.isSuccessful
         ? (
             Icons.check_circle_outline,
             'Payment successful',
-            '${payment.formattedAmount} was verified for order ${payment.orderNumber}.',
+            '${payment.formattedAmount} was verified for ${payment.targetLabel}.',
           )
         : status.isTerminalFailure
         ? (
@@ -251,12 +255,12 @@ class _PaymentResultBody extends ConsumerWidget {
                 ? 'Payment expired'
                 : 'Payment failed',
             payment.failureMessage ??
-                'This payment was not completed. You can retry from the order.',
+                'This payment was not completed. You can retry from the $targetName.',
           )
         : (
             Icons.hourglass_top_outlined,
             'Verification pending',
-            'The order remains unpaid until DoodhDirect verifies the payment.',
+            'The $targetName remains payment pending until DoodhDirect verifies the payment.',
           );
 
     return RefreshIndicator(
@@ -308,15 +312,19 @@ class _PaymentResultBody extends ConsumerWidget {
           if (status.isTerminalFailure) ...[
             const SizedBox(height: 20),
             FilledButton.icon(
-              onPressed: () => context.go('/orders/${payment.orderId}'),
+              onPressed: payment.hasValidTarget
+                  ? () => context.go(targetRoute)
+                  : null,
               icon: const Icon(Icons.replay),
-              label: const Text('Return to order'),
+              label: Text('Return to $targetName'),
             ),
           ],
           const SizedBox(height: 8),
           TextButton(
-            onPressed: () => context.go('/orders/${payment.orderId}'),
-            child: const Text('View order'),
+            onPressed: payment.hasValidTarget
+                ? () => context.go(targetRoute)
+                : null,
+            child: Text('View $targetName'),
           ),
         ],
       ),
@@ -335,7 +343,12 @@ class _PaymentSummary extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          _SummaryRow(label: 'Order', value: payment.orderNumber),
+          _SummaryRow(
+            label: payment.isSubscriptionPayment ? 'Subscription' : 'Order',
+            value: payment.isSubscriptionPayment
+                ? payment.subscriptionId ?? 'Unavailable'
+                : payment.orderNumber ?? 'Unavailable',
+          ),
           _SummaryRow(label: 'Method', value: payment.method.label),
           _SummaryRow(label: 'Amount', value: payment.formattedAmount),
           _SummaryRow(label: 'Status', value: payment.status.name),

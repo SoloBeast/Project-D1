@@ -59,6 +59,15 @@ class PaymentController extends Notifier<PaymentState> {
     state = state.copyWith(selectedMethod: method, clearError: true);
   }
 
+  void adopt(PaymentDetails payment) {
+    state = state.copyWith(
+      payment: payment,
+      selectedMethod: payment.method,
+      isLoading: false,
+      clearError: true,
+    );
+  }
+
   Future<bool> createForOrder(String orderId) async {
     final token = _token;
     if (token == null) return false;

@@ -10,6 +10,7 @@ import 'package:doodh_direct_mobile/features/home/role_home_screen.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/orders/order_screens.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_screens.dart';
+import 'package:doodh_direct_mobile/features/subscriptions/subscription_screens.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_screens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -110,6 +111,38 @@ final routerProvider = Provider<GoRouter>((ref) {
             orderId: orderId,
             initialOrder: initialOrder,
           );
+        },
+      ),
+      GoRoute(
+        path: '/subscriptions',
+        builder: (context, state) => const SubscriptionListScreen(),
+      ),
+      GoRoute(
+        path: '/subscriptions/new',
+        builder: (context, state) => const SubscriptionSetupScreen(),
+      ),
+      GoRoute(
+        path: '/subscriptions/:subscriptionId',
+        builder: (context, state) {
+          final subscriptionId = _requiredPathParameter(
+            state,
+            'subscriptionId',
+          );
+          return subscriptionId == null
+              ? const _RouteErrorScreen(resource: 'subscription')
+              : SubscriptionDetailScreen(subscriptionId: subscriptionId);
+        },
+      ),
+      GoRoute(
+        path: '/subscriptions/:subscriptionId/calendar',
+        builder: (context, state) {
+          final subscriptionId = _requiredPathParameter(
+            state,
+            'subscriptionId',
+          );
+          return subscriptionId == null
+              ? const _RouteErrorScreen(resource: 'subscription')
+              : SubscriptionCalendarScreen(subscriptionId: subscriptionId);
         },
       ),
       GoRoute(

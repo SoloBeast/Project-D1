@@ -105,6 +105,17 @@ class _CustomerHomeActions extends StatelessWidget {
           onTap: () => context.push('/orders'),
         ),
       ),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.event_repeat_outlined),
+          title: const Text('My subscriptions'),
+          subtitle: const Text(
+            'Manage prepaid plans and scheduled delivery days',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/subscriptions'),
+        ),
+      ),
     ],
   );
 }

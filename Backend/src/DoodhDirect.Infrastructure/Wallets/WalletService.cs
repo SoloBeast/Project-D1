@@ -48,6 +48,7 @@ public sealed class WalletService(
             .AsNoTracking()
             .Include(x => x.Payment)
             .Include(x => x.Order)
+            .Include(x => x.Subscription)
             .Where(x => x.WalletId == walletId.Value)
             .OrderByDescending(x => x.OccurredAtUtc)
             .ThenByDescending(x => x.Id)
@@ -155,6 +156,47 @@ public sealed class WalletService(
         }
     }
 
+    public async Task<WalletTransactionResult> DebitSubscriptionAsync(
+        long customerId,
+        long subscriptionId,
+        long paymentId,
+        decimal amount,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        ValidatePositiveAmount(amount, nameof(amount));
+        ValidateIdempotencyKey(idempotencyKey);
+        await EnsureSubscriptionPaymentReferenceAsync(
+            customerId,
+            subscriptionId,
+            paymentId,
+            cancellationToken);
+
+        try
+        {
+            return await MutateAsync(
+                customerId,
+                idempotencyKey,
+                wallet => wallet.DebitSubscription(
+                    amount,
+                    subscriptionId,
+                    paymentId,
+                    idempotencyKey,
+                    "Prepaid subscription payment",
+                    clock.UtcNow),
+                null,
+                cancellationToken);
+        }
+        catch (WalletBalanceInsufficientException exception)
+        {
+            throw new InsufficientWalletBalanceException(
+                exception.AvailableBalance,
+                exception.RequiredAmount,
+                exception.Shortfall,
+                exception.Currency);
+        }
+    }
+
     public async Task<WalletTransactionResult> CreditRefundAsync(
         long customerId,
         long orderId,
@@ -178,6 +220,37 @@ public sealed class WalletService(
                 clock.UtcNow,
                 paymentId,
                 orderId),
+            null,
+            cancellationToken);
+    }
+
+    public async Task<WalletTransactionResult> CreditSubscriptionRefundAsync(
+        long customerId,
+        long subscriptionId,
+        long paymentId,
+        decimal amount,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        ValidatePositiveAmount(amount, nameof(amount));
+        ValidateIdempotencyKey(idempotencyKey);
+        await EnsureSubscriptionPaymentReferenceAsync(
+            customerId,
+            subscriptionId,
+            paymentId,
+            cancellationToken);
+
+        return await MutateAsync(
+            customerId,
+            idempotencyKey,
+            wallet => wallet.Credit(
+                WalletTransactionType.RefundCredit,
+                amount,
+                idempotencyKey,
+                "Subscription payment refund credit",
+                clock.UtcNow,
+                paymentId,
+                subscriptionId: subscriptionId),
             null,
             cancellationToken);
     }
@@ -239,6 +312,7 @@ public sealed class WalletService(
             .AsNoTracking()
             .Include(x => x.Payment)
             .Include(x => x.Order)
+            .Include(x => x.Subscription)
             .SingleOrDefaultAsync(
                 x => x.PublicId == transactionId && x.Wallet.CustomerId == customerId,
                 cancellationToken))?.ToResult()
@@ -287,11 +361,30 @@ public sealed class WalletService(
             x => x.Id == paymentId &&
                 x.OrderId == orderId &&
                 x.CustomerId == customerId &&
-                x.Order.CustomerId == customerId,
+                x.Order!.CustomerId == customerId,
             cancellationToken);
         if (!validReference)
         {
             throw new NotFoundException("The payment reference was not found for this customer and order.");
+        }
+    }
+
+    private async Task EnsureSubscriptionPaymentReferenceAsync(
+        long customerId,
+        long subscriptionId,
+        long paymentId,
+        CancellationToken cancellationToken)
+    {
+        var validReference = await dbContext.Payments.AnyAsync(
+            x => x.Id == paymentId &&
+                x.SubscriptionId == subscriptionId &&
+                x.CustomerId == customerId &&
+                x.Subscription!.CustomerId == customerId,
+            cancellationToken);
+        if (!validReference)
+        {
+            throw new NotFoundException(
+                "The payment reference was not found for this customer and subscription.");
         }
     }
 

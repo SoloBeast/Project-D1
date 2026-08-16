@@ -497,17 +497,170 @@ paths:
         '201': { description: Complaint created }
         '422': { description: Complaint window/business rule failure }
   /subscriptions:
+    get:
+      summary: List the authenticated customer's subscriptions
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Ownership-scoped subscription list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
-      summary: Create prepaid subscription
+      summary: Create a prepaid finite-entitlement subscription
+      description: Creates one subscription and its single associated Wallet or Razorpay payment. Retrying the same request requires the same idempotency key.
       security:
         - bearerAuth: []
       parameters:
-        - in: header
-          name: Idempotency-Key
-          required: true
-          schema: { type: string }
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSubscriptionRequest' }
       responses:
-        '201': { description: Subscription created }
+        '201':
+          description: Subscription and its reusable payment were created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedSubscriptionResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /subscriptions/{subscriptionId}:
+    get:
+      summary: Get an owned subscription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/subscriptionId'
+      responses:
+        '200':
+          description: Subscription snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Update an owned eligible subscription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/subscriptionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateSubscriptionRequest' }
+      responses:
+        '200':
+          description: Updated subscription snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /subscriptions/{subscriptionId}/pause:
+    post:
+      summary: Pause an owned active subscription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/subscriptionId'
+      responses:
+        '200':
+          description: Paused subscription snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /subscriptions/{subscriptionId}/resume:
+    post:
+      summary: Resume an owned paused subscription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/subscriptionId'
+      responses:
+        '200':
+          description: Resumed subscription snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /subscriptions/{subscriptionId}/cancel:
+    post:
+      summary: Cancel an owned eligible subscription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/subscriptionId'
+      responses:
+        '200':
+          description: Cancelled subscription snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /subscriptions/{subscriptionId}/skip:
+    post:
+      summary: Skip one scheduled delivery for an owned subscription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/subscriptionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SkipSubscriptionDeliveryRequest' }
+      responses:
+        '200':
+          description: Skipped subscription delivery snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionDeliveryResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /subscriptions/{subscriptionId}/calendar:
+    get:
+      summary: List the delivery calendar and history for an owned subscription
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/subscriptionId'
+      responses:
+        '200':
+          description: Subscription delivery calendar and history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SubscriptionDeliveryListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /delivery/{deliveryId}/verify-otp:
     post:
       summary: Verify delivery OTP
@@ -575,7 +728,247 @@ components:
       schema:
         type: string
         format: uuid
+    subscriptionId:
+      name: subscriptionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Client-generated key used to make subscription creation idempotent.
+      schema: { type: string, minLength: 1, maxLength: 100 }
+  responses:
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Authentication is required or the access token is invalid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: The authenticated user lacks the required permission
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: The owned resource was not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: The request conflicts with existing state or an idempotency key was reused with different input
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    BusinessRuleError:
+      description: A subscription, entitlement, cutoff, availability, or payment business rule failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
   schemas:
+    ApiError:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        field: { type: string, nullable: true }
+        message: { type: string }
+    ErrorResponse:
+      type: object
+      required: [success, errors]
+      properties:
+        success: { type: boolean, enum: [false] }
+        data: { nullable: true }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          items: { $ref: '#/components/schemas/ApiError' }
+    CreateSubscriptionRequest:
+      type: object
+      required: [productId, addressId, quantity, startDate, deliveryDays, totalEntitlement, paymentMethod]
+      properties:
+        productId: { type: string, format: uuid }
+        addressId: { type: string, format: uuid }
+        quantity: { type: number, format: double, minimum: 0.001, multipleOf: 0.001 }
+        startDate: { type: string, format: date, description: Must not be in the past. }
+        deliveryDays:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/DeliveryWeekday' }
+        totalEntitlement: { type: integer, format: int32, minimum: 1, maximum: 366 }
+        paymentMethod: { $ref: '#/components/schemas/PaymentMethod' }
+    UpdateSubscriptionRequest:
+      type: object
+      properties:
+        quantity: { type: number, format: double, nullable: true, minimum: 0.001, multipleOf: 0.001 }
+        addressId: { type: string, format: uuid, nullable: true }
+        deliveryDays:
+          type: array
+          nullable: true
+          minItems: 1
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/DeliveryWeekday' }
+    SkipSubscriptionDeliveryRequest:
+      type: object
+      required: [deliveryId]
+      properties:
+        deliveryId: { type: string, format: uuid }
+    DeliveryWeekday:
+      type: string
+      enum: [Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday]
+    PaymentMethod:
+      type: string
+      enum: [Razorpay, Wallet]
+    PaymentStatus:
+      type: string
+      enum: [Initiated, Pending, Success, Failed, Expired, RefundPending, PartiallyRefunded, Refunded]
+    SubscriptionStatus:
+      type: string
+      enum: [PaymentPending, Active, Paused, Completed, Cancelled, PaymentFailed]
+    SubscriptionDeliveryStatus:
+      type: string
+      enum: [Scheduled, Skipped, Delivered, Failed, Cancelled]
+    SubscriptionSchedule:
+      type: object
+      required: [dayOfWeek]
+      properties:
+        dayOfWeek: { $ref: '#/components/schemas/DeliveryWeekday' }
+    SubscriptionDelivery:
+      type: object
+      required: [publicId, scheduledDate, quantity, status, branchId, branchCode, branchName, address]
+      properties:
+        publicId: { type: string, format: uuid }
+        scheduledDate: { type: string, format: date }
+        quantity: { type: number, format: double, minimum: 0.001, multipleOf: 0.001 }
+        status: { $ref: '#/components/schemas/SubscriptionDeliveryStatus' }
+        branchId: { type: string, format: uuid }
+        branchCode: { type: string }
+        branchName: { type: string }
+        address: { type: string }
+        statusChangedAtUtc: { type: string, format: date-time, nullable: true }
+    Subscription:
+      type: object
+      required: [publicId, status, productId, productSku, productName, unitOfMeasure, quantity, unitPrice, payableAmount, startDate, endDate, totalEntitlement, usedEntitlement, remainingEntitlement, addressId, address, branchId, branchCode, branchName, schedules, createdAtUtc]
+      properties:
+        publicId: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/SubscriptionStatus' }
+        productId: { type: string, format: uuid }
+        productSku: { type: string }
+        productName: { type: string }
+        unitOfMeasure: { type: string }
+        quantity: { type: number, format: double, minimum: 0.001, multipleOf: 0.001 }
+        unitPrice: { type: number, format: double, minimum: 0 }
+        payableAmount: { type: number, format: double, minimum: 0 }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        totalEntitlement: { type: integer, format: int32, minimum: 1, maximum: 366 }
+        usedEntitlement: { type: integer, format: int32, minimum: 0 }
+        remainingEntitlement: { type: integer, format: int32, minimum: 0 }
+        addressId: { type: string, format: uuid }
+        address: { type: string }
+        branchId: { type: string, format: uuid }
+        branchCode: { type: string }
+        branchName: { type: string }
+        schedules:
+          type: array
+          items: { $ref: '#/components/schemas/SubscriptionSchedule' }
+        activatedAtUtc: { type: string, format: date-time, nullable: true }
+        pausedAtUtc: { type: string, format: date-time, nullable: true }
+        cancelledAtUtc: { type: string, format: date-time, nullable: true }
+        completedAtUtc: { type: string, format: date-time, nullable: true }
+        createdAtUtc: { type: string, format: date-time }
+    Payment:
+      type: object
+      required: [publicId, method, status, amount, refundedAmount, currency, expiresAtUtc, createdAtUtc]
+      properties:
+        publicId: { type: string, format: uuid }
+        orderId: { type: string, format: uuid, nullable: true }
+        orderNumber: { type: string, nullable: true }
+        method: { $ref: '#/components/schemas/PaymentMethod' }
+        status: { $ref: '#/components/schemas/PaymentStatus' }
+        amount: { type: number, format: double, minimum: 0 }
+        refundedAmount: { type: number, format: double, minimum: 0 }
+        currency: { type: string, example: INR }
+        gatewayOrderId: { type: string, nullable: true }
+        gatewayPaymentId: { type: string, nullable: true }
+        gatewayKeyId: { type: string, nullable: true }
+        failureCode: { type: string, nullable: true }
+        failureMessage: { type: string, nullable: true }
+        expiresAtUtc: { type: string, format: date-time }
+        verifiedAtUtc: { type: string, format: date-time, nullable: true }
+        createdAtUtc: { type: string, format: date-time }
+        subscriptionId: { type: string, format: uuid, nullable: true }
+    CreatedSubscription:
+      type: object
+      required: [subscription, payment]
+      properties:
+        subscription: { $ref: '#/components/schemas/Subscription' }
+        payment: { $ref: '#/components/schemas/Payment' }
+    SubscriptionResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/Subscription' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    SubscriptionListResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Subscription' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    CreatedSubscriptionResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/CreatedSubscription' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    SubscriptionDeliveryResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/SubscriptionDelivery' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    SubscriptionDeliveryListResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/SubscriptionDelivery' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
     ProductCategory:
       type: object
       required: [publicId, code, name, isActive]

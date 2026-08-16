@@ -89,6 +89,9 @@ public static class AuthorizationCodes
     public const string OrdersReadOwn = "ORDERS.READ_OWN";
     public const string OrdersCancelOwn = "ORDERS.CANCEL_OWN";
     public const string OrdersRead = "ORDERS.READ";
+    public const string SubscriptionsCreateOwn = "SUBSCRIPTIONS.CREATE_OWN";
+    public const string SubscriptionsReadOwn = "SUBSCRIPTIONS.READ_OWN";
+    public const string SubscriptionsManageOwn = "SUBSCRIPTIONS.MANAGE_OWN";
     public const string PaymentsCreateOwn = "PAYMENTS.CREATE_OWN";
     public const string PaymentsReadOwn = "PAYMENTS.READ_OWN";
     public const string PaymentsRefund = "PAYMENTS.REFUND";
@@ -130,6 +133,9 @@ public static class AuthorizationCodes
         [OrdersReadOwn] = "Read own orders",
         [OrdersCancelOwn] = "Cancel own eligible orders",
         [OrdersRead] = "Read customer orders for administration",
+        [SubscriptionsCreateOwn] = "Create own prepaid subscriptions",
+        [SubscriptionsReadOwn] = "Read own subscriptions and delivery calendars",
+        [SubscriptionsManageOwn] = "Update, pause, resume, cancel, and skip own subscriptions",
         [PaymentsCreateOwn] = "Create and verify own payments",
         [PaymentsReadOwn] = "Read own payments",
         [PaymentsRefund] = "Refund successful payments",

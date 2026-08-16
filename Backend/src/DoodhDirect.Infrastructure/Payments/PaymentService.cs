@@ -8,6 +8,7 @@ using DoodhDirect.Application.Wallets;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Payments;
+using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -35,7 +36,7 @@ public sealed class PaymentService(
             cancellationToken);
         if (existing is not null)
         {
-            if (existing.Order.PublicId != request.OrderId || existing.Method != request.Method)
+            if (existing.Order?.PublicId != request.OrderId || existing.Method != request.Method)
             {
                 throw new ConflictException("The idempotency key is already associated with a different payment request.");
             }
@@ -90,7 +91,7 @@ public sealed class PaymentService(
                     $"payment:{payment.PublicId:N}",
                     cancellationToken);
                 payment.Succeed(null, "wallet_debited", clock.UtcNow);
-                order.ConfirmPayment();
+                ConfirmTarget(payment, clock.UtcNow);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
         }
@@ -112,6 +113,113 @@ public sealed class PaymentService(
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
                 payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, clock.UtcNow);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                throw new BusinessRuleException("The payment gateway could not create the payment order.");
+            }
+
+            EnsureGatewayFinancials(payment, gatewayOrder.AmountMinor, gatewayOrder.Currency);
+            payment.AttachGatewayOrder(gatewayOrder.GatewayOrderId, gatewayOrder.Status);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        await LoadPaymentNavigationsAsync(payment, cancellationToken);
+        return payment.ToResult(payment.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+    }
+
+    public async Task<PaymentResult> CreateForSubscriptionAsync(
+        long customerId,
+        long subscriptionId,
+        PaymentMethod method,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        ValidateIdempotencyKey(idempotencyKey);
+        var normalizedIdempotencyKey = idempotencyKey.Trim();
+        var existing = await PaymentQuery().SingleOrDefaultAsync(
+            x => x.CustomerId == customerId && x.IdempotencyKey == normalizedIdempotencyKey,
+            cancellationToken);
+        if (existing is not null)
+        {
+            if (existing.SubscriptionId != subscriptionId || existing.Method != method)
+            {
+                throw new ConflictException(
+                    "The idempotency key is already associated with a different payment request.");
+            }
+
+            return existing.ToResult(existing.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+        }
+
+        var subscription = await dbContext.Subscriptions.SingleOrDefaultAsync(
+            x => x.Id == subscriptionId && x.CustomerId == customerId,
+            cancellationToken)
+            ?? throw new NotFoundException("The subscription was not found.");
+        if (subscription.Status != SubscriptionStatus.PaymentPending)
+        {
+            throw new BusinessRuleException(
+                $"A subscription in status '{subscription.Status}' cannot start a payment.");
+        }
+        if (subscription.PayableAmount <= 0)
+        {
+            throw new BusinessRuleException("The subscription does not have a positive payable amount.");
+        }
+
+        var activePaymentExists = await dbContext.Payments.AnyAsync(
+            x => x.SubscriptionId == subscription.Id &&
+                x.Status != PaymentStatus.Failed &&
+                x.Status != PaymentStatus.Expired,
+            cancellationToken);
+        if (activePaymentExists)
+        {
+            throw new ConflictException("The subscription already has an active payment.");
+        }
+
+        var payment = Payment.CreateForSubscription(
+            subscription.Id,
+            customerId,
+            method,
+            subscription.PayableAmount,
+            options.Currency,
+            normalizedIdempotencyKey,
+            clock.UtcNow.AddMinutes(options.PaymentExpiryMinutes));
+        dbContext.Payments.Add(payment);
+
+        if (method == PaymentMethod.Wallet)
+        {
+            await ExecuteSerializableAsync(async () =>
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+                payment.MarkWalletPending();
+                await walletService.DebitSubscriptionAsync(
+                    customerId,
+                    subscription.Id,
+                    payment.Id,
+                    payment.Amount,
+                    $"payment:{payment.PublicId:N}",
+                    cancellationToken);
+                payment.Succeed(null, "wallet_debited", clock.UtcNow);
+                ConfirmTarget(payment, clock.UtcNow);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
+        }
+        else
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+            GatewayOrderResult gatewayOrder;
+            try
+            {
+                gatewayOrder = await gateway.CreateOrderAsync(
+                    new GatewayOrderRequest(
+                        payment.PublicId,
+                        $"SUB-{subscription.PublicId:N}",
+                        ToMinorUnits(payment.Amount),
+                        payment.Currency,
+                        payment.ExpiresAtUtc),
+                    cancellationToken);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+            {
+                payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, clock.UtcNow);
+                subscription.FailPayment();
                 await dbContext.SaveChangesAsync(cancellationToken);
                 throw new BusinessRuleException("The payment gateway could not create the payment order.");
             }
@@ -158,7 +266,7 @@ public sealed class PaymentService(
         if (clock.UtcNow > payment.ExpiresAtUtc)
         {
             payment.Expire(clock.UtcNow);
-            payment.Order.FailPayment();
+            FailTarget(payment);
             await dbContext.SaveChangesAsync(cancellationToken);
             throw new BusinessRuleException("The payment has expired.");
         }
@@ -177,12 +285,12 @@ public sealed class PaymentService(
             if (gatewayStatus.IsSuccessful)
             {
                 payment.Succeed(gatewayStatus.GatewayPaymentId, gatewayStatus.Status, clock.UtcNow);
-                payment.Order.ConfirmPayment();
+                ConfirmTarget(payment, clock.UtcNow);
             }
             else if (gatewayStatus.IsTerminalFailure)
             {
                 payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", gatewayStatus.Status, clock.UtcNow);
-                payment.Order.FailPayment();
+                FailTarget(payment);
             }
             else
             {
@@ -242,13 +350,31 @@ public sealed class PaymentService(
             await ExecuteSerializableAsync(async () =>
             {
                 await dbContext.SaveChangesAsync(cancellationToken);
-                await walletService.CreditRefundAsync(
-                    payment.CustomerId,
-                    payment.OrderId,
-                    payment.Id,
-                    amount,
-                    $"refund:{refund.PublicId:N}",
-                    cancellationToken);
+                if (payment.OrderId is long orderId)
+                {
+                    await walletService.CreditRefundAsync(
+                        payment.CustomerId,
+                        orderId,
+                        payment.Id,
+                        amount,
+                        $"refund:{refund.PublicId:N}",
+                        cancellationToken);
+                }
+                else if (payment.SubscriptionId is long subscriptionId)
+                {
+                    await walletService.CreditSubscriptionRefundAsync(
+                        payment.CustomerId,
+                        subscriptionId,
+                        payment.Id,
+                        amount,
+                        $"refund:{refund.PublicId:N}",
+                        cancellationToken);
+                }
+                else
+                {
+                    throw new InvalidOperationException("The payment has no payable target.");
+                }
+
                 refund.Succeed(clock.UtcNow);
                 payment.CompleteRefund(amount);
                 WriteRefundAudit(payment, refund, requestedByUserId, request);
@@ -403,6 +529,7 @@ public sealed class PaymentService(
 
         var payment = await dbContext.Payments
             .Include(x => x.Order)
+            .Include(x => x.Subscription)
             .SingleOrDefaultAsync(
                 x => x.GatewayOrderId == gatewayEvent.GatewayOrderId ||
                     x.GatewayPaymentId == gatewayEvent.GatewayPaymentId,
@@ -423,12 +550,12 @@ public sealed class PaymentService(
         if (status.IsSuccessful)
         {
             payment.Succeed(status.GatewayPaymentId, status.Status, clock.UtcNow);
-            payment.Order.ConfirmPayment();
+            ConfirmTarget(payment, clock.UtcNow);
         }
         else if (status.IsTerminalFailure)
         {
             payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", status.Status, clock.UtcNow);
-            payment.Order.FailPayment();
+            FailTarget(payment);
         }
     }
 
@@ -471,14 +598,53 @@ public sealed class PaymentService(
         }
     }
 
-    private IQueryable<Payment> PaymentQuery() => dbContext.Payments.Include(x => x.Order);
+    private IQueryable<Payment> PaymentQuery() => dbContext.Payments
+        .Include(x => x.Order)
+        .Include(x => x.Subscription);
 
     private async Task LoadPaymentNavigationsAsync(Payment payment, CancellationToken cancellationToken)
     {
-        if (!dbContext.Entry(payment).Reference(x => x.Order).IsLoaded)
+        if (payment.OrderId.HasValue && !dbContext.Entry(payment).Reference(x => x.Order).IsLoaded)
         {
             await dbContext.Entry(payment).Reference(x => x.Order).LoadAsync(cancellationToken);
         }
+        if (payment.SubscriptionId.HasValue &&
+            !dbContext.Entry(payment).Reference(x => x.Subscription).IsLoaded)
+        {
+            await dbContext.Entry(payment).Reference(x => x.Subscription).LoadAsync(cancellationToken);
+        }
+    }
+
+    private static void ConfirmTarget(Payment payment, DateTime utcNow)
+    {
+        if (payment.Order is not null)
+        {
+            payment.Order.ConfirmPayment();
+            return;
+        }
+        if (payment.Subscription is not null)
+        {
+            payment.Subscription.Activate(utcNow);
+            return;
+        }
+
+        throw new InvalidOperationException("The payment has no payable target.");
+    }
+
+    private static void FailTarget(Payment payment)
+    {
+        if (payment.Order is not null)
+        {
+            payment.Order.FailPayment();
+            return;
+        }
+        if (payment.Subscription is not null)
+        {
+            payment.Subscription.FailPayment();
+            return;
+        }
+
+        throw new InvalidOperationException("The payment has no payable target.");
     }
 
     private void WriteRefundAudit(
