@@ -233,6 +233,131 @@ public sealed class PaymentService(
         return payment.ToResult(payment.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
     }
 
+    public async Task<PaymentResult> RetrySubscriptionAsync(
+        long customerId,
+        Guid subscriptionId,
+        PaymentMethod method,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        ValidateIdempotencyKey(idempotencyKey);
+        var normalizedIdempotencyKey = idempotencyKey.Trim();
+        var existing = await PaymentQuery().SingleOrDefaultAsync(
+            x => x.CustomerId == customerId && x.IdempotencyKey == normalizedIdempotencyKey,
+            cancellationToken);
+        if (existing is not null)
+        {
+            if (existing.Subscription?.PublicId != subscriptionId || existing.Method != method)
+            {
+                throw new ConflictException(
+                    "The idempotency key is already associated with a different payment request.");
+            }
+
+            return existing.ToResult(existing.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+        }
+
+        var subscription = await dbContext.Subscriptions.SingleOrDefaultAsync(
+            x => x.PublicId == subscriptionId && x.CustomerId == customerId,
+            cancellationToken)
+            ?? throw new NotFoundException("The subscription was not found.");
+        if (subscription.Status is not (
+            SubscriptionStatus.PaymentPending or SubscriptionStatus.PaymentFailed))
+        {
+            throw new BusinessRuleException(
+                $"A subscription in status '{subscription.Status}' cannot retry payment.");
+        }
+        if (subscription.PayableAmount <= 0)
+        {
+            throw new BusinessRuleException("The subscription does not have a positive payable amount.");
+        }
+
+        var activePayments = await dbContext.Payments
+            .Where(x => x.SubscriptionId == subscription.Id &&
+                x.Status != PaymentStatus.Failed &&
+                x.Status != PaymentStatus.Expired)
+            .ToListAsync(cancellationToken);
+        if (activePayments.Any(x => x.Status is not (PaymentStatus.Initiated or PaymentStatus.Pending)))
+        {
+            throw new ConflictException("The subscription already has a completed payment.");
+        }
+
+        var payment = Payment.CreateForSubscription(
+            subscription.Id,
+            customerId,
+            method,
+            subscription.PayableAmount,
+            options.Currency,
+            normalizedIdempotencyKey,
+            clock.UtcNow.AddMinutes(options.PaymentExpiryMinutes));
+        dbContext.Payments.Add(payment);
+
+        void PrepareReplacement()
+        {
+            foreach (var activePayment in activePayments)
+            {
+                activePayment.Expire(clock.UtcNow);
+            }
+            if (subscription.Status == SubscriptionStatus.PaymentFailed)
+            {
+                subscription.RetryPayment();
+            }
+        }
+
+        if (method == PaymentMethod.Wallet)
+        {
+            await ExecuteSerializableAsync(async () =>
+            {
+                PrepareReplacement();
+                await dbContext.SaveChangesAsync(cancellationToken);
+                payment.MarkWalletPending();
+                await walletService.DebitSubscriptionAsync(
+                    customerId,
+                    subscription.Id,
+                    payment.Id,
+                    payment.Amount,
+                    $"payment:{payment.PublicId:N}",
+                    cancellationToken);
+                payment.Succeed(null, "wallet_debited", clock.UtcNow);
+                ConfirmTarget(payment, clock.UtcNow);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
+        }
+        else
+        {
+            await ExecuteSerializableAsync(async () =>
+            {
+                PrepareReplacement();
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
+            GatewayOrderResult gatewayOrder;
+            try
+            {
+                gatewayOrder = await gateway.CreateOrderAsync(
+                    new GatewayOrderRequest(
+                        payment.PublicId,
+                        $"SUB-{subscription.PublicId:N}",
+                        ToMinorUnits(payment.Amount),
+                        payment.Currency,
+                        payment.ExpiresAtUtc),
+                    cancellationToken);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+            {
+                payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, clock.UtcNow);
+                subscription.FailPayment();
+                await dbContext.SaveChangesAsync(cancellationToken);
+                throw new BusinessRuleException("The payment gateway could not create the payment order.");
+            }
+
+            EnsureGatewayFinancials(payment, gatewayOrder.AmountMinor, gatewayOrder.Currency);
+            payment.AttachGatewayOrder(gatewayOrder.GatewayOrderId, gatewayOrder.Status);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        await LoadPaymentNavigationsAsync(payment, cancellationToken);
+        return payment.ToResult(payment.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+    }
+
     public async Task<PaymentResult> VerifyAsync(
         long customerId,
         VerifyPaymentRequest request,

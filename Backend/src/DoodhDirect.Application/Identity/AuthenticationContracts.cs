@@ -95,6 +95,11 @@ public static class AuthorizationCodes
     public const string PaymentsCreateOwn = "PAYMENTS.CREATE_OWN";
     public const string PaymentsReadOwn = "PAYMENTS.READ_OWN";
     public const string PaymentsRefund = "PAYMENTS.REFUND";
+    public const string DeliveriesReadOwn = "DELIVERIES.READ_OWN";
+    public const string DeliveriesOperateAssigned = "DELIVERIES.OPERATE_ASSIGNED";
+    public const string DeliveriesTrackAssigned = "DELIVERIES.TRACK_ASSIGNED";
+    public const string DeliveriesReadBranch = "DELIVERIES.READ_BRANCH";
+    public const string DeliveriesAssignBranch = "DELIVERIES.ASSIGN_BRANCH";
     public const string WalletReadOwn = "WALLET.READ_OWN";
     public const string WalletTopUpOwn = "WALLET.TOPUP_OWN";
     public const string WalletAdjust = "WALLET.ADJUST";
@@ -139,6 +144,11 @@ public static class AuthorizationCodes
         [PaymentsCreateOwn] = "Create and verify own payments",
         [PaymentsReadOwn] = "Read own payments",
         [PaymentsRefund] = "Refund successful payments",
+        [DeliveriesReadOwn] = "Read own delivery status and active tracking",
+        [DeliveriesOperateAssigned] = "Operate assigned deliveries",
+        [DeliveriesTrackAssigned] = "Publish location for active assigned deliveries",
+        [DeliveriesReadBranch] = "Read and monitor branch deliveries",
+        [DeliveriesAssignBranch] = "Assign and reassign branch deliveries",
         [WalletReadOwn] = "Read own wallet and ledger",
         [WalletTopUpOwn] = "Top up own wallet through an approved development flow",
         [WalletAdjust] = "Adjust customer wallets"

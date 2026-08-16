@@ -45,6 +45,20 @@ public sealed class SubscriptionsController(ISubscriptionService subscriptionSer
         Ok(ApiResponse<SubscriptionResult>.Ok(
             await subscriptionService.GetAsync(RequireUserId(), subscriptionId, cancellationToken)));
 
+    [HttpPost("{subscriptionId:guid}/retry-payment")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.SubscriptionsManageOwn)]
+    [ProducesResponseType(typeof(ApiResponse<CreatedSubscriptionResult>), StatusCodes.Status201Created)]
+    public async Task<ActionResult<ApiResponse<CreatedSubscriptionResult>>> RetryPayment(
+        Guid subscriptionId,
+        [FromBody] RetrySubscriptionPaymentRequest request,
+        [FromHeader(Name = "Idempotency-Key"), Required, MaxLength(100)] string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var result = await subscriptionService.RetryPaymentAsync(
+            RequireUserId(), subscriptionId, request, idempotencyKey, cancellationToken);
+        return StatusCode(StatusCodes.Status201Created, ApiResponse<CreatedSubscriptionResult>.Ok(result));
+    }
+
     [HttpPatch("{subscriptionId:guid}")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.SubscriptionsManageOwn)]
     [ProducesResponseType(typeof(ApiResponse<SubscriptionResult>), StatusCodes.Status200OK)]

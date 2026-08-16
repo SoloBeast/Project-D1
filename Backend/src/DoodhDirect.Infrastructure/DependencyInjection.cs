@@ -1,6 +1,7 @@
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Catalogue;
 using DoodhDirect.Application.Customer;
+using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Identity;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Payments;
@@ -8,6 +9,7 @@ using DoodhDirect.Application.Subscriptions;
 using DoodhDirect.Application.Wallets;
 using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Customer;
+using DoodhDirect.Infrastructure.Deliveries;
 using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Orders;
 using DoodhDirect.Infrastructure.Payments;
@@ -51,6 +53,10 @@ public static class DependencyInjection
             .Bind(configuration.GetSection(PaymentOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
+        services.AddOptions<DeliveryOptions>()
+            .Bind(configuration.GetSection(DeliveryOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
 
         services.AddHealthChecks()
             .AddDbContextCheck<DoodhDirectDbContext>("sql-server", tags: ["ready"]);
@@ -65,8 +71,10 @@ public static class DependencyInjection
         services.AddScoped<IBranchAllocationService, BranchAllocationService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<ISubscriptionService, SubscriptionService>();
+        services.AddScoped<IDeliveryService, DeliveryService>();
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IWalletService, WalletService>();
+        services.AddSingleton<IDeliveryRealtimePublisher, NullDeliveryRealtimePublisher>();
         services.AddSingleton<MockPaymentGateway>();
         services.AddHttpClient<RazorpayPaymentGateway>(client =>
         {
@@ -83,6 +91,7 @@ public static class DependencyInjection
         services.AddSingleton<IAddressLocationLookup, UnconfiguredAddressLocationLookup>();
         services.AddScoped<IdentitySeedService>();
         services.AddScoped<DevelopmentCustomerSeedService>();
+        services.AddScoped<DevelopmentDeliveryStaffSeedService>();
         services.AddScoped<CatalogueSeedService>();
         services.AddSingleton<IOtpDeliveryService, UnconfiguredOtpDeliveryService>();
 

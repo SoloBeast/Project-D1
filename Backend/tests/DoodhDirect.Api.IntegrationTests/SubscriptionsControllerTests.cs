@@ -29,6 +29,7 @@ public sealed class SubscriptionsControllerTests
             [nameof(SubscriptionsController.Create)] = ("POST", null),
             [nameof(SubscriptionsController.GetMine)] = ("GET", null),
             [nameof(SubscriptionsController.Get)] = ("GET", "{subscriptionId:guid}"),
+            [nameof(SubscriptionsController.RetryPayment)] = ("POST", "{subscriptionId:guid}/retry-payment"),
             [nameof(SubscriptionsController.Update)] = ("PATCH", "{subscriptionId:guid}"),
             [nameof(SubscriptionsController.Pause)] = ("POST", "{subscriptionId:guid}/pause"),
             [nameof(SubscriptionsController.Resume)] = ("POST", "{subscriptionId:guid}/resume"),
@@ -58,6 +59,7 @@ public sealed class SubscriptionsControllerTests
     [InlineData(nameof(SubscriptionsController.Create), AuthorizationCodes.SubscriptionsCreateOwn)]
     [InlineData(nameof(SubscriptionsController.GetMine), AuthorizationCodes.SubscriptionsReadOwn)]
     [InlineData(nameof(SubscriptionsController.Get), AuthorizationCodes.SubscriptionsReadOwn)]
+    [InlineData(nameof(SubscriptionsController.RetryPayment), AuthorizationCodes.SubscriptionsManageOwn)]
     [InlineData(nameof(SubscriptionsController.Update), AuthorizationCodes.SubscriptionsManageOwn)]
     [InlineData(nameof(SubscriptionsController.Pause), AuthorizationCodes.SubscriptionsManageOwn)]
     [InlineData(nameof(SubscriptionsController.Resume), AuthorizationCodes.SubscriptionsManageOwn)]
@@ -76,10 +78,12 @@ public sealed class SubscriptionsControllerTests
         Assert.Empty(method.GetCustomAttributes(typeof(AllowAnonymousAttribute), inherit: true));
     }
 
-    [Fact]
-    public void Create_IdempotencyKeyIsRequiredHeaderWithBoundedLength()
+    [Theory]
+    [InlineData(nameof(SubscriptionsController.Create))]
+    [InlineData(nameof(SubscriptionsController.RetryPayment))]
+    public void PaymentAction_IdempotencyKeyIsRequiredHeaderWithBoundedLength(string methodName)
     {
-        var method = typeof(SubscriptionsController).GetMethod(nameof(SubscriptionsController.Create));
+        var method = typeof(SubscriptionsController).GetMethod(methodName);
         var parameter = Assert.Single(method!.GetParameters(), value => value.Name == "idempotencyKey");
         var header = Assert.IsType<FromHeaderAttribute>(parameter.GetCustomAttribute<FromHeaderAttribute>());
 
@@ -104,6 +108,7 @@ public sealed class SubscriptionsControllerTests
             [DayOfWeek.Monday, DayOfWeek.Thursday],
             8,
             PaymentMethod.Wallet);
+        var retryRequest = new RetrySubscriptionPaymentRequest(PaymentMethod.Razorpay);
         var updateRequest = new UpdateSubscriptionRequest(2m, Guid.NewGuid(), [DayOfWeek.Tuesday]);
         var skipRequest = new SkipSubscriptionDeliveryRequest(deliveryId);
 
@@ -120,6 +125,17 @@ public sealed class SubscriptionsControllerTests
         Assert.Same(service.Subscription, AssertSuccess(
             await controller.Get(subscriptionId, CancellationToken.None), StatusCodes.Status200OK));
         Assert.Equal((customerId, subscriptionId), service.GetCall);
+
+        Assert.Same(service.CreatedResult, AssertSuccess(
+            await controller.RetryPayment(
+                subscriptionId,
+                retryRequest,
+                "subscription-retry-73-1",
+                CancellationToken.None),
+            StatusCodes.Status201Created));
+        Assert.Equal(
+            (customerId, subscriptionId, retryRequest, "subscription-retry-73-1"),
+            service.RetryCall);
 
         Assert.Same(service.Subscription, AssertSuccess(
             await controller.Update(subscriptionId, updateRequest, CancellationToken.None),
@@ -201,6 +217,7 @@ public sealed class SubscriptionsControllerTests
         public IReadOnlyList<SubscriptionDeliveryResult> Deliveries { get; }
         public CreatedSubscriptionResult CreatedResult { get; }
         public (long CustomerId, CreateSubscriptionRequest Request, string IdempotencyKey)? CreateCall { get; private set; }
+        public (long CustomerId, Guid SubscriptionId, RetrySubscriptionPaymentRequest Request, string IdempotencyKey)? RetryCall { get; private set; }
         public long? GetMineCustomerId { get; private set; }
         public (long CustomerId, Guid SubscriptionId)? GetCall { get; private set; }
         public (long CustomerId, Guid SubscriptionId, UpdateSubscriptionRequest Request)? UpdateCall { get; private set; }
@@ -261,6 +278,17 @@ public sealed class SubscriptionsControllerTests
         {
             GetCall = (customerId, subscriptionId);
             return Task.FromResult(Subscription);
+        }
+
+        public Task<CreatedSubscriptionResult> RetryPaymentAsync(
+            long customerId,
+            Guid subscriptionId,
+            RetrySubscriptionPaymentRequest request,
+            string idempotencyKey,
+            CancellationToken cancellationToken)
+        {
+            RetryCall = (customerId, subscriptionId, request, idempotencyKey);
+            return Task.FromResult(CreatedResult);
         }
 
         public Task<SubscriptionResult> UpdateAsync(

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using DoodhDirect.Api.Authorization;
 using DoodhDirect.Api.Middleware;
@@ -89,8 +90,28 @@ builder.Services.AddOpenApi(options =>
     {
         document.Info.Title = "DoodhDirect API";
         document.Info.Version = "v1";
-        document.Info.Description = "Identity/RBAC, customer, catalogue, one-time ordering, prepaid subscriptions, payments, refunds, webhooks, and wallet API.";
+        document.Info.Description = "Identity/RBAC, customer, catalogue, one-time ordering, prepaid subscriptions, payments, refunds, webhooks, wallet, and branch-scoped delivery operations API.";
         document.Components ??= new OpenApiComponents();
+        document.Components.Schemas ??=
+            new Dictionary<string, IOpenApiSchema>(StringComparer.Ordinal);
+
+        SetStringEnumSchema(
+            document.Components.Schemas,
+            "DeliverySourceType",
+            ["OneTimeOrder", "SubscriptionOccurrence"]);
+        SetStringEnumSchema(
+            document.Components.Schemas,
+            "DeliveryStatus",
+            [
+                "ReadyForAssignment",
+                "Assigned",
+                "PickedUp",
+                "OutForDelivery",
+                "Arrived",
+                "Delivered",
+                "Failed"
+            ]);
+
         document.Components.SecuritySchemes ??=
             new Dictionary<string, IOpenApiSecurityScheme>(StringComparer.Ordinal);
         document.Components.SecuritySchemes["bearerAuth"] = new OpenApiSecurityScheme
@@ -160,6 +181,12 @@ await using (var scope = app.Services.CreateAsyncScope())
     await scope.ServiceProvider
         .GetRequiredService<CatalogueSeedService>()
         .SeedAsync(cancellationToken);
+    if (app.Environment.IsDevelopment())
+    {
+        await scope.ServiceProvider
+            .GetRequiredService<DevelopmentDeliveryStaffSeedService>()
+            .SeedAsync(cancellationToken);
+    }
 }
 
 app.UseMiddleware<CorrelationIdMiddleware>();
@@ -205,5 +232,22 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 app.MapControllers();
 
 app.Run();
+
+static void SetStringEnumSchema(
+    IDictionary<string, IOpenApiSchema> schemas,
+    string schemaName,
+    IReadOnlyCollection<string> values)
+{
+    if (!schemas.ContainsKey(schemaName))
+    {
+        return;
+    }
+
+    schemas[schemaName] = new OpenApiSchema
+    {
+        Type = JsonSchemaType.String,
+        Enum = values.Select(value => (JsonNode)JsonValue.Create(value)!).ToList()
+    };
+}
 
 public partial class Program;

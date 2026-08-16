@@ -6,8 +6,11 @@ import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_models.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_repository.dart';
+import 'package:doodh_direct_mobile/features/wallet/wallet_controller.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_models.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_repository.dart';
+import 'package:doodh_direct_mobile/features/wallet/wallet_screens.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -312,6 +315,26 @@ void main() {
       expect(transaction.amount, 500);
       expect(transaction.isReconciled, isTrue);
     });
+
+    testWidgets('shows development top-up in debug builds', (tester) async {
+      expect(developmentWalletTopUpEnabled, isTrue);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            walletControllerProvider.overrideWith(
+              () => _SeededWalletController(
+                WalletState(wallet: WalletDetails.fromJson(walletJson())),
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: WalletScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Development top-up'), findsOneWidget);
+      expect(find.text('₹410.50'), findsOneWidget);
+    });
   });
 }
 
@@ -334,6 +357,18 @@ final _authenticatedSession = AuthSession(
 class _AuthenticatedAuthRepository extends AuthRepository {
   @override
   Future<AuthSession?> restore() async => _authenticatedSession;
+}
+
+class _SeededWalletController extends WalletController {
+  _SeededWalletController(this.initialState);
+
+  final WalletState initialState;
+
+  @override
+  WalletState build() => initialState;
+
+  @override
+  Future<void> load() async {}
 }
 
 class _InsufficientWalletPaymentRepository extends PaymentRepository {

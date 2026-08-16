@@ -12,6 +12,52 @@ import 'package:go_router/go_router.dart';
 import 'subscription_controller.dart';
 import 'subscription_models.dart';
 
+List<CatalogueProduct> deduplicateAvailableSubscriptionProducts(
+  Iterable<CatalogueProduct> products,
+) {
+  final uniqueProducts = <String, CatalogueProduct>{};
+  for (final product in products) {
+    if (product.isActive &&
+        product.branchAvailability.any((branch) => branch.isAvailable)) {
+      uniqueProducts.putIfAbsent(product.publicId, () => product);
+    }
+  }
+  return uniqueProducts.values.toList(growable: false);
+}
+
+String? resolveAvailableSubscriptionProductId(
+  List<CatalogueProduct> products,
+  String? selectedProductId,
+) => products.any((product) => product.publicId == selectedProductId)
+    ? selectedProductId
+    : products.firstOrNull?.publicId;
+
+List<CustomerAddress> deduplicateActiveSubscriptionAddresses(
+  Iterable<CustomerAddress> addresses,
+) {
+  final uniqueAddresses = <String, CustomerAddress>{};
+  for (final address in addresses) {
+    if (address.isActive) {
+      uniqueAddresses.putIfAbsent(address.publicId, () => address);
+    }
+  }
+  return uniqueAddresses.values.toList(growable: false);
+}
+
+String? resolveActiveSubscriptionAddressId(
+  List<CustomerAddress> addresses,
+  String? selectedAddressId,
+) {
+  if (addresses.any((address) => address.publicId == selectedAddressId)) {
+    return selectedAddressId;
+  }
+  return addresses
+          .where((address) => address.isDefault)
+          .firstOrNull
+          ?.publicId ??
+      addresses.firstOrNull?.publicId;
+}
+
 class SubscriptionSetupScreen extends ConsumerStatefulWidget {
   const SubscriptionSetupScreen({super.key});
 
@@ -22,8 +68,8 @@ class SubscriptionSetupScreen extends ConsumerStatefulWidget {
 
 class _SubscriptionSetupScreenState
     extends ConsumerState<SubscriptionSetupScreen> {
-  CatalogueProduct? _product;
-  CustomerAddress? _address;
+  String? _productId;
+  String? _addressId;
   double _quantity = 1;
   int _entitlement = 30;
   DateTime _startDate = _dateOnly(DateTime.now());
@@ -48,23 +94,14 @@ class _SubscriptionSetupScreenState
     final catalogue = ref.watch(catalogueControllerProvider);
     final customer = ref.watch(customerControllerProvider);
     final subscription = ref.watch(subscriptionControllerProvider);
-    final products = catalogue.products
-        .where(
-          (item) =>
-              item.isActive &&
-              item.branchAvailability.any((branch) => branch.isAvailable),
-        )
-        .toList(growable: false);
-    final addresses = customer.addresses
-        .where((item) => item.isActive)
-        .toList(growable: false);
-    _product ??= products.isEmpty ? null : products.first;
-    _address ??= addresses.isEmpty
-        ? null
-        : addresses.firstWhere(
-            (item) => item.isDefault,
-            orElse: () => addresses.first,
-          );
+    final products = deduplicateAvailableSubscriptionProducts(
+      catalogue.products,
+    );
+    final addresses = deduplicateActiveSubscriptionAddresses(
+      customer.addresses,
+    );
+    _productId = resolveAvailableSubscriptionProductId(products, _productId);
+    _addressId = resolveActiveSubscriptionAddressId(addresses, _addressId);
     return Scaffold(
       appBar: AppBar(title: const Text('New subscription')),
       body:
@@ -91,34 +128,37 @@ class _SubscriptionSetupScreenState
     List<CustomerAddress> addresses,
     SubscriptionState state,
   ) {
-    final product = _product!;
+    final product = products.firstWhere((item) => item.publicId == _productId);
     final estimate = product.price * _quantity * _entitlement;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        DropdownButtonFormField<CatalogueProduct>(
-          initialValue: product,
+        DropdownButtonFormField<String>(
+          initialValue: product.publicId,
           decoration: const InputDecoration(labelText: 'Product'),
           items: products
               .map(
-                (item) => DropdownMenuItem(value: item, child: Text(item.name)),
+                (item) => DropdownMenuItem(
+                  value: item.publicId,
+                  child: Text(item.name),
+                ),
               )
               .toList(),
-          onChanged: (value) => setState(() => _product = value),
+          onChanged: (value) => setState(() => _productId = value),
         ),
         const SizedBox(height: 12),
-        DropdownButtonFormField<CustomerAddress>(
-          initialValue: _address,
+        DropdownButtonFormField<String>(
+          initialValue: _addressId,
           decoration: const InputDecoration(labelText: 'Delivery address'),
           items: addresses
               .map(
                 (item) => DropdownMenuItem(
-                  value: item,
+                  value: item.publicId,
                   child: Text('${item.label} - ${item.city}'),
                 ),
               )
               .toList(),
-          onChanged: (value) => setState(() => _address = value),
+          onChanged: (value) => setState(() => _addressId = value),
         ),
         const SizedBox(height: 12),
         TextFormField(
@@ -224,8 +264,8 @@ class _SubscriptionSetupScreenState
     final scaledQuantity = _quantity * 1000;
     final quantityHasTooManyDecimals =
         (scaledQuantity - scaledQuantity.round()).abs() > 0.000001;
-    if (_product == null ||
-        _address == null ||
+    if (_productId == null ||
+        _addressId == null ||
         _quantity <= 0 ||
         quantityHasTooManyDecimals ||
         _entitlement < 1 ||
@@ -245,8 +285,8 @@ class _SubscriptionSetupScreenState
         .read(subscriptionControllerProvider.notifier)
         .create(
           CreateSubscriptionRequest(
-            productId: _product!.publicId,
-            addressId: _address!.publicId,
+            productId: _productId!,
+            addressId: _addressId!,
             quantity: _quantity,
             startDate: _startDate,
             deliveryDays: _days,
@@ -263,7 +303,13 @@ class _SubscriptionSetupScreenState
           .read(paymentControllerProvider.notifier)
           .openRazorpayAndVerify();
     }
-    if (mounted) context.go('/payments/${payment.publicId}/result');
+    if (!mounted) return;
+    await context.push('/payments/${payment.publicId}/result');
+    if (mounted) {
+      await ref
+          .read(subscriptionControllerProvider.notifier)
+          .loadSubscription(created.subscription.publicId);
+    }
   }
 }
 
@@ -382,6 +428,7 @@ class SubscriptionDetailScreen extends ConsumerStatefulWidget {
 
 class _SubscriptionDetailScreenState
     extends ConsumerState<SubscriptionDetailScreen> {
+  PaymentMethod _retryPaymentMethod = PaymentMethod.wallet;
   @override
   void initState() {
     super.initState();
@@ -525,6 +572,63 @@ class _SubscriptionDetailScreenState
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
+        if (subscription.status == SubscriptionStatus.paymentPending ||
+            subscription.status == SubscriptionStatus.paymentFailed) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Status: ${subscription.status.label}',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          Text('Amount Due: ${subscription.formattedPayableAmount}'),
+          const SizedBox(height: 8),
+          Text(
+            subscription.status == SubscriptionStatus.paymentPending
+                ? 'Complete Payment'
+                : 'Retry Payment',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          RadioGroup<PaymentMethod>(
+            groupValue: _retryPaymentMethod,
+            onChanged: (value) {
+              if (!state.isSaving && value != null) {
+                setState(() => _retryPaymentMethod = value);
+              }
+            },
+            child: const Column(
+              children: [
+                RadioListTile(
+                  value: PaymentMethod.wallet,
+                  title: Text('DoodhDirect Wallet'),
+                ),
+                RadioListTile(
+                  value: PaymentMethod.razorpay,
+                  title: Text('Razorpay'),
+                ),
+              ],
+            ),
+          ),
+          FilledButton.icon(
+            onPressed: state.isSaving ? null : _retryPayment,
+            icon: state.isSaving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(
+                    subscription.status == SubscriptionStatus.paymentPending
+                        ? Icons.payment
+                        : Icons.replay,
+                  ),
+            label: Text(
+              state.isSaving
+                  ? 'Processing...'
+                  : subscription.status == SubscriptionStatus.paymentPending
+                  ? 'Complete Payment'
+                  : 'Retry Payment',
+            ),
+          ),
+        ],
         const SizedBox(height: 8),
         OutlinedButton.icon(
           onPressed: subscription.status.canUpdate && !state.isSaving
@@ -580,6 +684,25 @@ class _SubscriptionDetailScreenState
     ),
   );
 
+  Future<void> _retryPayment() async {
+    final created = await ref
+        .read(subscriptionControllerProvider.notifier)
+        .retryPayment(widget.subscriptionId, _retryPaymentMethod);
+    if (!mounted || created == null) return;
+
+    final payment = created.payment;
+    if (payment.method == PaymentMethod.razorpay &&
+        !payment.usesMockGateway &&
+        payment.status.isPending) {
+      await ref
+          .read(paymentControllerProvider.notifier)
+          .openRazorpayAndVerify();
+    }
+    if (!mounted) return;
+    await context.push('/payments/${payment.publicId}/result');
+    if (mounted) await _reload();
+  }
+
   Future<void> _action(
     String label,
     String title,
@@ -618,19 +741,17 @@ class _SubscriptionDetailScreenState
       await ref.read(customerControllerProvider.notifier).load();
     }
     if (!mounted) return;
-    final addresses = ref
-        .read(customerControllerProvider)
-        .addresses
-        .where((item) => item.isActive)
-        .toList(growable: false);
+    final addresses = deduplicateActiveSubscriptionAddresses(
+      ref.read(customerControllerProvider).addresses,
+    );
     if (addresses.isEmpty) return;
     final quantityController = TextEditingController(
       text: subscription.quantity.toString(),
     );
-    var address = addresses.firstWhere(
-      (item) => item.publicId == subscription.addressId,
-      orElse: () => addresses.first,
-    );
+    var addressId = resolveActiveSubscriptionAddressId(
+      addresses,
+      subscription.addressId,
+    )!;
     var days = subscription.schedules.map((item) => item.dayOfWeek).toSet();
     final result = await showDialog<UpdateSubscriptionRequest>(
       context: this.context,
@@ -650,20 +771,24 @@ class _SubscriptionDetailScreenState
                     labelText: 'Quantity per delivery',
                   ),
                 ),
-                DropdownButtonFormField<CustomerAddress>(
-                  initialValue: address,
+                DropdownButtonFormField<String>(
+                  initialValue: addressId,
                   decoration: const InputDecoration(
                     labelText: 'Delivery address',
                   ),
                   items: addresses
                       .map(
                         (item) => DropdownMenuItem(
-                          value: item,
+                          value: item.publicId,
                           child: Text(item.label),
                         ),
                       )
                       .toList(),
-                  onChanged: (value) => setDialogState(() => address = value!),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() => addressId = value);
+                    }
+                  },
                 ),
                 const SizedBox(height: 12),
                 Align(
@@ -706,7 +831,7 @@ class _SubscriptionDetailScreenState
                       context,
                       UpdateSubscriptionRequest(
                         quantity: double.tryParse(quantityController.text),
-                        addressId: address.publicId,
+                        addressId: addressId,
                         deliveryDays: days,
                       ),
                     ),

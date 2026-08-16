@@ -138,6 +138,13 @@ public interface IPaymentService
         string idempotencyKey,
         CancellationToken cancellationToken);
 
+    Task<PaymentResult> RetrySubscriptionAsync(
+        long customerId,
+        Guid subscriptionId,
+        PaymentMethod method,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
     Task<PaymentResult> VerifyAsync(
         long customerId,
         VerifyPaymentRequest request,

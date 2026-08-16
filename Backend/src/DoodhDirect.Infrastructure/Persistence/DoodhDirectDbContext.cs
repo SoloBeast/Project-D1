@@ -1,5 +1,6 @@
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Catalogue;
+using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Configuration;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
@@ -40,6 +41,10 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<SubscriptionSchedule> SubscriptionSchedules => Set<SubscriptionSchedule>();
     public DbSet<SubscriptionDelivery> SubscriptionDeliveries => Set<SubscriptionDelivery>();
+    public DbSet<Delivery> Deliveries => Set<Delivery>();
+    public DbSet<DeliveryAssignment> DeliveryAssignments => Set<DeliveryAssignment>();
+    public DbSet<DeliveryOtp> DeliveryOtps => Set<DeliveryOtp>();
+    public DbSet<DeliveryLocation> DeliveryLocations => Set<DeliveryLocation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -61,7 +66,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigureProduct(modelBuilder);
         ConfigureBranch(modelBuilder, usesSqlite);
         ConfigureProductBranch(modelBuilder);
-        ConfigureOrder(modelBuilder);
+        ConfigureOrder(modelBuilder, usesSqlite);
         ConfigureOrderItem(modelBuilder);
         ConfigurePayment(modelBuilder);
         ConfigurePaymentWebhook(modelBuilder);
@@ -71,6 +76,10 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigureSubscription(modelBuilder);
         ConfigureSubscriptionSchedule(modelBuilder);
         ConfigureSubscriptionDelivery(modelBuilder);
+        ConfigureDelivery(modelBuilder, usesSqlite);
+        ConfigureDeliveryAssignment(modelBuilder);
+        ConfigureDeliveryOtp(modelBuilder);
+        ConfigureDeliveryLocation(modelBuilder, usesSqlite);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -361,7 +370,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasOne(x => x.Branch).WithMany(x => x.ProductBranches).HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
     }
 
-    private static void ConfigureOrder(ModelBuilder modelBuilder)
+    private static void ConfigureOrder(ModelBuilder modelBuilder, bool usesSqlite)
     {
         var entity = modelBuilder.Entity<Order>();
         entity.ToTable("Order", table =>
@@ -369,8 +378,11 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
             table.HasCheckConstraint("CK_Order_Subtotal", "[Subtotal] >= 0");
             table.HasCheckConstraint("CK_Order_DiscountAmount", "[DiscountAmount] >= 0 AND [DiscountAmount] <= [Subtotal]");
             table.HasCheckConstraint("CK_Order_PayableAmount", "[PayableAmount] >= 0");
-            table.HasCheckConstraint("CK_Order_Latitude", "[LatitudeSnapshot] >= -90 AND [LatitudeSnapshot] <= 90");
-            table.HasCheckConstraint("CK_Order_Longitude", "[LongitudeSnapshot] >= -180 AND [LongitudeSnapshot] <= 180");
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_Order_Latitude", "[LatitudeSnapshot] >= -90 AND [LatitudeSnapshot] <= 90");
+                table.HasCheckConstraint("CK_Order_Longitude", "[LongitudeSnapshot] >= -180 AND [LongitudeSnapshot] <= 180");
+            }
         });
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).UseIdentityColumn();
@@ -622,6 +634,105 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasIndex(x => new { x.Status, x.ScheduledDate });
         entity.HasOne(x => x.Subscription).WithMany(x => x.Deliveries).HasForeignKey(x => x.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureDelivery(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<Delivery>();
+        entity.ToTable("Delivery", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_Delivery_Source",
+                "([OrderId] IS NOT NULL AND [SubscriptionDeliveryId] IS NULL AND [SourceType] = 'OneTimeOrder') OR " +
+                "([OrderId] IS NULL AND [SubscriptionDeliveryId] IS NOT NULL AND [SourceType] = 'SubscriptionOccurrence')");
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_Delivery_DestinationLatitude", "[DestinationLatitude] >= -90 AND [DestinationLatitude] <= 90");
+                table.HasCheckConstraint("CK_Delivery_DestinationLongitude", "[DestinationLongitude] >= -180 AND [DestinationLongitude] <= 180");
+                table.HasCheckConstraint("CK_Delivery_FailureCoordinates", "([FailureLatitude] IS NULL AND [FailureLongitude] IS NULL) OR ([FailureLatitude] BETWEEN -90 AND 90 AND [FailureLongitude] BETWEEN -180 AND 180)");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.SourceType).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.ScheduledDate).HasColumnType("date").IsRequired();
+        entity.Property(x => x.ReferenceNumber).HasMaxLength(80).IsRequired();
+        entity.Property(x => x.CustomerNameSnapshot).HasMaxLength(160).IsRequired();
+        entity.Property(x => x.CustomerMobileSnapshot).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.DestinationAddressSnapshot).HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.DeliveryInstructionsSnapshot).HasMaxLength(500);
+        entity.Property(x => x.DestinationLatitude).HasPrecision(9, 6).IsRequired();
+        entity.Property(x => x.DestinationLongitude).HasPrecision(9, 6).IsRequired();
+        entity.Property(x => x.FailureLatitude).HasPrecision(9, 6);
+        entity.Property(x => x.FailureLongitude).HasPrecision(9, 6);
+        entity.Property(x => x.FailureReason).HasMaxLength(120);
+        entity.Property(x => x.Remarks).HasMaxLength(1000);
+        entity.Property(x => x.OperationalNotes).HasMaxLength(1000);
+        entity.Ignore(x => x.IsTrackingActive);
+        entity.HasIndex(x => x.OrderId).IsUnique().HasFilter("[OrderId] IS NOT NULL");
+        entity.HasIndex(x => x.SubscriptionDeliveryId).IsUnique().HasFilter("[SubscriptionDeliveryId] IS NOT NULL");
+        entity.HasIndex(x => new { x.BranchId, x.ScheduledDate, x.Status });
+        entity.HasIndex(x => new { x.AssignedEmployeeId, x.ScheduledDate, x.Status });
+        entity.HasIndex(x => new { x.CustomerId, x.ScheduledDate });
+        entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.SubscriptionDelivery).WithMany().HasForeignKey(x => x.SubscriptionDeliveryId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.AssignedEmployee).WithMany().HasForeignKey(x => x.AssignedEmployeeId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureDeliveryAssignment(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<DeliveryAssignment>();
+        entity.ToTable("DeliveryAssignment");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.Reason).HasMaxLength(500);
+        entity.HasIndex(x => new { x.DeliveryId, x.AssignedAtUtc });
+        entity.HasIndex(x => new { x.EmployeeId, x.AssignedAtUtc });
+        entity.HasOne(x => x.Delivery).WithMany(x => x.Assignments).HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.PreviousEmployee).WithMany().HasForeignKey(x => x.PreviousEmployeeId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.AssignedByUser).WithMany().HasForeignKey(x => x.AssignedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureDeliveryOtp(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<DeliveryOtp>();
+        entity.ToTable("DeliveryOtp", table =>
+            table.HasCheckConstraint("CK_DeliveryOtp_Attempts", "[MaximumAttempts] > 0 AND [AttemptCount] >= 0 AND [AttemptCount] <= [MaximumAttempts]"));
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.CodeHash).HasMaxLength(128).IsRequired();
+        entity.HasIndex(x => new { x.DeliveryId, x.CreatedAtUtc });
+        entity.HasIndex(x => new { x.ExpiresAtUtc, x.ConsumedAtUtc });
+        entity.HasOne(x => x.Delivery).WithMany(x => x.Otps).HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureDeliveryLocation(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<DeliveryLocation>();
+        entity.ToTable("DeliveryLocation", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_DeliveryLocation_Latitude", "[Latitude] >= -90 AND [Latitude] <= 90");
+                table.HasCheckConstraint("CK_DeliveryLocation_Longitude", "[Longitude] >= -180 AND [Longitude] <= 180");
+                table.HasCheckConstraint("CK_DeliveryLocation_Accuracy", "[AccuracyMetres] IS NULL OR [AccuracyMetres] >= 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.Latitude).HasPrecision(9, 6).IsRequired();
+        entity.Property(x => x.Longitude).HasPrecision(9, 6).IsRequired();
+        entity.Property(x => x.AccuracyMetres).HasPrecision(8, 2);
+        entity.HasIndex(x => new { x.DeliveryId, x.RecordedAtUtc });
+        entity.HasIndex(x => x.RecordedAtUtc);
+        entity.HasOne(x => x.Delivery).WithMany(x => x.Locations).HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureSystemConfiguration(ModelBuilder modelBuilder)

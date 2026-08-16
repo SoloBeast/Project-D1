@@ -18,6 +18,7 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.OrdersCreateOwn,
                 AuthorizationCodes.OrdersReadOwn,
                 AuthorizationCodes.OrdersCancelOwn,
+                AuthorizationCodes.DeliveriesReadOwn,
                 AuthorizationCodes.SubscriptionsCreateOwn,
                 AuthorizationCodes.SubscriptionsReadOwn,
                 AuthorizationCodes.SubscriptionsManageOwn,
@@ -31,7 +32,9 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.ProfileReadOwn,
                 AuthorizationCodes.ProfileUpdateOwn,
                 AuthorizationCodes.SessionsManageOwn,
-                AuthorizationCodes.BranchAccess
+                AuthorizationCodes.BranchAccess,
+                AuthorizationCodes.DeliveriesOperateAssigned,
+                AuthorizationCodes.DeliveriesTrackAssigned
             ],
             [AuthorizationCodes.DairyManager] =
             [
@@ -47,7 +50,9 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.ProfileUpdateOwn,
                 AuthorizationCodes.SessionsManageOwn,
                 AuthorizationCodes.UsersRead,
-                AuthorizationCodes.BranchAccess
+                AuthorizationCodes.BranchAccess,
+                AuthorizationCodes.DeliveriesReadBranch,
+                AuthorizationCodes.DeliveriesAssignBranch
             ],
             [AuthorizationCodes.CustomerSupport] =
             [
@@ -83,6 +88,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.CatalogueRead,
                 AuthorizationCodes.CatalogueManage,
                 AuthorizationCodes.OrdersRead,
+                AuthorizationCodes.DeliveriesReadBranch,
+                AuthorizationCodes.DeliveriesAssignBranch,
                 AuthorizationCodes.PaymentsRefund,
                 AuthorizationCodes.WalletAdjust
             ],

@@ -116,6 +116,24 @@ public sealed class SubscriptionService(
     public async Task<SubscriptionResult> GetAsync(long customerId, Guid subscriptionId, CancellationToken cancellationToken) =>
         (await FindOwnedAsync(customerId, subscriptionId, cancellationToken)).ToResult();
 
+    public async Task<CreatedSubscriptionResult> RetryPaymentAsync(
+        long customerId,
+        Guid subscriptionId,
+        RetrySubscriptionPaymentRequest request,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        ValidateIdempotencyKey(idempotencyKey);
+        var payment = await paymentService.RetrySubscriptionAsync(
+            customerId,
+            subscriptionId,
+            request.PaymentMethod,
+            idempotencyKey,
+            cancellationToken);
+        var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
+        return new CreatedSubscriptionResult(subscription.ToResult(), payment);
+    }
+
     public async Task<SubscriptionResult> UpdateAsync(
         long customerId,
         Guid subscriptionId,

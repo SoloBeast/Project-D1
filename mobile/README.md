@@ -1,6 +1,6 @@
 # DoodhDirect Flutter application
 
-The `mobile` project is the DoodhDirect client for Android, iOS, and web. It implements authenticated customer ordering, payments, wallet access, and role-aware workspaces.
+The `mobile` project is the DoodhDirect client for Android, iOS, and web. It implements authenticated customer ordering, payments, wallet access, delivery operations, and role-aware workspaces.
 
 ## Implemented client behavior
 
@@ -11,6 +11,9 @@ The `mobile` project is the DoodhDirect client for Android, iOS, and web. It imp
 - Wallet balance, transaction history, and Development-only top-up
 - Wallet and Razorpay payment initiation with server verification
 - Payment result refresh, failure handling, and terminal-payment retry
+- Customer delivery status and active-location tracking
+- Delivery staff pickup, start, arrival, OTP, completion, failure, and location updates
+- Delivery manager materialization, branch queue, employee assignment, and detail views
 - Role-aware navigation based on server role codes
 - Standard API success/error envelope handling
 
@@ -47,6 +50,17 @@ For an Android emulator connecting to the Development HTTP profile, use an API h
 
 The backend fixture is activated only by the ASP.NET Development environment. The visual shortcuts are compiled out unless `DOOHDIRECT_ENABLE_DEV_TOOLS` is explicitly enabled.
 
+## Local delivery workflow
+
+1. Complete the local payment and wallet workflow through a confirmed customer order. Development startup now also creates a branch-scoped delivery staff account for `MAIN`: `delivery@doodhdirect.local` / `DoodhDirect@123`.
+2. Use an account with `DELIVERIES.ASSIGN_BRANCH` and `DELIVERIES.READ_BRANCH` access for `MAIN` to open the manager workspace. The Development fixture intentionally does not create a manager or owner account; assign those permissions and the `MAIN` branch scope to an existing local employee before this step.
+3. In the manager workspace, materialize eligible deliveries through the order's scheduled date, open the `MAIN` branch queue, and assign the order's delivery to Development Delivery Staff.
+4. Sign out and sign in as `delivery@doodhdirect.local`. The staff workspace shows assigned deliveries for the selected date. Open the assigned delivery and perform Pickup, Start delivery, and Arrive in that order.
+5. With a configured server-side OTP delivery provider, issue the OTP and verify the customer-provided code, then complete the delivery. Alternatively, exercise the failed-delivery action with a supported failure reason and optional coordinates.
+6. Sign back in as the customer and open Orders. The delivery status is available from the delivery details while tracking is active. Location updates can also be posted to the staff location endpoint using device coordinates and a UTC timestamp.
+
+The Flutter client does not currently acquire device location from a platform location plugin. The delivery location API and client repository are available for an approved platform integration or API-driven local verification. The default backend OTP provider is unconfigured, so real OTP completion requires a configured server-side delivery integration.
+
 ## Validation
 
 Run these commands from the `mobile` directory:
@@ -57,6 +71,4 @@ flutter test
 flutter build web --release
 ```
 
-The client expects the API routes documented in [`Document/05_API_Specification.md`](../Document/05_API_Specification.md), including authentication, customer, catalogue, order, payment, and wallet routes.
-
-OTP delivery is not configured by the backend default provider, so end-to-end OTP use requires a configured server-side delivery integration.
+The client expects the API routes documented in [`Document/05_API_Specification.md`](../Document/05_API_Specification.md), including authentication, customer, catalogue, order, payment, wallet, and delivery routes.

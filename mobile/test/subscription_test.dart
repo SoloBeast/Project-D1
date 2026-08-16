@@ -16,6 +16,7 @@ import 'package:doodh_direct_mobile/features/subscriptions/subscription_screens.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -127,6 +128,39 @@ void main() {
       expect(result.payment.subscriptionId, 'subscription-1');
     });
 
+    test('retry posts method and fresh-attempt idempotency header', () async {
+      final client = MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(
+          request.url.path,
+          '/api/v1/subscriptions/subscription-1/retry-payment',
+        );
+        expect(request.headers['Authorization'], 'Bearer customer-token');
+        expect(request.headers['Idempotency-Key'], 'subscription-retry-1');
+        expect(jsonDecode(request.body), {'paymentMethod': 'Razorpay'});
+        return successResponse({
+          'subscription': subscriptionJson(status: 'PaymentPending'),
+          'payment': paymentJson(
+            publicId: 'payment-retry-1',
+            method: 'Razorpay',
+            status: 'Pending',
+          ),
+        }, statusCode: 201);
+      });
+      final repository = testRepository(client);
+
+      final result = await repository.retryPayment(
+        token: 'customer-token',
+        subscriptionId: 'subscription-1',
+        paymentMethod: PaymentMethod.razorpay,
+        idempotencyKey: 'subscription-retry-1',
+      );
+
+      expect(result.subscription.status, SubscriptionStatus.paymentPending);
+      expect(result.payment.publicId, 'payment-retry-1');
+      expect(result.payment.method, PaymentMethod.razorpay);
+    });
+
     test(
       'uses customer detail, lifecycle, update, skip, and calendar routes',
       () async {
@@ -213,6 +247,52 @@ void main() {
     });
 
     test(
+      'retry adopts payment, upserts subscription, and uses new keys',
+      () async {
+        final repository = _FakeSubscriptionRepository();
+        final container = await authenticatedContainer(repository);
+        addTearDown(container.dispose);
+
+        final controller = container.read(
+          subscriptionControllerProvider.notifier,
+        );
+        final first = await controller.retryPayment(
+          'subscription-1',
+          PaymentMethod.wallet,
+        );
+        final second = await controller.retryPayment(
+          'subscription-1',
+          PaymentMethod.razorpay,
+        );
+
+        expect(first, isNotNull);
+        expect(second, isNotNull);
+        expect(repository.retrySubscriptionIds, [
+          'subscription-1',
+          'subscription-1',
+        ]);
+        expect(repository.retryMethods, [
+          PaymentMethod.wallet,
+          PaymentMethod.razorpay,
+        ]);
+        expect(repository.retryIdempotencyKeys, hasLength(2));
+        expect(
+          repository.retryIdempotencyKeys,
+          everyElement(startsWith('mobile-subscription-retry-')),
+        );
+        expect(repository.retryIdempotencyKeys.toSet(), hasLength(2));
+        expect(
+          container.read(paymentControllerProvider).payment?.publicId,
+          'payment-retry-2',
+        );
+        final state = container.read(subscriptionControllerProvider);
+        expect(state.subscriptions, hasLength(1));
+        expect(state.selectedSubscription?.publicId, 'subscription-1');
+        expect(state.selectedSubscription?.status, SubscriptionStatus.active);
+      },
+    );
+
+    test(
       'preserves API error message without marking the state offline',
       () async {
         final container = await authenticatedContainer(
@@ -254,6 +334,100 @@ void main() {
     });
   });
 
+  group('subscription product selection', () {
+    test('deduplicates available products by immutable public ID', () {
+      final replacement = productFixture('product-1', 'Replacement Milk');
+
+      final products = deduplicateAvailableSubscriptionProducts([
+        _product,
+        replacement,
+      ]);
+
+      expect(products, hasLength(1));
+      expect(products.single, same(_product));
+    });
+
+    test('preserves selection when catalogue replaces the Dart object', () {
+      final replacement = productFixture('product-1', 'Replacement Milk');
+
+      expect(
+        resolveAvailableSubscriptionProductId([replacement], 'product-1'),
+        'product-1',
+      );
+    });
+
+    test('falls back predictably when selection disappears', () {
+      final firstAvailable = productFixture('product-2', 'Toned Milk');
+      final secondAvailable = productFixture('product-3', 'Cow Milk');
+
+      expect(
+        resolveAvailableSubscriptionProductId([
+          firstAvailable,
+          secondAvailable,
+        ], 'product-1'),
+        'product-2',
+      );
+      expect(resolveAvailableSubscriptionProductId([], 'product-1'), isNull);
+    });
+  });
+
+  group('subscription address selection', () {
+    test('deduplicates active addresses by immutable public ID', () {
+      final replacement = addressFixture(
+        publicId: 'address-1',
+        label: 'Replacement Home',
+      );
+      final inactive = addressFixture(
+        publicId: 'address-2',
+        label: 'Inactive',
+        isActive: false,
+      );
+
+      final addresses = deduplicateActiveSubscriptionAddresses([
+        _address,
+        replacement,
+        inactive,
+      ]);
+
+      expect(addresses, hasLength(1));
+      expect(addresses.single, same(_address));
+    });
+
+    test('preserves selection when repository replaces the Dart object', () {
+      final replacement = addressFixture(
+        publicId: 'address-1',
+        label: 'Replacement Home',
+      );
+
+      expect(
+        resolveActiveSubscriptionAddressId([replacement], 'address-1'),
+        'address-1',
+      );
+    });
+
+    test('falls back to active default, first active address, then null', () {
+      final first = addressFixture(publicId: 'address-2', label: 'Office');
+      final defaultAddress = addressFixture(
+        publicId: 'address-3',
+        label: 'Parents',
+        isDefault: true,
+      );
+
+      expect(
+        resolveActiveSubscriptionAddressId([
+          first,
+          defaultAddress,
+        ], 'inactive-address'),
+        'address-3',
+      );
+      expect(
+        resolveActiveSubscriptionAddressId([first], 'inactive-address'),
+        'address-2',
+      );
+      expect(resolveActiveSubscriptionAddressId([], 'address-1'), isNull);
+    });
+  });
+
   group('subscription screens', () {
     testWidgets(
       'setup shows eligible products, addresses, and finite controls',
@@ -278,6 +452,27 @@ void main() {
         expect(find.text('Continue to payment'), findsOneWidget);
       },
     );
+
+    testWidgets('setup tolerates duplicate address IDs across rebuilds', (
+      tester,
+    ) async {
+      await pumpScreen(
+        tester,
+        const SubscriptionSetupScreen(),
+        catalogueState: CatalogueState(products: [_product]),
+        customerState: CustomerState(
+          addresses: [
+            _address,
+            addressFixture(publicId: 'address-1', label: 'Replacement Home'),
+          ],
+        ),
+      );
+
+      expect(find.text('Home - Pune'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets('list renders entitlement and schedule from server state', (
       tester,
@@ -319,7 +514,123 @@ void main() {
       expect(find.text('Pause subscription'), findsOneWidget);
       expect(find.text('Cancel subscription'), findsOneWidget);
       expect(find.text('Resume subscription'), findsNothing);
+      expect(find.text('Retry payment'), findsNothing);
       expect(find.text('View delivery calendar'), findsOneWidget);
+      expect(find.text('Complete Payment'), findsNothing);
+    });
+
+    testWidgets(
+      'pending detail shows amount and deliberate completion actions',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(800, 1400));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        final pendingSubscription = SubscriptionDetails.fromJson(
+          subscriptionJson(status: 'PaymentPending'),
+        );
+        await pumpScreen(
+          tester,
+          const SubscriptionDetailScreen(subscriptionId: 'subscription-1'),
+          subscriptionState: SubscriptionState(
+            subscriptions: [pendingSubscription],
+            selectedSubscription: pendingSubscription,
+          ),
+        );
+
+        expect(find.text('Status: Payment Pending'), findsOneWidget);
+        expect(find.text('Amount Due: ₹2025.00'), findsOneWidget);
+        expect(find.text('Complete Payment'), findsNWidgets(2));
+        expect(find.text('DoodhDirect Wallet'), findsOneWidget);
+        expect(find.text('Razorpay'), findsOneWidget);
+        expect(find.text('Retry Payment'), findsNothing);
+      },
+    );
+
+    testWidgets('detail offers Wallet and Razorpay retry only after failure', (
+      tester,
+    ) async {
+      final failedSubscription = SubscriptionDetails.fromJson(
+        subscriptionJson(status: 'PaymentFailed'),
+      );
+      await pumpScreen(
+        tester,
+        const SubscriptionDetailScreen(subscriptionId: 'subscription-1'),
+        subscriptionState: SubscriptionState(
+          subscriptions: [failedSubscription],
+          selectedSubscription: failedSubscription,
+        ),
+      );
+
+      await tester.scrollUntilVisible(
+        find.widgetWithText(FilledButton, 'Retry Payment'),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Retry Payment'), findsNWidgets(2));
+      expect(find.text('DoodhDirect Wallet'), findsOneWidget);
+      expect(find.text('Razorpay'), findsOneWidget);
+      expect(find.text('Pause subscription'), findsNothing);
+      expect(find.text('Resume subscription'), findsNothing);
+    });
+
+    testWidgets('reloads subscription after payment result route returns', (
+      tester,
+    ) async {
+      final pendingSubscription = SubscriptionDetails.fromJson(
+        subscriptionJson(status: 'PaymentPending'),
+      );
+      final retryResult = CreatedSubscription.fromJson({
+        'subscription': subscriptionJson(status: 'Active'),
+        'payment': paymentJson(publicId: 'payment-retry-1'),
+      });
+      late _SeededSubscriptionController controller;
+      final router = GoRouter(
+        initialLocation: '/subscriptions/subscription-1',
+        routes: [
+          GoRoute(
+            path: '/subscriptions/:subscriptionId',
+            builder: (context, state) => SubscriptionDetailScreen(
+              subscriptionId: state.pathParameters['subscriptionId']!,
+            ),
+          ),
+          GoRoute(
+            path: '/payments/:paymentId/result',
+            builder: (context, state) =>
+                const Scaffold(body: Center(child: Text('Payment result'))),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            subscriptionControllerProvider.overrideWith(
+              () => controller = _SeededSubscriptionController(
+                SubscriptionState(
+                  subscriptions: [pendingSubscription],
+                  selectedSubscription: pendingSubscription,
+                ),
+                retryResult: retryResult,
+              ),
+            ),
+          ],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final initialLoads = controller.loadedSubscriptionIds.length;
+      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Complete Payment'));
+      await tester.pumpAndSettle();
+      expect(find.text('Payment result'), findsOneWidget);
+
+      router.pop();
+      await tester.pumpAndSettle();
+
+      expect(controller.loadedSubscriptionIds, hasLength(initialLoads + 1));
+      expect(controller.loadedSubscriptionIds.last, 'subscription-1');
     });
 
     testWidgets('calendar offers skip only for scheduled deliveries', (
@@ -415,13 +726,17 @@ Map<String, dynamic> subscriptionJson({String status = 'Active'}) => {
   'createdAtUtc': '2026-08-16T09:00:00Z',
 };
 
-Map<String, dynamic> paymentJson() => {
-  'publicId': 'payment-1',
+Map<String, dynamic> paymentJson({
+  String publicId = 'payment-1',
+  String method = 'Wallet',
+  String status = 'Success',
+}) => {
+  'publicId': publicId,
   'orderId': null,
   'orderNumber': null,
   'subscriptionId': 'subscription-1',
-  'method': 'Wallet',
-  'status': 'Success',
+  'method': method,
+  'status': status,
   'amount': 2025,
   'refundedAmount': 0,
   'currency': 'INR',
@@ -511,6 +826,9 @@ class _FakeSubscriptionRepository extends SubscriptionRepository {
 
   String? lastToken;
   String? lastIdempotencyKey;
+  final retrySubscriptionIds = <String>[];
+  final retryMethods = <PaymentMethod>[];
+  final retryIdempotencyKeys = <String>[];
 
   @override
   Future<CreatedSubscription> create({
@@ -523,6 +841,29 @@ class _FakeSubscriptionRepository extends SubscriptionRepository {
     return CreatedSubscription.fromJson({
       'subscription': subscriptionJson(),
       'payment': paymentJson(),
+    });
+  }
+
+  @override
+  Future<CreatedSubscription> retryPayment({
+    required String token,
+    required String subscriptionId,
+    required PaymentMethod paymentMethod,
+    required String idempotencyKey,
+  }) async {
+    retrySubscriptionIds.add(subscriptionId);
+    retryMethods.add(paymentMethod);
+    retryIdempotencyKeys.add(idempotencyKey);
+    final attempt = retrySubscriptionIds.length;
+    return CreatedSubscription.fromJson({
+      'subscription': subscriptionJson(
+        status: attempt == 1 ? 'PaymentPending' : 'Active',
+      ),
+      'payment': paymentJson(
+        publicId: 'payment-retry-$attempt',
+        method: paymentMethod.apiValue,
+        status: attempt == 1 ? 'Pending' : 'Success',
+      ),
     });
   }
 }
@@ -539,9 +880,11 @@ class _FailingSubscriptionRepository extends SubscriptionRepository {
 }
 
 class _SeededSubscriptionController extends SubscriptionController {
-  _SeededSubscriptionController(this.initialState);
+  _SeededSubscriptionController(this.initialState, {this.retryResult});
 
   final SubscriptionState initialState;
+  final CreatedSubscription? retryResult;
+  final loadedSubscriptionIds = <String>[];
 
   @override
   SubscriptionState build() => initialState;
@@ -550,10 +893,18 @@ class _SeededSubscriptionController extends SubscriptionController {
   Future<void> loadSubscriptions() async {}
 
   @override
-  Future<void> loadSubscription(String subscriptionId) async {}
+  Future<void> loadSubscription(String subscriptionId) async {
+    loadedSubscriptionIds.add(subscriptionId);
+  }
 
   @override
   Future<void> loadCalendar(String subscriptionId) async {}
+
+  @override
+  Future<CreatedSubscription?> retryPayment(
+    String subscriptionId,
+    PaymentMethod paymentMethod,
+  ) async => retryResult;
 }
 
 class _SeededCatalogueController extends CatalogueController {
@@ -624,6 +975,43 @@ const _address = CustomerAddress(
   isDefault: true,
   isActive: true,
 );
+
+CustomerAddress addressFixture({
+  required String publicId,
+  required String label,
+  bool isDefault = false,
+  bool isActive = true,
+}) => CustomerAddress(
+  publicId: publicId,
+  label: label,
+  addressLine1: '2 Main Street',
+  addressLine2: null,
+  locality: 'Central',
+  city: 'Pune',
+  state: 'Maharashtra',
+  pinCode: '411001',
+  landmark: null,
+  deliveryInstructions: null,
+  contactName: 'Customer',
+  contactMobile: '9999999999',
+  latitude: 18.5204,
+  longitude: 73.8567,
+  isDefault: isDefault,
+  isActive: isActive,
+);
+
+CatalogueProduct productFixture(String publicId, String name) =>
+    CatalogueProduct(
+      publicId: publicId,
+      sku: 'MILK-$publicId',
+      name: name,
+      description: null,
+      category: _product.category,
+      unitOfMeasure: _product.unitOfMeasure,
+      price: _product.price,
+      isActive: true,
+      branchAvailability: _product.branchAvailability,
+    );
 
 final _session = AuthSession(
   user: const AuthUser(

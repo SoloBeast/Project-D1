@@ -214,17 +214,17 @@ public sealed record CreatePaymentApiRequest(
 
 public sealed record VerifyPaymentApiRequest(
     Guid PaymentId,
-    [property: Required, MaxLength(100)] string GatewayOrderId,
-    [property: Required, MaxLength(100)] string GatewayPaymentId,
-    [property: Required, MaxLength(500)] string Signature);
+    [Required, MaxLength(100)] string GatewayOrderId,
+    [Required, MaxLength(100)] string GatewayPaymentId,
+    [Required, MaxLength(500)] string Signature);
 
 public sealed record RefundPaymentApiRequest(
-    [property: Range(typeof(decimal), "0.01", "9999999999.99")] decimal? Amount,
-    [property: Required, MaxLength(500)] string Reason);
+    [Range(typeof(decimal), "0.01", "9999999999.99")] decimal? Amount,
+    [Required, MaxLength(500)] string Reason);
 
 public sealed record WalletTopUpApiRequest(
-    [property: Range(typeof(decimal), "0.01", "9999999999.99")] decimal Amount);
+    [Range(typeof(decimal), "0.01", "9999999999.99")] decimal Amount);
 
 public sealed record WalletAdjustmentApiRequest(
     decimal Amount,
-    [property: Required, MaxLength(500)] string Reason);
+    [Required, MaxLength(500)] string Reason);

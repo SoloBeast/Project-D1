@@ -54,6 +54,42 @@ public sealed class SubscriptionDomainTests
     }
 
     [Fact]
+    public void RetryPayment_AfterTerminalFailure_ReturnsToPaymentPending()
+    {
+        var subscription = CreateSubscription();
+        subscription.FailPayment();
+
+        subscription.RetryPayment();
+
+        Assert.Equal(SubscriptionStatus.PaymentPending, subscription.Status);
+    }
+
+    [Theory]
+    [InlineData(SubscriptionStatus.PaymentPending)]
+    [InlineData(SubscriptionStatus.Active)]
+    [InlineData(SubscriptionStatus.Paused)]
+    [InlineData(SubscriptionStatus.Cancelled)]
+    public void RetryPayment_OutsidePaymentFailed_IsRejected(SubscriptionStatus status)
+    {
+        var subscription = CreateSubscription();
+        if (status == SubscriptionStatus.Active || status == SubscriptionStatus.Paused || status == SubscriptionStatus.Cancelled)
+        {
+            subscription.Activate(UtcNow);
+        }
+        if (status == SubscriptionStatus.Paused || status == SubscriptionStatus.Cancelled)
+        {
+            subscription.Pause(UtcNow.AddMinutes(1));
+        }
+        if (status == SubscriptionStatus.Cancelled)
+        {
+            subscription.Cancel(UtcNow.AddMinutes(2));
+        }
+
+        Assert.Throws<InvalidOperationException>(() => subscription.RetryPayment());
+        Assert.Equal(status, subscription.Status);
+    }
+
+    [Fact]
     public void Skip_BeforeCutoffIsIdempotentAndDoesNotConsumeEntitlement()
     {
         var subscription = CreateActiveSubscription();

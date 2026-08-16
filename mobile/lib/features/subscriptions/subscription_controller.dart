@@ -2,6 +2,7 @@ import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_controller.dart';
+import 'package:doodh_direct_mobile/features/payments/payment_models.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'subscription_models.dart';
@@ -80,6 +81,35 @@ class SubscriptionController extends Notifier<SubscriptionState> {
         request: request,
         idempotencyKey:
             'mobile-subscription-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      ref.read(paymentControllerProvider.notifier).adopt(created.payment);
+      state = state.copyWith(
+        subscriptions: _upsert(created.subscription),
+        selectedSubscription: created.subscription,
+        isSaving: false,
+      );
+      return created;
+    } on Object catch (error) {
+      _setFailure(error, saving: true);
+      return null;
+    }
+  }
+
+  Future<CreatedSubscription?> retryPayment(
+    String subscriptionId,
+    PaymentMethod paymentMethod,
+  ) async {
+    final token = _token;
+    if (token == null) return null;
+
+    state = state.copyWith(isSaving: true, isOffline: false, clearError: true);
+    try {
+      final created = await _repository.retryPayment(
+        token: token,
+        subscriptionId: subscriptionId,
+        paymentMethod: paymentMethod,
+        idempotencyKey:
+            'mobile-subscription-retry-${DateTime.now().microsecondsSinceEpoch}',
       );
       ref.read(paymentControllerProvider.notifier).adopt(created.payment);
       state = state.copyWith(

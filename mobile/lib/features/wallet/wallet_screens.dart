@@ -1,13 +1,12 @@
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'wallet_controller.dart';
 import 'wallet_models.dart';
 
-const _developmentToolsEnabled = bool.fromEnvironment(
-  'DOOHDIRECT_ENABLE_DEV_TOOLS',
-);
+const developmentWalletTopUpEnabled = kDebugMode;
 
 class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
@@ -99,7 +98,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                 padding: const EdgeInsets.all(16),
                 children: [
                   _BalancePanel(wallet: wallet),
-                  if (_developmentToolsEnabled) ...[
+                  if (developmentWalletTopUpEnabled) ...[
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
                       onPressed: state.isSaving ? null : _showTopUpDialog,

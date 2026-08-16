@@ -393,27 +393,39 @@ Webhook must be signature verified and idempotent.
 
 ## 10. Delivery APIs
 
-Delivery staff:
+Delivery status values are `ReadyForAssignment`, `Assigned`, `PickedUp`, `OutForDelivery`, `Arrived`, `Delivered`, and `Failed`. OTP verification is recorded separately while the delivery remains `Arrived`. All routes require bearer authentication.
 
-`GET /delivery/my-today`
+### Customer delivery tracking
 
-`GET /delivery/{deliveryId}`
+- `GET /deliveries` lists deliveries owned by the authenticated customer.
+- `GET /deliveries/{deliveryId}` returns one owned delivery.
+- Required permission: `DELIVERIES.READ_OWN`.
+- Customer responses expose the latest GPS location only while tracking is active. Assignment history, OTP data, customer contact details, and operational notes are not returned.
 
-`POST /delivery/{deliveryId}/pickup`
+### Delivery staff operations
 
-`POST /delivery/{deliveryId}/start`
+- `GET /delivery/my-today?date=YYYY-MM-DD` lists deliveries assigned to the authenticated employee. The date defaults to the current UTC date.
+- `GET /delivery/{deliveryId}` returns one delivery assigned to the authenticated employee.
+- `POST /delivery/{deliveryId}/pickup` accepts `{ "remarks": "optional operational notes" }`.
+- `POST /delivery/{deliveryId}/start` transitions a picked-up delivery to `OutForDelivery`.
+- `POST /delivery/{deliveryId}/arrive` transitions an out-for-delivery delivery to `Arrived`.
+- `POST /delivery/{deliveryId}/issue-otp` issues a short-lived delivery OTP through the configured server provider.
+- `POST /delivery/{deliveryId}/verify-otp` accepts `{ "code": "123456" }` and records OTP verification for an arrived delivery without changing its `Arrived` status.
+- `POST /delivery/{deliveryId}/complete` accepts `{ "remarks": "optional completion remarks" }` and requires prior OTP verification.
+- `POST /delivery/{deliveryId}/fail` accepts `{ "reason": "CUSTOMER_UNAVAILABLE", "remarks": "optional", "latitude": 12.9716, "longitude": 77.5946 }`. Coordinates are optional as a pair.
+- `POST /delivery/{deliveryId}/location` accepts `{ "latitude": 12.9716, "longitude": 77.5946, "accuracyMetres": 10, "recordedAtUtc": "2026-08-16T12:00:00Z" }` while tracking is active.
+- Lifecycle operations require `DELIVERIES.OPERATE_ASSIGNED`; location publication requires `DELIVERIES.TRACK_ASSIGNED`. The authenticated employee must own the current assignment.
 
-`POST /delivery/{deliveryId}/location`
+### Delivery management
 
-`POST /delivery/{deliveryId}/test`
+- `POST /delivery-management/materialize?throughDate=YYYY-MM-DD` idempotently creates delivery work from eligible confirmed orders and scheduled subscription occurrences.
+- `GET /delivery-management/branches/{branchId}?date=YYYY-MM-DD&status=Assigned` lists branch deliveries with optional filters.
+- `GET /delivery-management/branches/{branchId}/employees` lists employees eligible for delivery assignment in the branch.
+- `GET /delivery-management/{deliveryId}` returns operational delivery detail.
+- `POST /delivery-management/{deliveryId}/assign` accepts `{ "employeeId": "uuid", "reason": "optional assignment reason" }` and supports reassignment before terminal completion.
+- Branch reads require `DELIVERIES.READ_BRANCH`; materialization and assignment require `DELIVERIES.ASSIGN_BRANCH`. The requested delivery/branch must be within the actor's branch claims unless the actor has global access.
 
-`POST /delivery/{deliveryId}/verify-otp`
-
-`POST /delivery/{deliveryId}/fail`
-
-`POST /delivery/{deliveryId}/complete`
-
-`POST /delivery/{deliveryId}/replacement/complete`
+All successful responses use the standard API envelope. Invalid transitions and OTP failures return the standard error envelope without exposing stored OTP hashes or codes.
 
 ---
 

@@ -4,6 +4,8 @@ using DoodhDirect.Api.Authorization;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Identity;
 using DoodhDirect.Domain.Customer;
+using DoodhDirect.Domain.Identity;
+using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -82,6 +84,41 @@ public sealed class IdentitySeedServiceTests
         Assert.True(address.IsDefault);
         Assert.Equal(12.9716m, address.Latitude);
         Assert.Equal(77.5946m, address.Longitude);
+    }
+
+    [Fact]
+    public async Task DevelopmentDeliveryStaffSeedAsync_IsIdempotent_AndCreatesBranchScopedEmployee()
+    {
+        await using var provider = CreateProvider();
+        await using var scope = provider.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<DoodhDirectDbContext>();
+        var passwordHasher = new Pbkdf2PasswordHasher(Options.Create(new IdentityOptions()));
+        var identitySeed = new IdentitySeedService(db);
+        var catalogueSeed = new CatalogueSeedService(db);
+        var developmentSeed = new DevelopmentDeliveryStaffSeedService(db, passwordHasher);
+
+        await identitySeed.SeedAsync(CancellationToken.None);
+        await catalogueSeed.SeedAsync(CancellationToken.None);
+        await developmentSeed.SeedAsync(CancellationToken.None);
+        await developmentSeed.SeedAsync(CancellationToken.None);
+
+        var users = await db.Users
+            .Include(item => item.UserRoles).ThenInclude(item => item.Role)
+            .Where(item => item.Email == DevelopmentDeliveryStaffSeedService.Email)
+            .ToListAsync();
+        var user = Assert.Single(users);
+        var branch = await db.Branches.SingleAsync(
+            item => item.Code == DevelopmentDeliveryStaffSeedService.BranchCode);
+        var assignment = Assert.Single(
+            user.UserRoles,
+            item => item.Role.Code == AuthorizationCodes.DeliveryStaff);
+
+        Assert.Equal(UserType.Employee, user.UserType);
+        Assert.Equal("Development Delivery Staff", user.DisplayName);
+        Assert.Equal(branch.Id, assignment.BranchId);
+        Assert.True(passwordHasher.Verify(
+            user.PasswordHash!,
+            DevelopmentDeliveryStaffSeedService.Password));
     }
 
     private static ServiceProvider CreateProvider()

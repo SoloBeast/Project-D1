@@ -52,7 +52,8 @@ void main() {
 
       expect(repository.lastLogin, 'delivery@example.test');
       expect(find.text('Delivery workspace'), findsOneWidget);
-      expect(find.text('Delivery workspace ready'), findsOneWidget);
+      expect(find.text('Delivery route'), findsOneWidget);
+      expect(find.text("Today's deliveries"), findsOneWidget);
 
       await tester.tap(find.byTooltip('Sign out'));
       await tester.pumpAndSettle();

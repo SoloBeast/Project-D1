@@ -20,6 +20,8 @@ public sealed record UpdateSubscriptionRequest(
 
 public sealed record SkipSubscriptionDeliveryRequest(Guid DeliveryId);
 
+public sealed record RetrySubscriptionPaymentRequest(PaymentMethod PaymentMethod);
+
 public sealed record SubscriptionScheduleResult(DayOfWeek DayOfWeek);
 
 public sealed record SubscriptionDeliveryResult(
@@ -79,6 +81,13 @@ public interface ISubscriptionService
     Task<SubscriptionResult> GetAsync(
         long customerId,
         Guid subscriptionId,
+        CancellationToken cancellationToken);
+
+    Task<CreatedSubscriptionResult> RetryPaymentAsync(
+        long customerId,
+        Guid subscriptionId,
+        RetrySubscriptionPaymentRequest request,
+        string idempotencyKey,
         CancellationToken cancellationToken);
 
     Task<SubscriptionResult> UpdateAsync(

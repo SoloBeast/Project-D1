@@ -360,6 +360,13 @@ public sealed class SubscriptionServiceTests
                 subscription.PublicId);
         }
 
+        public Task<PaymentResult> RetrySubscriptionAsync(
+            long customerId,
+            Guid subscriptionId,
+            PaymentMethod method,
+            string idempotencyKey,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<PaymentResult> CreateAsync(
             long customerId,
             CreatePaymentRequest request,

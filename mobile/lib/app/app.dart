@@ -6,6 +6,7 @@ import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_screens.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_screens.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
 import 'package:doodh_direct_mobile/features/home/role_home_screen.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/orders/order_screens.dart';
@@ -170,6 +171,52 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/admin/catalogue',
         builder: (context, state) => const AdminCatalogueScreen(),
+      ),
+      GoRoute(
+        path: '/deliveries',
+        builder: (context, state) => const CustomerDeliveryListScreen(),
+      ),
+      GoRoute(
+        path: '/deliveries/:deliveryId',
+        builder: (context, state) {
+          final deliveryId = _requiredPathParameter(state, 'deliveryId');
+          return deliveryId == null
+              ? const _RouteErrorScreen(resource: 'delivery')
+              : CustomerDeliveryDetailScreen(deliveryId: deliveryId);
+        },
+      ),
+      GoRoute(
+        path: '/delivery',
+        builder: (context, state) => const StaffDeliveryListScreen(),
+      ),
+      GoRoute(
+        path: '/delivery/:deliveryId',
+        builder: (context, state) {
+          final deliveryId = _requiredPathParameter(state, 'deliveryId');
+          return deliveryId == null
+              ? const _RouteErrorScreen(resource: 'delivery')
+              : StaffDeliveryDetailScreen(deliveryId: deliveryId);
+        },
+      ),
+      GoRoute(
+        path: '/delivery-management/branch/:branchId',
+        builder: (context, state) {
+          final branchId = int.tryParse(
+            _requiredPathParameter(state, 'branchId') ?? '',
+          );
+          return branchId == null
+              ? const _RouteErrorScreen(resource: 'branch delivery')
+              : DeliveryManagementScreen(branchId: branchId);
+        },
+      ),
+      GoRoute(
+        path: '/delivery-management/:deliveryId',
+        builder: (context, state) {
+          final deliveryId = _requiredPathParameter(state, 'deliveryId');
+          return deliveryId == null
+              ? const _RouteErrorScreen(resource: 'delivery')
+              : DeliveryManagementDetailScreen(deliveryId: deliveryId);
+        },
       ),
     ],
   );

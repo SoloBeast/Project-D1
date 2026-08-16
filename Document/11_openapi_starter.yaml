@@ -661,28 +661,324 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
-  /delivery/{deliveryId}/verify-otp:
-    post:
-      summary: Verify delivery OTP
+  /deliveries:
+    get:
+      summary: List deliveries owned by the authenticated customer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Customer-safe delivery snapshots
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerDeliveryListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /deliveries/{deliveryId}:
+    get:
+      summary: Get an owned delivery with customer-safe tracking data
       security:
         - bearerAuth: []
       parameters:
-        - name: deliveryId
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/deliveryId'
+      responses:
+        '200':
+          description: Customer-safe delivery snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerDeliveryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /delivery/my-today:
+    get:
+      summary: List deliveries assigned to the authenticated delivery employee
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryDate'
+      responses:
+        '200':
+          description: Assigned deliveries for the requested date, or today when omitted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /delivery/{deliveryId}:
+    get:
+      summary: Get an assigned delivery for operational use
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      responses:
+        '200':
+          description: Operational delivery snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /delivery/{deliveryId}/pickup:
+    post:
+      summary: Mark an assigned delivery as picked up
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [otp]
-              properties:
-                otp: { type: string, minLength: 4, maxLength: 8 }
+            schema: { $ref: '#/components/schemas/DeliveryNotesRequest' }
       responses:
-        '200': { description: OTP verified }
-        '422': { description: Invalid/expired OTP }
+        '200':
+          description: Updated delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /delivery/{deliveryId}/start:
+    post:
+      summary: Start an assigned delivery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      responses:
+        '200':
+          description: Updated delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /delivery/{deliveryId}/arrive:
+    post:
+      summary: Mark an assigned delivery as arrived
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      responses:
+        '200':
+          description: Updated delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /delivery/{deliveryId}/issue-otp:
+    post:
+      summary: Issue an OTP to the customer for an arrived delivery
+      description: The plaintext OTP and stored OTP hash are never returned by the API.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      responses:
+        '200':
+          description: OTP issuance accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryOtpIssuedResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /delivery/{deliveryId}/verify-otp:
+    post:
+      summary: Verify the customer OTP for an arrived delivery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerifyDeliveryOtpRequest' }
+      responses:
+        '200':
+          description: Updated OTP-verified delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /delivery/{deliveryId}/complete:
+    post:
+      summary: Complete an OTP-verified delivery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryNotesRequest' }
+      responses:
+        '200':
+          description: Completed delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /delivery/{deliveryId}/fail:
+    post:
+      summary: Mark an assigned delivery as failed
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FailDeliveryRequest' }
+      responses:
+        '200':
+          description: Failed delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /delivery/{deliveryId}/location:
+    post:
+      summary: Record the authenticated employee's location for an active delivery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliveryLocationRequest' }
+      responses:
+        '200':
+          description: Recorded location
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryLocationResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /delivery-management/materialize:
+    post:
+      summary: Materialize eligible confirmed orders and subscription occurrences as deliveries
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/throughDate'
+      responses:
+        '200':
+          description: Materialization counts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryMaterializationResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /delivery-management/branches/{branchId}:
+    get:
+      summary: List a branch delivery queue
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryBranchId'
+        - $ref: '#/components/parameters/deliveryDate'
+        - $ref: '#/components/parameters/deliveryStatus'
+      responses:
+        '200':
+          description: Branch delivery queue
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /delivery-management/branches/{branchId}/employees:
+    get:
+      summary: List delivery employees eligible for assignment in a branch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryBranchId'
+      responses:
+        '200':
+          description: Eligible branch delivery employees
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryEmployeeListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /delivery-management/{deliveryId}:
+    get:
+      summary: Get an operational delivery within the caller's branch scope
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      responses:
+        '200':
+          description: Operational delivery snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /delivery-management/{deliveryId}/assign:
+    post:
+      summary: Assign or reassign a delivery to an eligible employee in the delivery branch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignDeliveryRequest' }
+      responses:
+        '200':
+          description: Assigned delivery
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /webhooks/razorpay:
     post:
       summary: Razorpay webhook
@@ -733,6 +1029,31 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    deliveryId:
+      name: deliveryId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    deliveryBranchId:
+      name: branchId
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    deliveryDate:
+      name: date
+      in: query
+      required: false
+      schema: { type: string, format: date }
+    deliveryStatus:
+      name: status
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/DeliveryStatus' }
+    throughDate:
+      name: throughDate
+      in: query
+      required: true
+      schema: { type: string, format: date }
     idempotencyKey:
       name: Idempotency-Key
       in: header
@@ -787,6 +1108,234 @@ components:
         message: { type: string, nullable: true }
         errors:
           type: array
+          items: { $ref: '#/components/schemas/ApiError' }
+    DeliverySourceType:
+      type: string
+      enum: [OneTimeOrder, SubscriptionOccurrence]
+    DeliveryStatus:
+      type: string
+      enum: [ReadyForAssignment, Assigned, PickedUp, OutForDelivery, Arrived, Delivered, Failed]
+    AssignDeliveryRequest:
+      type: object
+      required: [employeeId]
+      properties:
+        employeeId: { type: string, format: uuid }
+        reason: { type: string, nullable: true }
+    DeliveryNotesRequest:
+      type: object
+      properties:
+        remarks: { type: string, nullable: true }
+    FailDeliveryRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+        remarks: { type: string, nullable: true }
+        latitude: { type: number, format: double, nullable: true, minimum: -90, maximum: 90 }
+        longitude: { type: number, format: double, nullable: true, minimum: -180, maximum: 180 }
+    VerifyDeliveryOtpRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: Customer-provided delivery verification code.
+    DeliveryLocationRequest:
+      type: object
+      required: [latitude, longitude, recordedAtUtc]
+      properties:
+        latitude: { type: number, format: double, minimum: -90, maximum: 90 }
+        longitude: { type: number, format: double, minimum: -180, maximum: 180 }
+        accuracyMetres: { type: number, format: double, nullable: true, minimum: 0 }
+        recordedAtUtc: { type: string, format: date-time }
+    DeliveryLocation:
+      type: object
+      required: [latitude, longitude, recordedAtUtc]
+      properties:
+        latitude: { type: number, format: double, minimum: -90, maximum: 90 }
+        longitude: { type: number, format: double, minimum: -180, maximum: 180 }
+        accuracyMetres: { type: number, format: double, nullable: true, minimum: 0 }
+        recordedAtUtc: { type: string, format: date-time }
+    DeliveryAssignment:
+      type: object
+      required: [employeeId, assignedByUserId, assignedAtUtc]
+      properties:
+        employeeId: { type: string, format: uuid }
+        employeeName: { type: string, nullable: true }
+        assignedByUserId: { type: string, format: uuid }
+        assignedAtUtc: { type: string, format: date-time }
+        reason: { type: string, nullable: true }
+    Delivery:
+      type: object
+      required: [deliveryId, sourceType, referenceNumber, status, scheduledDate, branchId, customerId, customerName, customerMobile, destinationAddress, destinationLatitude, destinationLongitude, isTrackingActive, assignments]
+      properties:
+        deliveryId: { type: string, format: uuid }
+        sourceType: { $ref: '#/components/schemas/DeliverySourceType' }
+        referenceNumber: { type: string }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+        scheduledDate: { type: string, format: date }
+        branchId: { type: integer, format: int64 }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string }
+        customerMobile: { type: string }
+        destinationAddress: { type: string }
+        deliveryInstructions: { type: string, nullable: true }
+        destinationLatitude: { type: number, format: double, minimum: -90, maximum: 90 }
+        destinationLongitude: { type: number, format: double, minimum: -180, maximum: 180 }
+        assignedEmployeeId: { type: string, format: uuid, nullable: true }
+        assignedEmployeeName: { type: string, nullable: true }
+        assignedAtUtc: { type: string, format: date-time, nullable: true }
+        pickedUpAtUtc: { type: string, format: date-time, nullable: true }
+        outForDeliveryAtUtc: { type: string, format: date-time, nullable: true }
+        arrivedAtUtc: { type: string, format: date-time, nullable: true }
+        otpVerifiedAtUtc: { type: string, format: date-time, nullable: true }
+        completedAtUtc: { type: string, format: date-time, nullable: true }
+        failedAtUtc: { type: string, format: date-time, nullable: true }
+        failureReason: { type: string, nullable: true }
+        remarks: { type: string, nullable: true }
+        operationalNotes: { type: string, nullable: true }
+        isTrackingActive: { type: boolean }
+        latestLocation:
+          description: Most recent location; null outside the active tracking window.
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/DeliveryLocation'
+        assignments:
+          type: array
+          items: { $ref: '#/components/schemas/DeliveryAssignment' }
+    CustomerDelivery:
+      type: object
+      description: Customer-safe tracking view that omits contact data, destination coordinates, operational notes, and assignment history.
+      required: [deliveryId, sourceType, referenceNumber, status, scheduledDate, destinationAddress, isTrackingActive]
+      properties:
+        deliveryId: { type: string, format: uuid }
+        sourceType: { $ref: '#/components/schemas/DeliverySourceType' }
+        referenceNumber: { type: string }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+        scheduledDate: { type: string, format: date }
+        destinationAddress: { type: string }
+        assignedEmployeeId: { type: string, format: uuid, nullable: true }
+        assignedEmployeeName: { type: string, nullable: true }
+        isTrackingActive: { type: boolean }
+        latestLocation:
+          description: Present only while tracking is active; otherwise null.
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/DeliveryLocation'
+        completedAtUtc: { type: string, format: date-time, nullable: true }
+        failedAtUtc: { type: string, format: date-time, nullable: true }
+        failureReason: { type: string, nullable: true }
+    DeliveryEmployee:
+      type: object
+      required: [employeeId, displayName, branchId]
+      properties:
+        employeeId: { type: string, format: uuid }
+        displayName: { type: string }
+        branchId: { type: integer, format: int64 }
+    DeliveryMaterialization:
+      type: object
+      required: [ordersCreated, subscriptionOccurrencesCreated]
+      properties:
+        ordersCreated: { type: integer, format: int32, minimum: 0 }
+        subscriptionOccurrencesCreated: { type: integer, format: int32, minimum: 0 }
+    DeliveryOtpIssued:
+      type: object
+      required: [issued]
+      properties:
+        issued: { type: boolean }
+    DeliveryResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/Delivery' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    DeliveryListResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Delivery' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    CustomerDeliveryResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/CustomerDelivery' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    CustomerDeliveryListResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/CustomerDelivery' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    DeliveryLocationResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/DeliveryLocation' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    DeliveryEmployeeListResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/DeliveryEmployee' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    DeliveryMaterializationResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/DeliveryMaterialization' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    DeliveryOtpIssuedResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/DeliveryOtpIssued' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
           items: { $ref: '#/components/schemas/ApiError' }
     CreateSubscriptionRequest:
       type: object

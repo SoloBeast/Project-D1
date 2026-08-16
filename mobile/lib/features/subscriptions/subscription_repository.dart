@@ -1,4 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
+import 'package:doodh_direct_mobile/features/payments/payment_models.dart';
 
 import 'subscription_models.dart';
 
@@ -15,6 +16,23 @@ class SubscriptionRepository {
     final response = await api.post(
       '/api/v1/subscriptions',
       body: request.toJson(),
+      accessToken: token,
+      extraHeaders: {'Idempotency-Key': idempotencyKey},
+    );
+    return CreatedSubscription.fromJson(
+      response['data'] as Map<String, dynamic>,
+    );
+  }
+
+  Future<CreatedSubscription> retryPayment({
+    required String token,
+    required String subscriptionId,
+    required PaymentMethod paymentMethod,
+    required String idempotencyKey,
+  }) async {
+    final response = await api.post(
+      '/api/v1/subscriptions/$subscriptionId/retry-payment',
+      body: {'paymentMethod': paymentMethod.apiValue},
       accessToken: token,
       extraHeaders: {'Idempotency-Key': idempotencyKey},
     );

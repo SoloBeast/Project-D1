@@ -161,13 +161,61 @@ public sealed class Order : AuditableEntity
             throw new InvalidOperationException($"An order in status '{Status}' cannot be cancelled.");
         }
 
-        if (utcNow.Kind != DateTimeKind.Utc)
-        {
-            throw new ArgumentException("Timestamp must be UTC.", nameof(utcNow));
-        }
-
+        EnsureUtc(utcNow, nameof(utcNow));
         Status = OrderStatus.Cancelled;
         CancelledAtUtc = utcNow;
+    }
+
+    public void AssignForDelivery()
+    {
+        if (Status == OrderStatus.Assigned) return;
+        EnsureStatus(OrderStatus.Confirmed, "assigned for delivery");
+        Status = OrderStatus.Assigned;
+    }
+
+    public void StartDelivery()
+    {
+        if (Status == OrderStatus.OutForDelivery) return;
+        EnsureStatus(OrderStatus.Assigned, "started for delivery");
+        Status = OrderStatus.OutForDelivery;
+    }
+
+    public void MarkDelivered()
+    {
+        if (Status == OrderStatus.Delivered) return;
+        if (Status is not (OrderStatus.Assigned or OrderStatus.OutForDelivery))
+        {
+            throw new InvalidOperationException($"An order in status '{Status}' cannot be marked delivered.");
+        }
+
+        Status = OrderStatus.Delivered;
+    }
+
+    public void MarkDeliveryFailed()
+    {
+        if (Status == OrderStatus.Failed) return;
+        if (Status is not (OrderStatus.Assigned or OrderStatus.OutForDelivery))
+        {
+            throw new InvalidOperationException($"An order in status '{Status}' cannot be marked as delivery failed.");
+        }
+
+        Status = OrderStatus.Failed;
+    }
+
+    private void EnsureStatus(OrderStatus expected, string operation)
+    {
+        if (Status != expected)
+        {
+            throw new InvalidOperationException($"An order in status '{Status}' cannot be {operation}.");
+        }
+    }
+
+    private static void EnsureUtc(DateTime value, string parameterName)
+    {
+        if (value.Kind != DateTimeKind.Utc)
+        {
+            throw new ArgumentException("Timestamp must be UTC.", parameterName);
+        }
     }
 
     private static string Required(string value, string parameterName) =>

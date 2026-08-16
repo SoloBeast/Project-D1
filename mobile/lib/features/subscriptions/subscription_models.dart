@@ -22,7 +22,7 @@ enum SubscriptionStatus {
       };
 
   String get label => switch (this) {
-    SubscriptionStatus.paymentPending => 'Payment pending',
+    SubscriptionStatus.paymentPending => 'Payment Pending',
     SubscriptionStatus.active => 'Active',
     SubscriptionStatus.paused => 'Paused',
     SubscriptionStatus.cancelled => 'Cancelled',

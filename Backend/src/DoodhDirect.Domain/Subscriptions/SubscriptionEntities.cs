@@ -164,6 +164,16 @@ public sealed class Subscription : AuditableEntity
         Status = SubscriptionStatus.PaymentFailed;
     }
 
+    public void RetryPayment()
+    {
+        if (Status != SubscriptionStatus.PaymentFailed)
+        {
+            throw new InvalidOperationException($"A subscription in status '{Status}' cannot retry payment.");
+        }
+
+        Status = SubscriptionStatus.PaymentPending;
+    }
+
     public void Pause(DateTime utcNow)
     {
         EnsureUtc(utcNow, nameof(utcNow));

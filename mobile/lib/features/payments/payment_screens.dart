@@ -130,7 +130,9 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                                 .openRazorpayAndVerify();
                           }
                           if (context.mounted) {
-                            context.go('/payments/${payment.publicId}/result');
+                            context.push(
+                              '/payments/${payment.publicId}/result',
+                            );
                           }
                         },
                   icon: paymentState.isLoading
