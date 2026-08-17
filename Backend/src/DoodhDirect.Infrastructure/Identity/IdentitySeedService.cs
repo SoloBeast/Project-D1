@@ -102,6 +102,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.DairyManage,
                 AuthorizationCodes.CamerasRead,
                 AuthorizationCodes.CamerasManage,
+                AuthorizationCodes.NotificationTemplatesRead,
+                AuthorizationCodes.NotificationTemplatesManage,
                 AuthorizationCodes.DeliveriesReadBranch,
                 AuthorizationCodes.DeliveriesAssignBranch,
                 AuthorizationCodes.PaymentsRefund,

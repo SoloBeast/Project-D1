@@ -1,4 +1,5 @@
 using DoodhDirect.Application.Common;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Customer;
@@ -82,7 +83,8 @@ public sealed class BranchAllocationService(DoodhDirectDbContext dbContext) : IB
 
 public sealed class OrderService(
     DoodhDirectDbContext dbContext,
-    IBranchAllocationService branchAllocationService) : IOrderService
+    IBranchAllocationService branchAllocationService,
+    INotificationEventWriter notificationEventWriter) : IOrderService
 {
     public async Task<CheckoutResult> PreviewAsync(long customerId, CheckoutRequest request, CancellationToken cancellationToken)
     {
@@ -149,6 +151,16 @@ public sealed class OrderService(
         }
 
         dbContext.Orders.Add(order);
+        var notificationEventKey = $"order:{order.PublicId:N}:created";
+        notificationEventWriter.Add(new NotificationEventRequest(
+            customerId,
+            NotificationEventTypes.OrderCreated,
+            notificationEventKey,
+            new Dictionary<string, string>
+            {
+                ["message"] = $"Order {order.OrderNumber} has been created."
+            },
+            $"/orders/{order.PublicId}"));
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -159,6 +171,13 @@ public sealed class OrderService(
             foreach (var item in order.Items)
             {
                 dbContext.Entry(item).State = EntityState.Detached;
+            }
+
+            var notificationEvent = dbContext.NotificationEvents.Local
+                .SingleOrDefault(item => item.EventKey == notificationEventKey);
+            if (notificationEvent is not null)
+            {
+                dbContext.Entry(notificationEvent).State = EntityState.Detached;
             }
 
             var duplicate = await LoadOrderAsync(customerId, idempotencyKey.Trim(), cancellationToken);

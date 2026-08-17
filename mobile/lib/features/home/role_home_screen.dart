@@ -1,6 +1,7 @@
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/auth/session_state.dart';
+import 'package:doodh_direct_mobile/features/notifications/notification_controller.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +16,7 @@ class RoleHomeScreen extends ConsumerWidget {
     appBar: AppBar(
       title: Text('${role.label} workspace'),
       actions: [
+        const _NotificationButton(),
         IconButton(
           tooltip: 'Sign out',
           onPressed: () async {
@@ -59,6 +61,64 @@ class RoleHomeScreen extends ConsumerWidget {
       ),
     },
   );
+}
+
+class _NotificationButton extends ConsumerWidget {
+  const _NotificationButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final unreadCount = ref.watch(
+      notificationControllerProvider.select((state) => state.unreadCount),
+    );
+    return SizedBox.square(
+      dimension: 48,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: IconButton(
+              tooltip: 'Notifications',
+              onPressed: () => context.push('/notifications'),
+              icon: const Icon(Icons.notifications_outlined),
+            ),
+          ),
+          if (unreadCount > 0)
+            Positioned(
+              right: 2,
+              top: 3,
+              child: IgnorePointer(
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minWidth: 18,
+                    minHeight: 18,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.error,
+                    borderRadius: BorderRadius.circular(9),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.surface,
+                      width: 1.5,
+                    ),
+                  ),
+                  child: Text(
+                    unreadCount > 99 ? '99+' : '$unreadCount',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onError,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _CustomerHomeActions extends StatelessWidget {

@@ -1,4 +1,6 @@
+using System.Text.Json;
 using DoodhDirect.Application.Common;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Subscriptions;
@@ -70,6 +72,35 @@ public sealed class SubscriptionServiceTests
         Assert.Equal(first.Subscription.PublicId, replay.Subscription.PublicId);
         Assert.Single(await harness.Db.Subscriptions.AsNoTracking().ToListAsync());
         Assert.Equal(2, harness.PaymentService.Calls.Count);
+
+        var events = await harness.Db.NotificationEvents
+            .AsNoTracking()
+            .OrderBy(x => x.EventType)
+            .ToListAsync();
+        Assert.Equal(2, events.Count);
+        Assert.All(events, notificationEvent =>
+        {
+            Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
+            Assert.Equal(harness.Clock.UtcNow, notificationEvent.OccurredAtUtc);
+            Assert.Equal(
+                $"/subscriptions/{first.Subscription.PublicId}",
+                Payload(notificationEvent).GetProperty("DeepLink").GetString());
+            Assert.Equal(
+                first.Subscription.PublicId.ToString(),
+                Variables(notificationEvent).GetProperty("subscriptionId").GetString());
+        });
+        Assert.Contains(events, notificationEvent =>
+            notificationEvent.EventType == NotificationEventTypes.SubscriptionCreated &&
+            notificationEvent.EventKey ==
+                $"subscription:{first.Subscription.PublicId:N}:created" &&
+            !notificationEvent.IsCritical);
+        Assert.Contains(events, notificationEvent =>
+            notificationEvent.EventType == NotificationEventTypes.SubscriptionPaymentPending &&
+            notificationEvent.EventKey ==
+                $"subscription:{first.Subscription.PublicId:N}:payment-pending" &&
+            notificationEvent.IsCritical &&
+            Variables(notificationEvent).GetProperty("amount").GetString() == "320.00" &&
+            Variables(notificationEvent).GetProperty("currency").GetString() == "INR");
 
         await Assert.ThrowsAsync<ConflictException>(() => harness.Service.CreateAsync(
             harness.Customer.Id,
@@ -171,7 +202,45 @@ public sealed class SubscriptionServiceTests
             .Select(x => x.Status)
             .ToListAsync();
         Assert.Equal([SubscriptionDeliveryStatus.Skipped, SubscriptionDeliveryStatus.Cancelled], statuses);
+
+        var events = await harness.Db.NotificationEvents
+            .AsNoTracking()
+            .Where(x =>
+                x.EventType == NotificationEventTypes.SubscriptionPaused ||
+                x.EventType == NotificationEventTypes.SubscriptionResumed ||
+                x.EventType == NotificationEventTypes.SubscriptionSkipped)
+            .OrderBy(x => x.EventType)
+            .ToListAsync();
+        Assert.Equal(3, events.Count);
+        Assert.Contains(events, notificationEvent =>
+            notificationEvent.EventType == NotificationEventTypes.SubscriptionPaused &&
+            notificationEvent.EventKey ==
+                $"subscription:{created.Subscription.PublicId:N}:paused:{harness.Clock.UtcNow.Ticks}" &&
+            notificationEvent.OccurredAtUtc == harness.Clock.UtcNow);
+        Assert.Contains(events, notificationEvent =>
+            notificationEvent.EventType == NotificationEventTypes.SubscriptionResumed &&
+            notificationEvent.EventKey ==
+                $"subscription:{created.Subscription.PublicId:N}:resumed:{harness.Clock.UtcNow.Ticks}" &&
+            notificationEvent.OccurredAtUtc == harness.Clock.UtcNow);
+        var skippedEvent = Assert.Single(events, notificationEvent =>
+            notificationEvent.EventType == NotificationEventTypes.SubscriptionSkipped);
+        Assert.Equal(
+            $"subscription-delivery:{firstDelivery.PublicId:N}:skipped",
+            skippedEvent.EventKey);
+        Assert.Equal(harness.Clock.UtcNow, skippedEvent.OccurredAtUtc);
+        Assert.Equal(
+            "2026-08-17",
+            Variables(skippedEvent).GetProperty("date").GetString());
+        Assert.Equal(
+            $"/subscriptions/{created.Subscription.PublicId}",
+            Payload(skippedEvent).GetProperty("DeepLink").GetString());
     }
+
+    private static JsonElement Payload(DoodhDirect.Domain.Notifications.NotificationEvent notificationEvent) =>
+        JsonSerializer.Deserialize<JsonElement>(notificationEvent.PayloadJson);
+
+    private static JsonElement Variables(DoodhDirect.Domain.Notifications.NotificationEvent notificationEvent) =>
+        Payload(notificationEvent).GetProperty("Variables");
 
     [Fact]
     public async Task Update_RejectsChangesToGeneratedCommercialAndScheduleFields()
@@ -300,7 +369,13 @@ public sealed class SubscriptionServiceTests
             var clock = new TestClock(utcNow ?? new DateTime(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc));
             var paymentService = new CapturingSubscriptionPaymentService(db, clock);
             var allocation = new FixedBranchAllocationService(branch);
-            var service = new SubscriptionService(db, allocation, paymentService, clock);
+            var notificationEventWriter = new TestNotificationEventWriter(db, clock);
+            var service = new SubscriptionService(
+                db,
+                allocation,
+                paymentService,
+                clock,
+                notificationEventWriter);
             return new SubscriptionHarness(
                 connection, db, customer, otherCustomer, product, address, clock, paymentService, service);
         }

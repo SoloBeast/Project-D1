@@ -11,6 +11,8 @@ import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
 import 'package:doodh_direct_mobile/features/home/role_home_screen.dart';
 import 'package:doodh_direct_mobile/features/dairy/dairy_screens.dart';
 import 'package:doodh_direct_mobile/features/milk_testing/milk_test_screens.dart';
+import 'package:doodh_direct_mobile/features/notifications/notification_controller.dart';
+import 'package:doodh_direct_mobile/features/notifications/notification_screen.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/orders/order_screens.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_screens.dart';
@@ -48,6 +50,10 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/home',
         builder: (context, state) => RoleHomeScreen(role: session.role!),
+      ),
+      GoRoute(
+        path: '/notifications',
+        builder: (context, state) => const NotificationInboxScreen(),
       ),
       GoRoute(
         path: '/customer',
@@ -376,12 +382,26 @@ class DoodhDirectApp extends ConsumerWidget {
   const DoodhDirectApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => MaterialApp.router(
-    title: 'DoodhDirect',
-    routerConfig: ref.watch(routerProvider),
-    theme: ThemeData(
-      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF087F8C)),
-      useMaterial3: true,
-    ),
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(notificationControllerProvider);
+    ref.listen<String?>(
+      notificationControllerProvider.select((state) => state.pendingDeepLink),
+      (previous, next) {
+        if (next == null || next == previous) return;
+        final link = ref
+            .read(notificationControllerProvider.notifier)
+            .takePendingDeepLink();
+        if (link != null) ref.read(routerProvider).push(link);
+      },
+    );
+
+    return MaterialApp.router(
+      title: 'DoodhDirect',
+      routerConfig: ref.watch(routerProvider),
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF087F8C)),
+        useMaterial3: true,
+      ),
+    );
+  }
 }

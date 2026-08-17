@@ -1,6 +1,7 @@
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Cameras;
 using DoodhDirect.Domain.Catalogue;
+using DoodhDirect.Domain.Notifications;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Configuration;
 using DoodhDirect.Domain.Customer;
@@ -54,6 +55,13 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     public DbSet<MilkTestImage> MilkTestImages => Set<MilkTestImage>();
     public DbSet<Camera> Cameras => Set<Camera>();
     public DbSet<CameraStream> CameraStreams => Set<CameraStream>();
+    public DbSet<NotificationEvent> NotificationEvents => Set<NotificationEvent>();
+    public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<NotificationTemplate> NotificationTemplates => Set<NotificationTemplate>();
+    public DbSet<NotificationPreference> NotificationPreferences => Set<NotificationPreference>();
+    public DbSet<UserDevice> UserDevices => Set<UserDevice>();
+    public DbSet<NotificationDelivery> NotificationDeliveries => Set<NotificationDelivery>();
+    public DbSet<NotificationAttempt> NotificationAttempts => Set<NotificationAttempt>();
     public DbSet<DeliveryOtp> DeliveryOtps => Set<DeliveryOtp>();
     public DbSet<DeliveryLocation> DeliveryLocations => Set<DeliveryLocation>();
 
@@ -97,6 +105,13 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigureMilkTestImage(modelBuilder, usesSqlite);
         ConfigureCamera(modelBuilder, usesSqlite);
         ConfigureCameraStream(modelBuilder);
+        ConfigureNotificationEvent(modelBuilder);
+        ConfigureNotification(modelBuilder);
+        ConfigureNotificationTemplate(modelBuilder);
+        ConfigureNotificationPreference(modelBuilder);
+        ConfigureUserDevice(modelBuilder, usesSqlite);
+        ConfigureNotificationDelivery(modelBuilder, usesSqlite);
+        ConfigureNotificationAttempt(modelBuilder);
         ConfigureDeliveryOtp(modelBuilder);
         ConfigureDeliveryLocation(modelBuilder, usesSqlite);
     }
@@ -950,6 +965,142 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.ProviderStreamReference).HasMaxLength(240).IsRequired();
         entity.HasIndex(x => x.CameraId).IsUnique();
         entity.HasOne(x => x.Camera).WithOne(x => x.Stream).HasForeignKey<CameraStream>(x => x.CameraId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureNotificationEvent(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<NotificationEvent>();
+        entity.ToTable("NotificationEvent");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.EventType).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.EventKey).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.PayloadJson).HasMaxLength(8000).IsRequired();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.OccurredAtUtc).IsRequired();
+        entity.Property(x => x.FailureCode).HasMaxLength(100);
+        entity.Property(x => x.FailureMessage).HasMaxLength(1000);
+        entity.HasIndex(x => x.EventKey).IsUnique();
+        entity.HasIndex(x => new { x.Status, x.OccurredAtUtc });
+        entity.HasIndex(x => new { x.UserId, x.OccurredAtUtc });
+        entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureNotification(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<Notification>();
+        entity.ToTable("Notification");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.EventType).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.Title).HasMaxLength(240).IsRequired();
+        entity.Property(x => x.Body).HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.DeepLink).HasMaxLength(500);
+        entity.HasIndex(x => x.NotificationEventId).IsUnique();
+        entity.HasIndex(x => new { x.UserId, x.ReadAtUtc, x.CreatedAtUtc });
+        entity.HasOne(x => x.Event).WithMany(x => x.Notifications).HasForeignKey(x => x.NotificationEventId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureNotificationTemplate(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<NotificationTemplate>();
+        entity.ToTable("NotificationTemplate");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.EventType).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.Channel).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Language).HasMaxLength(10).IsRequired();
+        entity.Property(x => x.TitleTemplate).HasMaxLength(240);
+        entity.Property(x => x.BodyTemplate).HasMaxLength(2000).IsRequired();
+        entity.HasIndex(x => new { x.EventType, x.Channel, x.Language }).IsUnique();
+        entity.HasIndex(x => new { x.IsActive, x.EventType });
+    }
+
+    private static void ConfigureNotificationPreference(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<NotificationPreference>();
+        entity.ToTable("NotificationPreference");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.EventType).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.Channel).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.HasIndex(x => new { x.UserId, x.EventType, x.Channel }).IsUnique();
+        entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureUserDevice(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<UserDevice>();
+        entity.ToTable("UserDevice");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.DeviceIdentifierHash).HasMaxLength(64).IsRequired();
+        entity.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
+        entity.Property(x => x.ProtectedToken).HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.Platform).HasMaxLength(30).IsRequired();
+        entity.Property(x => x.DeviceName).HasMaxLength(160);
+        entity.Property(x => x.RegisteredAtUtc).IsRequired();
+        entity.HasIndex(x => new { x.UserId, x.DeviceIdentifierHash }).IsUnique();
+        entity.HasIndex(x => x.TokenHash)
+            .IsUnique()
+            .HasDatabaseName("UX_UserDevice_ActiveTokenHash")
+            .HasFilter(usesSqlite ? "\"IsActive\" = 1" : "[IsActive] = 1");
+        entity.HasIndex(x => new { x.UserId, x.IsActive });
+        entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureNotificationDelivery(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<NotificationDelivery>();
+        entity.ToTable("NotificationDelivery", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_NotificationDelivery_AttemptCount", "[AttemptCount] >= 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Channel).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.ProviderCode).HasMaxLength(80).IsRequired();
+        entity.Property(x => x.DestinationReference).HasMaxLength(500).IsRequired();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.ProviderMessageId).HasMaxLength(240);
+        entity.Property(x => x.FailureCode).HasMaxLength(100);
+        entity.Property(x => x.FailureMessage).HasMaxLength(1000);
+        entity.HasIndex(x => new { x.NotificationId, x.Channel, x.UserDeviceId })
+            .IsUnique()
+            .HasFilter("[UserDeviceId] IS NOT NULL");
+        entity.HasIndex(x => new { x.NotificationId, x.Channel })
+            .IsUnique()
+            .HasDatabaseName("UX_NotificationDelivery_NonDeviceChannel")
+            .HasFilter("[UserDeviceId] IS NULL");
+        entity.HasIndex(x => new { x.Status, x.NextAttemptAtUtc });
+        entity.HasOne(x => x.Notification).WithMany(x => x.Deliveries).HasForeignKey(x => x.NotificationId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.UserDevice).WithMany(x => x.Deliveries).HasForeignKey(x => x.UserDeviceId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureNotificationAttempt(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<NotificationAttempt>();
+        entity.ToTable("NotificationAttempt");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Outcome).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.ProviderMessageId).HasMaxLength(240);
+        entity.Property(x => x.FailureCode).HasMaxLength(100);
+        entity.Property(x => x.FailureMessage).HasMaxLength(1000);
+        entity.Property(x => x.AttemptedAtUtc).IsRequired();
+        entity.HasIndex(x => new { x.NotificationDeliveryId, x.AttemptNumber }).IsUnique();
+        entity.HasOne(x => x.Delivery).WithMany(x => x.Attempts).HasForeignKey(x => x.NotificationDeliveryId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigurePublicEntity<TEntity>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<TEntity> entity)

@@ -3,6 +3,7 @@ using System.Text;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Infrastructure.Persistence;
@@ -17,7 +18,8 @@ public sealed class OtpService(
     IOtpDeliveryService delivery,
     IClock clock,
     ITokenService tokenService,
-    IOptions<IdentityOptions> options) : IOtpService
+    IOptions<IdentityOptions> options,
+    INotificationEventWriter notificationEventWriter) : IOtpService
 {
     private readonly IdentityOptions _options = options.Value;
 
@@ -75,6 +77,7 @@ public sealed class OtpService(
         }
 
         challenge.Consume(now);
+        var registeredUser = false;
         var user = await dbContext.Users
             .Include(x => x.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x.RolePermissions).ThenInclude(x => x.Permission)
             .SingleOrDefaultAsync(x => x.Mobile == destination, cancellationToken);
@@ -94,6 +97,7 @@ public sealed class OtpService(
             user.AssignRole(customerRole);
             dbContext.Users.Add(user);
             await dbContext.SaveChangesAsync(cancellationToken);
+            registeredUser = true;
         }
         if (user is null || !user.IsActive)
         {
@@ -116,6 +120,28 @@ public sealed class OtpService(
             now);
         dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAtUtc, session.Id, now));
         dbContext.AuditLogs.Add(new AuditLog(user.Id, "AUTH_OTP_LOGIN", "UserSession", session.PublicId.ToString(), null, null, request.Device.IpAddress, request.Device.UserAgent, request.Purpose.ToString(), now));
+        if (registeredUser)
+        {
+            notificationEventWriter.Add(new NotificationEventRequest(
+                user.Id,
+                NotificationEventTypes.RegistrationCompleted,
+                $"registration:{user.PublicId:N}:completed",
+                new Dictionary<string, string>
+                {
+                    ["message"] = "Your DoodhDirect registration is complete."
+                },
+                "/"));
+        }
+
+        notificationEventWriter.Add(new NotificationEventRequest(
+            user.Id,
+            NotificationEventTypes.AuthenticationSucceeded,
+            $"authentication:{session.PublicId:N}:succeeded",
+            new Dictionary<string, string>
+            {
+                ["message"] = "You signed in successfully."
+            },
+            "/"));
         await dbContext.SaveChangesAsync(cancellationToken);
         return new AuthSessionResult(authUser, tokens);
     }

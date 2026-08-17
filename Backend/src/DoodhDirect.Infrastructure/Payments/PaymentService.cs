@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Wallets;
 using DoodhDirect.Domain.Auditing;
@@ -20,7 +21,8 @@ public sealed class PaymentService(
     IPaymentGateway gateway,
     IWalletService walletService,
     IClock clock,
-    IOptions<PaymentOptions> paymentOptions) : IPaymentService
+    IOptions<PaymentOptions> paymentOptions,
+    INotificationEventWriter notificationEventWriter) : IPaymentService
 {
     private readonly PaymentOptions options = paymentOptions.Value;
 
@@ -92,6 +94,7 @@ public sealed class PaymentService(
                     cancellationToken);
                 payment.Succeed(null, "wallet_debited", clock.UtcNow);
                 ConfirmTarget(payment, clock.UtcNow);
+                AddPaymentOutcomeEvents(payment);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
         }
@@ -113,6 +116,7 @@ public sealed class PaymentService(
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
                 payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, clock.UtcNow);
+                AddPaymentOutcomeEvents(payment);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 throw new BusinessRuleException("The payment gateway could not create the payment order.");
             }
@@ -198,6 +202,7 @@ public sealed class PaymentService(
                     cancellationToken);
                 payment.Succeed(null, "wallet_debited", clock.UtcNow);
                 ConfirmTarget(payment, clock.UtcNow);
+                AddPaymentOutcomeEvents(payment, subscription);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
         }
@@ -220,6 +225,7 @@ public sealed class PaymentService(
             {
                 payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, clock.UtcNow);
                 subscription.FailPayment();
+                AddPaymentOutcomeEvents(payment, subscription);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 throw new BusinessRuleException("The payment gateway could not create the payment order.");
             }
@@ -296,6 +302,7 @@ public sealed class PaymentService(
             foreach (var activePayment in activePayments)
             {
                 activePayment.Expire(clock.UtcNow);
+                AddPaymentOutcomeEvents(activePayment, subscription);
             }
             if (subscription.Status == SubscriptionStatus.PaymentFailed)
             {
@@ -319,6 +326,7 @@ public sealed class PaymentService(
                     cancellationToken);
                 payment.Succeed(null, "wallet_debited", clock.UtcNow);
                 ConfirmTarget(payment, clock.UtcNow);
+                AddPaymentOutcomeEvents(payment, subscription);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
         }
@@ -345,6 +353,7 @@ public sealed class PaymentService(
             {
                 payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, clock.UtcNow);
                 subscription.FailPayment();
+                AddPaymentOutcomeEvents(payment, subscription);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 throw new BusinessRuleException("The payment gateway could not create the payment order.");
             }
@@ -392,6 +401,7 @@ public sealed class PaymentService(
         {
             payment.Expire(clock.UtcNow);
             FailTarget(payment);
+            AddPaymentOutcomeEvents(payment);
             await dbContext.SaveChangesAsync(cancellationToken);
             throw new BusinessRuleException("The payment has expired.");
         }
@@ -422,6 +432,7 @@ public sealed class PaymentService(
                 throw new ConflictException("The payment is still pending gateway confirmation.");
             }
 
+            AddPaymentOutcomeEvents(payment);
             await dbContext.SaveChangesAsync(cancellationToken);
         }, cancellationToken);
 
@@ -676,11 +687,13 @@ public sealed class PaymentService(
         {
             payment.Succeed(status.GatewayPaymentId, status.Status, clock.UtcNow);
             ConfirmTarget(payment, clock.UtcNow);
+            AddPaymentOutcomeEvents(payment);
         }
         else if (status.IsTerminalFailure)
         {
             payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", status.Status, clock.UtcNow);
             FailTarget(payment);
+            AddPaymentOutcomeEvents(payment);
         }
     }
 
@@ -738,6 +751,69 @@ public sealed class PaymentService(
         {
             await dbContext.Entry(payment).Reference(x => x.Subscription).LoadAsync(cancellationToken);
         }
+    }
+
+    private void AddPaymentOutcomeEvents(Payment payment, Subscription? subscriptionOverride = null)
+    {
+        var subscription = payment.Subscription ?? subscriptionOverride;
+        var deepLink = payment.Order is not null
+            ? $"/orders/{payment.Order.PublicId}"
+            : subscription is not null
+                ? $"/subscriptions/{subscription.PublicId}"
+                : $"/payments/{payment.PublicId}";
+        var variables = new Dictionary<string, string>
+        {
+            ["amount"] = payment.Amount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+            ["currency"] = payment.Currency,
+            ["method"] = payment.Method.ToString(),
+            ["paymentId"] = payment.PublicId.ToString()
+        };
+
+        if (payment.Status == PaymentStatus.Success)
+        {
+            variables["message"] = $"Your payment of {payment.Currency} {payment.Amount:0.00} was successful.";
+            notificationEventWriter.Add(new NotificationEventRequest(
+                payment.CustomerId,
+                NotificationEventTypes.PaymentSucceeded,
+                $"payment:{payment.PublicId:N}:succeeded",
+                variables,
+                deepLink,
+                payment.VerifiedAtUtc));
+
+            if (subscription?.Status == SubscriptionStatus.Active)
+            {
+                notificationEventWriter.Add(new NotificationEventRequest(
+                    payment.CustomerId,
+                    NotificationEventTypes.SubscriptionActivated,
+                    $"subscription:{subscription.PublicId:N}:activated",
+                    new Dictionary<string, string>
+                    {
+                        ["message"] = $"Your {subscription.ProductNameSnapshot} subscription is now active.",
+                        ["subscriptionId"] = subscription.PublicId.ToString()
+                    },
+                    $"/subscriptions/{subscription.PublicId}",
+                    subscription.ActivatedAtUtc));
+            }
+
+            return;
+        }
+
+        if (payment.Status is not (PaymentStatus.Failed or PaymentStatus.Expired))
+        {
+            return;
+        }
+
+        variables["failureCode"] = payment.FailureCode ?? "PAYMENT_FAILED";
+        variables["message"] = payment.Status == PaymentStatus.Expired
+            ? "Your payment expired before confirmation."
+            : "Your payment could not be completed.";
+        notificationEventWriter.Add(new NotificationEventRequest(
+            payment.CustomerId,
+            NotificationEventTypes.PaymentFailed,
+            $"payment:{payment.PublicId:N}:failed",
+            variables,
+            deepLink,
+            payment.FailedAtUtc));
     }
 
     private static void ConfirmTarget(Payment payment, DateTime utcNow)

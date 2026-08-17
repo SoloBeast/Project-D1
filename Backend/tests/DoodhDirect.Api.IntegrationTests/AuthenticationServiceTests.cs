@@ -281,6 +281,7 @@ internal sealed class AuthenticationHarness : IAsyncDisposable
         var hasher = new TestPasswordHasher();
         var tokens = new TestTokenService();
         var delivery = new CapturingOtpDelivery();
+        var notificationEventWriter = new TestNotificationEventWriter(db, clock);
         var identityOptions = Options.Create(new IdentityOptions
         {
             OtpLifetimeMinutes = otpLifetimeMinutes,
@@ -295,8 +296,20 @@ internal sealed class AuthenticationHarness : IAsyncDisposable
             clock,
             tokens,
             delivery,
-            new AuthenticationService(db, hasher, tokens, clock),
-            new OtpService(db, hasher, delivery, clock, tokens, identityOptions));
+            new AuthenticationService(
+                db,
+                hasher,
+                tokens,
+                clock,
+                notificationEventWriter),
+            new OtpService(
+                db,
+                hasher,
+                delivery,
+                clock,
+                tokens,
+                identityOptions,
+                notificationEventWriter));
     }
 
     public ValueTask DisposeAsync() => Db.DisposeAsync();

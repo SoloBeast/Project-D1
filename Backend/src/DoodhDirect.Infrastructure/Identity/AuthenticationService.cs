@@ -3,6 +3,7 @@ using System.Text;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Infrastructure.Persistence;
@@ -14,7 +15,8 @@ public sealed class AuthenticationService(
     DoodhDirectDbContext dbContext,
     IPasswordHasher passwordHasher,
     ITokenService tokenService,
-    IClock clock) : IAuthenticationService
+    IClock clock,
+    INotificationEventWriter notificationEventWriter) : IAuthenticationService
 {
     public async Task<AuthSessionResult> RegisterAsync(
         RegisterRequest request,
@@ -162,7 +164,39 @@ public sealed class AuthenticationService(
             authUser.BranchIds,
             now);
         dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAtUtc, session.Id, now));
-        await WriteAuditAsync(user.Id, action, "UserSession", session.PublicId.ToString(), device.IpAddress, device.UserAgent, null, cancellationToken);
+        dbContext.AuditLogs.Add(new AuditLog(
+            user.Id,
+            action,
+            "UserSession",
+            session.PublicId.ToString(),
+            null,
+            null,
+            device.IpAddress,
+            device.UserAgent,
+            null,
+            now));
+        if (string.Equals(action, "REGISTRATION", StringComparison.Ordinal))
+        {
+            notificationEventWriter.Add(new NotificationEventRequest(
+                user.Id,
+                NotificationEventTypes.RegistrationCompleted,
+                $"registration:{user.PublicId:N}:completed",
+                new Dictionary<string, string>
+                {
+                    ["message"] = "Your DoodhDirect registration is complete."
+                },
+                "/"));
+        }
+
+        notificationEventWriter.Add(new NotificationEventRequest(
+            user.Id,
+            NotificationEventTypes.AuthenticationSucceeded,
+            $"authentication:{session.PublicId:N}:succeeded",
+            new Dictionary<string, string>
+            {
+                ["message"] = "You signed in successfully."
+            },
+            "/"));
         await dbContext.SaveChangesAsync(cancellationToken);
         return new AuthSessionResult(authUser, tokens);
     }

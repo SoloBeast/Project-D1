@@ -547,13 +547,19 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
                 PaymentExpiryMinutes = 15,
                 MockSigningSecret = "test-signing-secret"
             });
-            var walletService = new WalletService(db, clock, paymentOptions);
+            var notificationEventWriter = new TestNotificationEventWriter(db, clock);
+            var walletService = new WalletService(
+                db,
+                clock,
+                paymentOptions,
+                notificationEventWriter);
             var paymentService = new PaymentService(
                 db,
                 new MockPaymentGateway(paymentOptions),
                 walletService,
                 clock,
-                paymentOptions);
+                paymentOptions,
+                notificationEventWriter);
 
             return new SubscriptionPaymentHarness(
                 connection,

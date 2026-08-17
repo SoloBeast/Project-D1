@@ -2,6 +2,7 @@ using System.Data;
 using System.Text.Json;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Wallets;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Identity;
@@ -17,7 +18,8 @@ namespace DoodhDirect.Infrastructure.Wallets;
 public sealed class WalletService(
     DoodhDirectDbContext dbContext,
     IClock clock,
-    IOptions<PaymentOptions> paymentOptions) : IWalletService
+    IOptions<PaymentOptions> paymentOptions,
+    INotificationEventWriter notificationEventWriter) : IWalletService
 {
     private const int MaxConcurrencyAttempts = 3;
     private readonly PaymentOptions options = paymentOptions.Value;
@@ -284,6 +286,16 @@ public sealed class WalletService(
 
                     var transaction = mutation(wallet);
                     afterMutation?.Invoke(wallet, transaction);
+                    notificationEventWriter.Add(new NotificationEventRequest(
+                        customerId,
+                        NotificationEventTypes.WalletUpdated,
+                        $"wallet-transaction:{transaction.PublicId:N}:updated",
+                        new Dictionary<string, string>
+                        {
+                            ["message"] =
+                                $"Your wallet balance is {transaction.BalanceAfter:0.00} {wallet.Currency}."
+                        },
+                        "/wallet"));
                     await dbContext.SaveChangesAsync(cancellationToken);
                     transactionId = transaction.PublicId;
                 }, cancellationToken);

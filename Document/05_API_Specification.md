@@ -673,15 +673,88 @@ Creation and update are audit logged. Provider codes and references must remain 
 
 ## 15. Notification APIs
 
-`GET /notifications`
+All notification, device, and preference operations require an authenticated user and derive ownership from the bearer token. A caller cannot read or mutate another user's notifications, devices, or preferences.
 
-`POST /notifications/{id}/read`
+Notification channels are `Push`, `Sms`, `WhatsApp`, and `Email`.
 
-Admin:
+### Inbox
 
-`GET /admin/notification-templates`
+#### `GET /notifications?page={page}&pageSize={pageSize}&isRead={isRead}`
 
-`PATCH /admin/notification-templates/{id}`
+Returns the caller's notifications newest first. `page` defaults to `1`, `pageSize` defaults to `20`, and optional `isRead` filters read or unread items.
+
+Result fields:
+
+- `items`: notification objects containing `notificationId`, `eventType`, `title`, `body`, optional internal `deepLink`, `isRead`, `createdAtUtc`, and optional `readAtUtc`.
+- `page`, `pageSize`, and `totalCount`.
+
+#### `GET /notifications/unread-count`
+
+Returns `{ "unreadCount": number }` for the authenticated user. The Flutter home badge uses this server-authoritative count.
+
+#### `POST /notifications/{notificationId}/read`
+
+Marks one owned notification as read and returns `200`. Repeating the operation is idempotent. An unknown notification or a notification owned by another user returns `404` without disclosing its existence.
+
+### Device registration
+
+#### `POST /devices`
+
+Registers or rotates a push destination for the authenticated user.
+
+Request fields:
+
+- `deviceIdentifier`: stable installation/device identifier.
+- `pushToken`: current provider token; accepted only from a client with authorized or provisional push permission.
+- `platform`: bounded platform identifier such as `android` or `ios`.
+- `deviceName`: optional user-readable device name.
+
+Returns `deviceId`, `platform`, optional `deviceName`, `isActive`, `registeredAtUtc`, and optional `lastSeenAtUtc`. Re-registering the same device rotates its token and updates last-seen state. API responses never return the token.
+
+### Preferences
+
+#### `GET /notification-preferences`
+
+Returns the caller's effective event/channel preferences. Each item contains `eventType`, `channel`, `isEnabled`, and `isCritical`.
+
+#### `PATCH /notification-preferences`
+
+Request:
+
+```json
+{
+  "eventType": "ORDER_CREATED",
+  "channel": "Push",
+  "isEnabled": true
+}
+```
+
+Returns the updated preference. Unknown event/channel combinations or attempts to disable protected critical delivery produce `422`.
+
+### Template administration
+
+#### `GET /admin/notification-templates`
+
+Permission: `NOTIFICATION_TEMPLATES.READ`.
+
+Returns all configured templates. Each item contains `templateId`, `eventType`, `channel`, `language`, optional `titleTemplate`, `bodyTemplate`, `isActive`, `createdAtUtc`, and `updatedAtUtc`.
+
+#### `PATCH /admin/notification-templates/{templateId}`
+
+Permission: `NOTIFICATION_TEMPLATES.MANAGE`.
+
+Request:
+
+```json
+{
+  "titleTemplate": "Order confirmed",
+  "bodyTemplate": "Your order {{orderId}} has been confirmed.",
+  "isActive": true,
+  "reason": "Clarify the customer message"
+}
+```
+
+Updates an existing template and returns `200`; an unknown template returns `404`. `bodyTemplate` and an audit reason are required. The mutation records the authenticated actor and change reason in the audit trail.
 
 ---
 

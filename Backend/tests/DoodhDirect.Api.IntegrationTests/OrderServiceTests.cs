@@ -203,9 +203,11 @@ public sealed class OrderServiceTests
             await db.SaveChangesAsync();
 
             var allocation = new BranchAllocationService(db);
+            var clock = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Utc));
+            var notificationEventWriter = new TestNotificationEventWriter(db, clock);
             return new OrderHarness(
                 db, customer, otherCustomer, address, product, nearBranch, nearAvailability,
-                farAvailability, new OrderService(db, allocation));
+                farAvailability, new OrderService(db, allocation, notificationEventWriter));
         }
 
         public ValueTask DisposeAsync() => Db.DisposeAsync();

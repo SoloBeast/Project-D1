@@ -48,48 +48,61 @@ The backend must own branch-allocation distance decisions; do not rely only on f
 
 ---
 
-## 3. Firebase Cloud Messaging
+## 3. Notification Delivery Integrations
 
-### Events
-- Order confirmed
-- Delivery assigned
-- Delivery started
-- Delivery near customer
-- Delivery completed
-- Complaint update
-- Replacement update
-- Subscription reminders
-- Payment result
+### Durable event boundary
 
-### Device registration
-Store push token against UserDevice. Tokens can rotate and become invalid.
+Business modules append provider-neutral notification events in the same persistence boundary as their business change. They never invoke Firebase Cloud Messaging, SMS, WhatsApp, or email providers directly. The background notification processor claims pending events, renders configured templates, creates an in-app notification, evaluates preferences, creates independent channel deliveries, and records every attempt and final outcome.
+
+Supported event types cover registration, authentication, order creation, payment outcomes, wallet updates, subscription lifecycle, delivery lifecycle, and doorstep milk-test lifecycle. Templates are also seeded for complaint and replacement updates, but producer integration for those two event types remains deferred until those business modules exist.
+
+The event key provides idempotency. Processing and retries must not duplicate the durable inbox item or channel delivery for the same event, recipient, and channel.
+
+### Channel gateway boundary
+
+`INotificationChannelGateway` is implemented independently for `Push`, `Sms`, `WhatsApp`, and `Email`. A provider may be replaced without changing business modules, event contracts, templates, persistence, APIs, or Flutter models.
+
+Each channel has separate configuration and failure state:
+
+- One unavailable or failing channel does not block the inbox or other channels.
+- Disabled preferences create a suppressed delivery rather than calling a provider.
+- Retryable failures are scheduled with bounded attempts and a future UTC retry time.
+- Permanent destination failures are terminal. An invalid push destination also invalidates the corresponding device token.
+- Unconfigured providers are recorded as `Unconfigured`; they do not report false delivery success.
+- Every provider call creates an attempt record with outcome and sanitized diagnostics.
+
+### Provider selection
+
+Development may explicitly select `DevelopmentMock` independently for each channel. Mock gateways record deterministic success without external network calls and are prohibited outside the Development environment.
+
+Production fails closed per channel. Every enabled channel must select an operational real provider; a missing or mock selection resolves to an unconfigured gateway and cannot synthesize success. Provider credentials and endpoint secrets are injected through environment configuration or a managed secret store.
+
+### Firebase Cloud Messaging and devices
+
+Push uses Firebase Cloud Messaging behind the push gateway. `POST /devices` registers or rotates the authenticated user's token only after the client reports authorized or provisional permission.
+
+- Startup may inspect permission but must not trigger the operating-system prompt.
+- The prompt follows explicit user action only.
+- Token refresh is synchronized with the current authenticated session.
+- The token hash supplies identity and uniqueness; the protected token supplies the provider destination.
+- Plaintext tokens are not persisted, returned by the API, or logged.
+- Permanent invalid-token responses deactivate the device destination.
+
+Foreground messages refresh inbox and unread state. Opened messages and cold-start messages may navigate only through the Flutter internal deep-link allowlist.
 
 ---
 
 ## 4. SMS
 
-Use an India-compliant SMS provider.
-
-Initial uses:
-- OTP
-- Critical payment/complaint messages if configured
-
-The SMS provider should be behind an interface so it can be changed later.
+Use an India-compliant SMS provider behind the shared channel gateway. Phase 11 notification SMS uses rendered templates and the durable delivery/retry lifecycle; identity OTP delivery remains a separate identity integration. SMS destination and provider diagnostics must be redacted from logs and attempts.
 
 ---
 
 ## 5. WhatsApp
 
-Use a WhatsApp Business/API provider.
+Use an approved WhatsApp Business/API provider behind the shared channel gateway. WhatsApp is optional and must never be the only durable customer-notification surface; the authenticated inbox remains available. Template/provider approval failures are isolated to the WhatsApp delivery and follow retryable or permanent failure classification.
 
-Potential messages:
-- Order confirmation
-- Delivery updates
-- Complaint/replacement updates
-- Subscription reminders
-- Payment receipts
-
-Do not make WhatsApp the only notification channel.
+Email follows the same gateway, template, preference, attempt, and fail-closed rules even though it has no separate external-provider section in this specification.
 
 ---
 
@@ -211,9 +224,11 @@ Razorpay timeout after payment initiation:
 - Keep payment Pending.
 - Reconcile using webhook/status lookup.
 
-FCM failure:
-- Core order still succeeds.
-- Notification is retried asynchronously.
+Notification provider failure:
+- The core business operation and durable notification event still succeed.
+- Inbox materialization and each channel delivery are processed asynchronously.
+- Retryable channel failures are rescheduled with bounded attempts; permanent and unconfigured outcomes become terminal.
+- A failing channel does not block other channels, and no provider failure may roll back completed business data.
 
 Maps unavailable:
 - Manual address entry fallback can be allowed.

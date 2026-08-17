@@ -1,8 +1,7 @@
 import 'dart:convert';
-import 'dart:math';
 
+import 'package:doodh_direct_mobile/core/device/device_metadata_service.dart';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 const apiBaseUrl = String.fromEnvironment(
@@ -135,15 +134,20 @@ class AuthSession {
 }
 
 class AuthRepository {
-  AuthRepository({ApiClient? api, FlutterSecureStorage? storage})
-    : _api = api ?? ApiClient(baseUrl: apiBaseUrl),
-      _storage = storage ?? const FlutterSecureStorage();
+  AuthRepository({
+    ApiClient? api,
+    FlutterSecureStorage? storage,
+    DeviceMetadataService? deviceMetadata,
+  }) : _api = api ?? ApiClient(baseUrl: apiBaseUrl),
+       _storage = storage ?? const FlutterSecureStorage(),
+       _deviceMetadata =
+           deviceMetadata ?? DeviceMetadataService(storage: storage);
 
   static const _sessionKey = 'identity.session.v1';
-  static const _deviceKey = 'identity.device-id.v1';
 
   final ApiClient _api;
   final FlutterSecureStorage _storage;
+  final DeviceMetadataService _deviceMetadata;
 
   Future<AuthSession> login(String login, String password) async =>
       _authenticate('/api/v1/auth/login', {
@@ -247,22 +251,8 @@ class AuthRepository {
   Future<void> _save(AuthSession session) =>
       _storage.write(key: _sessionKey, value: jsonEncode(session.toJson()));
 
-  Future<Map<String, dynamic>> _device() async {
-    var identifier = await _storage.read(key: _deviceKey);
-    if (identifier == null) {
-      final random = Random.secure();
-      identifier = List.generate(
-        32,
-        (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
-      ).join();
-      await _storage.write(key: _deviceKey, value: identifier);
-    }
-    return {
-      'deviceIdentifier': identifier,
-      'deviceName': 'DoodhDirect Flutter',
-      'platform': kIsWeb ? 'web' : defaultTargetPlatform.name,
-    };
-  }
+  Future<Map<String, dynamic>> _device() async =>
+      (await _deviceMetadata.get()).toJson();
 
   static String? _optional(String? value) {
     final normalized = value?.trim();

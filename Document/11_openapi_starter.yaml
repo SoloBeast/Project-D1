@@ -1393,6 +1393,153 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: List the authenticated user's notifications
+      description: Returns a newest-first, ownership-scoped page. The optional read-state filter is server enforced.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/notificationPage'
+        - $ref: '#/components/parameters/notificationPageSize'
+        - $ref: '#/components/parameters/notificationIsRead'
+      responses:
+        '200':
+          description: Ownership-scoped notification page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPageResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: Get the authenticated user's unread notification count
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Server-authoritative unread count
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationUnreadCountResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /notifications/{notificationId}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark an owned notification as read
+      description: Unknown and non-owned notification identifiers return the same not-found response.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/notificationId'
+      responses:
+        '200':
+          description: Notification marked as read
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmptySuccessResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /devices:
+    post:
+      tags: [Notification devices]
+      summary: Register or rotate a push-notification device token
+      description: The push token is accepted only over authenticated transport and is never returned by this API.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterNotificationDeviceRequest' }
+      responses:
+        '200':
+          description: Device registered or its token rotated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationDeviceResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /notification-preferences:
+    get:
+      tags: [Notification preferences]
+      summary: List the authenticated user's notification preferences
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Effective event and channel preferences, including critical-event status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPreferenceListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: [Notification preferences]
+      summary: Update one notification event and channel preference
+      description: Critical notification event preferences cannot be disabled.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNotificationPreferenceRequest' }
+      responses:
+        '200':
+          description: Notification preference updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationPreferenceResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /admin/notification-templates:
+    get:
+      tags: [Notification template administration]
+      summary: List notification templates
+      description: Requires NOTIFICATION_TEMPLATES.READ.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Notification templates for every configured event, channel, and language
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationTemplateListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/notification-templates/{templateId}:
+    patch:
+      tags: [Notification template administration]
+      summary: Update a notification template
+      description: Requires NOTIFICATION_TEMPLATES.MANAGE. The reason is required and the mutation is audited.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/notificationTemplateId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNotificationTemplateRequest' }
+      responses:
+        '200':
+          description: Notification template updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationTemplateResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /webhooks/razorpay:
     post:
       summary: Razorpay webhook
@@ -1463,6 +1610,31 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    notificationId:
+      name: notificationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    notificationTemplateId:
+      name: templateId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    notificationPage:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, format: int32, minimum: 1, default: 1 }
+    notificationPageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema: { type: integer, format: int32, minimum: 1, maximum: 100, default: 20 }
+    notificationIsRead:
+      name: isRead
+      in: query
+      required: false
+      schema: { type: boolean }
     cameraBranchId:
       name: branchId
       in: query
@@ -1574,6 +1746,130 @@ components:
         errors:
           type: array
           items: { $ref: '#/components/schemas/ApiError' }
+    NotificationChannel:
+      type: string
+      enum: [Push, Sms, WhatsApp, Email]
+    NotificationListItem:
+      type: object
+      required: [notificationId, eventType, title, body, isRead, createdAtUtc]
+      properties:
+        notificationId: { type: string, format: uuid }
+        eventType: { type: string }
+        title: { type: string }
+        body: { type: string }
+        deepLink: { type: string, nullable: true, description: Internal application route validated by the client allowlist. }
+        isRead: { type: boolean }
+        createdAtUtc: { type: string, format: date-time }
+        readAtUtc: { type: string, format: date-time, nullable: true }
+    NotificationPage:
+      type: object
+      required: [items, page, pageSize, totalCount]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/NotificationListItem' }
+        page: { type: integer, format: int32, minimum: 1 }
+        pageSize: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        totalCount: { type: integer, format: int32, minimum: 0 }
+    NotificationUnreadCount:
+      type: object
+      required: [unreadCount]
+      properties:
+        unreadCount: { type: integer, format: int32, minimum: 0 }
+    RegisterNotificationDeviceRequest:
+      type: object
+      required: [deviceIdentifier, pushToken, platform]
+      properties:
+        deviceIdentifier: { type: string, minLength: 1, maxLength: 200 }
+        pushToken: { type: string, minLength: 1, maxLength: 4096, writeOnly: true }
+        platform: { type: string, minLength: 1, maxLength: 40, example: android }
+        deviceName: { type: string, nullable: true, maxLength: 160 }
+    NotificationDevice:
+      type: object
+      required: [deviceId, platform, isActive, registeredAtUtc]
+      properties:
+        deviceId: { type: string, format: uuid }
+        platform: { type: string }
+        deviceName: { type: string, nullable: true }
+        isActive: { type: boolean }
+        registeredAtUtc: { type: string, format: date-time }
+        lastSeenAtUtc: { type: string, format: date-time, nullable: true }
+    NotificationPreference:
+      type: object
+      required: [eventType, channel, isEnabled, isCritical]
+      properties:
+        eventType: { type: string }
+        channel: { $ref: '#/components/schemas/NotificationChannel' }
+        isEnabled: { type: boolean }
+        isCritical: { type: boolean, description: Critical event preferences cannot be disabled. }
+    UpdateNotificationPreferenceRequest:
+      type: object
+      required: [eventType, channel, isEnabled]
+      properties:
+        eventType: { type: string, minLength: 1 }
+        channel: { $ref: '#/components/schemas/NotificationChannel' }
+        isEnabled: { type: boolean }
+    NotificationTemplate:
+      type: object
+      required: [templateId, eventType, channel, language, bodyTemplate, isActive, createdAtUtc, updatedAtUtc]
+      properties:
+        templateId: { type: string, format: uuid }
+        eventType: { type: string }
+        channel: { $ref: '#/components/schemas/NotificationChannel' }
+        language: { type: string }
+        titleTemplate: { type: string, nullable: true }
+        bodyTemplate: { type: string }
+        isActive: { type: boolean }
+        createdAtUtc: { type: string, format: date-time }
+        updatedAtUtc: { type: string, format: date-time }
+    UpdateNotificationTemplateRequest:
+      type: object
+      required: [bodyTemplate, isActive, reason]
+      properties:
+        titleTemplate: { type: string, nullable: true, maxLength: 240 }
+        bodyTemplate: { type: string, minLength: 1, maxLength: 4000 }
+        isActive: { type: boolean }
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    EmptySuccessResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { type: object, additionalProperties: false } }
+    NotificationPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/NotificationPage' } }
+    NotificationUnreadCountResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/NotificationUnreadCount' } }
+    NotificationDeviceResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/NotificationDevice' } }
+    NotificationPreferenceResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/NotificationPreference' } }
+    NotificationPreferenceListResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { type: array, items: { $ref: '#/components/schemas/NotificationPreference' } } }
+    NotificationTemplateResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/NotificationTemplate' } }
+    NotificationTemplateListResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { type: array, items: { $ref: '#/components/schemas/NotificationTemplate' } } }
     CameraStreamProtocol:
       type: string
       enum: [Hls, WebRtc]

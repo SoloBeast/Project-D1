@@ -112,6 +112,8 @@ public static class AuthorizationCodes
     public const string CamerasViewPublic = "CAMERAS.VIEW_PUBLIC";
     public const string CamerasRead = "CAMERAS.READ";
     public const string CamerasManage = "CAMERAS.MANAGE";
+    public const string NotificationTemplatesRead = "NOTIFICATIONS.TEMPLATES.READ";
+    public const string NotificationTemplatesManage = "NOTIFICATIONS.TEMPLATES.MANAGE";
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -169,6 +171,8 @@ public static class AuthorizationCodes
         [DairyManage] = "Record branch dairy production and usage",
         [CamerasViewPublic] = "View active public dairy cameras",
         [CamerasRead] = "Read branch camera metadata",
-        [CamerasManage] = "Manage branch camera metadata"
+        [CamerasManage] = "Manage branch camera metadata",
+        [NotificationTemplatesRead] = "Read notification templates",
+        [NotificationTemplatesManage] = "Manage notification templates"
     };
 }

@@ -1,5 +1,7 @@
+using System.Text.Json;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.MilkTesting;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Deliveries;
@@ -38,6 +40,17 @@ public sealed class MilkTestServiceTests
             .OrderBy(x => x)
             .ToArrayAsync();
         Assert.Equal(["MILK_TEST.CREATE", "MILK_TEST.REQUEST"], actions);
+
+        var notificationEvent = await harness.Db.NotificationEvents.SingleAsync();
+        Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
+        Assert.Equal(NotificationEventTypes.MilkTestRequested, notificationEvent.EventType);
+        Assert.Equal($"milk-test:{result.MilkTestId:N}:requested", notificationEvent.EventKey);
+        Assert.True(notificationEvent.IsCritical);
+        Assert.Equal(result.RequestedAtUtc, notificationEvent.OccurredAtUtc);
+        Assert.Equal($"/deliveries/{harness.Delivery.PublicId}/milk-test", Payload(notificationEvent).GetProperty("DeepLink").GetString());
+        var variables = Variables(notificationEvent);
+        Assert.Equal(result.MilkTestId.ToString(), variables.GetProperty("milkTestId").GetString());
+        Assert.Equal(harness.Delivery.PublicId.ToString(), variables.GetProperty("deliveryId").GetString());
     }
 
     [Theory]
@@ -265,6 +278,18 @@ public sealed class MilkTestServiceTests
         Assert.NotNull(customerResult);
         Assert.Single(customerResult.Images);
         Assert.NotNull(customerResult.CompletedAtUtc);
+
+        var notificationEvent = await harness.Db.NotificationEvents.SingleAsync(
+            x => x.EventType == NotificationEventTypes.MilkTestCompleted);
+        Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
+        Assert.Equal($"milk-test:{requested.MilkTestId:N}:completed", notificationEvent.EventKey);
+        Assert.True(notificationEvent.IsCritical);
+        Assert.Equal(staffResult.CompletedAtUtc, notificationEvent.OccurredAtUtc);
+        Assert.Equal($"/deliveries/{harness.Delivery.PublicId}/milk-test", Payload(notificationEvent).GetProperty("DeepLink").GetString());
+        var variables = Variables(notificationEvent);
+        Assert.Equal(requested.MilkTestId.ToString(), variables.GetProperty("milkTestId").GetString());
+        Assert.Equal(harness.Delivery.PublicId.ToString(), variables.GetProperty("deliveryId").GetString());
+        Assert.Equal("1", variables.GetProperty("readingCount").GetString());
         await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.OpenImageForCustomerAsync(
             harness.CustomerActor(harness.OtherCustomer), requested.MilkTestId, image.ImageId, CancellationToken.None));
         await using var content = await harness.Service.OpenImageForCustomerAsync(
@@ -502,7 +527,12 @@ public sealed class MilkTestServiceTests
 
             var clock = new TestClock(now.AddMinutes(1));
             var storage = new CapturingMediaStorage();
-            var service = new MilkTestService(db, clock, storage, new DeterministicImageValidator());
+            var service = new MilkTestService(
+                db,
+                clock,
+                storage,
+                new DeterministicImageValidator(),
+                new TestNotificationEventWriter(db, clock));
             return new MilkTestHarness(
                 connection,
                 db,
@@ -532,6 +562,14 @@ public sealed class MilkTestServiceTests
             await connection.DisposeAsync();
         }
     }
+
+    private static JsonElement Payload(
+        DoodhDirect.Domain.Notifications.NotificationEvent notificationEvent) =>
+        JsonSerializer.Deserialize<JsonElement>(notificationEvent.PayloadJson);
+
+    private static JsonElement Variables(
+        DoodhDirect.Domain.Notifications.NotificationEvent notificationEvent) =>
+        Payload(notificationEvent).GetProperty("Variables");
 
     private sealed class DeterministicImageValidator : IMilkTestImageValidator
     {

@@ -219,6 +219,21 @@ The business should obtain professional tax/accounting advice before invoicing a
 - Database write access restricted to backend services.
 - A production camera stream gateway must be explicitly configured and operational; the system fails closed otherwise.
 - The `DevelopmentMock` camera adapter is prohibited outside the Development environment.
+- Each enabled notification channel must select an explicitly configured operational provider. Missing providers fail closed and cannot report synthetic success.
+- Notification `DevelopmentMock` providers are prohibited outside the Development environment.
+- Notification provider credentials, API keys, signing material, endpoints containing secrets, and encryption/data-protection keys must be injected through environment configuration or a managed secret/key store.
+
+### Notification security and privacy
+
+- Inbox reads, unread count, mark-read, device registration, and preferences derive the user from the authenticated token and are ownership-scoped. Unknown and non-owned notification IDs share the same `404` behavior.
+- Template reads require `NOTIFICATION_TEMPLATES.READ`; template mutations require `NOTIFICATION_TEMPLATES.MANAGE`. Every mutation records the actor, template identity, reason, and UTC timestamp without copying secrets or rendered destination data into the audit record.
+- Push permission is inspected without prompting at startup. The operating-system prompt may be triggered only by an explicit user action, and tokens may be registered only while permission is authorized or provisional.
+- Push tokens are never stored in plaintext. A cryptographic hash is used for equality and uniqueness; the provider-deliverable value is protected with the application data-protection key ring. Tokens are never returned by APIs or written to logs, metrics, traces, audit events, exception messages, or analytics.
+- Device identifiers, mobile numbers, email addresses, and WhatsApp destinations are personal data. Logs and delivery-attempt diagnostics must redact them and retain only the minimum operational category required for diagnosis.
+- Permanent invalid-destination responses invalidate the associated device or destination. Token rotation replaces protected material while preserving user/device ownership.
+- Notification deep links are untrusted input even when produced internally. Flutter accepts only allowlisted internal application paths, rejects external schemes/hosts and malformed routes, and rechecks authorization at the destination screen.
+- Preferences cannot bypass protected critical-delivery rules. Provider suppression and unconfigured outcomes are persisted explicitly and must not be represented as successful delivery.
+- Notification events, deliveries, and attempts must use bounded diagnostic fields, restrictive foreign keys, and retention controls appropriate to their operational and personal-data content.
 
 ### Live dairy camera security
 
@@ -237,7 +252,7 @@ The business should obtain professional tax/accounting advice before invoicing a
 
 Create runbooks for:
 - Payment outage
-- Notification outage
+- Notification outage, including pending-event age, retry backlog, per-channel unconfigured/failure rates, invalid-token spikes, provider credential/configuration checks, worker health, and safe replay/idempotency verification
 - GPS outage
 - Camera outage, including metadata API, stream gateway, descriptor issuance, upstream camera/NVR, expiry, and protocol-specific diagnosis
 - Database outage

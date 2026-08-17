@@ -52,6 +52,24 @@
 | Flutter workflows | Public list, viewer, and management screens provide required loading, empty, failure, retry, unsupported-protocol, and development-warning states | `mobile/lib/features/cameras/camera_screens.dart`; `mobile/test/camera_screens_test.dart` |
 | API contract | Public and administration paths, parameters, privacy descriptions, requests, schemas, and error responses are synchronized | `Backend/src/DoodhDirect.Api/Controllers/CamerasController.cs`; `Document/05_API_Specification.md`; `Document/11_openapi_starter.yaml` |
 
+## Phase 11 — Notifications
+
+| Requirement area | Phase 11 implementation | Evidence |
+|---|---|---|
+| Durable event ownership | Business modules append provider-neutral events through `INotificationEventWriter` and do not invoke delivery providers | `Backend/src/DoodhDirect.Application/Notifications/NotificationContracts.cs`; `Backend/src/DoodhDirect.Infrastructure/Notifications/NotificationServices.cs`; business service notification integrations |
+| Persistent delivery lifecycle | Events, inbox items, templates, preferences, devices, deliveries, and attempts have explicit state, constraints, and idempotency | `Backend/src/DoodhDirect.Domain/Notifications/NotificationEntities.cs`; `Backend/src/DoodhDirect.Infrastructure/Persistence/Migrations/20260817150825_Phase11Notifications.cs` |
+| Provider-neutral channels | Push, SMS, WhatsApp, and Email implement one gateway contract with independent channel outcomes | `Backend/src/DoodhDirect.Infrastructure/Notifications/NotificationOptions.cs`; `Backend/src/DoodhDirect.Infrastructure/DependencyInjection.cs` |
+| Retry and failure isolation | Background processing records attempts, schedules bounded retryable failures, terminates permanent failures, suppresses disabled preferences, and invalidates bad push destinations | `Backend/src/DoodhDirect.Infrastructure/Notifications/NotificationProcessor.cs`; `Backend/src/DoodhDirect.Infrastructure/Notifications/NotificationSecurityAndWorker.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/NotificationServiceTests.cs` |
+| Provider configuration | Development mocks are explicit; non-Development environments reject mocks and resolve absent real providers to fail-closed gateways | `Backend/src/DoodhDirect.Infrastructure/Notifications/NotificationOptions.cs`; `Backend/src/DoodhDirect.Infrastructure/DependencyInjection.cs`; `Backend/src/DoodhDirect.Api/appsettings.Development.json` |
+| Protected device tokens | Token hash supplies identity/uniqueness and data protection secures provider payload; plaintext token columns and API results are excluded | `Backend/src/DoodhDirect.Infrastructure/Notifications/NotificationSecurityAndWorker.cs`; `Backend/src/DoodhDirect.Infrastructure/Persistence/DoodhDirectDbContext.cs`; `Backend/src/DoodhDirect.Application/Notifications/NotificationContracts.cs` |
+| Inbox ownership and preferences | Inbox, unread count, mark-read, device registration, and preferences derive the user from authentication and enforce critical-event rules | `Backend/src/DoodhDirect.Api/Controllers/NotificationsController.cs`; `Backend/src/DoodhDirect.Infrastructure/Notifications/NotificationServices.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/NotificationServiceTests.cs` |
+| Template administration | Read/manage permissions are distinct; updates validate content and persist actor/reason auditing | `Backend/src/DoodhDirect.Api/Controllers/NotificationsController.cs`; `Backend/src/DoodhDirect.Infrastructure/Notifications/NotificationServices.cs`; `Backend/src/DoodhDirect.Application/Identity/AuthenticationContracts.cs` |
+| Seed coverage | English templates cover 21 configured events across four channels; complaint/replacement producers remain deferred with their absent modules | `Backend/src/DoodhDirect.Infrastructure/Notifications/NotificationSeedServices.cs`; SQL Server template inspection evidence |
+| Flutter permission and token lifecycle | Startup inspection does not prompt; explicit action requests permission; authorized/provisional tokens and refreshes synchronize against the current session | `mobile/lib/features/notifications/push_notification_gateway.dart`; `mobile/lib/features/notifications/notification_controller.dart`; `mobile/test/notification_controller_test.dart` |
+| Flutter inbox and navigation | Paginated inbox, unread badge, read state, foreground refresh, state panels, session isolation, and allowlisted opened/cold-start deep links are implemented | `mobile/lib/features/notifications/notification_screen.dart`; `mobile/lib/features/home/role_home_screen.dart`; `mobile/lib/app/app.dart`; `mobile/test/notification_screen_test.dart` |
+| Platform configuration | Android notification permission and iOS APS entitlement/delegate configuration are present | `mobile/android/app/src/main/AndroidManifest.xml`; `mobile/ios/Runner/Runner.entitlements`; `mobile/ios/Runner/AppDelegate.swift`; `mobile/ios/Runner.xcodeproj/project.pbxproj` |
+| API contract | Eight authenticated notification/device/preference/template operations and their schemas are synchronized | `Backend/src/DoodhDirect.Api/Controllers/NotificationsController.cs`; `Document/05_API_Specification.md`; `Document/11_openapi_starter.yaml` |
+
 ## Acceptance Evidence
 
 Evidence confirmed during Phase 1 implementation and release validation:
@@ -105,6 +123,27 @@ Evidence confirmed during Phase 10 implementation and final release validation:
 - Scope boundary: PASS; Phase 11 notification functionality has not started.
 
 Detailed evidence is recorded in `Document/PHASE_10_ACCEPTANCE.md`.
+
+### Phase 11 Acceptance Evidence
+
+Evidence confirmed during Phase 11 implementation and release validation:
+
+- Focused backend notification tests: PASS, 7 tests.
+- Focused Flutter notification tests: PASS, 23 tests, including permission, session isolation, repository/model, controller, and widget coverage.
+- Backend Release build: PASS, zero warnings and zero errors.
+- Backend solution tests: PASS, 322 tests total: 57 domain and 265 API integration.
+- Flutter analysis: PASS, no issues found.
+- Flutter tests: PASS, 168 tests, including notification and OpenAPI contract coverage.
+- Flutter web Release build: PASS; the JavaScript artifact was generated.
+- OpenAPI validation: PASS; YAML parsing, local component references, and templated route parameters were verified by `mobile/test/openapi_document_test.dart`.
+- Phase 11 migration script: PASS, exact idempotent Phase 10-to-Phase 11 script generated at `Backend/Phase11Notifications.sql` for `20260817150825_Phase11Notifications`.
+- SQL Server Express migration: PASS on `DoodhDirect` at `DESKTOP-6LU1CLD\\SQLEXPRESS`; the migration was applied and the checked-in script then executed twice idempotently with quoted identifiers enabled.
+- Physical SQL Server schema: PASS; `Notification`, `NotificationAttempt`, `NotificationDelivery`, `NotificationEvent`, `NotificationPreference`, `NotificationTemplate`, and `UserDevice` were inspected with expected keys, indexes, defaults, checks, and restrictive foreign keys.
+- Token-storage exclusion: PASS; physical inspection found token hash and protected payload storage with no plaintext push-token column.
+- Template seed coverage: PASS; 84 English rows cover 21 event types across four channels exactly once per combination.
+- Scope boundary: PASS; Phase 12 Admin & Reports has not started. Complaint and replacement producers remain deferred because those modules do not exist.
+
+Detailed evidence is recorded in `Document/PHASE_11_ACCEPTANCE.md`.
 
 ## Deployment Blockers
 

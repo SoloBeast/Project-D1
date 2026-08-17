@@ -179,11 +179,27 @@ Acceptance:
 ## Phase 11 — Notifications
 
 Deliver:
-- FCM
-- SMS
-- WhatsApp abstraction
-- Templates
-- Retry queue
+- Durable provider-neutral notification events written by business modules without direct provider calls.
+- In-app notification inbox, unread count, ownership-scoped mark-read behavior, pagination, and event deep links.
+- Push, SMS, WhatsApp, and email channel gateways with independent delivery and attempt persistence.
+- Background processing, bounded retries, terminal failure classification, preference suppression, and invalid-destination handling.
+- User device registration and token rotation with hashed identity and protected provider payload.
+- Event/channel preferences with protected critical-notification rules.
+- Seeded English templates for all configured event/channel combinations and permission/audit-protected administration.
+- Explicit Development mock providers and fail-closed Production provider selection.
+- Flutter explicit permission flow, authorized/provisional token synchronization, foreground refresh, home badge, cold-start/opened-message handling, and internal-only deep-link validation.
+- Loading, empty, offline, API-error, refresh, pagination, permission-denied, and unavailable states with session/user isolation.
+- Android and iOS notification platform configuration plus backend, Flutter, OpenAPI, migration, and security coverage.
+
+Acceptance:
+- Core business transactions commit durable notification events and remain independent of provider availability.
+- Inbox, unread count, mark-read, device, preference, and template APIs enforce authentication, ownership, permissions, validation, and auditing.
+- Push tokens have no plaintext persistence or API/log exposure; token rotation and invalidation are deterministic.
+- A failing, suppressed, permanently invalid, or unconfigured channel does not block the inbox or other channels and is represented truthfully in delivery/attempt state.
+- Production rejects Development mocks and fails closed for unconfigured providers.
+- Flutter never prompts at startup, registers tokens only for authorized/provisional permission, validates notification routes internally, and discards stale session responses.
+- Complaint and replacement templates exist, while producer integration remains deferred until those business modules exist.
+- Release builds, complete backend and Flutter regressions, OpenAPI validation, migration idempotency, and physical SQL Server inspection pass.
 
 ## Phase 12 — Admin & Reports
 

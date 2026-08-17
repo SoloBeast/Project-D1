@@ -80,6 +80,29 @@ Sections:
 - Complaint status.
 - Live Dairy CTA.
 - Wallet balance.
+- Notification inbox action with a server-authoritative unread-count badge; selecting it opens the inbox.
+
+### 3.4.1 Notification Inbox
+
+Content:
+- Paginated notifications ordered newest first.
+- Unread rows have a distinct accessible visual treatment.
+- Each row shows title, body, timestamp, and read state.
+- Pull-to-refresh reloads the first page and unread count.
+- Scrolling loads the next page without replacing already loaded rows.
+
+Behavior:
+- Opening an unread notification marks it read, updates the inbox, and refreshes the home badge.
+- Foreground push messages refresh inbox and unread state.
+- A notification deep link navigates only when it is a valid allowlisted internal route. Invalid, external, or unauthorized routes remain in the inbox without navigation.
+- Opened-notification and cold-start delivery use the same validation path.
+- Loading, empty, offline, API-error, refresh-error, and pagination-error states provide a retry action where applicable.
+- Signing out or changing users clears notification, token-sync, and pending-navigation state. Responses started for an earlier session must not update the current session.
+
+Push permission:
+- Startup may display the current permission state but must not trigger the system prompt.
+- A dedicated user action requests permission and explains denied/unavailable state through normal UI status.
+- Device token registration and refresh synchronization occur only for authorized or provisional permission.
 
 ### 3.5 Product List
 Initial product: loose buffalo milk.

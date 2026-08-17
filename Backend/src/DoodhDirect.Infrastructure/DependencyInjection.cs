@@ -6,6 +6,7 @@ using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Dairy;
 using DoodhDirect.Application.Identity;
 using DoodhDirect.Application.MilkTesting;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Subscriptions;
@@ -17,11 +18,13 @@ using DoodhDirect.Infrastructure.Deliveries;
 using DoodhDirect.Infrastructure.Dairy;
 using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.MilkTesting;
+using DoodhDirect.Infrastructure.Notifications;
 using DoodhDirect.Infrastructure.Orders;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
 using DoodhDirect.Infrastructure.Subscriptions;
 using DoodhDirect.Infrastructure.Wallets;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -84,9 +87,22 @@ public static class DependencyInjection
                     && uri.Scheme == Uri.UriSchemeHttps,
                 "CameraStreams:DevelopmentHlsPlaybackUrl must be an absolute HTTPS URL when DevelopmentMock is selected.")
             .ValidateOnStart();
+        services.AddOptions<NotificationOptions>()
+            .Bind(configuration.GetSection(NotificationOptions.SectionName))
+            .ValidateDataAnnotations()
+            .Validate(
+                options => Enum.GetValues<DoodhDirect.Domain.Notifications.NotificationChannel>()
+                    .All(channel => IsSupportedNotificationProvider(options.ProviderFor(channel))),
+                "Notifications providers must be 'Unconfigured' or 'DevelopmentMock'.")
+            .Validate(
+                options => environment.IsDevelopment() || !options.UsesDevelopmentMock,
+                "Notifications DevelopmentMock providers are prohibited outside Development.")
+            .ValidateOnStart();
 
         services.AddHealthChecks()
             .AddDbContextCheck<DoodhDirectDbContext>("sql-server", tags: ["ready"]);
+        services.AddDataProtection()
+            .SetApplicationName("DoodhDirect");
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<SecureTokenGenerator>();
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
@@ -102,6 +118,12 @@ public static class DependencyInjection
         services.AddScoped<IDairyService, DairyService>();
         services.AddScoped<IMilkTestService, MilkTestService>();
         services.AddScoped<ICameraService, CameraService>();
+        services.AddScoped<INotificationEventWriter, NotificationEventWriter>();
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<INotificationTemplateService, NotificationTemplateService>();
+        services.AddScoped<INotificationProcessor, NotificationProcessor>();
+        services.AddSingleton<NotificationTokenProtector>();
+        services.AddHostedService<NotificationWorker>();
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IWalletService, WalletService>();
         services.AddSingleton<IDeliveryRealtimePublisher, NullDeliveryRealtimePublisher>();
@@ -126,6 +148,11 @@ public static class DependencyInjection
         services.AddScoped<DevelopmentDeliveryStaffSeedService>();
         services.AddScoped<DevelopmentDairyManagerSeedService>();
         services.AddScoped<CatalogueSeedService>();
+        services.AddScoped<NotificationTemplateSeedService>();
+        if (environment.IsDevelopment())
+        {
+            services.AddScoped<IDevelopmentNotificationService, DevelopmentNotificationService>();
+        }
         services.AddSingleton<IOtpDeliveryService, UnconfiguredOtpDeliveryService>();
         services.AddSingleton<ICameraStreamGateway>(provider =>
         {
@@ -134,9 +161,24 @@ public static class DependencyInjection
                 ? ActivatorUtilities.CreateInstance<DevelopmentCameraStreamGateway>(provider)
                 : new UnconfiguredCameraStreamGateway();
         });
+        foreach (var channel in Enum.GetValues<DoodhDirect.Domain.Notifications.NotificationChannel>())
+        {
+            services.AddSingleton<INotificationChannelGateway>(provider =>
+            {
+                var options = provider.GetRequiredService<IOptions<NotificationOptions>>().Value;
+                return environment.IsDevelopment()
+                    && NotificationOptions.IsDevelopmentMock(options.ProviderFor(channel))
+                    ? new DevelopmentNotificationGateway(channel)
+                    : new UnconfiguredNotificationGateway(channel);
+            });
+        }
 
         return services;
     }
+
+    private static bool IsSupportedNotificationProvider(string provider) =>
+        string.Equals(provider, "Unconfigured", StringComparison.OrdinalIgnoreCase)
+        || NotificationOptions.IsDevelopmentMock(provider);
 
     private sealed class SystemClock : IClock
     {

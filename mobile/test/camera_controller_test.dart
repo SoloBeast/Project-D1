@@ -157,7 +157,10 @@ void main() {
     test('does not call repository without an authenticated session', () async {
       final repository = _FakeCameraRepository();
       final container = ProviderContainer(
-        overrides: [cameraRepositoryProvider.overrideWithValue(repository)],
+        overrides: [
+          authRepositoryProvider.overrideWithValue(_UnauthenticatedRepository()),
+          cameraRepositoryProvider.overrideWithValue(repository),
+        ],
       );
       addTearDown(container.dispose);
       container.read(cameraControllerProvider);
@@ -193,6 +196,11 @@ Future<ProviderContainer> _authenticatedContainer(
 class _AuthenticatedRepository extends AuthRepository {
   @override
   Future<AuthSession?> restore() async => _session;
+}
+
+class _UnauthenticatedRepository extends AuthRepository {
+  @override
+  Future<AuthSession?> restore() async => null;
 }
 
 class _FakeCameraRepository extends CameraRepository {

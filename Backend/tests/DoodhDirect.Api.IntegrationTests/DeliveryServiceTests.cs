@@ -1,6 +1,8 @@
+using System.Text.Json;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Deliveries;
@@ -167,6 +169,35 @@ public sealed class DeliveryServiceTests
         Assert.Equal(2, harness.Realtime.Deliveries.Count);
         Assert.Equal(2, await harness.Db.AuditLogs.AsNoTracking()
             .CountAsync(x => x.Action == "DELIVERY.ASSIGN" || x.Action == "DELIVERY.REASSIGN"));
+        var assignedEvents = await harness.Db.NotificationEvents
+            .AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.DeliveryAssigned)
+            .OrderBy(x => x.OccurredAtUtc)
+            .ToListAsync();
+        Assert.Equal(2, assignedEvents.Count);
+        Assert.Equal(
+            [
+                $"delivery:{deliveryId:N}:assigned:{assigned.AssignedAtUtc!.Value.Ticks}",
+                $"delivery:{deliveryId:N}:assigned:{reassigned.AssignedAtUtc!.Value.Ticks}"
+            ],
+            assignedEvents.Select(x => x.EventKey));
+        Assert.All(assignedEvents, notificationEvent =>
+        {
+            Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
+            Assert.True(notificationEvent.IsCritical);
+            Assert.Equal(
+                $"/deliveries/{deliveryId}",
+                Payload(notificationEvent).GetProperty("DeepLink").GetString());
+            Assert.Equal(
+                deliveryId.ToString(),
+                Variables(notificationEvent).GetProperty("deliveryId").GetString());
+        });
+        Assert.Equal(
+            harness.Staff.PublicId.ToString(),
+            Variables(assignedEvents[0]).GetProperty("employeeId").GetString());
+        Assert.Equal(
+            harness.SecondStaff.PublicId.ToString(),
+            Variables(assignedEvents[1]).GetProperty("employeeId").GetString());
     }
 
     [Fact]
@@ -233,6 +264,40 @@ public sealed class DeliveryServiceTests
         var otp = await harness.Db.DeliveryOtps.AsNoTracking().SingleAsync();
         Assert.Equal(1, otp.AttemptCount);
         Assert.NotNull(otp.ConsumedAtUtc);
+
+        var events = await harness.Db.NotificationEvents
+            .AsNoTracking()
+            .OrderBy(x => x.EventType)
+            .ToListAsync();
+        Assert.Equal(4, events.Count);
+        Assert.All(events, notificationEvent =>
+        {
+            Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
+            Assert.True(notificationEvent.IsCritical);
+            Assert.Equal(harness.Clock.UtcNow, notificationEvent.OccurredAtUtc);
+            Assert.Equal(
+                $"/deliveries/{deliveryId}",
+                Payload(notificationEvent).GetProperty("DeepLink").GetString());
+            Assert.Equal(
+                harness.Order.OrderNumber,
+                Variables(notificationEvent).GetProperty("referenceNumber").GetString());
+        });
+        Assert.Contains(events, notificationEvent =>
+            notificationEvent.EventType == NotificationEventTypes.DeliveryAssigned &&
+            notificationEvent.EventKey ==
+                $"delivery:{deliveryId:N}:assigned:{harness.Clock.UtcNow.Ticks}");
+        Assert.Contains(events, notificationEvent =>
+            notificationEvent.EventType == NotificationEventTypes.DeliveryStarted &&
+            notificationEvent.EventKey ==
+                $"delivery:{deliveryId:N}:started:{harness.Clock.UtcNow.Ticks}");
+        Assert.Contains(events, notificationEvent =>
+            notificationEvent.EventType == NotificationEventTypes.DeliveryNearCustomer &&
+            notificationEvent.EventKey ==
+                $"delivery:{deliveryId:N}:near-customer:{harness.Clock.UtcNow.Ticks}");
+        Assert.Contains(events, notificationEvent =>
+            notificationEvent.EventType == NotificationEventTypes.DeliveryCompleted &&
+            notificationEvent.EventKey ==
+                $"delivery:{deliveryId:N}:completed:{harness.Clock.UtcNow.Ticks}");
     }
 
     [Fact]
@@ -295,7 +360,33 @@ public sealed class DeliveryServiceTests
             .SingleAsync(x => x.Id == harness.Subscription.Id);
         Assert.Equal(SubscriptionDeliveryStatus.Failed, occurrence.Status);
         Assert.Equal(0, subscription.UsedEntitlement);
+
+        var failedEvent = Assert.Single(
+            await harness.Db.NotificationEvents
+                .AsNoTracking()
+                .Where(x => x.EventType == NotificationEventTypes.DeliveryFailed)
+                .ToListAsync());
+        Assert.Equal(harness.Customer.Id, failedEvent.UserId);
+        Assert.True(failedEvent.IsCritical);
+        Assert.Equal(harness.Clock.UtcNow, failedEvent.OccurredAtUtc);
+        Assert.Equal(
+            $"delivery:{deliveryId:N}:failed:{harness.Clock.UtcNow.Ticks}",
+            failedEvent.EventKey);
+        Assert.Equal(
+            DeliveryFailureReasons.CustomerNotAvailable,
+            Variables(failedEvent).GetProperty("reason").GetString());
+        Assert.Equal(
+            $"/deliveries/{deliveryId}",
+            Payload(failedEvent).GetProperty("DeepLink").GetString());
     }
+
+    private static JsonElement Payload(
+        DoodhDirect.Domain.Notifications.NotificationEvent notificationEvent) =>
+        JsonSerializer.Deserialize<JsonElement>(notificationEvent.PayloadJson);
+
+    private static JsonElement Variables(
+        DoodhDirect.Domain.Notifications.NotificationEvent notificationEvent) =>
+        Payload(notificationEvent).GetProperty("Variables");
 
     private sealed class DeliveryHarness : IAsyncDisposable
     {
@@ -511,7 +602,8 @@ public sealed class DeliveryServiceTests
                     MaximumLocationFutureSkewMinutes = 5,
                     MaximumLocationsPerDelivery = 10,
                     LocationRetentionDays = 30
-                }));
+                }),
+                new TestNotificationEventWriter(db, clock));
             return new DeliveryHarness(
                 connection,
                 db,

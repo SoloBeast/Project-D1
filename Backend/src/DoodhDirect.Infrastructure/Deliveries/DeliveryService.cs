@@ -5,6 +5,7 @@ using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
@@ -22,7 +23,8 @@ public sealed class DeliveryService(
     IPasswordHasher passwordHasher,
     IOtpDeliveryService otpDeliveryService,
     IDeliveryRealtimePublisher realtimePublisher,
-    IOptions<DeliveryOptions> deliveryOptions) : IDeliveryService
+    IOptions<DeliveryOptions> deliveryOptions,
+    INotificationEventWriter notificationEventWriter) : IDeliveryService
 {
     private readonly DeliveryOptions _options = deliveryOptions.Value;
 
@@ -191,10 +193,22 @@ public sealed class DeliveryService(
         EnsureBranchAccess(actor, delivery.BranchId);
         var employee = await FindEligibleEmployeeAsync(request.EmployeeId, delivery.BranchId, cancellationToken);
         var previousEmployeeId = delivery.AssignedEmployeeId;
-        Mutate(() => delivery.Assign(employee.Id, actor.UserId, clock.UtcNow, request.Reason));
+        var now = clock.UtcNow;
+        Mutate(() => delivery.Assign(employee.Id, actor.UserId, now, request.Reason));
         if (delivery.Order is not null) Mutate(delivery.Order.AssignForDelivery);
         AddAudit(actor.UserId, previousEmployeeId.HasValue ? "DELIVERY.REASSIGN" : "DELIVERY.ASSIGN", "Delivery",
-            delivery.PublicId.ToString(), new { EmployeeId = previousEmployeeId }, new { EmployeeId = employee.PublicId }, request.Reason, clock.UtcNow);
+            delivery.PublicId.ToString(), new { EmployeeId = previousEmployeeId }, new { EmployeeId = employee.PublicId }, request.Reason, now);
+        AddDeliveryEvent(
+            delivery,
+            NotificationEventTypes.DeliveryAssigned,
+            $"delivery:{delivery.PublicId:N}:assigned:{now.Ticks}",
+            $"Your delivery has been assigned to {employee.DisplayName ?? "a delivery employee"}.",
+            now,
+            new Dictionary<string, string>
+            {
+                ["employeeId"] = employee.PublicId.ToString(),
+                ["employeeName"] = employee.DisplayName ?? "Delivery employee"
+            });
         await dbContext.SaveChangesAsync(cancellationToken);
         return await PublishChangedAsync(delivery.PublicId, cancellationToken);
     }
@@ -209,15 +223,38 @@ public sealed class DeliveryService(
     public async Task<DeliveryResult> StartAsync(DeliveryActor actor, Guid deliveryId, CancellationToken cancellationToken)
     {
         var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
-        Mutate(() => delivery.Start(actor.UserId, clock.UtcNow));
+        var now = clock.UtcNow;
+        Mutate(() => delivery.Start(actor.UserId, now));
         if (delivery.Order is not null) Mutate(delivery.Order.StartDelivery);
         AddTransitionAudit(actor.UserId, "DELIVERY.START", delivery);
+        AddDeliveryEvent(
+            delivery,
+            NotificationEventTypes.DeliveryStarted,
+            $"delivery:{delivery.PublicId:N}:started:{now.Ticks}",
+            "Your delivery is on the way.",
+            now);
         await dbContext.SaveChangesAsync(cancellationToken);
         return await PublishChangedAsync(delivery.PublicId, cancellationToken);
     }
 
-    public Task<DeliveryResult> ArriveAsync(DeliveryActor actor, Guid deliveryId, CancellationToken cancellationToken) =>
-        TransitionAsync(actor, deliveryId, "DELIVERY.ARRIVE", d => d.Arrive(actor.UserId, clock.UtcNow), cancellationToken);
+    public async Task<DeliveryResult> ArriveAsync(
+        DeliveryActor actor,
+        Guid deliveryId,
+        CancellationToken cancellationToken)
+    {
+        var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
+        var now = clock.UtcNow;
+        Mutate(() => delivery.Arrive(actor.UserId, now));
+        AddTransitionAudit(actor.UserId, "DELIVERY.ARRIVE", delivery);
+        AddDeliveryEvent(
+            delivery,
+            NotificationEventTypes.DeliveryNearCustomer,
+            $"delivery:{delivery.PublicId:N}:near-customer:{now.Ticks}",
+            "Your delivery has arrived nearby.",
+            now);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return await PublishChangedAsync(delivery.PublicId, cancellationToken);
+    }
 
     public async Task IssueOtpAsync(DeliveryActor actor, Guid deliveryId, CancellationToken cancellationToken)
     {
@@ -318,6 +355,12 @@ public sealed class DeliveryService(
                 Mutate(() => occurrence.Subscription.MarkDelivered(occurrence, now));
             }
             AddTransitionAudit(actor.UserId, "DELIVERY.COMPLETE", delivery);
+            AddDeliveryEvent(
+                delivery,
+                NotificationEventTypes.DeliveryCompleted,
+                $"delivery:{delivery.PublicId:N}:completed:{now.Ticks}",
+                "Your delivery has been completed.",
+                now);
             await dbContext.SaveChangesAsync(cancellationToken);
         }, cancellationToken);
         return await PublishChangedAsync(deliveryId, cancellationToken);
@@ -345,6 +388,16 @@ public sealed class DeliveryService(
             }
             AddAudit(actor.UserId, "DELIVERY.FAIL", "Delivery", delivery.PublicId.ToString(), null,
                 new { delivery.Status, delivery.FailureReason, delivery.FailureLatitude, delivery.FailureLongitude }, request.Remarks, now);
+            AddDeliveryEvent(
+                delivery,
+                NotificationEventTypes.DeliveryFailed,
+                $"delivery:{delivery.PublicId:N}:failed:{now.Ticks}",
+                "Your delivery could not be completed.",
+                now,
+                new Dictionary<string, string>
+                {
+                    ["reason"] = request.Reason
+                });
             await dbContext.SaveChangesAsync(cancellationToken);
         }, cancellationToken);
         return await PublishChangedAsync(deliveryId, cancellationToken);
@@ -499,6 +552,37 @@ public sealed class DeliveryService(
 
     private void AddTransitionAudit(long userId, string action, Delivery delivery) =>
         AddAudit(userId, action, "Delivery", delivery.PublicId.ToString(), null, new { delivery.Status }, null, clock.UtcNow);
+
+    private void AddDeliveryEvent(
+        Delivery delivery,
+        string eventType,
+        string eventKey,
+        string message,
+        DateTime occurredAtUtc,
+        IReadOnlyDictionary<string, string>? additionalVariables = null)
+    {
+        var variables = new Dictionary<string, string>
+        {
+            ["deliveryId"] = delivery.PublicId.ToString(),
+            ["message"] = message,
+            ["referenceNumber"] = delivery.ReferenceNumber
+        };
+        if (additionalVariables is not null)
+        {
+            foreach (var variable in additionalVariables)
+            {
+                variables[variable.Key] = variable.Value;
+            }
+        }
+
+        notificationEventWriter.Add(new NotificationEventRequest(
+            delivery.CustomerId,
+            eventType,
+            eventKey,
+            variables,
+            $"/deliveries/{delivery.PublicId}",
+            occurredAtUtc));
+    }
 
     private void AddAudit(
         long? userId,

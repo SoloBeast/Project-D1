@@ -1,12 +1,16 @@
+using System.Globalization;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using DoodhDirect.Api.Authorization;
 using DoodhDirect.Api.Middleware;
 using DoodhDirect.Application.Common;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Infrastructure;
 using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Identity;
+using DoodhDirect.Infrastructure.Notifications;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Policy;
@@ -90,7 +94,7 @@ builder.Services.AddOpenApi(options =>
     {
         document.Info.Title = "DoodhDirect API";
         document.Info.Version = "v1";
-        document.Info.Description = "Identity/RBAC, customer, catalogue, ordering, subscriptions, payments, wallet, delivery, dairy, doorstep testing, and secure live dairy camera API.";
+        document.Info.Description = "Identity/RBAC, customer, catalogue, ordering, subscriptions, payments, wallet, delivery, dairy, doorstep testing, secure live dairy cameras, and provider-neutral notifications API.";
         document.Components ??= new OpenApiComponents();
         document.Components.Schemas ??=
             new Dictionary<string, IOpenApiSchema>(StringComparer.Ordinal);
@@ -181,6 +185,9 @@ await using (var scope = app.Services.CreateAsyncScope())
     await scope.ServiceProvider
         .GetRequiredService<CatalogueSeedService>()
         .SeedAsync(cancellationToken);
+    await scope.ServiceProvider
+        .GetRequiredService<NotificationTemplateSeedService>()
+        .SeedAsync(cancellationToken);
     if (app.Environment.IsDevelopment())
     {
         await scope.ServiceProvider
@@ -222,6 +229,33 @@ if (app.Environment.IsDevelopment())
         options.Title = "DoodhDirect API";
         options.Theme = ScalarTheme.Default;
     }).AllowAnonymous();
+
+    app.MapPost(
+            "/api/v1/development/notifications/samples",
+            async (
+                ClaimsPrincipal user,
+                IDevelopmentNotificationService notificationService,
+                CancellationToken cancellationToken) =>
+            {
+                var userIdValue = user.FindFirstValue("user_id");
+                if (!long.TryParse(
+                        userIdValue,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var userId))
+                {
+                    throw new UnauthorizedAppException();
+                }
+
+                var eventIds = await notificationService.CreateSamplesAsync(
+                    new NotificationActor(userId),
+                    cancellationToken);
+                return Results.Ok(ApiResponse<IReadOnlyCollection<Guid>>.Ok(
+                    eventIds,
+                    "Development notification samples created."));
+            })
+        .WithTags("Development notifications")
+        .Produces<ApiResponse<IReadOnlyCollection<Guid>>>(StatusCodes.Status200OK);
 }
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions

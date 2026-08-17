@@ -3,6 +3,7 @@ using System.Text.Json;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.MilkTesting;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.MilkTesting;
@@ -15,7 +16,8 @@ public sealed class MilkTestService(
     DoodhDirectDbContext dbContext,
     IClock clock,
     IMediaStorage mediaStorage,
-    IMilkTestImageValidator imageValidator) : IMilkTestService
+    IMilkTestImageValidator imageValidator,
+    INotificationEventWriter notificationEventWriter) : IMilkTestService
 {
     private const decimal MaximumReadingMagnitude = 999999999999.999999m;
 
@@ -47,6 +49,13 @@ public sealed class MilkTestService(
                 new { DeliveryId = delivery.PublicId, milkTest.Status }, null, now);
             AddAudit(actor.UserId, "MILK_TEST.CREATE", milkTest.PublicId, null,
                 new { DeliveryId = delivery.PublicId, milkTest.CustomerId, milkTest.BranchId }, null, now);
+            AddMilkTestEvent(
+                milkTest,
+                delivery.PublicId,
+                NotificationEventTypes.MilkTestRequested,
+                $"milk-test:{milkTest.PublicId:N}:requested",
+                "Your doorstep milk test has been requested.",
+                now);
             await dbContext.SaveChangesAsync(cancellationToken);
             result = ToCustomerResult(milkTest, delivery.PublicId);
         }, cancellationToken);
@@ -200,6 +209,17 @@ public sealed class MilkTestService(
                 new { milkTest.Status, milkTest.CompletedAtUtc, ReadingCount = milkTest.Parameters.Count, ImageCount = milkTest.Images.Count },
                 request.Remarks,
                 now);
+            AddMilkTestEvent(
+                milkTest,
+                milkTest.Delivery.PublicId,
+                NotificationEventTypes.MilkTestCompleted,
+                $"milk-test:{milkTest.PublicId:N}:completed",
+                "Your doorstep milk test results are ready.",
+                now,
+                new Dictionary<string, string>
+                {
+                    ["readingCount"] = milkTest.Parameters.Count.ToString()
+                });
             await dbContext.SaveChangesAsync(cancellationToken);
             result = ToStaffResult(milkTest, milkTest.Delivery.PublicId);
         }, cancellationToken);
@@ -340,6 +360,38 @@ public sealed class MilkTestService(
             await operation();
             await transaction.CommitAsync(cancellationToken);
         });
+    }
+
+    private void AddMilkTestEvent(
+        MilkTest milkTest,
+        Guid deliveryId,
+        string eventType,
+        string eventKey,
+        string message,
+        DateTime occurredAtUtc,
+        IReadOnlyDictionary<string, string>? additionalVariables = null)
+    {
+        var variables = new Dictionary<string, string>
+        {
+            ["milkTestId"] = milkTest.PublicId.ToString(),
+            ["deliveryId"] = deliveryId.ToString(),
+            ["message"] = message
+        };
+        if (additionalVariables is not null)
+        {
+            foreach (var variable in additionalVariables)
+            {
+                variables[variable.Key] = variable.Value;
+            }
+        }
+
+        notificationEventWriter.Add(new NotificationEventRequest(
+            milkTest.CustomerId,
+            eventType,
+            eventKey,
+            variables,
+            $"/deliveries/{deliveryId}/milk-test",
+            occurredAtUtc));
     }
 
     private void AddAudit(

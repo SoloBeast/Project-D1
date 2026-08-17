@@ -1,5 +1,6 @@
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Subscriptions;
@@ -15,7 +16,8 @@ public sealed class SubscriptionService(
     DoodhDirectDbContext dbContext,
     IBranchAllocationService branchAllocationService,
     IPaymentService paymentService,
-    IClock clock) : ISubscriptionService
+    IClock clock,
+    INotificationEventWriter notificationEventWriter) : ISubscriptionService
 {
     private const string CutoffConfigurationKey = "Subscription.SkipPauseCutoffHours";
     private const int DefaultCutoffHours = 24;
@@ -83,13 +85,54 @@ public sealed class SubscriptionService(
         }
 
         dbContext.Subscriptions.Add(subscription);
+        var createdEventKey = $"subscription:{subscription.PublicId:N}:created";
+        var paymentPendingEventKey = $"subscription:{subscription.PublicId:N}:payment-pending";
+        notificationEventWriter.Add(new NotificationEventRequest(
+            customerId,
+            NotificationEventTypes.SubscriptionCreated,
+            createdEventKey,
+            new Dictionary<string, string>
+            {
+                ["message"] = $"Your {subscription.ProductNameSnapshot} subscription has been created.",
+                ["subscriptionId"] = subscription.PublicId.ToString()
+            },
+            $"/subscriptions/{subscription.PublicId}"));
+        notificationEventWriter.Add(new NotificationEventRequest(
+            customerId,
+            NotificationEventTypes.SubscriptionPaymentPending,
+            paymentPendingEventKey,
+            new Dictionary<string, string>
+            {
+                ["amount"] = subscription.PayableAmount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+                ["currency"] = "INR",
+                ["message"] = "Payment is pending for your subscription.",
+                ["subscriptionId"] = subscription.PublicId.ToString()
+            },
+            $"/subscriptions/{subscription.PublicId}"));
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateException)
         {
+            foreach (var schedule in subscription.Schedules)
+            {
+                dbContext.Entry(schedule).State = EntityState.Detached;
+            }
+            foreach (var delivery in subscription.Deliveries)
+            {
+                dbContext.Entry(delivery).State = EntityState.Detached;
+            }
             dbContext.Entry(subscription).State = EntityState.Detached;
+            foreach (var eventKey in new[] { createdEventKey, paymentPendingEventKey })
+            {
+                var notificationEvent = dbContext.NotificationEvents.Local
+                    .SingleOrDefault(item => item.EventKey == eventKey);
+                if (notificationEvent is not null)
+                {
+                    dbContext.Entry(notificationEvent).State = EntityState.Detached;
+                }
+            }
             var duplicate = await Query()
                 .SingleOrDefaultAsync(x => x.CustomerId == customerId && x.IdempotencyKey == normalizedKey, cancellationToken);
             if (duplicate is not null)
@@ -167,6 +210,17 @@ public sealed class SubscriptionService(
         var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
         await EnsureCutoffAsync(subscription, cancellationToken);
         subscription.Pause(clock.UtcNow);
+        notificationEventWriter.Add(new NotificationEventRequest(
+            customerId,
+            NotificationEventTypes.SubscriptionPaused,
+            $"subscription:{subscription.PublicId:N}:paused:{subscription.PausedAtUtc!.Value.Ticks}",
+            new Dictionary<string, string>
+            {
+                ["message"] = $"Your {subscription.ProductNameSnapshot} subscription has been paused.",
+                ["subscriptionId"] = subscription.PublicId.ToString()
+            },
+            $"/subscriptions/{subscription.PublicId}",
+            subscription.PausedAtUtc));
         await dbContext.SaveChangesAsync(cancellationToken);
         return subscription.ToResult();
     }
@@ -174,7 +228,19 @@ public sealed class SubscriptionService(
     public async Task<SubscriptionResult> ResumeAsync(long customerId, Guid subscriptionId, CancellationToken cancellationToken)
     {
         var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
+        var pausedAtUtc = subscription.PausedAtUtc
+            ?? throw new BusinessRuleException("Only a paused subscription can be resumed.");
         subscription.Resume();
+        notificationEventWriter.Add(new NotificationEventRequest(
+            customerId,
+            NotificationEventTypes.SubscriptionResumed,
+            $"subscription:{subscription.PublicId:N}:resumed:{pausedAtUtc.Ticks}",
+            new Dictionary<string, string>
+            {
+                ["message"] = $"Your {subscription.ProductNameSnapshot} subscription has resumed.",
+                ["subscriptionId"] = subscription.PublicId.ToString()
+            },
+            $"/subscriptions/{subscription.PublicId}"));
         await dbContext.SaveChangesAsync(cancellationToken);
         return subscription.ToResult();
     }
@@ -197,6 +263,18 @@ public sealed class SubscriptionService(
         var delivery = subscription.Deliveries.SingleOrDefault(x => x.PublicId == request.DeliveryId)
             ?? throw new NotFoundException("The subscription delivery was not found.");
         subscription.Skip(delivery, clock.UtcNow, await GetCutoffAsync(cancellationToken));
+        notificationEventWriter.Add(new NotificationEventRequest(
+            customerId,
+            NotificationEventTypes.SubscriptionSkipped,
+            $"subscription-delivery:{delivery.PublicId:N}:skipped",
+            new Dictionary<string, string>
+            {
+                ["date"] = delivery.ScheduledDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+                ["message"] = $"Your delivery for {delivery.ScheduledDate:dd MMM yyyy} has been skipped.",
+                ["subscriptionId"] = subscription.PublicId.ToString()
+            },
+            $"/subscriptions/{subscription.PublicId}",
+            delivery.StatusChangedAtUtc));
         await dbContext.SaveChangesAsync(cancellationToken);
         await LoadDeliveryNavigationAsync(delivery, cancellationToken);
         return delivery.ToResult();
