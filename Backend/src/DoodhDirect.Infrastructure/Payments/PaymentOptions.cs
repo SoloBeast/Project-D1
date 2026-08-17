@@ -56,10 +56,7 @@ public sealed class PaymentOptions : IValidatableObject
             yield return RequiredForRazorpay(nameof(RazorpayKeySecret));
         }
 
-        if (string.IsNullOrWhiteSpace(RazorpayWebhookSecret))
-        {
-            yield return RequiredForRazorpay(nameof(RazorpayWebhookSecret));
-        }
+        // Webhook verification fails closed when this separately managed secret is absent.
     }
 
     private static ValidationResult RequiredForRazorpay(string memberName) =>

@@ -760,23 +760,36 @@ Updates an existing template and returns `200`; an unknown template returns `404
 
 ## 16. Report APIs
 
-`GET /admin/reports/orders`
+All report endpoints are authenticated and rooted at `/admin/reports`. The server derives the report actor, branch assignments, and global-access entitlement from the authenticated token. Client-side visibility is never an authorization boundary.
 
-`GET /admin/reports/deliveries`
+### Dashboard
 
-`GET /admin/reports/production`
+`GET /admin/reports/dashboard` requires `REPORTS.DASHBOARD.READ`. Optional query fields are `fromUtc`, `toUtc`, and repeated `branchIds`. The response contains permission-filtered metrics for customers, employees, orders, subscriptions, payments, wallets, deliveries, dairy, milk tests, cameras, and notifications. Requested branches are intersected with the actor's server-authorized scope; `ACCESS.GLOBAL` permits global scope.
 
-`GET /admin/reports/revenue`
+### Report modules
 
-`GET /admin/reports/complaints`
+| Route | Permission |
+|---|---|
+| `GET /admin/reports/customers` | `REPORTS.ADMINISTRATION.READ` |
+| `GET /admin/reports/employees` | `REPORTS.ADMINISTRATION.READ` |
+| `GET /admin/reports/orders` | `REPORTS.ADMINISTRATION.READ` |
+| `GET /admin/reports/subscriptions` | `REPORTS.ADMINISTRATION.READ` |
+| `GET /admin/reports/payments` | `REPORTS.FINANCIAL.READ` |
+| `GET /admin/reports/wallets` | `REPORTS.FINANCIAL.READ` |
+| `GET /admin/reports/deliveries` | `REPORTS.OPERATIONS.READ` |
+| `GET /admin/reports/dairy` | `REPORTS.OPERATIONS.READ` |
+| `GET /admin/reports/milk-tests` | `REPORTS.MILK_TESTS.READ` |
+| `GET /admin/reports/cameras` | `REPORTS.OPERATIONS.READ` |
+| `GET /admin/reports/notifications` | `REPORTS.OPERATIONS.READ` |
+| `GET /admin/reports/audit` | `REPORTS.AUDIT.READ` |
 
-`GET /admin/reports/subscriptions`
+Report reads accept query-bound filter fields: optional `fromUtc`, `toUtc`, repeated `branchIds`, `search`, repeated `statuses`, `customerId`, `employeeId`, `productId`, `paymentState`, `page` (default `1`), `pageSize` (default `50`), `sortBy`, and `sortDirection` (`Ascending` or `Descending`, default `Descending`). Responses contain `items`, `page`, `pageSize`, `totalCount`, and `hasNextPage`.
 
-Exports:
+### Synchronous exports
 
-`POST /admin/reports/export`
+Each module has a direct binary export route, for example `POST /admin/reports/customers/export`; the same `/export` suffix is available for all twelve modules. Export requests require both the module read permission and `REPORTS.EXPORT`.
 
-Return asynchronous export job ID for large reports.
+The JSON request body contains a nested `filter` with the report filter fields and a `format` of `Csv` or `Xlsx`. The response is generated file bytes with the appropriate content type and `Content-Disposition` filename. `X-Report-Row-Count` reports the number of exported rows. Export generation is synchronous; a separate export-job resource is not part of Phase 12.
 
 ---
 

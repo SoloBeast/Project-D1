@@ -321,11 +321,42 @@ class _AdminHomeActions extends ConsumerWidget {
       permissions.contains('CAMERAS.READ') ||
       permissions.contains('CAMERAS.MANAGE');
 
+  bool get _canReadReports => permissions.any(
+    const {
+      'REPORTS.ADMINISTRATION.READ',
+      'REPORTS.FINANCIAL.READ',
+      'REPORTS.OPERATIONS.READ',
+      'REPORTS.MILK_TESTS.READ',
+      'REPORTS.AUDIT.READ',
+    }.contains,
+  );
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        if (_canReadReports) ...[
+          Text(
+            'Administration',
+            style: Theme.of(context).textTheme.headlineSmall,
+          ),
+          const SizedBox(height: 8),
+          const Text('Review operational metrics and authorized reports.'),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.dashboard_outlined),
+              title: const Text('Dashboard and reports'),
+              subtitle: const Text(
+                'Open administration metrics, filters, and exports',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push('/admin'),
+            ),
+          ),
+          const SizedBox(height: 20),
+        ],
         Text('Catalogue', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 8),
         const Text('Maintain products, categories, and branch availability.'),

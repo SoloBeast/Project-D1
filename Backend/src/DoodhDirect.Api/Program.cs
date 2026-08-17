@@ -22,6 +22,7 @@ using Scalar.AspNetCore;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+LoadLocalDotEnv(builder.Configuration, builder.Environment.ContentRootPath);
 const string corsPolicyName = "DoodhDirectWeb";
 
 builder.Host.UseSerilog((context, services, configuration) => configuration
@@ -285,6 +286,57 @@ static void SetStringEnumSchema(
         Type = JsonSchemaType.String,
         Enum = values.Select(value => (JsonNode)JsonValue.Create(value)!).ToList()
     };
+}
+
+static void LoadLocalDotEnv(ConfigurationManager configuration, string contentRootPath)
+{
+    var directory = new DirectoryInfo(contentRootPath);
+    while (directory is not null)
+    {
+        var path = Path.Combine(directory.FullName, ".env");
+        if (File.Exists(path))
+        {
+            var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var line in File.ReadLines(path))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+                {
+                    continue;
+                }
+
+                var separator = trimmed.IndexOf('=');
+                if (separator <= 0)
+                {
+                    continue;
+                }
+
+                var name = trimmed[..separator].Trim();
+                var value = trimmed[(separator + 1)..].Trim().Trim('"', '\'');
+                values[name] = value;
+            }
+
+            var mapped = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            values.TryGetValue("RAZORPAY_KEY_ID", out var keyId);
+            values.TryGetValue("RAZORPAY_KEY_SECRET", out var keySecret);
+            if (!string.IsNullOrWhiteSpace(keyId) && !string.IsNullOrWhiteSpace(keySecret))
+            {
+                mapped["Payments:Provider"] = "Razorpay";
+                mapped["Payments:RazorpayKeyId"] = keyId;
+                mapped["Payments:RazorpayKeySecret"] = keySecret;
+            }
+            if (values.TryGetValue("RAZORPAY_WEBHOOK_SECRET", out var webhookSecret) &&
+                !string.IsNullOrWhiteSpace(webhookSecret))
+            {
+                mapped["Payments:RazorpayWebhookSecret"] = webhookSecret;
+            }
+
+            configuration.AddInMemoryCollection(mapped);
+            return;
+        }
+
+        directory = directory.Parent;
+    }
 }
 
 public partial class Program;

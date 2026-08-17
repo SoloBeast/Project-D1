@@ -204,11 +204,19 @@ Acceptance:
 ## Phase 12 — Admin & Reports
 
 Deliver:
-- All dashboards
-- Search/filter
-- CSV/XLSX exports
-- Global owner access
-- Audit viewer
+- Permission-aware admin dashboard with date and branch scope, including global-owner scope where `ACCESS.GLOBAL` is granted.
+- Twelve report modules: Customers, Employees, Orders, Subscriptions, Payments, Wallets, Deliveries, Dairy, Milk tests, Cameras, Notifications, and Audit.
+- Server-side search, status/date/branch and module-specific filters, sorting, page size, pagination, and responsive Flutter table/list presentation.
+- Loading, empty, offline, unauthorized, stale-session, and general-error state handling.
+- Permission-protected synchronous CSV/XLSX generation with direct binary response, safe filename/content-type handling, row-count header, and native/browser save handoff.
+- Backend report contracts, optimized indexes/migration, Flutter Riverpod and `go_router` integration, focused tests, OpenAPI, and synchronized Phase 12 documentation.
+
+Acceptance:
+- Every dashboard metric, module route, filter, sort, page, and export is constrained by server-side permission and branch/global scope; client visibility is not authorization.
+- All twelve modules expose truthful loading, empty, unauthorized, offline/error, stale-data, and export success/failure states on desktop, tablet, and narrow layouts.
+- CSV and XLSX exports contain the selected authorized report data, are handed to the platform save boundary, and transient export bytes are cleared after handoff.
+- Backend and Flutter focused/full regressions, Release/web builds, OpenAPI validation, migration/model alignment, and SQL schema inspection pass.
+- Phase 13 hardening work remains deferred until this acceptance is complete.
 
 ## Phase 13 — Hardening
 

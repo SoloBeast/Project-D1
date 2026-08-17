@@ -1,3 +1,4 @@
+using DoodhDirect.Application.Reports;
 using DoodhDirect.Domain.Identity;
 
 namespace DoodhDirect.Application.Identity;
@@ -114,6 +115,13 @@ public static class AuthorizationCodes
     public const string CamerasManage = "CAMERAS.MANAGE";
     public const string NotificationTemplatesRead = "NOTIFICATIONS.TEMPLATES.READ";
     public const string NotificationTemplatesManage = "NOTIFICATIONS.TEMPLATES.MANAGE";
+    public const string ReportsDashboardRead = ReportPermissions.DashboardRead;
+    public const string ReportsAdministrationRead = ReportPermissions.AdministrationRead;
+    public const string ReportsFinancialRead = ReportPermissions.FinancialRead;
+    public const string ReportsOperationsRead = ReportPermissions.OperationsRead;
+    public const string ReportsMilkTestsRead = ReportPermissions.MilkTestsRead;
+    public const string ReportsAuditRead = ReportPermissions.AuditRead;
+    public const string ReportsExport = ReportPermissions.Export;
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -173,6 +181,13 @@ public static class AuthorizationCodes
         [CamerasRead] = "Read branch camera metadata",
         [CamerasManage] = "Manage branch camera metadata",
         [NotificationTemplatesRead] = "Read notification templates",
-        [NotificationTemplatesManage] = "Manage notification templates"
+        [NotificationTemplatesManage] = "Manage notification templates",
+        [ReportsDashboardRead] = "Read authorized administration dashboard metrics",
+        [ReportsAdministrationRead] = "Read authorized customer, employee, order, and subscription reports",
+        [ReportsFinancialRead] = "Read authorized payment and wallet reports",
+        [ReportsOperationsRead] = "Read authorized delivery, dairy, camera, and notification reports",
+        [ReportsMilkTestsRead] = "Read authorized milk-test reports without protected media storage data",
+        [ReportsAuditRead] = "Read audit-log metadata",
+        [ReportsExport] = "Export authorized reports as CSV or XLSX"
     };
 }

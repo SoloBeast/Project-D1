@@ -224,7 +224,8 @@ public sealed class RazorpayPaymentGateway(
     }
 
     public bool VerifyWebhookSignature(ReadOnlySpan<byte> payload, string signature) =>
-        MockPaymentGateway.VerifyHmac(payload, signature, _options.RazorpayWebhookSecret!);
+        !string.IsNullOrWhiteSpace(_options.RazorpayWebhookSecret) &&
+        MockPaymentGateway.VerifyHmac(payload, signature, _options.RazorpayWebhookSecret);
 
     public GatewayWebhookEvent ParseWebhook(ReadOnlySpan<byte> payload) =>
         MockPaymentGateway.ParseWebhookPayload(payload);
@@ -274,9 +275,8 @@ public sealed class RazorpayPaymentGateway(
         var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var detail = Encoding.UTF8.GetString(bytes);
             throw new HttpRequestException(
-                $"Razorpay returned HTTP {(int)response.StatusCode}: {detail}",
+                $"Razorpay request failed with HTTP {(int)response.StatusCode}.",
                 null,
                 response.StatusCode);
         }

@@ -151,6 +151,88 @@ void main() {
     expect(body['success'], isTrue);
   });
 
+  test('binary POST sends JSON and parses response metadata', () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(
+        request.url.toString(),
+        'https://api.example.test/api/v1/admin/reports/orders/export',
+      );
+      expect(request.headers['Authorization'], 'Bearer access-token');
+      expect(request.headers['Content-Type'], 'application/json');
+      expect(request.headers['Accept'], 'application/json');
+      expect(jsonDecode(request.body), {
+        'format': 'Csv',
+        'filter': {'page': 1, 'pageSize': 25},
+      });
+      return http.Response.bytes(
+        Uint8List.fromList([1, 2, 3]),
+        200,
+        headers: {
+          'content-type': 'text/csv',
+          'content-disposition': 'attachment; filename="orders.csv"',
+        },
+      );
+    });
+    final api = ApiClient(client: client, baseUrl: 'https://api.example.test');
+
+    final response = await api.postBytes(
+      '/api/v1/admin/reports/orders/export',
+      body: {
+        'format': 'Csv',
+        'filter': {'page': 1, 'pageSize': 25},
+      },
+      accessToken: 'access-token',
+    );
+
+    expect(response.bytes, [1, 2, 3]);
+    expect(response.contentType, 'text/csv');
+    expect(response.fileName, 'orders.csv');
+  });
+
+  test('binary POST decodes UTF-8 filename metadata', () async {
+    final client = MockClient(
+      (request) async => http.Response.bytes(
+        Uint8List.fromList([9]),
+        200,
+        headers: {
+          'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'content-disposition':
+              "attachment; filename*=UTF-8''milk%20tests.xlsx",
+        },
+      ),
+    );
+    final api = ApiClient(client: client, baseUrl: 'https://api.example.test');
+
+    final response = await api.postBytes('/export');
+
+    expect(response.fileName, 'milk tests.xlsx');
+    expect(response.bytes, [9]);
+  });
+
+  test('binary POST decodes standard API error envelope', () async {
+    final client = MockClient(
+      (request) async => http.Response.bytes(
+        utf8.encode(
+          '{"success":false,"errors":[{"code":"FORBIDDEN","message":"Export denied."}]}',
+        ),
+        403,
+        headers: {'content-type': 'application/json'},
+      ),
+    );
+    final api = ApiClient(client: client, baseUrl: 'https://api.example.test');
+
+    await expectLater(
+      api.postBytes('/export', accessToken: 'access-token'),
+      throwsA(
+        isA<ApiException>()
+            .having((error) => error.statusCode, 'statusCode', 403)
+            .having((error) => error.code, 'code', 'FORBIDDEN')
+            .having((error) => error.message, 'message', 'Export denied.'),
+      ),
+    );
+  });
+
   test('POST decodes standard API error envelope', () async {
     final client = MockClient(
       (request) async => http.Response(

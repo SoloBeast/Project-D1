@@ -218,6 +218,14 @@ Do not assume every current milk transaction needs GST merely because an invoice
 
 External service failure must not corrupt core business data.
 
+### Phase 12 report export boundary
+
+- Report queries and CSV/XLSX generation execute on the authenticated backend using the actor's permissions and branch/global scope.
+- The transport is an authenticated binary response with `Content-Disposition`, a server-selected filename/content type, and `X-Report-Row-Count`; report reads continue to use the standard JSON API envelope.
+- Flutter passes the returned bytes to an injectable native/browser save boundary. The platform handoff is not treated as part of report generation or business-data persistence.
+- A backend generation failure remains an API/report error and must not invoke the saver. A native/browser save failure reports that the file could not be saved while retaining truthful report state.
+- Export bytes are held only for the handoff, cleared afterward, and never written to business tables, logs, analytics, or audit records.
+
 Example:
 
 Razorpay timeout after payment initiation:

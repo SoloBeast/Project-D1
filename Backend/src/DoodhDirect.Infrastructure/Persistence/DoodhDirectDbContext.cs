@@ -160,6 +160,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigurePublicEntity(entity);
         entity.HasIndex(x => x.Mobile).IsUnique().HasFilter("[Mobile] IS NOT NULL");
         entity.HasIndex(x => x.Email).IsUnique().HasFilter("[Email] IS NOT NULL");
+        entity.HasIndex(x => new { x.UserType, x.CreatedAtUtc, x.Id });
         entity.Property(x => x.UserType).HasConversion<string>().HasMaxLength(30).IsRequired();
         entity.Property(x => x.DisplayName).HasMaxLength(160);
         entity.Property(x => x.Mobile).HasMaxLength(20);
@@ -203,6 +204,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasIndex(x => new { x.UserId, x.RoleId, x.BranchId })
             .IsUnique()
             .HasFilter("[BranchId] IS NOT NULL");
+        entity.HasIndex(x => new { x.BranchId, x.UserId });
         entity.HasOne(x => x.User).WithMany(x => x.UserRoles).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Role).WithMany(x => x.UserRoles).HasForeignKey(x => x.RoleId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -281,6 +283,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.UserAgent).HasMaxLength(1000);
         entity.Property(x => x.Reason).HasMaxLength(1000);
         entity.HasIndex(x => new { x.EntityType, x.EntityId, x.CreatedAtUtc });
+        entity.HasIndex(x => new { x.CreatedAtUtc, x.Id });
+        entity.HasIndex(x => new { x.UserId, x.CreatedAtUtc, x.Id });
     }
 
     private static void ConfigureCustomerProfile(ModelBuilder modelBuilder)
@@ -501,6 +505,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.FailureCode).HasMaxLength(100);
         entity.Property(x => x.FailureMessage).HasMaxLength(500);
         entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
+        entity.HasIndex(x => new { x.CustomerId, x.CreatedAtUtc, x.Id });
+        entity.HasIndex(x => new { x.Status, x.CreatedAtUtc, x.Id });
         entity.HasIndex(x => x.OrderId).HasFilter("[OrderId] IS NOT NULL");
         entity.HasIndex(x => x.SubscriptionId).HasFilter("[SubscriptionId] IS NOT NULL");
         entity.HasIndex(x => x.GatewayOrderId).IsUnique().HasFilter("[GatewayOrderId] IS NOT NULL");
@@ -633,6 +639,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
         entity.HasIndex(x => new { x.CustomerId, x.Status, x.CreatedAtUtc });
         entity.HasIndex(x => new { x.BranchId, x.Status, x.StartDate });
+        entity.HasIndex(x => new { x.BranchId, x.CreatedAtUtc, x.Id });
         entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.CustomerAddress).WithMany().HasForeignKey(x => x.CustomerAddressId).OnDelete(DeleteBehavior.Restrict);

@@ -15,6 +15,18 @@ class ApiException implements Exception {
   String toString() => '$statusCode $code: $message';
 }
 
+class ApiByteResponse {
+  const ApiByteResponse({
+    required this.bytes,
+    required this.contentType,
+    this.fileName,
+  });
+
+  final Uint8List bytes;
+  final String contentType;
+  final String? fileName;
+}
+
 class ApiClient {
   ApiClient({http.Client? client, required this.baseUrl})
     : _client = client ?? http.Client();
@@ -42,6 +54,27 @@ class ApiClient {
       body: jsonEncode(body),
     );
     return _decode(response);
+  }
+
+  Future<ApiByteResponse> postBytes(
+    String path, {
+    Map<String, dynamic> body = const <String, dynamic>{},
+    String? accessToken,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl$path'),
+      headers: _headers(accessToken),
+      body: jsonEncode(body),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      _decode(response);
+    }
+    return ApiByteResponse(
+      bytes: response.bodyBytes,
+      contentType:
+          response.headers['content-type'] ?? 'application/octet-stream',
+      fileName: _fileName(response.headers['content-disposition']),
+    );
   }
 
   Future<Map<String, dynamic>> postMultipart(
@@ -113,6 +146,19 @@ class ApiClient {
     if (includeContentType) 'Content-Type': 'application/json',
     if (accessToken != null) 'Authorization': 'Bearer $accessToken',
   };
+
+  String? _fileName(String? contentDisposition) {
+    if (contentDisposition == null) return null;
+    final encoded = RegExp(
+      r"filename\*=UTF-8''([^;]+)",
+      caseSensitive: false,
+    ).firstMatch(contentDisposition)?.group(1);
+    if (encoded != null) return Uri.decodeComponent(encoded);
+    return RegExp(
+      r'filename="?([^";]+)"?',
+      caseSensitive: false,
+    ).firstMatch(contentDisposition)?.group(1);
+  }
 
   Map<String, dynamic> _decode(http.Response response) {
     final body = response.body.isEmpty

@@ -248,6 +248,15 @@ The business should obtain professional tax/accounting advice before invoicing a
 
 ---
 
+### Report and export security
+
+- Dashboard and report reads enforce `REPORTS.DASHBOARD.READ`, the module-specific report read permission, and authenticated ownership of the actor context on the server.
+- Report scope is resolved from server-side branch assignments. Requested branch IDs are intersected with authorized scope; only `ACCESS.GLOBAL` bypasses branch restriction. Client filters and hidden navigation cannot grant access.
+- Export requires both `REPORTS.EXPORT` and the selected module's read permission. CSV/XLSX content is generated from the same authorized, filtered query boundary as report reads.
+- Export filenames and content types are selected and normalized by the server. The client must treat `Content-Disposition` and MIME metadata as untrusted display/transport values and must not construct executable paths.
+- Export bytes are transient, are passed only to the native/browser save boundary, and are cleared after handoff or failure. Report payloads must not be copied into logs, analytics, or audit reasons.
+- Audit reports are especially sensitive: access and export remain permission-protected, and audit rows expose only the documented fields. No report endpoint relies on client-side authorization.
+
 ## 15. Operational Runbooks
 
 Create runbooks for:

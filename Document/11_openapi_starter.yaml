@@ -1540,6 +1540,243 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /admin/reports/dashboard:
+    get:
+      tags: [Administration Reports]
+      summary: Get permission-aware administration dashboard metrics
+      description: Requires REPORTS.DASHBOARD.READ. Branch filters are intersected with the authenticated actor's branch scope unless ACCESS.GLOBAL is granted.
+      security:
+        - bearerAuth: []
+      parameters: &reportDashboardParameters
+        - $ref: '#/components/parameters/reportFromUtc'
+        - $ref: '#/components/parameters/reportToUtc'
+        - $ref: '#/components/parameters/reportBranchIds'
+      responses:
+        '200':
+          description: Scoped dashboard metrics
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReportDashboardResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/customers:
+    get:
+      tags: [Administration Reports]
+      summary: List customer report rows
+      description: Requires REPORTS.ADMINISTRATION.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: &reportReadParameters
+        - $ref: '#/components/parameters/reportFromUtc'
+        - $ref: '#/components/parameters/reportToUtc'
+        - $ref: '#/components/parameters/reportBranchIds'
+        - $ref: '#/components/parameters/reportSearch'
+        - $ref: '#/components/parameters/reportStatuses'
+        - $ref: '#/components/parameters/reportCustomerId'
+        - $ref: '#/components/parameters/reportEmployeeId'
+        - $ref: '#/components/parameters/reportProductId'
+        - $ref: '#/components/parameters/reportPaymentState'
+        - $ref: '#/components/parameters/reportPage'
+        - $ref: '#/components/parameters/reportPageSize'
+        - $ref: '#/components/parameters/reportSortBy'
+        - $ref: '#/components/parameters/reportSortDirection'
+      responses:
+        '200': { description: Scoped customer report page, content: { application/json: { schema: { $ref: '#/components/schemas/CustomerReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/employees:
+    get:
+      tags: [Administration Reports]
+      summary: List employee report rows
+      description: Requires REPORTS.ADMINISTRATION.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped employee report page, content: { application/json: { schema: { $ref: '#/components/schemas/EmployeeReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/orders:
+    get:
+      tags: [Administration Reports]
+      summary: List order report rows
+      description: Requires REPORTS.ADMINISTRATION.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped order report page, content: { application/json: { schema: { $ref: '#/components/schemas/OrderReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/subscriptions:
+    get:
+      tags: [Administration Reports]
+      summary: List subscription report rows
+      description: Requires REPORTS.ADMINISTRATION.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped subscription report page, content: { application/json: { schema: { $ref: '#/components/schemas/SubscriptionReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/payments:
+    get:
+      tags: [Administration Reports]
+      summary: List payment report rows
+      description: Requires REPORTS.FINANCIAL.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped payment report page, content: { application/json: { schema: { $ref: '#/components/schemas/PaymentReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/wallets:
+    get:
+      tags: [Administration Reports]
+      summary: List wallet report rows
+      description: Requires REPORTS.FINANCIAL.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped wallet report page, content: { application/json: { schema: { $ref: '#/components/schemas/WalletReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/deliveries:
+    get:
+      tags: [Administration Reports]
+      summary: List delivery report rows
+      description: Requires REPORTS.OPERATIONS.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped delivery report page, content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/dairy:
+    get:
+      tags: [Administration Reports]
+      summary: List dairy report rows
+      description: Requires REPORTS.OPERATIONS.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped dairy report page, content: { application/json: { schema: { $ref: '#/components/schemas/DairyReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/milk-tests:
+    get:
+      tags: [Administration Reports]
+      summary: List milk-test report rows
+      description: Requires REPORTS.MILK_TESTS.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped milk-test report page, content: { application/json: { schema: { $ref: '#/components/schemas/MilkTestReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/cameras:
+    get:
+      tags: [Administration Reports]
+      summary: List camera report rows
+      description: Requires REPORTS.OPERATIONS.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped camera report page, content: { application/json: { schema: { $ref: '#/components/schemas/CameraReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/notifications:
+    get:
+      tags: [Administration Reports]
+      summary: List notification report rows
+      description: Requires REPORTS.OPERATIONS.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped notification report page, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/audit:
+    get:
+      tags: [Administration Reports]
+      summary: List audit report rows
+      description: Requires REPORTS.AUDIT.READ.
+      security: [{ bearerAuth: [] }]
+      parameters: *reportReadParameters
+      responses:
+        '200': { description: Scoped audit report page, content: { application/json: { schema: { $ref: '#/components/schemas/AuditReportPageResponse' } } } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/customers/export:
+    post: &administrationReportExport
+      tags: [Administration Reports]
+      summary: Export customer report rows
+      description: Requires REPORTS.EXPORT and REPORTS.ADMINISTRATION.READ. The same authenticated branch scope and filters used by report reads are applied.
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: '#/components/requestBodies/ReportExportRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/ReportExportFile' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/reports/employees/export:
+    post:
+      <<: *administrationReportExport
+      summary: Export employee report rows
+  /admin/reports/orders/export:
+    post:
+      <<: *administrationReportExport
+      summary: Export order report rows
+  /admin/reports/subscriptions/export:
+    post:
+      <<: *administrationReportExport
+      summary: Export subscription report rows
+  /admin/reports/payments/export:
+    post: &financialReportExport
+      <<: *administrationReportExport
+      summary: Export payment report rows
+      description: Requires REPORTS.EXPORT and REPORTS.FINANCIAL.READ. The same authenticated branch scope and filters used by report reads are applied.
+  /admin/reports/wallets/export:
+    post:
+      <<: *financialReportExport
+      summary: Export wallet report rows
+  /admin/reports/deliveries/export:
+    post: &operationsReportExport
+      <<: *administrationReportExport
+      summary: Export delivery report rows
+      description: Requires REPORTS.EXPORT and REPORTS.OPERATIONS.READ. The same authenticated branch scope and filters used by report reads are applied.
+  /admin/reports/dairy/export:
+    post:
+      <<: *operationsReportExport
+      summary: Export dairy report rows
+  /admin/reports/cameras/export:
+    post:
+      <<: *operationsReportExport
+      summary: Export camera report rows
+  /admin/reports/notifications/export:
+    post:
+      <<: *operationsReportExport
+      summary: Export notification report rows
+  /admin/reports/milk-tests/export:
+    post:
+      <<: *administrationReportExport
+      summary: Export milk-test report rows
+      description: Requires REPORTS.EXPORT and REPORTS.MILK_TESTS.READ. The same authenticated branch scope and filters used by report reads are applied.
+  /admin/reports/audit/export:
+    post:
+      <<: *administrationReportExport
+      summary: Export audit report rows
+      description: Requires REPORTS.EXPORT and REPORTS.AUDIT.READ. The same authenticated branch scope and filters used by report reads are applied.
   /webhooks/razorpay:
     post:
       summary: Razorpay webhook
@@ -1697,7 +1934,100 @@ components:
       required: true
       description: Client-generated key used to make subscription creation idempotent.
       schema: { type: string, minLength: 1, maxLength: 100 }
+    reportFromUtc:
+      name: dateRange.fromUtc
+      in: query
+      required: false
+      description: Inclusive UTC start of the report range.
+      schema: { type: string, format: date-time }
+    reportToUtc:
+      name: dateRange.toUtc
+      in: query
+      required: false
+      description: Inclusive UTC end of the report range.
+      schema: { type: string, format: date-time }
+    reportBranchIds:
+      name: branchIds
+      in: query
+      required: false
+      description: Repeated public branch identifiers; server authorization intersects them with the actor's scope.
+      style: form
+      explode: true
+      schema: { type: array, items: { type: string, format: uuid } }
+    reportSearch:
+      name: search
+      in: query
+      required: false
+      schema: { type: string }
+    reportStatuses:
+      name: statuses
+      in: query
+      required: false
+      style: form
+      explode: true
+      schema: { type: array, items: { type: string } }
+    reportCustomerId:
+      name: customerId
+      in: query
+      required: false
+      schema: { type: string, format: uuid }
+    reportEmployeeId:
+      name: employeeId
+      in: query
+      required: false
+      schema: { type: string, format: uuid }
+    reportProductId:
+      name: productId
+      in: query
+      required: false
+      schema: { type: string, format: uuid }
+    reportPaymentState:
+      name: paymentState
+      in: query
+      required: false
+      schema: { type: string }
+    reportPage:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, format: int32, minimum: 1, default: 1 }
+    reportPageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema: { type: integer, format: int32, minimum: 1, maximum: 250, default: 50 }
+    reportSortBy:
+      name: sortBy
+      in: query
+      required: false
+      schema: { type: string }
+    reportSortDirection:
+      name: sortDirection
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/ReportSortDirection' }
+  requestBodies:
+    ReportExportRequest:
+      description: Report filters and requested server-generated file format.
+      required: true
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ReportExportRequest' }
   responses:
+    ReportExportFile:
+      description: Server-generated report file. Content-Disposition supplies the normalized download filename.
+      headers:
+        Content-Disposition:
+          description: Attachment disposition with the server-selected filename.
+          schema: { type: string }
+        X-Report-Row-Count:
+          description: Number of exported report rows.
+          schema: { type: integer, format: int32, minimum: 0 }
+      content:
+        text/csv:
+          schema: { type: string, format: binary }
+        application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+          schema: { type: string, format: binary }
     ValidationError:
       description: Request validation failed
       content:
@@ -2089,6 +2419,408 @@ components:
         - $ref: '#/components/schemas/SuccessResponse'
         - type: object
           properties: { data: { $ref: '#/components/schemas/DairyDashboard' } }
+    OrderType:
+      type: string
+      enum: [OneTime]
+    OrderStatus:
+      type: string
+      enum: [PendingPayment, Confirmed, Assigned, OutForDelivery, Delivered, Failed, Cancelled, PaymentFailed, RejectedByCustomer]
+    NotificationEventStatus:
+      type: string
+      enum: [Pending, Processing, Processed, Failed]
+    ReportModule:
+      type: string
+      enum: [Customers, Employees, Orders, Subscriptions, Payments, Wallets, Deliveries, Dairy, MilkTests, Cameras, Notifications, Audit]
+    ReportSortDirection:
+      type: string
+      enum: [Ascending, Descending]
+    ReportExportFormat:
+      type: string
+      enum: [Csv, Xlsx]
+    ReportDateRange:
+      type: object
+      properties:
+        fromUtc: { type: string, format: date-time, nullable: true }
+        toUtc: { type: string, format: date-time, nullable: true }
+    ReportFilter:
+      type: object
+      properties:
+        dateRange: { $ref: '#/components/schemas/ReportDateRange' }
+        branchIds:
+          type: array
+          items: { type: string, format: uuid }
+        search: { type: string, nullable: true }
+        statuses:
+          type: array
+          items: { type: string }
+        customerId: { type: string, format: uuid, nullable: true }
+        employeeId: { type: string, format: uuid, nullable: true }
+        productId: { type: string, format: uuid, nullable: true }
+        paymentState: { type: string, nullable: true }
+        page: { type: integer, format: int32, minimum: 1, default: 1 }
+        pageSize: { type: integer, format: int32, minimum: 1, maximum: 250, default: 50 }
+        sortBy: { type: string, nullable: true }
+        sortDirection: { $ref: '#/components/schemas/ReportSortDirection' }
+    ReportExportRequest:
+      type: object
+      required: [filter, format]
+      properties:
+        filter: { $ref: '#/components/schemas/ReportFilter' }
+        format: { $ref: '#/components/schemas/ReportExportFormat' }
+    DashboardMetrics:
+      type: object
+      required: [customers, activeCustomers, employees, orders, oneTimeOrderRevenue, activeSubscriptions, successfulPayments, pendingPayments, refunds, walletBalances, deliveries, successfulDeliveries, failedDeliveries, milkProduced, milkUsed, pendingMilkTests, availableCameras, notificationFailures]
+      properties:
+        customers: { type: integer, format: int32 }
+        activeCustomers: { type: integer, format: int32 }
+        employees: { type: integer, format: int32 }
+        orders: { type: integer, format: int32 }
+        oneTimeOrderRevenue: { type: number, format: double }
+        activeSubscriptions: { type: integer, format: int32 }
+        successfulPayments: { type: number, format: double }
+        pendingPayments: { type: number, format: double }
+        refunds: { type: number, format: double }
+        walletBalances: { type: number, format: double }
+        deliveries: { type: integer, format: int32 }
+        successfulDeliveries: { type: integer, format: int32 }
+        failedDeliveries: { type: integer, format: int32 }
+        milkProduced: { type: number, format: double }
+        milkUsed: { type: number, format: double }
+        pendingMilkTests: { type: integer, format: int32 }
+        availableCameras: { type: integer, format: int32 }
+        notificationFailures: { type: integer, format: int32 }
+    CustomerReportRow:
+      type: object
+      required: [id, isActive, createdAtUtc, orderCount, lifetimeOrderValue, walletBalance]
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string, nullable: true }
+        mobile: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        isActive: { type: boolean }
+        createdAtUtc: { type: string, format: date-time }
+        orderCount: { type: integer, format: int32 }
+        lifetimeOrderValue: { type: number, format: double }
+        walletBalance: { type: number, format: double }
+    EmployeeReportRow:
+      type: object
+      required: [id, isActive, roles, branchIds, assignedDeliveries, completedDeliveries]
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string, nullable: true }
+        mobile: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        isActive: { type: boolean }
+        roles: { type: array, items: { type: string } }
+        branchIds: { type: array, items: { type: string, format: uuid } }
+        assignedDeliveries: { type: integer, format: int32 }
+        completedDeliveries: { type: integer, format: int32 }
+    OrderReportRow:
+      type: object
+      required: [id, orderNumber, type, status, createdAtUtc, customerId, branchId, branchCode, branchName, payableAmount]
+      properties:
+        id: { type: string, format: uuid }
+        orderNumber: { type: string }
+        type: { $ref: '#/components/schemas/OrderType' }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        createdAtUtc: { type: string, format: date-time }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string, nullable: true }
+        branchId: { type: string, format: uuid }
+        branchCode: { type: string }
+        branchName: { type: string }
+        payableAmount: { type: number, format: double }
+    SubscriptionReportRow:
+      type: object
+      required: [id, status, customerId, productId, productName, branchId, branchName, startDate, endDate, payableAmount, totalEntitlement, usedEntitlement, remainingEntitlement]
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/SubscriptionStatus' }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string, nullable: true }
+        productId: { type: string, format: uuid }
+        productName: { type: string }
+        branchId: { type: string, format: uuid }
+        branchName: { type: string }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        payableAmount: { type: number, format: double }
+        totalEntitlement: { type: integer, format: int32 }
+        usedEntitlement: { type: integer, format: int32 }
+        remainingEntitlement: { type: integer, format: int32 }
+    PaymentReportRow:
+      type: object
+      required: [id, customerId, method, status, amount, refundedAmount, currency, createdAtUtc]
+      properties:
+        id: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        method: { $ref: '#/components/schemas/PaymentMethod' }
+        status: { $ref: '#/components/schemas/PaymentStatus' }
+        amount: { type: number, format: double }
+        refundedAmount: { type: number, format: double }
+        currency: { type: string }
+        createdAtUtc: { type: string, format: date-time }
+        verifiedAtUtc: { type: string, format: date-time, nullable: true }
+        failedAtUtc: { type: string, format: date-time, nullable: true }
+    WalletReportRow:
+      type: object
+      required: [customerId, balance, currency, transactionCount]
+      properties:
+        customerId: { type: string, format: uuid }
+        customerName: { type: string, nullable: true }
+        balance: { type: number, format: double }
+        currency: { type: string }
+        lastActivityAtUtc: { type: string, format: date-time, nullable: true }
+        transactionCount: { type: integer, format: int32 }
+    DeliveryReportRow:
+      type: object
+      required: [id, branchId, branchName, customerId, scheduledDate, status]
+      properties:
+        id: { type: string, format: uuid }
+        branchId: { type: string, format: uuid }
+        branchName: { type: string }
+        customerId: { type: string, format: uuid }
+        customerName: { type: string, nullable: true }
+        assignedEmployeeId: { type: string, format: uuid, nullable: true }
+        assignedEmployeeName: { type: string, nullable: true }
+        scheduledDate: { type: string, format: date }
+        status: { $ref: '#/components/schemas/DeliveryStatus' }
+        completedAtUtc: { type: string, format: date-time, nullable: true }
+        failureCode: { type: string, nullable: true }
+    DairyReportRow:
+      type: object
+      required: [source, branchId, branchName, occurredAtUtc, quantity, unit]
+      properties:
+        source: { $ref: '#/components/schemas/ReportModule' }
+        branchId: { type: string, format: uuid }
+        branchName: { type: string }
+        occurredAtUtc: { type: string, format: date-time }
+        quantity: { type: number, format: double }
+        unit: { type: string }
+        status: { type: string, nullable: true }
+        purpose: { type: string, nullable: true }
+    MilkTestReportRow:
+      type: object
+      required: [id, branchId, branchName, customerId, requestedAtUtc, status, customerDecision, parameterCount, imageCount]
+      properties:
+        id: { type: string, format: uuid }
+        branchId: { type: string, format: uuid }
+        branchName: { type: string }
+        customerId: { type: string, format: uuid }
+        requestedAtUtc: { type: string, format: date-time }
+        status: { $ref: '#/components/schemas/MilkTestStatus' }
+        customerDecision: { $ref: '#/components/schemas/MilkTestCustomerDecision' }
+        parameterCount: { type: integer, format: int32 }
+        imageCount: { type: integer, format: int32 }
+        completedAtUtc: { type: string, format: date-time, nullable: true }
+    CameraReportRow:
+      type: object
+      required: [id, branchId, branchName, displayName, isPublic, isActive, displayOrder]
+      properties:
+        id: { type: string, format: uuid }
+        branchId: { type: string, format: uuid }
+        branchName: { type: string }
+        displayName: { type: string }
+        isPublic: { type: boolean }
+        isActive: { type: boolean }
+        displayOrder: { type: integer, format: int32 }
+        streamProtocol: { $ref: '#/components/schemas/CameraStreamProtocol', nullable: true }
+    NotificationReportRow:
+      type: object
+      required: [id, eventType, eventStatus, occurredAtUtc, isCritical, deliveryCount, failedDeliveryCount, attemptCount]
+      properties:
+        id: { type: string, format: uuid }
+        eventType: { type: string }
+        eventStatus: { $ref: '#/components/schemas/NotificationEventStatus' }
+        occurredAtUtc: { type: string, format: date-time }
+        isCritical: { type: boolean }
+        deliveryCount: { type: integer, format: int32 }
+        failedDeliveryCount: { type: integer, format: int32 }
+        attemptCount: { type: integer, format: int32 }
+    AuditReportRow:
+      type: object
+      required: [id, action, entityType, entityId, createdAtUtc]
+      properties:
+        id: { type: integer, format: int64 }
+        userId: { type: integer, format: int64, nullable: true }
+        action: { type: string }
+        entityType: { type: string }
+        entityId: { type: string }
+        reason: { type: string, nullable: true }
+        createdAtUtc: { type: string, format: date-time }
+    ReportPageCustomer:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/CustomerReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPageEmployee:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/EmployeeReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPageOrder:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/OrderReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPageSubscription:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/SubscriptionReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPagePayment:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/PaymentReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPageWallet:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/WalletReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPageDelivery:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/DeliveryReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPageDairy:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/DairyReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPageMilkTest:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/MilkTestReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPageCamera:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/CameraReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPageNotification:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/NotificationReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportPageAudit:
+      type: object
+      required: [items, page, pageSize, totalCount, hasNextPage]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AuditReportRow' } }
+        page: { type: integer, format: int32 }
+        pageSize: { type: integer, format: int32 }
+        totalCount: { type: integer, format: int32 }
+        hasNextPage: { type: boolean }
+    ReportDashboardResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/DashboardMetrics' } }
+    CustomerReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageCustomer' } }
+    EmployeeReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageEmployee' } }
+    OrderReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageOrder' } }
+    SubscriptionReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageSubscription' } }
+    PaymentReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPagePayment' } }
+    WalletReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageWallet' } }
+    DeliveryReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageDelivery' } }
+    DairyReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageDairy' } }
+    MilkTestReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageMilkTest' } }
+    CameraReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageCamera' } }
+    NotificationReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageNotification' } }
+    AuditReportPageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ReportPageAudit' } }
     SuccessResponse:
       type: object
       required: [success, data, errors]

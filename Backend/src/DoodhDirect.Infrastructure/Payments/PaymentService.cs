@@ -911,9 +911,10 @@ public sealed class PaymentService(
     private static long ToMinorUnits(decimal amount)
     {
         var minor = decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero);
-        if (minor <= 0 || minor > long.MaxValue)
+        if (minor < 100 || minor > long.MaxValue)
         {
-            throw new BusinessRuleException("The payment amount cannot be represented by the gateway.");
+            throw new BusinessRuleException(
+                "The payment amount must be at least 100 paise and representable by the gateway.");
         }
 
         return decimal.ToInt64(minor);

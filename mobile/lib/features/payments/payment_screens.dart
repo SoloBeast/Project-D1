@@ -125,9 +125,10 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                           if (payment.method == PaymentMethod.razorpay &&
                               !payment.usesMockGateway &&
                               payment.status.isPending) {
-                            await ref
+                            final verified = await ref
                                 .read(paymentControllerProvider.notifier)
                                 .openRazorpayAndVerify();
+                            if (!context.mounted || !verified) return;
                           }
                           if (context.mounted) {
                             context.push(

@@ -1,4 +1,5 @@
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:doodh_direct_mobile/features/admin_reports/admin_report_screens.dart';
 import 'package:doodh_direct_mobile/features/auth/login_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/otp_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/register_screen.dart';
@@ -176,6 +177,15 @@ final routerProvider = Provider<GoRouter>((ref) {
               ? const _RouteErrorScreen(resource: 'product')
               : ProductDetailScreen(productId: productId);
         },
+      ),
+      GoRoute(
+        path: '/admin',
+        builder: (context, state) => const AdminDashboardScreen(),
+      ),
+      GoRoute(
+        path: '/admin/reports/:module',
+        builder: (context, state) =>
+            AdminReportScreen(moduleSlug: state.pathParameters['module'] ?? ''),
       ),
       GoRoute(
         path: '/admin/catalogue',
