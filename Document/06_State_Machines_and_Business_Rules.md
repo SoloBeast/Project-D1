@@ -293,3 +293,22 @@ The following operations must be idempotent:
 - Replacement order creation
 
 Use an idempotency key/reference unique within the operation scope.
+
+---
+
+## 19. Live Dairy Camera Rules
+
+- Public discovery and playback require authentication and `CAMERAS.VIEW_PUBLIC`.
+- Public discovery includes only active cameras explicitly marked public.
+- Unknown, inactive, and private camera IDs are publicly indistinguishable and return `404` for descriptor requests.
+- A camera is available only when its configured gateway supports the protocol/provider pair and reports the external stream available.
+- Playback is allowed only through a short-lived gateway descriptor. Expired descriptors must be discarded and reissued; they are never durable client or server data.
+- HLS and WebRTC are protocol metadata, not permission bypasses. A client must fail safely for unsupported protocols.
+- Development streams are explicit, HLS-only, HTTPS-only, visibly marked, and prohibited outside Development.
+- Production fails closed when no production stream gateway is configured.
+- Managed camera creation and updates require `CAMERAS.MANAGE`; managed reads require `CAMERAS.READ`.
+- `ACCESS.GLOBAL` can manage all branches. Other users can read or mutate only assigned branches.
+- A branch reassignment requires authorization to both the source and destination branches.
+- Internal identifiers are normalized and unique within a branch; display order is non-negative.
+- Create and update operations are audited.
+- Credentials, internal network addresses, hardware configuration, recordings, and raw/private stream URLs must not be stored in camera metadata or exposed through APIs.

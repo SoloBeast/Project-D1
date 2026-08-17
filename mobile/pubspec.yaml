@@ -16,6 +16,7 @@ dependencies:
   http_parser: ^4.1.2
   image_picker: ^1.2.3
   razorpay_flutter: ^1.4.0
+  video_player: ^2.10.1
 
 dev_dependencies:
   flutter_test:

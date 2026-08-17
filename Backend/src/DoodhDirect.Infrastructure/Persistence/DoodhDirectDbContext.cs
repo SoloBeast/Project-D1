@@ -1,4 +1,5 @@
 using DoodhDirect.Domain.Auditing;
+using DoodhDirect.Domain.Cameras;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Configuration;
@@ -51,6 +52,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     public DbSet<MilkTest> MilkTests => Set<MilkTest>();
     public DbSet<MilkTestParameter> MilkTestParameters => Set<MilkTestParameter>();
     public DbSet<MilkTestImage> MilkTestImages => Set<MilkTestImage>();
+    public DbSet<Camera> Cameras => Set<Camera>();
+    public DbSet<CameraStream> CameraStreams => Set<CameraStream>();
     public DbSet<DeliveryOtp> DeliveryOtps => Set<DeliveryOtp>();
     public DbSet<DeliveryLocation> DeliveryLocations => Set<DeliveryLocation>();
 
@@ -92,6 +95,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigureMilkTest(modelBuilder, usesSqlite);
         ConfigureMilkTestParameter(modelBuilder);
         ConfigureMilkTestImage(modelBuilder, usesSqlite);
+        ConfigureCamera(modelBuilder, usesSqlite);
+        ConfigureCameraStream(modelBuilder);
         ConfigureDeliveryOtp(modelBuilder);
         ConfigureDeliveryLocation(modelBuilder, usesSqlite);
     }
@@ -910,6 +915,41 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.Value).HasMaxLength(4000).IsRequired();
         entity.Property(x => x.ValueType).HasMaxLength(30).IsRequired();
         entity.Property(x => x.Description).HasMaxLength(500);
+    }
+
+    private static void ConfigureCamera(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<Camera>();
+        entity.ToTable("Camera", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_Camera_DisplayOrder", "[DisplayOrder] >= 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.InternalIdentifier).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.DisplayName).HasMaxLength(160).IsRequired();
+        entity.HasIndex(x => new { x.BranchId, x.InternalIdentifier }).IsUnique();
+        entity.HasIndex(x => new { x.IsActive, x.IsPublic, x.DisplayOrder });
+        entity.HasIndex(x => new { x.BranchId, x.IsActive, x.DisplayOrder });
+        entity.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureCameraStream(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<CameraStream>();
+        entity.ToTable("CameraStream");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Protocol).HasConversion<string>().HasMaxLength(20).IsRequired();
+        entity.Property(x => x.ProviderCode).HasMaxLength(80).IsRequired();
+        entity.Property(x => x.ProviderStreamReference).HasMaxLength(240).IsRequired();
+        entity.HasIndex(x => x.CameraId).IsUnique();
+        entity.HasOne(x => x.Camera).WithOne(x => x.Stream).HasForeignKey<CameraStream>(x => x.CameraId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigurePublicEntity<TEntity>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<TEntity> entity)

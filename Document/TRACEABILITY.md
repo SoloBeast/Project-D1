@@ -36,6 +36,22 @@
 | Flutter workflows | Customer request/decision and staff upload/readings/completion flows use server-authoritative refresh and explicit loading, error, offline, and terminal states | `mobile/lib/features/milk_testing/milk_test_controller.dart`; `mobile/lib/features/milk_testing/milk_test_screens.dart`; `mobile/test/milk_test_controller_test.dart`; `mobile/test/milk_test_screens_test.dart` |
 | API contract | Customer, staff, mutation, multipart upload, and protected media routes are documented with role-specific schemas | `Backend/src/DoodhDirect.Api/Controllers/MilkTestsController.cs`; `Document/05_API_Specification.md`; `Document/11_openapi_starter.yaml` |
 
+## Phase 10 — Live Dairy Cameras
+
+| Requirement area | Phase 10 implementation | Evidence |
+|---|---|---|
+| Metadata-only persistence | Branch-owned `Camera` and one-to-one `CameraStream` store bounded display, visibility, protocol, and opaque provider metadata only | `Backend/src/DoodhDirect.Domain/Cameras/CameraEntities.cs`; `Backend/src/DoodhDirect.Infrastructure/Persistence/Migrations/20260817132613_Phase10LiveDairyCameras.cs` |
+| Public privacy boundary | Public list returns active/public cameras only; public DTOs omit branch, internal, provider, administration, and timestamp fields | `Backend/src/DoodhDirect.Application/Cameras/CameraContracts.cs`; `Backend/src/DoodhDirect.Infrastructure/Cameras/CameraService.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/CameraServiceTests.cs` |
+| Enumeration resistance | Unknown, inactive, and private stream requests share the same not-found behavior | `Backend/src/DoodhDirect.Infrastructure/Cameras/CameraService.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/CameraServiceTests.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/CamerasControllerTests.cs` |
+| Permission enforcement | Public viewing, managed reads, and mutations require `CAMERAS.VIEW_PUBLIC`, `CAMERAS.READ`, and `CAMERAS.MANAGE` respectively | `Backend/src/DoodhDirect.Application/Identity/AuthenticationContracts.cs`; `Backend/src/DoodhDirect.Api/Controllers/CamerasController.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/CamerasControllerTests.cs` |
+| Branch authorization | Managed queries and mutations are branch-filtered; reassignment requires both source and destination scope; `ACCESS.GLOBAL` is explicit | `Backend/src/DoodhDirect.Infrastructure/Cameras/CameraService.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/CameraServiceTests.cs` |
+| Stream abstraction | `ICameraStreamGateway` provides capability, availability, and short-lived descriptor issuance independent of provider | `Backend/src/DoodhDirect.Application/Cameras/CameraContracts.cs`; `Backend/src/DoodhDirect.Infrastructure/Cameras/CameraStreamGateways.cs` |
+| Production fail-closed | Unconfigured gateway refuses issuance; DevelopmentMock is HLS/HTTPS-only and prohibited outside Development | `Backend/src/DoodhDirect.Infrastructure/Cameras/CameraStreamOptions.cs`; `Backend/src/DoodhDirect.Infrastructure/Cameras/CameraStreamGateways.cs`; `Backend/src/DoodhDirect.Infrastructure/DependencyInjection.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/CameraServiceTests.cs` |
+| Audit coverage | Camera creation and update persist `CAMERA.CREATE` and `CAMERA.UPDATE` audit events | `Backend/src/DoodhDirect.Infrastructure/Cameras/CameraService.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/CameraServiceTests.cs` |
+| Flutter transport and state | Repository uses exact authenticated routes; controller maps unauthorized, unavailable, offline, expired, and stale descriptor behavior | `mobile/lib/features/cameras/camera_repository.dart`; `mobile/lib/features/cameras/camera_controller.dart`; `mobile/test/camera_repository_test.dart`; `mobile/test/camera_controller_test.dart` |
+| Flutter workflows | Public list, viewer, and management screens provide required loading, empty, failure, retry, unsupported-protocol, and development-warning states | `mobile/lib/features/cameras/camera_screens.dart`; `mobile/test/camera_screens_test.dart` |
+| API contract | Public and administration paths, parameters, privacy descriptions, requests, schemas, and error responses are synchronized | `Backend/src/DoodhDirect.Api/Controllers/CamerasController.cs`; `Document/05_API_Specification.md`; `Document/11_openapi_starter.yaml` |
+
 ## Acceptance Evidence
 
 Evidence confirmed during Phase 1 implementation and release validation:
@@ -68,6 +84,27 @@ Evidence confirmed during Phase 9 implementation and release validation:
 - Scope boundary: PASS; Phase 10 camera functionality remains unimplemented.
 
 Detailed evidence is recorded in `Document/PHASE_9_ACCEPTANCE.md`.
+
+### Phase 10 Acceptance Evidence
+
+Evidence confirmed during Phase 10 implementation and final release validation:
+
+- Focused backend camera tests: PASS, 23 tests across service and controller coverage.
+- Focused Flutter camera tests: PASS, 30 tests across models, repository, controller, and widgets.
+- Backend Release build: PASS, zero warnings and zero errors.
+- Backend solution tests: PASS, 315 tests total: 57 domain and 258 API integration.
+- Flutter analysis: PASS, no issues found.
+- Flutter tests: PASS, 145 tests, including camera and OpenAPI contract coverage.
+- Flutter web Release build: PASS; the JavaScript artifact was generated with non-blocking secure-storage WebAssembly dry-run and unused Cupertino font warnings.
+- OpenAPI validation: PASS; YAML parsing, local component references, and templated route parameters were verified.
+- EF model/snapshot alignment: PASS, with no pending model changes.
+- Phase 10 migration script: PASS, generated and inspected at `Backend/artifacts/sql/Phase10LiveDairyCameras.sql`.
+- SQL Server Express migration: PASS on `DoodhDirect` at `DESKTOP-6LU1CLD\\SQLEXPRESS`; `20260817132613_Phase10LiveDairyCameras` applied successfully and the repeat update was idempotent.
+- Physical SQL Server schema: PASS; both camera tables have the expected bounded columns, nullability, defaults, checks, indexes, and restrictive `NO_ACTION` foreign keys.
+- Prohibited-storage exclusion: PASS; catalog inspection found zero credential, internal-address, hardware, recording, raw/private/playback URL, or binary columns.
+- Scope boundary: PASS; Phase 11 notification functionality has not started.
+
+Detailed evidence is recorded in `Document/PHASE_10_ACCEPTANCE.md`.
 
 ## Deployment Blockers
 

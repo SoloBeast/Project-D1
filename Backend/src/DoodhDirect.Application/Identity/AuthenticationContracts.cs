@@ -109,6 +109,9 @@ public static class AuthorizationCodes
     public const string WalletAdjust = "WALLET.ADJUST";
     public const string DairyRead = "DAIRY.READ";
     public const string DairyManage = "DAIRY.MANAGE";
+    public const string CamerasViewPublic = "CAMERAS.VIEW_PUBLIC";
+    public const string CamerasRead = "CAMERAS.READ";
+    public const string CamerasManage = "CAMERAS.MANAGE";
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -163,6 +166,9 @@ public static class AuthorizationCodes
         [WalletTopUpOwn] = "Top up own wallet through an approved development flow",
         [WalletAdjust] = "Adjust customer wallets",
         [DairyRead] = "Read branch dairy operations",
-        [DairyManage] = "Record branch dairy production and usage"
+        [DairyManage] = "Record branch dairy production and usage",
+        [CamerasViewPublic] = "View active public dairy cameras",
+        [CamerasRead] = "Read branch camera metadata",
+        [CamerasManage] = "Manage branch camera metadata"
     };
 }

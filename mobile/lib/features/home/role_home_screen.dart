@@ -39,6 +39,9 @@ class RoleHomeScreen extends ConsumerWidget {
       ),
       UserRole.dairy => const _DairyHomeActions(),
       UserRole.owner || UserRole.admin => _AdminHomeActions(
+        permissions:
+            ref.watch(sessionControllerProvider).session?.user.permissions ??
+            const [],
         branchIds:
             ref.watch(sessionControllerProvider).session?.user.branchIds ??
             const [],
@@ -128,6 +131,15 @@ class _CustomerHomeActions extends StatelessWidget {
           ),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => context.push('/subscriptions'),
+        ),
+      ),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.videocam_outlined),
+          title: const Text('Live Dairy'),
+          subtitle: const Text('View selected public dairy cameras'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push('/cameras'),
         ),
       ),
     ],
@@ -240,9 +252,14 @@ class _DairyHomeActions extends ConsumerWidget {
 }
 
 class _AdminHomeActions extends ConsumerWidget {
-  const _AdminHomeActions({required this.branchIds});
+  const _AdminHomeActions({required this.permissions, required this.branchIds});
 
+  final List<String> permissions;
   final List<int> branchIds;
+
+  bool get _canReadCameras =>
+      permissions.contains('CAMERAS.READ') ||
+      permissions.contains('CAMERAS.MANAGE');
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -273,6 +290,18 @@ class _AdminHomeActions extends ConsumerWidget {
             onTap: () => context.push('/catalogue'),
           ),
         ),
+        if (_canReadCameras)
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.video_settings_outlined),
+              title: const Text('Manage cameras'),
+              subtitle: const Text(
+                'Review visibility, status, ordering, and stream metadata',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push('/admin/cameras'),
+            ),
+          ),
         if (branchIds.isNotEmpty)
           Card(
             child: ListTile(

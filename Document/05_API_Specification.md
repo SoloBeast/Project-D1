@@ -588,21 +588,86 @@ Order or subscription capacity reservation against dairy inventory is also outsi
 
 ## 14. Camera APIs
 
-Customer:
+All camera routes are under `/api/v1` and require a bearer token. Camera and stream persistence is metadata-only; credentials, internal addresses, hardware configuration, recordings, and raw/private stream URLs are outside the API contract.
 
-`GET /cameras/public`
+### Public live dairy
 
-`GET /cameras/public/{cameraId}/stream`
+#### `GET /cameras/public`
 
-Admin:
+Permission: `CAMERAS.VIEW_PUBLIC`.
 
-`GET /admin/cameras`
+Returns active cameras explicitly marked public, ordered by display order and then display name. Each item contains only:
 
-`POST /admin/cameras`
+```text
+cameraId
+ displayName
+ displayOrder
+ isAvailable
+```
 
-`PATCH /admin/cameras/{id}`
+Provider metadata, branch metadata, internal identifiers, active/public administration flags, and timestamps are never returned by this route.
 
-Do not expose raw camera credentials.
+#### `GET /cameras/public/{cameraId}/stream`
+
+Permission: `CAMERAS.VIEW_PUBLIC`.
+
+Returns the selected camera's public identity and a gateway-issued playback descriptor:
+
+```text
+cameraId
+ displayName
+ stream.protocol                 Hls | WebRtc
+ stream.playbackUri              short-lived gateway URI
+ stream.expiresAtUtc
+ stream.isDevelopmentStream
+```
+
+Rules:
+
+- The descriptor is issued only for an active, explicitly public camera.
+- Unknown, inactive, and private camera identifiers all return `404` and must be externally indistinguishable.
+- `503` means the configured stream gateway cannot issue a usable descriptor.
+- The playback URI is not a persisted raw camera/NVR URL and must not be logged or cached as long-lived application data.
+- Clients must discard expired descriptors and request a new one.
+
+### Camera administration
+
+#### `GET /admin/cameras?branchId={branchId}`
+
+Permission: `CAMERAS.READ`.
+
+Returns managed camera metadata for branches authorized to the caller. `branchId` is optional. A branch-scoped caller may query only an assigned branch; `ACCESS.GLOBAL` may query all branches or one selected branch.
+
+#### `POST /admin/cameras`
+
+Permission: `CAMERAS.MANAGE`.
+
+Request:
+
+```json
+{
+  "branchId": 1,
+  "internalIdentifier": "MILKING-FLOOR-01",
+  "displayName": "Milking Floor",
+  "isPublic": true,
+  "displayOrder": 0,
+  "protocol": "Hls",
+  "providerCode": "PROVIDER",
+  "providerStreamReference": "opaque-provider-reference"
+}
+```
+
+Creates active camera metadata and returns `201`. The caller must have scope for the target branch unless `ACCESS.GLOBAL` is present.
+
+#### `PATCH /admin/cameras/{cameraId}`
+
+Permission: `CAMERAS.MANAGE`.
+
+The request contains the same fields as creation plus `isActive`. It replaces the managed metadata represented by those fields. Reassignment to another branch requires authorization for both the current and destination branches unless `ACCESS.GLOBAL` is present.
+
+Managed results contain `cameraId`, branch identity, internal identifier, display name, public/active flags, display order, protocol, non-secret provider code, opaque provider stream reference, and UTC creation/update timestamps. Internal identifiers are unique within a branch. Display order must be non-negative.
+
+Creation and update are audit logged. Provider codes and references must remain non-secret; credentials, internal addresses, hardware configuration, recordings, and direct private stream URLs are prohibited from these fields.
 
 ---
 

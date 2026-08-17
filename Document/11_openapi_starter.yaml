@@ -1291,6 +1291,108 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /cameras/public:
+    get:
+      tags: [Live dairy cameras]
+      summary: List active cameras explicitly selected for public viewing
+      description: Requires CAMERAS.VIEW_PUBLIC. Provider, branch, and internal metadata are intentionally omitted.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Public camera list in configured display order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicCameraListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /cameras/public/{cameraId}/stream:
+    get:
+      tags: [Live dairy cameras]
+      summary: Issue a short-lived playback descriptor for a public camera
+      description: Requires CAMERAS.VIEW_PUBLIC. Unknown, inactive, and private camera identifiers return the same not-found response.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/cameraId'
+      responses:
+        '200':
+          description: Gateway-issued playback descriptor
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicCameraStreamResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: The configured stream gateway cannot issue a usable descriptor
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /admin/cameras:
+    get:
+      tags: [Camera administration]
+      summary: List managed camera metadata within the caller's branch scope
+      description: Requires CAMERAS.READ. ACCESS.GLOBAL may read all branches; other callers are limited to assigned branches.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/cameraBranchId'
+      responses:
+        '200':
+          description: Authorized managed camera metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedCameraListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Camera administration]
+      summary: Create branch-owned camera and stream metadata
+      description: Requires CAMERAS.MANAGE and target-branch scope unless ACCESS.GLOBAL is present. Credentials, internal addresses, recordings, and raw/private stream URLs are prohibited.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateCameraRequest' }
+      responses:
+        '201':
+          description: Camera metadata created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedCameraResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/cameras/{cameraId}:
+    patch:
+      tags: [Camera administration]
+      summary: Replace managed fields for camera and stream metadata
+      description: Requires CAMERAS.MANAGE. Branch reassignment requires scope for both source and destination branches unless ACCESS.GLOBAL is present.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/cameraId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateCameraRequest' }
+      responses:
+        '200':
+          description: Camera metadata updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedCameraResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /webhooks/razorpay:
     post:
       summary: Razorpay webhook
@@ -1356,6 +1458,17 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    cameraId:
+      name: cameraId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    cameraBranchId:
+      name: branchId
+      in: query
+      required: false
+      description: Optional branch filter; authorization remains server-enforced.
+      schema: { type: integer, format: int64, minimum: 1 }
     deliveryBranchId:
       name: branchId
       in: path
@@ -1461,6 +1574,97 @@ components:
         errors:
           type: array
           items: { $ref: '#/components/schemas/ApiError' }
+    CameraStreamProtocol:
+      type: string
+      enum: [Hls, WebRtc]
+    PublicCamera:
+      type: object
+      required: [cameraId, displayName, displayOrder, isAvailable]
+      properties:
+        cameraId: { type: string, format: uuid }
+        displayName: { type: string }
+        displayOrder: { type: integer, format: int32, minimum: 0 }
+        isAvailable: { type: boolean }
+    CameraStreamDescriptor:
+      type: object
+      required: [protocol, playbackUri, expiresAtUtc, isDevelopmentStream]
+      properties:
+        protocol: { $ref: '#/components/schemas/CameraStreamProtocol' }
+        playbackUri:
+          type: string
+          format: uri
+          description: Short-lived gateway-issued playback URI; never a persisted raw/private camera URL.
+        expiresAtUtc: { type: string, format: date-time }
+        isDevelopmentStream: { type: boolean }
+    PublicCameraStream:
+      type: object
+      required: [cameraId, displayName, stream]
+      properties:
+        cameraId: { type: string, format: uuid }
+        displayName: { type: string }
+        stream: { $ref: '#/components/schemas/CameraStreamDescriptor' }
+    ManagedCamera:
+      type: object
+      required: [cameraId, branchId, branchName, internalIdentifier, displayName, isPublic, isActive, displayOrder, protocol, providerCode, providerStreamReference, createdAtUtc, updatedAtUtc]
+      properties:
+        cameraId: { type: string, format: uuid }
+        branchId: { type: integer, format: int64, minimum: 1 }
+        branchName: { type: string }
+        internalIdentifier: { type: string, maxLength: 100 }
+        displayName: { type: string, maxLength: 160 }
+        isPublic: { type: boolean }
+        isActive: { type: boolean }
+        displayOrder: { type: integer, format: int32, minimum: 0 }
+        protocol: { $ref: '#/components/schemas/CameraStreamProtocol' }
+        providerCode: { type: string, maxLength: 80, description: Non-secret provider code. }
+        providerStreamReference: { type: string, maxLength: 240, description: Opaque non-secret provider reference; never credentials or a raw/private stream URL. }
+        createdAtUtc: { type: string, format: date-time }
+        updatedAtUtc: { type: string, format: date-time }
+    CreateCameraRequest:
+      type: object
+      required: [branchId, internalIdentifier, displayName, isPublic, displayOrder, protocol, providerCode, providerStreamReference]
+      properties:
+        branchId: { type: integer, format: int64, minimum: 1 }
+        internalIdentifier: { type: string, minLength: 1, maxLength: 100 }
+        displayName: { type: string, minLength: 1, maxLength: 160 }
+        isPublic: { type: boolean }
+        displayOrder: { type: integer, format: int32, minimum: 0 }
+        protocol: { $ref: '#/components/schemas/CameraStreamProtocol' }
+        providerCode: { type: string, minLength: 1, maxLength: 80, description: Must be non-secret. }
+        providerStreamReference: { type: string, minLength: 1, maxLength: 240, description: Opaque non-secret reference only. }
+    UpdateCameraRequest:
+      type: object
+      required: [branchId, internalIdentifier, displayName, isPublic, isActive, displayOrder, protocol, providerCode, providerStreamReference]
+      properties:
+        branchId: { type: integer, format: int64, minimum: 1 }
+        internalIdentifier: { type: string, minLength: 1, maxLength: 100 }
+        displayName: { type: string, minLength: 1, maxLength: 160 }
+        isPublic: { type: boolean }
+        isActive: { type: boolean }
+        displayOrder: { type: integer, format: int32, minimum: 0 }
+        protocol: { $ref: '#/components/schemas/CameraStreamProtocol' }
+        providerCode: { type: string, minLength: 1, maxLength: 80, description: Must be non-secret. }
+        providerStreamReference: { type: string, minLength: 1, maxLength: 240, description: Opaque non-secret reference only. }
+    PublicCameraListResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { type: array, items: { $ref: '#/components/schemas/PublicCamera' } } }
+    PublicCameraStreamResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/PublicCameraStream' } }
+    ManagedCameraResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/ManagedCamera' } }
+    ManagedCameraListResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { type: array, items: { $ref: '#/components/schemas/ManagedCamera' } } }
     RecordMilkProductionRequest:
       type: object
       required: [productionAtUtc, buffaloCount, quantityProduced, unit]

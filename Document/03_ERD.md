@@ -13,6 +13,9 @@ Subscription -> SubscriptionSchedule, SubscriptionDelivery.
 Complaint -> Attachments, Replacement.
 MilkProduction -> MilkBatch.
 Delivery -> zero or one MilkTest.
+Branch -> zero or more Cameras; each Camera belongs to exactly one Branch.
+Camera -> exactly one CameraStream metadata row; CameraStream belongs to exactly one Camera.
+Camera stores public identity, internal identifier, display metadata, public/active flags, and ordering. CameraStream stores protocol, non-secret provider code, and an opaque provider reference only. Neither entity stores credentials, internal addresses, hardware configuration, recordings, or raw/private stream URLs.
 MilkTest -> one or more MilkTestParameters after completion.
 MilkTest -> one or more MilkTestImages after completion; image rows contain metadata and an external storage key, never binary content.
 MilkTest -> requesting Customer, Branch, requesting User, and optional completing User.

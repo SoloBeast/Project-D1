@@ -95,23 +95,42 @@ Do not make WhatsApp the only notification channel.
 
 ## 6. Camera / CCTV
 
-Initial hardware:
-- IP cameras
-- Separate camera/NVR application
+### Integration boundary
 
-Application responsibility:
-- Store selected public camera metadata.
-- Display a secure customer-facing live stream.
+IP cameras and the camera/NVR system remain external infrastructure. DoodhDirect stores only branch-linked camera metadata and an opaque, non-secret provider reference. `ICameraStreamGateway` is the only application boundary that may translate that reference into customer playback access.
 
-Recommended customer-facing streaming format:
-- HLS or WebRTC depending on camera/streaming gateway capability.
+The gateway contract supports:
 
-Do not expose:
-- Raw RTSP credentials
-- NVR admin credentials
-- Internal network addresses
+- Capability checks by `Hls` or `WebRtc` protocol and provider code.
+- Availability checks without disclosing provider details.
+- Issuance of a short-lived playback URI, UTC expiry, protocol, and development-stream marker.
 
-Camera recording stays outside the application database.
+The public API never returns the provider code or provider stream reference. Camera/NVR credentials, internal network addresses, hardware configuration, recordings, raw RTSP URLs, and private upstream URLs must not enter SQL Server, API DTOs, logs, analytics, or Flutter persistence.
+
+### Adapter selection
+
+Production fails closed when no production stream adapter is configured. The unconfigured adapter reports cameras unavailable and refuses descriptor issuance; it must not synthesize or reveal an upstream URL.
+
+Development may explicitly select the `DevelopmentMock` adapter. It:
+
+- Is prohibited outside the Development environment.
+- Supports HLS only.
+- Accepts only an absolute HTTPS playback URI as its development reference.
+- Marks every descriptor with `isDevelopmentStream: true` so the client displays a visible warning.
+
+A production HLS or WebRTC provider may replace the adapter without changing domain entities, application services, public DTOs, or Flutter models.
+
+### Descriptor lifecycle
+
+Playback descriptors expire after a configured short lifetime, defaulting to five minutes and constrained to 1–60 minutes. Clients keep descriptors in memory only, discard them on expiry, and request a replacement. Descriptor issuance does not grant recording playback and does not create recording metadata.
+
+### Failure policy
+
+- Unknown, inactive, and private camera identifiers return the same public `404` behavior.
+- An unsupported provider/protocol combination or gateway outage returns `503` without exposing provider diagnostics.
+- Public list availability is informational; descriptor issuance remains authoritative.
+- Monitoring may record camera ID, provider code, protocol, result category, latency, and correlation ID, but never credentials or playback URIs.
+- Camera outage runbooks must distinguish metadata/API health from external gateway and upstream camera health.
 
 ---
 

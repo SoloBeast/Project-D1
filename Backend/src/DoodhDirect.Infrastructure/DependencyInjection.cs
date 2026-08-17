@@ -1,4 +1,5 @@
 using DoodhDirect.Application.Abstractions;
+using DoodhDirect.Application.Cameras;
 using DoodhDirect.Application.Catalogue;
 using DoodhDirect.Application.Customer;
 using DoodhDirect.Application.Deliveries;
@@ -9,6 +10,7 @@ using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Subscriptions;
 using DoodhDirect.Application.Wallets;
+using DoodhDirect.Infrastructure.Cameras;
 using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Customer;
 using DoodhDirect.Infrastructure.Deliveries;
@@ -23,6 +25,7 @@ using DoodhDirect.Infrastructure.Wallets;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace DoodhDirect.Infrastructure;
@@ -31,7 +34,8 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHostEnvironment environment)
     {
         var connectionString = configuration.GetConnectionString("DoodhDirect")
             ?? throw new InvalidOperationException(
@@ -68,6 +72,18 @@ public static class DependencyInjection
                 options => string.Equals(options.Provider, "Local", StringComparison.OrdinalIgnoreCase),
                 "MilkTestMedia:Provider must be 'Local'.")
             .ValidateOnStart();
+        services.AddOptions<CameraStreamOptions>()
+            .Bind(configuration.GetSection(CameraStreamOptions.SectionName))
+            .ValidateDataAnnotations()
+            .Validate(
+                options => environment.IsDevelopment() || !options.IsDevelopmentMock,
+                "CameraStreams:Provider DevelopmentMock is prohibited outside Development.")
+            .Validate(
+                options => !options.IsDevelopmentMock
+                    || Uri.TryCreate(options.DevelopmentHlsPlaybackUrl, UriKind.Absolute, out var uri)
+                    && uri.Scheme == Uri.UriSchemeHttps,
+                "CameraStreams:DevelopmentHlsPlaybackUrl must be an absolute HTTPS URL when DevelopmentMock is selected.")
+            .ValidateOnStart();
 
         services.AddHealthChecks()
             .AddDbContextCheck<DoodhDirectDbContext>("sql-server", tags: ["ready"]);
@@ -85,6 +101,7 @@ public static class DependencyInjection
         services.AddScoped<IDeliveryService, DeliveryService>();
         services.AddScoped<IDairyService, DairyService>();
         services.AddScoped<IMilkTestService, MilkTestService>();
+        services.AddScoped<ICameraService, CameraService>();
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IWalletService, WalletService>();
         services.AddSingleton<IDeliveryRealtimePublisher, NullDeliveryRealtimePublisher>();
@@ -110,6 +127,13 @@ public static class DependencyInjection
         services.AddScoped<DevelopmentDairyManagerSeedService>();
         services.AddScoped<CatalogueSeedService>();
         services.AddSingleton<IOtpDeliveryService, UnconfiguredOtpDeliveryService>();
+        services.AddSingleton<ICameraStreamGateway>(provider =>
+        {
+            var options = provider.GetRequiredService<IOptions<CameraStreamOptions>>().Value;
+            return environment.IsDevelopment() && options.IsDevelopmentMock
+                ? ActivatorUtilities.CreateInstance<DevelopmentCameraStreamGateway>(provider)
+                : new UnconfiguredCameraStreamGateway();
+        });
 
         return services;
     }

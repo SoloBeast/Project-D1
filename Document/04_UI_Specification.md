@@ -249,12 +249,37 @@ Shows:
 - Transaction history
 
 ### 3.20 Live Dairy
-Shows only cameras configured as public.
 
-Rules:
-- Login required.
-- 24x7 when stream is available.
-- No customer playback of recordings.
+Authenticated users with `CAMERAS.VIEW_PUBLIC` follow:
+
+```text
+Live Dairy -> Selected Public Cameras -> Open Camera -> Live Stream
+```
+
+The list shows only active cameras explicitly configured as public, in configured display order. Each row shows the public display name and current availability; it does not expose branch, internal identifier, provider, or stream-reference metadata.
+
+Opening an available camera requests a short-lived playback descriptor and starts HLS or WebRTC playback according to the returned protocol. The descriptor remains in memory only. Expired descriptors are discarded and refreshed from the API. Recordings and playback history are not available.
+
+Required states:
+
+- Loading list or playback descriptor.
+- Empty public-camera list.
+- Camera unavailable or stream-gateway failure with retry.
+- Offline with retry.
+- Unauthorized with safe navigation.
+- Unknown/private/inactive camera shown only as unavailable/not found.
+- Expired playback descriptor with refresh action.
+- Unsupported playback protocol without attempting playback.
+- Player initialization or playback failure with retry.
+- Visible warning whenever `isDevelopmentStream` is true.
+
+### 3.20.1 Camera Administration
+
+Users with `CAMERAS.READ` can list camera metadata for authorized branches. Users with `CAMERAS.MANAGE` can create and edit the branch, internal identifier, display name, public visibility, active status, display order, protocol, non-secret provider code, and opaque provider stream reference.
+
+The branch selector contains only authorized branches unless `ACCESS.GLOBAL` is present. Reassignment is unavailable unless the user is authorized for both source and destination branches. Forms validate required bounded fields and non-negative display order, preserve input after recoverable errors, and refresh server-authoritative state after a successful mutation.
+
+Administration provides loading, empty, unauthorized, offline, validation, conflict, unavailable, success, and retry states. No form accepts credentials, internal addresses, hardware configuration, recordings, or direct private stream URLs.
 
 ### 3.21 Profile
 - Personal details

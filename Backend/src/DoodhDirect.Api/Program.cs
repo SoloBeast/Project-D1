@@ -82,7 +82,7 @@ builder.Services.AddCors(options =>
     });
 });
 
-builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi(options =>
 {
@@ -90,7 +90,7 @@ builder.Services.AddOpenApi(options =>
     {
         document.Info.Title = "DoodhDirect API";
         document.Info.Version = "v1";
-        document.Info.Description = "Identity/RBAC, customer, catalogue, one-time ordering, prepaid subscriptions, payments, refunds, webhooks, wallet, and branch-scoped delivery operations API.";
+        document.Info.Description = "Identity/RBAC, customer, catalogue, ordering, subscriptions, payments, wallet, delivery, dairy, doorstep testing, and secure live dairy camera API.";
         document.Components ??= new OpenApiComponents();
         document.Components.Schemas ??=
             new Dictionary<string, IOpenApiSchema>(StringComparer.Ordinal);

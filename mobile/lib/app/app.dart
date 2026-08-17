@@ -6,6 +6,7 @@ import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_screens.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_screens.dart';
+import 'package:doodh_direct_mobile/features/cameras/camera_screens.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
 import 'package:doodh_direct_mobile/features/home/role_home_screen.dart';
 import 'package:doodh_direct_mobile/features/dairy/dairy_screens.dart';
@@ -175,6 +176,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const AdminCatalogueScreen(),
       ),
       GoRoute(
+        path: '/admin/cameras',
+        builder: (context, state) => const AdminCameraListScreen(),
+      ),
+      GoRoute(
         path: '/deliveries',
         builder: (context, state) => const CustomerDeliveryListScreen(),
       ),
@@ -236,6 +241,19 @@ final routerProvider = Provider<GoRouter>((ref) {
           return deliveryId == null
               ? const _RouteErrorScreen(resource: 'delivery')
               : DeliveryManagementDetailScreen(deliveryId: deliveryId);
+        },
+      ),
+      GoRoute(
+        path: '/cameras',
+        builder: (context, state) => const LiveDairyCameraListScreen(),
+      ),
+      GoRoute(
+        path: '/cameras/:cameraId',
+        builder: (context, state) {
+          final cameraId = _requiredPathParameter(state, 'cameraId');
+          return cameraId == null
+              ? const _RouteErrorScreen(resource: 'camera')
+              : LiveDairyCameraViewerScreen(cameraId: cameraId);
         },
       ),
       GoRoute(path: '/dairy', redirect: (context, state) => '/dairy/dashboard'),

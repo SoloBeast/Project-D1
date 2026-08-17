@@ -217,6 +217,19 @@ The business should obtain professional tax/accounting advice before invoicing a
 - Admin accounts use strong authentication.
 - Critical admin actions are logged.
 - Database write access restricted to backend services.
+- A production camera stream gateway must be explicitly configured and operational; the system fails closed otherwise.
+- The `DevelopmentMock` camera adapter is prohibited outside the Development environment.
+
+### Live dairy camera security
+
+- SQL Server stores camera identity, branch/display/visibility metadata, protocol, a non-secret provider code, and an opaque non-secret provider reference only.
+- Camera/NVR credentials, internal network addresses, hardware configuration, recordings, raw RTSP URLs, private upstream URLs, and issued playback URIs are prohibited from persistence.
+- Public DTOs omit branch and provider metadata. Unknown, private, and inactive cameras share the same public not-found behavior to prevent enumeration.
+- Playback descriptors are gateway-issued, short-lived, and retained in Flutter memory only. Clients discard expired descriptors and request replacements.
+- `CAMERAS.VIEW_PUBLIC`, `CAMERAS.READ`, and `CAMERAS.MANAGE` are enforced by the API. Branch-scoped administration requires an assigned branch; reassignment requires both source and destination scope unless `ACCESS.GLOBAL` is present.
+- Camera creation and update are audit events. Audit data may identify the camera, actor, action, and branch but must not include playback URIs or prohibited secrets.
+- Operational logs and metrics may include camera ID, provider code, protocol, availability/result category, latency, and correlation ID. They must redact provider references where those references could reveal deployment details and must never include descriptor URIs or credentials.
+- Development descriptors must be visibly marked in the client and must use absolute HTTPS HLS URLs.
 
 ---
 
@@ -226,7 +239,7 @@ Create runbooks for:
 - Payment outage
 - Notification outage
 - GPS outage
-- Camera outage
+- Camera outage, including metadata API, stream gateway, descriptor issuance, upstream camera/NVR, expiry, and protocol-specific diagnosis
 - Database outage
 - Milk shortage
 - Mass complaint event

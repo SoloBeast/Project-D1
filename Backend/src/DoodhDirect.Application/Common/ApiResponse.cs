@@ -65,3 +65,7 @@ public sealed class NotFoundException(string message)
 
 public sealed class ConflictException(string message)
     : AppException(message, "CONFLICT", 409);
+
+public sealed class CameraStreamUnavailableException(
+    string message = "The live camera stream is currently unavailable.")
+    : AppException(message, "CAMERA_STREAM_UNAVAILABLE", 503);

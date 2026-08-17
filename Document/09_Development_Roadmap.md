@@ -158,12 +158,23 @@ Acceptance:
 ## Phase 10 — Camera
 
 Deliver:
-- Public camera configuration
-- Secure stream display
-- Offline state
+- Branch-linked, metadata-only `Camera` and `CameraStream` persistence.
+- Authenticated public camera discovery and short-lived stream-descriptor APIs.
+- Branch-scoped camera administration with global owner/system-administrator access.
+- Provider-neutral HLS/WebRTC stream gateway and fail-closed Production configuration.
+- Explicit, visibly marked, Development-only HLS adapter.
+- Flutter public list, live viewer, and camera administration workflows.
+- Loading, empty, unavailable, offline, unauthorized, expired, unsupported-protocol, stream-failure, retry, and development-warning states.
+- API, service, authorization, security, controller, repository, controller-state, and widget coverage.
 
 Acceptance:
-- Selected camera streams work inside authenticated app.
+- Only active, explicitly public cameras appear to authenticated users with `CAMERAS.VIEW_PUBLIC`.
+- Unknown, inactive, and private cameras are publicly indistinguishable.
+- Public DTOs and persistence contain no credentials, internal addresses, hardware configuration, recordings, or raw/private stream URLs.
+- Playback uses a short-lived gateway descriptor kept in Flutter memory only.
+- `CAMERAS.READ`, `CAMERAS.MANAGE`, branch scope, global access, and source/destination reassignment rules are enforced server-side.
+- Production refuses development/mock streaming and fails closed without a configured production adapter.
+- Release builds, regressions, OpenAPI validation, migration application, and physical SQL Server inspection pass.
 
 ## Phase 11 — Notifications
 

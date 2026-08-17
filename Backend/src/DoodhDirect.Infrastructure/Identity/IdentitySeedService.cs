@@ -28,7 +28,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.PaymentsCreateOwn,
                 AuthorizationCodes.PaymentsReadOwn,
                 AuthorizationCodes.WalletReadOwn,
-                AuthorizationCodes.WalletTopUpOwn
+                AuthorizationCodes.WalletTopUpOwn,
+                AuthorizationCodes.CamerasViewPublic
             ],
             [AuthorizationCodes.DeliveryStaff] =
             [
@@ -48,7 +49,9 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.UsersRead,
                 AuthorizationCodes.BranchAccess,
                 AuthorizationCodes.DairyRead,
-                AuthorizationCodes.DairyManage
+                AuthorizationCodes.DairyManage,
+                AuthorizationCodes.CamerasRead,
+                AuthorizationCodes.CamerasManage
             ],
             [AuthorizationCodes.DeliveryManager] =
             [
@@ -82,6 +85,7 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
             ],
             [AuthorizationCodes.SystemAdmin] =
             [
+                AuthorizationCodes.GlobalAccess,
                 AuthorizationCodes.ProfileReadOwn,
                 AuthorizationCodes.ProfileUpdateOwn,
                 AuthorizationCodes.SessionsManageOwn,
@@ -96,6 +100,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.OrdersRead,
                 AuthorizationCodes.DairyRead,
                 AuthorizationCodes.DairyManage,
+                AuthorizationCodes.CamerasRead,
+                AuthorizationCodes.CamerasManage,
                 AuthorizationCodes.DeliveriesReadBranch,
                 AuthorizationCodes.DeliveriesAssignBranch,
                 AuthorizationCodes.PaymentsRefund,
