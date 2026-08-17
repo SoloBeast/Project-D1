@@ -127,6 +127,14 @@ class _CustomerDeliveryDetailScreenState
                       title: 'Failure reason',
                       text: delivery.failureReason!,
                     ),
+                  const SizedBox(height: 16),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.science_outlined),
+                    label: const Text('Doorstep milk test'),
+                    onPressed: () => context.push(
+                      '/deliveries/${widget.deliveryId}/milk-test',
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -238,6 +246,17 @@ class _StaffDeliveryDetailScreenState
                   ),
                 if (state.errorMessage != null) _ErrorText(state.errorMessage!),
                 const SizedBox(height: 12),
+                if (delivery.status == DeliveryStatus.arrived)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.science_outlined),
+                      label: const Text('Perform milk test'),
+                      onPressed: () => context.push(
+                        '/delivery/${widget.deliveryId}/milk-test',
+                      ),
+                    ),
+                  ),
                 _StaffActions(delivery: delivery, saving: state.isSaving),
               ],
             ),

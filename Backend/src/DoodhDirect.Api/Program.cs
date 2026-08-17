@@ -186,6 +186,9 @@ await using (var scope = app.Services.CreateAsyncScope())
         await scope.ServiceProvider
             .GetRequiredService<DevelopmentDeliveryStaffSeedService>()
             .SeedAsync(cancellationToken);
+        await scope.ServiceProvider
+            .GetRequiredService<DevelopmentDairyManagerSeedService>()
+            .SeedAsync(cancellationToken);
     }
 }
 

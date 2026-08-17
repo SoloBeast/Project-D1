@@ -161,13 +161,15 @@ Admin may configure minimum order quantity and increment later.
 
 ## 10. Production Capacity Rule
 
-Order confirmation should check available milk capacity where the order is for a near-term delivery.
+A future order-capacity integration may check available milk capacity for a near-term delivery, but Phase 8 does not implement that reservation or allocation workflow.
 
-Conceptual available quantity:
+The Phase 8 operational inventory quantity is:
+
+`Produced - Recorded Usage = Available`.
+
+The current dairy service rejects usage above a batch's derived available quantity and does not create a usage row when that rule fails. It does not create `Reserved` quantities for orders or subscriptions. Reservation timing, expiry/release, allocation priority, cancellation, batch selection, and reconciliation must be specified before the conceptual formula below becomes an implemented cross-domain rule:
 
 `Produced - Reserved - Dispatched = Available`.
-
-When there is insufficient availability, the system should not silently oversell.
 
 ---
 
@@ -182,15 +184,26 @@ When there is insufficient availability, the system should not silently oversell
 
 ---
 
-## 12. Test Rules
+## 12. Doorstep Test Rules
 
-- Doorstep test is performed by delivery staff on request.
-- Testing is free to the customer.
-- Physical device reading is visible at doorstep.
-- MVP does not require customer UI for numeric reading.
-- Test event may be attached to order/delivery.
-- Future batch/lab tests use the same MilkTest abstraction.
-- Test result must not be marketed as laboratory certification unless supported by an appropriate testing process.
+Lifecycle:
+
+`Not requested -> Requested -> Completed -> Customer Confirmed | Customer Rejected`
+
+- A customer may request at most one test for an active delivery they own. A unique delivery index and serializable request transaction protect this rule.
+- `Delivered` and `Failed` deliveries cannot accept a request or image upload.
+- Only the delivery's currently assigned employee may read or operate the staff workflow.
+- Assigned staff must also hold the delivery branch claim unless granted `ACCESS.GLOBAL`.
+- Completion is permitted only while the delivery is `Arrived`.
+- Completion requires at least one validated external image and one valid reading.
+- Reading code, name, and unit are required; codes are unique case-insensitively within a test.
+- Reading values support at most six decimal places and must fit `decimal(18,6)`.
+- Customer DTOs and UI never expose numeric readings or staff remarks in the MVP.
+- Customer image metadata and content remain hidden until completion. Image content additionally requires customer ownership.
+- Confirmation and rejection require a completed test. The first decision is terminal; repeated or conflicting decisions are rejected.
+- Request, record creation, image upload, completion, confirmation, and rejection are audited with the authenticated actor.
+- Testing is free to the customer. Physical readings may be shown by staff at the doorstep, but the result is an indicative check and must not be represented as laboratory certification.
+- Phase 9 is delivery-owned. Future batch/lab testing may extend the abstraction only through a separately approved model.
 
 ---
 

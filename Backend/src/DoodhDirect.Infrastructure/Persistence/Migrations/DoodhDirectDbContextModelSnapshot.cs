@@ -523,6 +523,198 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.ToTable("CustomerProfile", "dbo");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Dairy.MilkBatch", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("BatchNumber")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<long>("BranchId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ProductionAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("ProductionId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<decimal>("QuantityProduced")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("Unit")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductionId")
+                        .IsUnique();
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("BranchId", "BatchNumber")
+                        .IsUnique();
+
+                    b.HasIndex("BranchId", "ProductionAtUtc", "Status");
+
+                    b.ToTable("MilkBatch", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_MilkBatch_QuantityProduced", "[QuantityProduced] > 0");
+                        });
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Dairy.MilkProduction", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("BranchId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("BuffaloCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ProductionAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<decimal>("QuantityProduced")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
+                    b.Property<long>("RecordedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Remarks")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("Shift")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("Unit")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("RecordedByUserId");
+
+                    b.HasIndex("BranchId", "ProductionAtUtc");
+
+                    b.ToTable("MilkProduction", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_MilkProduction_BuffaloCount", "[BuffaloCount] > 0");
+
+                            t.HasCheckConstraint("CK_MilkProduction_QuantityProduced", "[QuantityProduced] > 0");
+                        });
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Dairy.MilkUsage", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("BatchId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("BranchId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<decimal>("QuantityUsed")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
+                    b.Property<long>("RecordedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Remarks")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("UsedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("RecordedByUserId");
+
+                    b.HasIndex("BatchId", "UsedAtUtc");
+
+                    b.HasIndex("BranchId", "UsedAtUtc");
+
+                    b.ToTable("MilkUsage", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_MilkUsage_QuantityUsed", "[QuantityUsed] > 0");
+                        });
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Deliveries.Delivery", b =>
                 {
                     b.Property<long>("Id")
@@ -1176,6 +1368,190 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("UserId", "RevokedAtUtc", "LastSeenAtUtc");
 
                     b.ToTable("UserSession", "dbo");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.MilkTesting.MilkTest", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("BranchId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long?>("CompletedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("ConfirmedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("CustomerDecision")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<long>("CustomerId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("CustomerRemarks")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<long>("DeliveryId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<DateTime?>("RejectedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("RequestedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("RequestedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StaffRemarks")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompletedByUserId");
+
+                    b.HasIndex("DeliveryId")
+                        .IsUnique();
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("RequestedByUserId");
+
+                    b.HasIndex("CustomerId", "RequestedAtUtc");
+
+                    b.HasIndex("BranchId", "Status", "RequestedAtUtc");
+
+                    b.ToTable("MilkTest", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_MilkTest_Lifecycle", "([Status] = 'Requested' AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL AND [CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL) OR ([Status] = 'Completed' AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL AND (([CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL) OR ([CustomerDecision] = 'Confirmed' AND [ConfirmedAtUtc] IS NOT NULL AND [RejectedAtUtc] IS NULL) OR ([CustomerDecision] = 'Rejected' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NOT NULL)))");
+
+                            t.HasCheckConstraint("CK_MilkTest_TimestampOrder", "[CompletedAtUtc] IS NULL OR ([CompletedAtUtc] >= [RequestedAtUtc] AND ([ConfirmedAtUtc] IS NULL OR [ConfirmedAtUtc] >= [CompletedAtUtc]) AND ([RejectedAtUtc] IS NULL OR [RejectedAtUtc] >= [CompletedAtUtc]))");
+                        });
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.MilkTesting.MilkTestImage", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("MilkTestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime>("UploadedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("UploadedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("StorageKey")
+                        .IsUnique();
+
+                    b.HasIndex("UploadedByUserId");
+
+                    b.HasIndex("MilkTestId", "UploadedAtUtc");
+
+                    b.ToTable("MilkTestImage", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_MilkTestImage_FileSize", "[FileSize] > 0");
+                        });
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.MilkTesting.MilkTestParameter", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<long>("MilkTestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<string>("Unit")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<decimal>("Value")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("decimal(18,6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MilkTestId", "Code")
+                        .IsUnique();
+
+                    b.ToTable("MilkTestParameter", "dbo");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Orders.Order", b =>
@@ -2092,6 +2468,61 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Dairy.MilkBatch", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Catalogue.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Dairy.MilkProduction", "Production")
+                        .WithMany("Batches")
+                        .HasForeignKey("ProductionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Production");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Dairy.MilkProduction", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Catalogue.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("RecordedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Dairy.MilkUsage", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Dairy.MilkBatch", "Batch")
+                        .WithMany("Usages")
+                        .HasForeignKey("BatchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Catalogue.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", null)
+                        .WithMany()
+                        .HasForeignKey("RecordedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Batch");
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Deliveries.Delivery", b =>
                 {
                     b.HasOne("DoodhDirect.Domain.Identity.User", "AssignedEmployee")
@@ -2261,6 +2692,76 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.MilkTesting.MilkTest", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Catalogue.Branch", null)
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", "CompletedByUser")
+                        .WithMany()
+                        .HasForeignKey("CompletedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", "Customer")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Deliveries.Delivery", "Delivery")
+                        .WithMany()
+                        .HasForeignKey("DeliveryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", "RequestedByUser")
+                        .WithMany()
+                        .HasForeignKey("RequestedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CompletedByUser");
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("Delivery");
+
+                    b.Navigation("RequestedByUser");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.MilkTesting.MilkTestImage", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.MilkTesting.MilkTest", "MilkTest")
+                        .WithMany("Images")
+                        .HasForeignKey("MilkTestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", "UploadedByUser")
+                        .WithMany()
+                        .HasForeignKey("UploadedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("MilkTest");
+
+                    b.Navigation("UploadedByUser");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.MilkTesting.MilkTestParameter", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.MilkTesting.MilkTest", "MilkTest")
+                        .WithMany("Parameters")
+                        .HasForeignKey("MilkTestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("MilkTest");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Orders.Order", b =>
@@ -2483,6 +2984,16 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Navigation("Products");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Dairy.MilkBatch", b =>
+                {
+                    b.Navigation("Usages");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Dairy.MilkProduction", b =>
+                {
+                    b.Navigation("Batches");
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Deliveries.Delivery", b =>
                 {
                     b.Navigation("Assignments");
@@ -2516,6 +3027,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("DoodhDirect.Domain.Identity.UserSession", b =>
                 {
                     b.Navigation("RefreshTokens");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.MilkTesting.MilkTest", b =>
+                {
+                    b.Navigation("Images");
+
+                    b.Navigation("Parameters");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Orders.Order", b =>

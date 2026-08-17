@@ -50,6 +50,10 @@ For an Android emulator connecting to the Development HTTP profile, use an API h
 
 The backend fixture is activated only by the ASP.NET Development environment. The visual shortcuts are compiled out unless `DOOHDIRECT_ENABLE_DEV_TOOLS` is explicitly enabled.
 
+## Local dairy operations workflow
+
+Development startup creates a dairy manager scoped only to the `MAIN` branch: `dairy.manager@doodhdirect.local` / `DoodhDirect@123`. Sign in with this account to record production, inspect the automatically-created batch, review operational availability, and append batch usage. The fixture uses the normal password hasher and JWT authentication flow and is never seeded outside the ASP.NET Development environment.
+
 ## Local delivery workflow
 
 1. Complete the local payment and wallet workflow through a confirmed customer order. Development startup now also creates a branch-scoped delivery staff account for `MAIN`: `delivery@doodhdirect.local` / `DoodhDirect@123`.

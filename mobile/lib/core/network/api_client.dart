@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
 class ApiException implements Exception {
   const ApiException(this.statusCode, this.code, this.message);
@@ -42,6 +44,30 @@ class ApiClient {
     return _decode(response);
   }
 
+  Future<Map<String, dynamic>> postMultipart(
+    String path, {
+    required String fieldName,
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+    String? accessToken,
+  }) async {
+    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'))
+      ..headers.addAll(_headers(accessToken, includeContentType: false))
+      ..files.add(
+        http.MultipartFile.fromBytes(
+          fieldName,
+          bytes,
+          filename: fileName,
+          contentType: MediaType.parse(contentType),
+        ),
+      );
+    final response = await http.Response.fromStream(
+      await _client.send(request),
+    );
+    return _decode(response);
+  }
+
   Future<Map<String, dynamic>> patch(
     String path, {
     Map<String, dynamic> body = const <String, dynamic>{},
@@ -79,9 +105,12 @@ class ApiClient {
     return _decode(response);
   }
 
-  Map<String, String> _headers(String? accessToken) => {
+  Map<String, String> _headers(
+    String? accessToken, {
+    bool includeContentType = true,
+  }) => {
     'Accept': 'application/json',
-    'Content-Type': 'application/json',
+    if (includeContentType) 'Content-Type': 'application/json',
     if (accessToken != null) 'Authorization': 'Bearer $accessToken',
   };
 

@@ -2,7 +2,9 @@ using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Catalogue;
 using DoodhDirect.Application.Customer;
 using DoodhDirect.Application.Deliveries;
+using DoodhDirect.Application.Dairy;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.MilkTesting;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Subscriptions;
@@ -10,7 +12,9 @@ using DoodhDirect.Application.Wallets;
 using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Customer;
 using DoodhDirect.Infrastructure.Deliveries;
+using DoodhDirect.Infrastructure.Dairy;
 using DoodhDirect.Infrastructure.Identity;
+using DoodhDirect.Infrastructure.MilkTesting;
 using DoodhDirect.Infrastructure.Orders;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
@@ -57,6 +61,13 @@ public static class DependencyInjection
             .Bind(configuration.GetSection(DeliveryOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
+        services.AddOptions<MilkTestMediaOptions>()
+            .Bind(configuration.GetSection(MilkTestMediaOptions.SectionName))
+            .ValidateDataAnnotations()
+            .Validate(
+                options => string.Equals(options.Provider, "Local", StringComparison.OrdinalIgnoreCase),
+                "MilkTestMedia:Provider must be 'Local'.")
+            .ValidateOnStart();
 
         services.AddHealthChecks()
             .AddDbContextCheck<DoodhDirectDbContext>("sql-server", tags: ["ready"]);
@@ -72,9 +83,13 @@ public static class DependencyInjection
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<ISubscriptionService, SubscriptionService>();
         services.AddScoped<IDeliveryService, DeliveryService>();
+        services.AddScoped<IDairyService, DairyService>();
+        services.AddScoped<IMilkTestService, MilkTestService>();
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IWalletService, WalletService>();
         services.AddSingleton<IDeliveryRealtimePublisher, NullDeliveryRealtimePublisher>();
+        services.AddSingleton<IMilkTestImageValidator, MilkTestImageValidator>();
+        services.AddSingleton<IMediaStorage, LocalMediaStorage>();
         services.AddSingleton<MockPaymentGateway>();
         services.AddHttpClient<RazorpayPaymentGateway>(client =>
         {
@@ -92,6 +107,7 @@ public static class DependencyInjection
         services.AddScoped<IdentitySeedService>();
         services.AddScoped<DevelopmentCustomerSeedService>();
         services.AddScoped<DevelopmentDeliveryStaffSeedService>();
+        services.AddScoped<DevelopmentDairyManagerSeedService>();
         services.AddScoped<CatalogueSeedService>();
         services.AddSingleton<IOtpDeliveryService, UnconfiguredOtpDeliveryService>();
 

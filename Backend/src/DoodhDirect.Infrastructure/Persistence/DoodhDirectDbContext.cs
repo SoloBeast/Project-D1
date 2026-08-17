@@ -3,7 +3,9 @@ using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Configuration;
 using DoodhDirect.Domain.Customer;
+using DoodhDirect.Domain.Dairy;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.MilkTesting;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.Wallets;
@@ -43,6 +45,12 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     public DbSet<SubscriptionDelivery> SubscriptionDeliveries => Set<SubscriptionDelivery>();
     public DbSet<Delivery> Deliveries => Set<Delivery>();
     public DbSet<DeliveryAssignment> DeliveryAssignments => Set<DeliveryAssignment>();
+    public DbSet<MilkProduction> MilkProductions => Set<MilkProduction>();
+    public DbSet<MilkBatch> MilkBatches => Set<MilkBatch>();
+    public DbSet<MilkUsage> MilkUsages => Set<MilkUsage>();
+    public DbSet<MilkTest> MilkTests => Set<MilkTest>();
+    public DbSet<MilkTestParameter> MilkTestParameters => Set<MilkTestParameter>();
+    public DbSet<MilkTestImage> MilkTestImages => Set<MilkTestImage>();
     public DbSet<DeliveryOtp> DeliveryOtps => Set<DeliveryOtp>();
     public DbSet<DeliveryLocation> DeliveryLocations => Set<DeliveryLocation>();
 
@@ -78,6 +86,12 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigureSubscriptionDelivery(modelBuilder);
         ConfigureDelivery(modelBuilder, usesSqlite);
         ConfigureDeliveryAssignment(modelBuilder);
+        ConfigureMilkProduction(modelBuilder, usesSqlite);
+        ConfigureMilkBatch(modelBuilder, usesSqlite);
+        ConfigureMilkUsage(modelBuilder, usesSqlite);
+        ConfigureMilkTest(modelBuilder, usesSqlite);
+        ConfigureMilkTestParameter(modelBuilder);
+        ConfigureMilkTestImage(modelBuilder, usesSqlite);
         ConfigureDeliveryOtp(modelBuilder);
         ConfigureDeliveryLocation(modelBuilder, usesSqlite);
     }
@@ -733,6 +747,155 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasIndex(x => x.RecordedAtUtc);
         entity.HasOne(x => x.Delivery).WithMany(x => x.Locations).HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Cascade);
         entity.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureMilkProduction(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<MilkProduction>();
+        entity.ToTable("MilkProduction", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_MilkProduction_BuffaloCount", "[BuffaloCount] > 0");
+                table.HasCheckConstraint("CK_MilkProduction_QuantityProduced", "[QuantityProduced] > 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.ProductionAtUtc).IsRequired();
+        entity.Property(x => x.BuffaloCount).IsRequired();
+        entity.Property(x => x.QuantityProduced).HasPrecision(18, 3).IsRequired();
+        entity.Property(x => x.Unit).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.Shift).HasMaxLength(40);
+        entity.Property(x => x.Remarks).HasMaxLength(1000);
+        entity.HasIndex(x => new { x.BranchId, x.ProductionAtUtc });
+        entity.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne<User>().WithMany().HasForeignKey(x => x.RecordedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureMilkBatch(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<MilkBatch>();
+        entity.ToTable("MilkBatch", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_MilkBatch_QuantityProduced", "[QuantityProduced] > 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.BatchNumber).HasMaxLength(80).IsRequired();
+        entity.Property(x => x.ProductionAtUtc).IsRequired();
+        entity.Property(x => x.QuantityProduced).HasPrecision(18, 3).IsRequired();
+        entity.Property(x => x.Unit).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.HasIndex(x => new { x.BranchId, x.BatchNumber }).IsUnique();
+        entity.HasIndex(x => x.ProductionId).IsUnique();
+        entity.HasIndex(x => new { x.BranchId, x.ProductionAtUtc, x.Status });
+        entity.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Production).WithMany(x => x.Batches).HasForeignKey(x => x.ProductionId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureMilkUsage(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<MilkUsage>();
+        entity.ToTable("MilkUsage", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_MilkUsage_QuantityUsed", "[QuantityUsed] > 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.UsedAtUtc).IsRequired();
+        entity.Property(x => x.QuantityUsed).HasPrecision(18, 3).IsRequired();
+        entity.Property(x => x.Purpose).HasMaxLength(120).IsRequired();
+        entity.Property(x => x.Remarks).HasMaxLength(1000);
+        entity.HasIndex(x => new { x.BranchId, x.UsedAtUtc });
+        entity.HasIndex(x => new { x.BatchId, x.UsedAtUtc });
+        entity.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Batch).WithMany(x => x.Usages).HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne<User>().WithMany().HasForeignKey(x => x.RecordedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureMilkTest(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<MilkTest>();
+        entity.ToTable("MilkTest", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint(
+                    "CK_MilkTest_Lifecycle",
+                    "([Status] = 'Requested' AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL AND [CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Completed' AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL AND " +
+                    "(([CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL) OR " +
+                    "([CustomerDecision] = 'Confirmed' AND [ConfirmedAtUtc] IS NOT NULL AND [RejectedAtUtc] IS NULL) OR " +
+                    "([CustomerDecision] = 'Rejected' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NOT NULL)))");
+                table.HasCheckConstraint(
+                    "CK_MilkTest_TimestampOrder",
+                    "[CompletedAtUtc] IS NULL OR ([CompletedAtUtc] >= [RequestedAtUtc] AND ([ConfirmedAtUtc] IS NULL OR [ConfirmedAtUtc] >= [CompletedAtUtc]) AND ([RejectedAtUtc] IS NULL OR [RejectedAtUtc] >= [CompletedAtUtc]))");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.CustomerDecision).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.RequestedAtUtc).IsRequired();
+        entity.Property(x => x.StaffRemarks).HasMaxLength(1000);
+        entity.Property(x => x.CustomerRemarks).HasMaxLength(1000);
+        entity.HasIndex(x => x.DeliveryId).IsUnique();
+        entity.HasIndex(x => new { x.CustomerId, x.RequestedAtUtc });
+        entity.HasIndex(x => new { x.BranchId, x.Status, x.RequestedAtUtc });
+        entity.HasOne(x => x.Delivery).WithMany().HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.RequestedByUser).WithMany().HasForeignKey(x => x.RequestedByUserId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.CompletedByUser).WithMany().HasForeignKey(x => x.CompletedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureMilkTestParameter(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<MilkTestParameter>();
+        entity.ToTable("MilkTestParameter");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.Code).HasMaxLength(80).IsRequired();
+        entity.Property(x => x.Name).HasMaxLength(160).IsRequired();
+        entity.Property(x => x.Value).HasPrecision(18, 6).IsRequired();
+        entity.Property(x => x.Unit).HasMaxLength(40).IsRequired();
+        entity.HasIndex(x => new { x.MilkTestId, x.Code }).IsUnique();
+        entity.HasOne(x => x.MilkTest).WithMany(x => x.Parameters).HasForeignKey(x => x.MilkTestId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureMilkTestImage(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<MilkTestImage>();
+        entity.ToTable("MilkTestImage", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_MilkTestImage_FileSize", "[FileSize] > 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.StorageKey).HasMaxLength(500).IsRequired();
+        entity.Property(x => x.FileName).HasMaxLength(255).IsRequired();
+        entity.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.FileSize).IsRequired();
+        entity.Property(x => x.UploadedAtUtc).IsRequired();
+        entity.HasIndex(x => x.StorageKey).IsUnique();
+        entity.HasIndex(x => new { x.MilkTestId, x.UploadedAtUtc });
+        entity.HasOne(x => x.MilkTest).WithMany(x => x.Images).HasForeignKey(x => x.MilkTestId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.UploadedByUser).WithMany().HasForeignKey(x => x.UploadedByUserId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureSystemConfiguration(ModelBuilder modelBuilder)

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -67,6 +70,44 @@ void main() {
     );
 
     expect(body['success'], isTrue);
+  });
+
+  test('multipart POST sends bytes, metadata, and bearer token', () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(
+        request.url.toString(),
+        'https://api.example.test/api/v1/milk-tests/test-1/images',
+      );
+      expect(request.headers['Authorization'], 'Bearer access-token');
+      expect(request.headers['Accept'], 'application/json');
+      expect(
+        request.headers['Content-Type'],
+        startsWith('multipart/form-data;'),
+      );
+      final bufferedRequest = request;
+      final body = utf8.decode(bufferedRequest.bodyBytes);
+      expect(body, contains('name="image"; filename="test.jpg"'));
+      expect(body.toLowerCase(), contains('content-type: image/jpeg'));
+      expect(body, contains('image-bytes'));
+      return http.Response(
+        '{"success":true,"data":{"imageId":"image-1"},"errors":[]}',
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final api = ApiClient(client: client, baseUrl: 'https://api.example.test');
+
+    final body = await api.postMultipart(
+      '/api/v1/milk-tests/test-1/images',
+      fieldName: 'image',
+      bytes: Uint8List.fromList(utf8.encode('image-bytes')),
+      fileName: 'test.jpg',
+      contentType: 'image/jpeg',
+      accessToken: 'access-token',
+    );
+
+    expect((body['data'] as Map<String, dynamic>)['imageId'], 'image-1');
   });
 
   test('PATCH sends JSON body and bearer token', () async {

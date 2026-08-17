@@ -115,15 +115,25 @@ Camera recording stays outside the application database.
 
 ---
 
-## 7. Milk Testing Device — Future Integration
+## 7. Doorstep Milk Testing Integrations
 
-### MVP
-Manual entry from physical device/lactometer.
+### MVP device boundary
 
-### Future
-Bluetooth or vendor SDK.
+Readings are entered manually from the physical device or lactometer. Device-specific data and SDK types do not enter the domain model.
 
-Interface:
+### Media storage boundary
+
+`IMediaStorage` owns save, authenticated read, and cleanup operations. Development uses a local-filesystem provider. Production may replace it with object storage without changing the milk-test domain or API contract.
+
+- SQL Server stores the provider storage key, file name, normalized MIME type, size, authenticated uploader, and upload timestamp.
+- Image bytes are never stored in SQL Server.
+- The upload service validates the configured size limit and the actual JPEG, PNG, or WebP signature before storage, and rejects a declared MIME type that conflicts with the signature.
+- If database persistence fails after storage succeeds, the service removes the newly stored object.
+- Customer content reads remain authenticated, ownership-scoped, and unavailable before completion.
+
+### Future device integration
+
+Bluetooth or a vendor SDK may implement:
 
 ```text
 IMilkTestingDeviceAdapter
@@ -134,7 +144,7 @@ IMilkTestingDeviceAdapter
   getDeviceInfo()
 ```
 
-Vendor-specific code must not leak into the domain model.
+Vendor-specific code must remain behind the adapter and must not leak into the domain model. This future integration is not part of Phase 9.
 
 ---
 

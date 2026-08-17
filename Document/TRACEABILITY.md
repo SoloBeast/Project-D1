@@ -19,6 +19,23 @@
 | Flutter transport | JSON GET/POST, bearer headers, success envelopes, structured errors, and fallback errors | `mobile/lib/core/network/api_client.dart`; `mobile/test/api_client_test.dart` |
 | Phase boundary | No Phase 2 customer/address or later business workflows implemented | Repository source tree; `README.md` |
 
+## Phase 9 — Doorstep Testing
+
+| Requirement area | Phase 9 implementation | Evidence |
+|---|---|---|
+| Delivery-owned test lifecycle | One `MilkTest` is allowed per delivery; request, completion, and terminal customer decision are persisted | `Backend/src/DoodhDirect.Domain/MilkTesting/MilkTestEntities.cs`; `Backend/src/DoodhDirect.Infrastructure/MilkTesting/MilkTestService.cs`; `Backend/src/DoodhDirect.Infrastructure/Persistence/Migrations/20260817113835_Phase9DoorstepTesting.cs` |
+| Customer ownership | Customers can request/read only the milk test for their own delivery and can confirm or reject only their own completed test | `Backend/src/DoodhDirect.Infrastructure/MilkTesting/MilkTestService.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/MilkTestServiceTests.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/MilkTestsControllerTests.cs` |
+| Assigned-staff and branch authorization | Staff operations require current delivery assignment, matching branch scope, or explicit global access | `Backend/src/DoodhDirect.Infrastructure/MilkTesting/MilkTestService.cs`; `Backend/src/DoodhDirect.Application/Identity/AuthenticationContracts.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/MilkTestServiceTests.cs` |
+| Image validation and storage | JPEG, PNG, and WebP signatures are detected and checked against the declared MIME type and configured size limit; bytes are stored through the provider-neutral media abstraction | `Backend/src/DoodhDirect.Infrastructure/MilkTesting/MilkTestImageValidator.cs`; `Backend/src/DoodhDirect.Infrastructure/MilkTesting/LocalMediaStorage.cs`; `Backend/src/DoodhDirect.Application/MilkTesting/MilkTestContracts.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/MilkTestMediaTests.cs` |
+| Metadata-only persistence | SQL persistence stores image metadata and an external storage key, with no image-byte column | `Backend/src/DoodhDirect.Infrastructure/Persistence/Migrations/20260817113835_Phase9DoorstepTesting.cs`; `Backend/src/DoodhDirect.Infrastructure/Persistence/Migrations/DoodhDirectDbContextModelSnapshot.cs` |
+| Completion gates | Completion requires `Arrived` delivery status, at least one valid reading, and at least one image | `Backend/src/DoodhDirect.Infrastructure/MilkTesting/MilkTestService.cs`; `Backend/tests/DoodhDirect.Domain.Tests/MilkTestDomainTests.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/MilkTestServiceTests.cs` |
+| Reading precision and uniqueness | Numeric readings use `decimal(18,6)` and case-insensitive codes are unique per test | `Backend/src/DoodhDirect.Infrastructure/Persistence/Migrations/20260817113835_Phase9DoorstepTesting.cs`; `Backend/src/DoodhDirect.Infrastructure/MilkTesting/MilkTestService.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/MilkTestServiceTests.cs` |
+| Customer-safe disclosure | Customer DTOs expose lifecycle, decision, timestamp, and completed-test images, but omit numeric readings and staff remarks | `Backend/src/DoodhDirect.Application/MilkTesting/MilkTestContracts.cs`; `Backend/src/DoodhDirect.Infrastructure/MilkTesting/MilkTestService.cs`; `mobile/lib/features/milk_testing/milk_test_screens.dart` |
+| Protected image access | Image content is streamed through an authenticated ownership/assignment-scoped endpoint and remains hidden from customers until completion | `Backend/src/DoodhDirect.Api/Controllers/MilkTestsController.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/MilkTestMediaTests.cs`; `mobile/lib/features/milk_testing/milk_test_repository.dart` |
+| Audit coverage | Request, creation, image upload, completion, confirmation, and rejection actions are persisted | `Backend/src/DoodhDirect.Infrastructure/MilkTesting/MilkTestService.cs`; `Backend/tests/DoodhDirect.Api.IntegrationTests/MilkTestServiceTests.cs` |
+| Flutter workflows | Customer request/decision and staff upload/readings/completion flows use server-authoritative refresh and explicit loading, error, offline, and terminal states | `mobile/lib/features/milk_testing/milk_test_controller.dart`; `mobile/lib/features/milk_testing/milk_test_screens.dart`; `mobile/test/milk_test_controller_test.dart`; `mobile/test/milk_test_screens_test.dart` |
+| API contract | Customer, staff, mutation, multipart upload, and protected media routes are documented with role-specific schemas | `Backend/src/DoodhDirect.Api/Controllers/MilkTestsController.cs`; `Document/05_API_Specification.md`; `Document/11_openapi_starter.yaml` |
+
 ## Acceptance Evidence
 
 Evidence confirmed during Phase 1 implementation and release validation:
@@ -33,6 +50,24 @@ Evidence confirmed during Phase 1 implementation and release validation:
 - Generated OpenAPI bearer and anonymous-operation contract assertions: PASS within the API integration suite.
 
 The Flutter web build emits non-blocking toolchain warnings for the secure-storage package's WebAssembly dry run and an unused Cupertino icon font. The JavaScript web artifact still builds successfully.
+
+### Phase 9 Acceptance Evidence
+
+Evidence confirmed during Phase 9 implementation and release validation:
+
+- Backend Release build: PASS, zero warnings and zero errors.
+- Backend solution tests: PASS, 292 tests total: 57 domain and 235 API integration.
+- Flutter analysis: PASS, no issues found.
+- Flutter tests: PASS, 115 tests, including two OpenAPI contract tests.
+- OpenAPI document validation: PASS; YAML parsing, local component references, and templated route parameters were verified by `mobile/test/openapi_document_test.dart`.
+- EF model/snapshot alignment: PASS, with no pending model changes.
+- Phase 9 migration script: PASS, generated and inspected at `Backend/artifacts/sql/Phase9DoorstepTesting.sql`.
+- SQL Server Express migration: PASS on `DoodhDirect` at `DESKTOP-6LU1CLD\\SQLEXPRESS`; `20260817113835_Phase9DoorstepTesting` applied successfully and the repeat update was idempotent.
+- Physical SQL Server schema: PASS; all expected Phase 9 tables, columns, nullability, `decimal(18,6)` precision, constraints, indexes, and restrictive `NO_ACTION` foreign keys were present.
+- Image-byte exclusion: PASS; catalog inspection found zero `binary`, `varbinary`, or `image` columns in the Phase 9 tables.
+- Scope boundary: PASS; Phase 10 camera functionality remains unimplemented.
+
+Detailed evidence is recorded in `Document/PHASE_9_ACCEPTANCE.md`.
 
 ## Deployment Blockers
 

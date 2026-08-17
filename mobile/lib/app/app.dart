@@ -8,6 +8,8 @@ import 'package:doodh_direct_mobile/features/catalogue/catalogue_screens.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_screens.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
 import 'package:doodh_direct_mobile/features/home/role_home_screen.dart';
+import 'package:doodh_direct_mobile/features/dairy/dairy_screens.dart';
+import 'package:doodh_direct_mobile/features/milk_testing/milk_test_screens.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/orders/order_screens.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_screens.dart';
@@ -186,6 +188,15 @@ final routerProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: '/deliveries/:deliveryId/milk-test',
+        builder: (context, state) {
+          final deliveryId = _requiredPathParameter(state, 'deliveryId');
+          return deliveryId == null
+              ? const _RouteErrorScreen(resource: 'delivery')
+              : CustomerMilkTestScreen(deliveryId: deliveryId);
+        },
+      ),
+      GoRoute(
         path: '/delivery',
         builder: (context, state) => const StaffDeliveryListScreen(),
       ),
@@ -196,6 +207,15 @@ final routerProvider = Provider<GoRouter>((ref) {
           return deliveryId == null
               ? const _RouteErrorScreen(resource: 'delivery')
               : StaffDeliveryDetailScreen(deliveryId: deliveryId);
+        },
+      ),
+      GoRoute(
+        path: '/delivery/:deliveryId/milk-test',
+        builder: (context, state) {
+          final deliveryId = _requiredPathParameter(state, 'deliveryId');
+          return deliveryId == null
+              ? const _RouteErrorScreen(resource: 'delivery')
+              : StaffMilkTestScreen(deliveryId: deliveryId);
         },
       ),
       GoRoute(
@@ -216,6 +236,84 @@ final routerProvider = Provider<GoRouter>((ref) {
           return deliveryId == null
               ? const _RouteErrorScreen(resource: 'delivery')
               : DeliveryManagementDetailScreen(deliveryId: deliveryId);
+        },
+      ),
+      GoRoute(path: '/dairy', redirect: (context, state) => '/dairy/dashboard'),
+      GoRoute(
+        path: '/dairy/dashboard',
+        builder: (context, state) => const DairyDashboardScreen(),
+      ),
+      GoRoute(
+        path: '/dairy/branch/:branchId/production/new',
+        builder: (context, state) {
+          final branchId = int.tryParse(
+            _requiredPathParameter(state, 'branchId') ?? '',
+          );
+          return branchId == null
+              ? const _RouteErrorScreen(resource: 'dairy branch')
+              : DairyProductionEntryScreen(branchId: branchId);
+        },
+      ),
+      GoRoute(
+        path: '/dairy/branch/:branchId/production',
+        builder: (context, state) {
+          final branchId = int.tryParse(
+            _requiredPathParameter(state, 'branchId') ?? '',
+          );
+          return branchId == null
+              ? const _RouteErrorScreen(resource: 'dairy branch')
+              : DairyProductionHistoryScreen(branchId: branchId);
+        },
+      ),
+      GoRoute(
+        path: '/dairy/branch/:branchId/batches',
+        builder: (context, state) {
+          final branchId = int.tryParse(
+            _requiredPathParameter(state, 'branchId') ?? '',
+          );
+          return branchId == null
+              ? const _RouteErrorScreen(resource: 'dairy branch')
+              : DairyBatchListScreen(branchId: branchId);
+        },
+      ),
+      GoRoute(
+        path: '/dairy/branch/:branchId/availability',
+        builder: (context, state) {
+          final branchId = int.tryParse(
+            _requiredPathParameter(state, 'branchId') ?? '',
+          );
+          return branchId == null
+              ? const _RouteErrorScreen(resource: 'dairy branch')
+              : DairyAvailabilityScreen(branchId: branchId);
+        },
+      ),
+      GoRoute(
+        path: '/dairy/branch/:branchId/usage',
+        builder: (context, state) {
+          final branchId = int.tryParse(
+            _requiredPathParameter(state, 'branchId') ?? '',
+          );
+          return branchId == null
+              ? const _RouteErrorScreen(resource: 'dairy branch')
+              : DairyUsageScreen(branchId: branchId);
+        },
+      ),
+      GoRoute(
+        path: '/dairy/batches/:batchId',
+        builder: (context, state) {
+          final batchId = _requiredPathParameter(state, 'batchId');
+          return batchId == null
+              ? const _RouteErrorScreen(resource: 'dairy batch')
+              : DairyBatchDetailScreen(batchId: batchId);
+        },
+      ),
+      GoRoute(
+        path: '/dairy/batches/:batchId/usage/new',
+        builder: (context, state) {
+          final batchId = _requiredPathParameter(state, 'batchId');
+          return batchId == null
+              ? const _RouteErrorScreen(resource: 'dairy batch')
+              : DairyUsageEntryScreen(batchId: batchId);
         },
       ),
     ],

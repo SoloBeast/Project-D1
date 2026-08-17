@@ -35,3 +35,23 @@ Identity/RBAC relationships use restrictive deletes. Authentication failures, OT
 ## D-009: Provider and Secret Boundaries
 
 OTP delivery is represented by `IOtpDeliveryService`; the default implementation is intentionally unconfigured and throws until a real provider is supplied. JWT signing keys must be injected through deployment configuration or a secret manager and the checked-in placeholder must never be deployed.
+
+## D-010: Delivery-Owned Doorstep Test Aggregate
+
+Phase 9 attaches at most one doorstep test directly to a delivery. The aggregate records the customer, branch, requester, optional completer, lifecycle timestamps, readings, image metadata, and terminal customer decision. Batch and laboratory testing are separate future designs.
+
+## D-011: External Provider-Neutral Test Media
+
+Image bytes are stored through `IMediaStorage`; SQL Server stores only metadata and a provider storage key. Development uses a local filesystem provider. Uploads are signature-, MIME-, and size-validated before storage, and a database failure after storage triggers object cleanup.
+
+## D-012: Role-Specific Milk-Test Disclosure
+
+Staff DTOs contain configurable readings and operational remarks. Customer DTOs exclude both, hide all image metadata until completion, and expose image content only through an authenticated ownership-scoped endpoint.
+
+## D-013: Arrival-Gated Completion and Terminal Decision
+
+A test completes only when its delivery is `Arrived` and at least one validated image and one `decimal(18,6)` reading exist. Customer confirmation or rejection is allowed only after completion, and the first decision is terminal.
+
+## D-014: Manual Phase 9 Readings
+
+Phase 9 records manually entered physical-device readings. Future Bluetooth or vendor SDK support must implement a device adapter and must not introduce vendor-specific types into the domain model.

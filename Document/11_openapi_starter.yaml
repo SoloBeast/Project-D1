@@ -979,6 +979,318 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /dairy/branches/{branchId}/dashboard:
+    get:
+      summary: Get branch dairy dashboard totals
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/dairyBranchId'
+        - $ref: '#/components/parameters/productionDate'
+      responses:
+        '200':
+          description: Dairy dashboard
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DairyDashboardResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /dairy/branches/{branchId}/production:
+    get:
+      summary: List branch milk production entries
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/dairyBranchId'
+        - $ref: '#/components/parameters/fromDate'
+        - $ref: '#/components/parameters/toDate'
+      responses:
+        '200':
+          description: Production history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MilkProductionListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Record production and create its single associated batch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/dairyBranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordMilkProductionRequest' }
+      responses:
+        '201':
+          description: Production and automatically created batch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MilkProductionResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /dairy/branches/{branchId}/batches:
+    get:
+      summary: List branch milk batches
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/dairyBranchId'
+        - $ref: '#/components/parameters/batchStatus'
+      responses:
+        '200':
+          description: Batch list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MilkBatchListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /dairy/batches/{batchId}:
+    get:
+      summary: Get a milk batch within the caller's branch scope
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/batchId'
+      responses:
+        '200':
+          description: Milk batch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MilkBatchResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /dairy/branches/{branchId}/availability:
+    get:
+      summary: Get derived branch milk availability
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/dairyBranchId'
+      responses:
+        '200':
+          description: Milk availability
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MilkAvailabilityResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /dairy/batches/{batchId}/usage:
+    post:
+      summary: Append milk usage or dispatch for a batch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/batchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecordMilkUsageRequest' }
+      responses:
+        '201':
+          description: Appended usage entry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MilkUsageResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /dairy/branches/{branchId}/usage:
+    get:
+      summary: List branch milk usage history
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/dairyBranchId'
+        - $ref: '#/components/parameters/fromDate'
+        - $ref: '#/components/parameters/toDate'
+      responses:
+        '200':
+          description: Usage history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MilkUsageListResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /deliveries/{deliveryId}/milk-test:
+    post:
+      summary: Request a doorstep milk test for an owned active delivery
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      responses:
+        '200':
+          description: Requested doorstep test
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerMilkTestResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+    get:
+      summary: Get the owned doorstep milk test for a delivery, or null when not requested
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      responses:
+        '200':
+          description: Customer-safe doorstep test or null
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerMilkTestNullableResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /delivery/{deliveryId}/milk-test:
+    get:
+      summary: Get the assigned delivery employee's doorstep milk test
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/deliveryId'
+      responses:
+        '200':
+          description: Staff-safe doorstep test or null
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffMilkTestNullableResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /milk-tests/{milkTestId}/images:
+    post:
+      summary: Upload an image for an assigned doorstep milk test
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/milkTestId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: JPEG, PNG, or WebP image within the configured size limit.
+      responses:
+        '200':
+          description: Stored image metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MilkTestImageResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /milk-tests/{milkTestId}/complete:
+    post:
+      summary: Complete an arrived delivery's doorstep milk test
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/milkTestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteMilkTestRequest' }
+      responses:
+        '200':
+          description: Completed staff-safe doorstep test
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffMilkTestResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /milk-tests/{milkTestId}/confirm:
+    post:
+      summary: Confirm a completed owned doorstep milk test
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/milkTestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecideMilkTestRequest' }
+      responses:
+        '200':
+          description: Confirmed customer-safe doorstep test
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerMilkTestResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /milk-tests/{milkTestId}/reject:
+    post:
+      summary: Reject a completed owned doorstep milk test
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/milkTestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecideMilkTestRequest' }
+      responses:
+        '200':
+          description: Rejected customer-safe doorstep test
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomerMilkTestResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /milk-tests/{milkTestId}/images/{imageId}/content:
+    get:
+      summary: Stream an owned completed milk-test image
+      description: Image bytes are read from external media storage; SQL Server stores metadata and a storage key only.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/milkTestId'
+        - $ref: '#/components/parameters/milkTestImageId'
+      responses:
+        '200':
+          description: Authenticated image content
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /webhooks/razorpay:
     post:
       summary: Razorpay webhook
@@ -1034,11 +1346,51 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    milkTestId:
+      name: milkTestId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    milkTestImageId:
+      name: imageId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
     deliveryBranchId:
       name: branchId
       in: path
       required: true
       schema: { type: integer, format: int64 }
+    dairyBranchId:
+      name: branchId
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+    batchId:
+      name: batchId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    productionDate:
+      name: productionDate
+      in: query
+      required: false
+      schema: { type: string, format: date }
+    fromDate:
+      name: fromDate
+      in: query
+      required: false
+      schema: { type: string, format: date }
+    toDate:
+      name: toDate
+      in: query
+      required: false
+      schema: { type: string, format: date }
+    batchStatus:
+      name: status
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/MilkBatchStatus' }
     deliveryDate:
       name: date
       in: query
@@ -1109,6 +1461,258 @@ components:
         errors:
           type: array
           items: { $ref: '#/components/schemas/ApiError' }
+    RecordMilkProductionRequest:
+      type: object
+      required: [productionAtUtc, buffaloCount, quantityProduced, unit]
+      properties:
+        productionAtUtc: { type: string, format: date-time, description: UTC timestamp; cannot be more than five minutes in the future. }
+        shift: { type: string, nullable: true, maxLength: 40 }
+        buffaloCount: { type: integer, format: int32, minimum: 1 }
+        quantityProduced: { type: number, format: double, exclusiveMinimum: 0, multipleOf: 0.001 }
+        unit: { type: string, enum: [L, LITRE, LITRES], description: Accepted case-insensitively and normalized to L. }
+        remarks: { type: string, nullable: true, maxLength: 1000 }
+    RecordMilkUsageRequest:
+      type: object
+      required: [usedAtUtc, quantityUsed, purpose]
+      properties:
+        usedAtUtc: { type: string, format: date-time, description: UTC timestamp; must not precede production or be more than five minutes in the future. }
+        quantityUsed: { type: number, format: double, exclusiveMinimum: 0, multipleOf: 0.001 }
+        purpose: { type: string, minLength: 1, maxLength: 120 }
+        remarks: { type: string, nullable: true, maxLength: 1000 }
+    MilkBatchStatus:
+      type: string
+      enum: [Available, Exhausted]
+    MilkProduction:
+      type: object
+      required: [publicId, branchId, productionAtUtc, buffaloCount, quantityProduced, unit, recordedByUserId, createdAtUtc, batch]
+      properties:
+        publicId: { type: string, format: uuid }
+        branchId: { type: integer, format: int64 }
+        productionAtUtc: { type: string, format: date-time }
+        shift: { type: string, nullable: true }
+        buffaloCount: { type: integer, format: int32, minimum: 0 }
+        quantityProduced: { type: number, format: double, minimum: 0.001, multipleOf: 0.001 }
+        unit: { type: string, enum: [L] }
+        recordedByUserId: { type: integer, format: int64 }
+        remarks: { type: string, nullable: true }
+        createdAtUtc: { type: string, format: date-time }
+        batch: { $ref: '#/components/schemas/MilkBatch' }
+    MilkBatch:
+      type: object
+      required: [publicId, batchNumber, branchId, productionPublicId, productionAtUtc, quantityProduced, availableQuantity, unit, status, createdAtUtc]
+      properties:
+        publicId: { type: string, format: uuid }
+        batchNumber: { type: string }
+        branchId: { type: integer, format: int64 }
+        productionPublicId: { type: string, format: uuid }
+        productionAtUtc: { type: string, format: date-time }
+        quantityProduced: { type: number, format: double, minimum: 0.001, multipleOf: 0.001 }
+        availableQuantity: { type: number, format: double, minimum: 0, multipleOf: 0.001 }
+        unit: { type: string, enum: [L] }
+        status: { $ref: '#/components/schemas/MilkBatchStatus' }
+        createdAtUtc: { type: string, format: date-time }
+    MilkUsage:
+      type: object
+      required: [publicId, batchPublicId, batchNumber, branchId, usedAtUtc, quantityUsed, unit, purpose, recordedByUserId, createdAtUtc]
+      properties:
+        publicId: { type: string, format: uuid }
+        batchPublicId: { type: string, format: uuid }
+        batchNumber: { type: string }
+        branchId: { type: integer, format: int64 }
+        usedAtUtc: { type: string, format: date-time }
+        quantityUsed: { type: number, format: double, minimum: 0.001, multipleOf: 0.001 }
+        unit: { type: string, enum: [L] }
+        purpose: { type: string }
+        recordedByUserId: { type: integer, format: int64 }
+        remarks: { type: string, nullable: true }
+        createdAtUtc: { type: string, format: date-time }
+    MilkAvailability:
+      type: object
+      required: [branchId, quantityProduced, quantityUsed, availableQuantity, unit, availableBatchCount, calculatedAtUtc]
+      properties:
+        branchId: { type: integer, format: int64 }
+        quantityProduced: { type: number, format: double, minimum: 0, multipleOf: 0.001 }
+        quantityUsed: { type: number, format: double, minimum: 0, multipleOf: 0.001 }
+        availableQuantity: { type: number, format: double, minimum: 0, multipleOf: 0.001 }
+        unit: { type: string, enum: [L] }
+        availableBatchCount: { type: integer, format: int32, minimum: 0 }
+        calculatedAtUtc: { type: string, format: date-time }
+    DairyDashboard:
+      type: object
+      required: [branchId, productionDate, quantityProduced, availableQuantity, unit, productionEntryCount, availableBatchCount, calculatedAtUtc]
+      properties:
+        branchId: { type: integer, format: int64 }
+        productionDate: { type: string, format: date }
+        quantityProduced: { type: number, format: double, minimum: 0, multipleOf: 0.001 }
+        availableQuantity: { type: number, format: double, minimum: 0, multipleOf: 0.001 }
+        unit: { type: string, enum: [L] }
+        productionEntryCount: { type: integer, format: int32, minimum: 0 }
+        availableBatchCount: { type: integer, format: int32, minimum: 0 }
+        calculatedAtUtc: { type: string, format: date-time }
+    MilkProductionResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/MilkProduction' } }
+    MilkProductionListResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { type: array, items: { $ref: '#/components/schemas/MilkProduction' } } }
+    MilkBatchResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/MilkBatch' } }
+    MilkBatchListResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { type: array, items: { $ref: '#/components/schemas/MilkBatch' } } }
+    MilkUsageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/MilkUsage' } }
+    MilkUsageListResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { type: array, items: { $ref: '#/components/schemas/MilkUsage' } } }
+    MilkAvailabilityResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/MilkAvailability' } }
+    DairyDashboardResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/DairyDashboard' } }
+    SuccessResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: {}
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    MilkTestStatus:
+      type: string
+      enum: [Requested, Completed]
+    MilkTestCustomerDecision:
+      type: string
+      enum: [Pending, Confirmed, Rejected]
+    MilkTestParameterRequest:
+      type: object
+      required: [code, name, value, unit]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 40 }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        value: { type: number, format: double, description: Must fit decimal(18,6). }
+        unit: { type: string, minLength: 1, maxLength: 40 }
+    CompleteMilkTestRequest:
+      type: object
+      required: [parameters]
+      properties:
+        parameters:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/MilkTestParameterRequest' }
+        remarks: { type: string, nullable: true, maxLength: 1000 }
+    DecideMilkTestRequest:
+      type: object
+      properties:
+        remarks: { type: string, nullable: true, maxLength: 1000 }
+    MilkTestParameter:
+      type: object
+      required: [code, name, value, unit]
+      properties:
+        code: { type: string }
+        name: { type: string }
+        value: { type: number, format: double }
+        unit: { type: string }
+    MilkTestImage:
+      type: object
+      required: [imageId, fileName, contentType, fileSize, uploadedAtUtc, contentPath]
+      properties:
+        imageId: { type: string, format: uuid }
+        fileName: { type: string }
+        contentType: { type: string, enum: [image/jpeg, image/png, image/webp] }
+        fileSize: { type: integer, format: int64, minimum: 1 }
+        uploadedAtUtc: { type: string, format: date-time }
+        contentPath: { type: string }
+    CustomerMilkTest:
+      type: object
+      description: Customer-safe view. Numeric readings and staff remarks are intentionally excluded. Images are disclosed only after completion.
+      required: [milkTestId, deliveryId, status, customerDecision, requestedAtUtc, images]
+      properties:
+        milkTestId: { type: string, format: uuid }
+        deliveryId: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/MilkTestStatus' }
+        customerDecision: { $ref: '#/components/schemas/MilkTestCustomerDecision' }
+        requestedAtUtc: { type: string, format: date-time }
+        completedAtUtc: { type: string, format: date-time, nullable: true }
+        confirmedAtUtc: { type: string, format: date-time, nullable: true }
+        rejectedAtUtc: { type: string, format: date-time, nullable: true }
+        customerRemarks: { type: string, nullable: true }
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/MilkTestImage' }
+    StaffMilkTest:
+      type: object
+      required: [milkTestId, deliveryId, status, customerDecision, requestedAtUtc, parameters, images]
+      properties:
+        milkTestId: { type: string, format: uuid }
+        deliveryId: { type: string, format: uuid }
+        status: { $ref: '#/components/schemas/MilkTestStatus' }
+        customerDecision: { $ref: '#/components/schemas/MilkTestCustomerDecision' }
+        requestedAtUtc: { type: string, format: date-time }
+        completedAtUtc: { type: string, format: date-time, nullable: true }
+        staffRemarks: { type: string, nullable: true }
+        confirmedAtUtc: { type: string, format: date-time, nullable: true }
+        rejectedAtUtc: { type: string, format: date-time, nullable: true }
+        customerRemarks: { type: string, nullable: true }
+        parameters:
+          type: array
+          items: { $ref: '#/components/schemas/MilkTestParameter' }
+        images:
+          type: array
+          items: { $ref: '#/components/schemas/MilkTestImage' }
+    CustomerMilkTestResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/CustomerMilkTest' } }
+    CustomerMilkTestNullableResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data:
+              nullable: true
+              allOf: [{ $ref: '#/components/schemas/CustomerMilkTest' }]
+    StaffMilkTestResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/StaffMilkTest' } }
+    StaffMilkTestNullableResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties:
+            data:
+              nullable: true
+              allOf: [{ $ref: '#/components/schemas/StaffMilkTest' }]
+    MilkTestImageResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/MilkTestImage' } }
     DeliverySourceType:
       type: string
       enum: [OneTimeOrder, SubscriptionOccurrence]

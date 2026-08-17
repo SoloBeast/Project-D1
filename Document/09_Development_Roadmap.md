@@ -131,19 +131,29 @@ Deliver:
 
 Acceptance:
 - Branch can record today's production.
-- Orders cannot silently exceed configured availability rules.
+- Availability is derived from production minus append-only usage, and actual usage cannot overdraw a batch.
+- Order/subscription capacity reservation remains a future integration; Phase 8 does not claim or enforce reserved order capacity without an approved cross-domain contract.
 
 ## Phase 9 — Doorstep Testing
 
 Deliver:
-- Test request
-- Delivery test entry
-- MilkTest + parameters
-- Device master
+- Customer request and owned status workflow
+- Assigned delivery-staff workflow after arrival
+- Delivery-owned MilkTest, configurable numeric parameters, and image metadata
+- Provider-neutral external media storage with local development provider
+- Image signature, MIME, and configured-size validation
+- Customer-safe disclosure, authenticated image retrieval, and terminal confirm/reject decision
+- Audit events for request, creation, upload, completion, confirmation, and rejection
+- Backend integration/domain coverage and Flutter controller/widget coverage
+- Device adapter boundary for future integration; Phase 9 uses manual reading entry
 
 Acceptance:
-- Test is linked to delivery/order.
-- Device integration boundary is ready.
+- One test is linked to one delivery and duplicate requests are rejected.
+- Only the owning customer and currently assigned, branch-authorized staff can access their respective workflows.
+- Completion requires delivery arrival, one validated externally stored image, and one valid reading.
+- SQL Server contains metadata and storage keys but no image bytes.
+- Customers see status, completed images, completion time, and terminal decision controls, but no numeric readings.
+- Migration is applied and physically verified on SQL Server Express; backend and Flutter verification suites pass.
 
 ## Phase 10 — Camera
 

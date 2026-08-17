@@ -37,13 +37,12 @@ class RoleHomeScreen extends ConsumerWidget {
             ref.watch(sessionControllerProvider).session?.user.branchIds ??
             const [],
       ),
-      UserRole.dairy => const StatePanel(
-        icon: Icons.agriculture_outlined,
-        title: 'Dairy workspace ready',
-        message:
-            'Dairy operations are reserved for the dairy operations phase.',
+      UserRole.dairy => const _DairyHomeActions(),
+      UserRole.owner || UserRole.admin => _AdminHomeActions(
+        branchIds:
+            ref.watch(sessionControllerProvider).session?.user.branchIds ??
+            const [],
       ),
-      UserRole.owner || UserRole.admin => const _AdminHomeActions(),
       UserRole.support => const StatePanel(
         icon: Icons.support_agent_outlined,
         title: 'Customer support workspace ready',
@@ -195,14 +194,58 @@ class _DeliveryHomeActions extends StatelessWidget {
   }
 }
 
-class _AdminHomeActions extends ConsumerWidget {
-  const _AdminHomeActions();
+class _DairyHomeActions extends ConsumerWidget {
+  const _DairyHomeActions();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final branchIds =
         ref.watch(sessionControllerProvider).session?.user.branchIds ??
         const <int>[];
+    final branchId = branchIds.isEmpty ? null : branchIds.first;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text(
+          'Dairy operations',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Record production and manage operational milk availability.',
+        ),
+        const SizedBox(height: 16),
+        if (branchId == null)
+          const StatePanel(
+            icon: Icons.location_off_outlined,
+            title: 'No branch assigned',
+            message:
+                'A branch assignment is required to manage dairy operations.',
+          )
+        else
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.agriculture_outlined),
+              title: Text('Branch $branchId dairy dashboard'),
+              subtitle: const Text(
+                'Production, batches, availability, and usage',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push('/dairy/dashboard'),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _AdminHomeActions extends ConsumerWidget {
+  const _AdminHomeActions({required this.branchIds});
+
+  final List<int> branchIds;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -230,6 +273,18 @@ class _AdminHomeActions extends ConsumerWidget {
             onTap: () => context.push('/catalogue'),
           ),
         ),
+        if (branchIds.isNotEmpty)
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.agriculture_outlined),
+              title: const Text('Manage dairy operations'),
+              subtitle: Text(
+                'Record and review branch ${branchIds.first} dairy activity',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push('/dairy/dashboard'),
+            ),
+          ),
         if (branchIds.isNotEmpty)
           Card(
             child: ListTile(

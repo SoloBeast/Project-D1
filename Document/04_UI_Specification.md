@@ -170,20 +170,19 @@ Show:
 
 Location visibility starts only after active delivery begins.
 
-### 3.13 Test Request
-Initial screen explains:
-"Doorstep quality check is an indicative check performed using the available dairy testing device."
+### 3.13 Doorstep Milk Test
 
-Actions:
-- Request test
-- Cancel request
+The owned delivery detail presents the request action only while the delivery is active and no test exists. It describes the result as an indicative doorstep check, not laboratory certification.
 
-After request:
-- Waiting for delivery staff
-- Test performed
-- Test outcome recorded
+Customer states:
+- Loading, offline, unauthorized, error, and retry.
+- No test requested, with the request action when eligible.
+- Requested, waiting for assigned delivery staff; no image or reading is visible.
+- Completed, showing completion time and authenticated images.
+- Pending decision, with Confirm and Reject actions and optional remarks.
+- Confirmed or Rejected terminal outcome; decision actions are removed.
 
-The MVP does not need to display the numeric test result to the customer.
+The customer UI never displays numeric readings or staff remarks. It refreshes server-authoritative state after each mutation and cannot cancel a persisted request in Phase 9.
 
 ### 3.14 Complaint
 Fields:
@@ -291,8 +290,7 @@ Actions:
 - Navigate
 - Start delivery
 - Pick up
-- Request test
-- Perform test
+- Open requested doorstep test after arrival
 - Collect payment
 - Mark failed
 - Mark delivered
@@ -304,13 +302,21 @@ Actions:
 - Retry with rate limit
 
 ### 4.5 Milk Test
-Fields:
-- Test type
-- Readings relevant to configured device
-- Remarks
+
+The screen is available only to the currently assigned employee and is actionable only when the delivery is `Arrived`.
+
+Controls and content:
+- Current test status and customer decision.
+- Camera and gallery image-source actions.
+- Uploaded-image list with upload progress/error feedback.
+- Configurable reading rows with code, name, numeric value, and unit.
+- Optional staff remarks.
+- Complete action enabled only when at least one valid reading and one uploaded image exist.
+
+Validation preserves the form and gives field-level feedback. Loading, no-request, offline, unauthorized, stale-assignment, terminal-delivery, and server-error states provide retry or return navigation. The screen refreshes from the server after upload and completion.
 
 Future:
-- Bluetooth/device auto-import.
+- Bluetooth/device auto-import behind the device adapter boundary.
 
 ### 4.6 Failed Delivery
 Required:

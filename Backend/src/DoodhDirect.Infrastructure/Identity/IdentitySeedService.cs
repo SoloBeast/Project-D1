@@ -19,6 +19,9 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.OrdersReadOwn,
                 AuthorizationCodes.OrdersCancelOwn,
                 AuthorizationCodes.DeliveriesReadOwn,
+                AuthorizationCodes.MilkTestsRequestOwn,
+                AuthorizationCodes.MilkTestsReadOwn,
+                AuthorizationCodes.MilkTestsDecideOwn,
                 AuthorizationCodes.SubscriptionsCreateOwn,
                 AuthorizationCodes.SubscriptionsReadOwn,
                 AuthorizationCodes.SubscriptionsManageOwn,
@@ -34,7 +37,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.SessionsManageOwn,
                 AuthorizationCodes.BranchAccess,
                 AuthorizationCodes.DeliveriesOperateAssigned,
-                AuthorizationCodes.DeliveriesTrackAssigned
+                AuthorizationCodes.DeliveriesTrackAssigned,
+                AuthorizationCodes.MilkTestsOperateAssigned
             ],
             [AuthorizationCodes.DairyManager] =
             [
@@ -42,7 +46,9 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.ProfileUpdateOwn,
                 AuthorizationCodes.SessionsManageOwn,
                 AuthorizationCodes.UsersRead,
-                AuthorizationCodes.BranchAccess
+                AuthorizationCodes.BranchAccess,
+                AuthorizationCodes.DairyRead,
+                AuthorizationCodes.DairyManage
             ],
             [AuthorizationCodes.DeliveryManager] =
             [
@@ -88,6 +94,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.CatalogueRead,
                 AuthorizationCodes.CatalogueManage,
                 AuthorizationCodes.OrdersRead,
+                AuthorizationCodes.DairyRead,
+                AuthorizationCodes.DairyManage,
                 AuthorizationCodes.DeliveriesReadBranch,
                 AuthorizationCodes.DeliveriesAssignBranch,
                 AuthorizationCodes.PaymentsRefund,

@@ -416,6 +416,43 @@ Delivery status values are `ReadyForAssignment`, `Assigned`, `PickedUp`, `OutFor
 - `POST /delivery/{deliveryId}/location` accepts `{ "latitude": 12.9716, "longitude": 77.5946, "accuracyMetres": 10, "recordedAtUtc": "2026-08-16T12:00:00Z" }` while tracking is active.
 - Lifecycle operations require `DELIVERIES.OPERATE_ASSIGNED`; location publication requires `DELIVERIES.TRACK_ASSIGNED`. The authenticated employee must own the current assignment.
 
+### Doorstep milk testing
+
+Customer routes:
+
+- `POST /deliveries/{deliveryId}/milk-test` requests one test for an active delivery owned by the authenticated customer. Required permission: `MILK_TESTS.REQUEST_OWN`.
+- `GET /deliveries/{deliveryId}/milk-test` returns the owned test or `null`. Required permission: `MILK_TESTS.READ_OWN`.
+- `POST /milk-tests/{milkTestId}/confirm` and `POST /milk-tests/{milkTestId}/reject` accept `{ "remarks": "optional" }`. Required permission: `MILK_TESTS.DECIDE_OWN`.
+- `GET /milk-tests/{milkTestId}/images/{imageId}/content` streams authenticated image content with range processing. It returns content only to the owning customer and only after completion.
+
+Assigned-delivery-staff routes:
+
+- `GET /delivery/{deliveryId}/milk-test` returns the assigned test or `null`. Required permission: `MILK_TESTS.OPERATE_ASSIGNED`.
+- `POST /milk-tests/{milkTestId}/images` accepts `multipart/form-data` with one `image` part. The server validates configured size, JPEG/PNG/WebP signature, and declared MIME compatibility before external storage.
+- `POST /milk-tests/{milkTestId}/complete` accepts configurable numeric parameters and optional remarks. Completion requires the delivery to be `Arrived`, at least one stored image, and at least one valid reading.
+
+Completion request:
+
+```json
+{
+  "parameters": [
+    { "code": "FAT", "name": "Fat", "value": 6.123456, "unit": "%" }
+  ],
+  "remarks": "Indicative doorstep reading"
+}
+```
+
+Rules and disclosure:
+
+- There is at most one test per delivery; duplicate requests and conflicting decisions return `409`.
+- New requests and image uploads are rejected for `Delivered` or `Failed` deliveries.
+- Staff access requires current delivery assignment and branch scope unless `ACCESS.GLOBAL` is present. Unauthorized scoped resources are returned as not found.
+- Reading codes are unique case-insensitively. Values must fit SQL Server `decimal(18,6)`.
+- Customer DTOs never contain numeric parameters or staff remarks. Image metadata is empty until the test is completed; staff DTOs include readings and images.
+- Customer decisions are allowed only after completion and are terminal.
+- Request, creation, upload, completion, confirmation, and rejection create audit records.
+- SQL Server stores image metadata and a provider storage key only; image bytes are served through the configured media provider.
+
 ### Delivery management
 
 - `POST /delivery-management/materialize?throughDate=YYYY-MM-DD` idempotently creates delivery work from eligible confirmed orders and scheduled subscription occurrences.
@@ -475,23 +512,77 @@ Delivery:
 
 ## 13. Dairy APIs
 
-Dairy manager:
+All dairy endpoints require JWT authentication and `DAIRY.READ`. Write endpoints additionally require `DAIRY.MANAGE`. `DAIRY_MANAGER` users are restricted to branch IDs in their token; `OWNER` and `SYSTEM_ADMIN` may access all branches through `GLOBAL.ACCESS`. The API enforces scope independently of client navigation.
 
-`POST /dairy/production`
+### Dashboard and availability
 
-`GET /dairy/production`
+`GET /dairy/branches/{branchId}/dashboard?productionDate={yyyy-MM-dd}`
 
-`GET /dairy/production/{id}`
+Returns production and available quantity totals, entry and available-batch counts, and calculation time for the requested UTC production date. `productionDate` is optional and defaults to the current UTC date.
 
-`POST /dairy/batches`
+`GET /dairy/branches/{branchId}/availability`
 
-`GET /dairy/batches`
+Returns branch-wide produced, used, and currently available quantities. Availability is derived from the production and append-only usage records rather than stored as a mutable balance.
 
-`GET /dairy/batches/{id}`
+### Production and batches
 
-`POST /dairy/tests`
+`POST /dairy/branches/{branchId}/production`
 
-`GET /dairy/tests`
+Requires `DAIRY.MANAGE`. Records a production entry and creates exactly one associated batch in the same transaction. Clients do not create batches separately.
+
+Request:
+
+```json
+{
+  "productionAtUtc": "2026-08-17T03:00:00Z",
+  "shift": "Morning",
+  "buffaloCount": 12,
+  "quantityProduced": 24.500,
+  "unit": "L",
+  "remarks": "First collection"
+}
+```
+
+The timestamp must be UTC and cannot be more than five minutes in the future. Quantity must be positive with at most three fractional digits. `buffaloCount` must be positive. The API accepts `L`, `LITRE`, or `LITRES` case-insensitively and normalizes stored results to `L`.
+
+`GET /dairy/branches/{branchId}/production?fromDate={yyyy-MM-dd}&toDate={yyyy-MM-dd}`
+
+Returns production entries and their automatically created batches. Date filters are optional, inclusive UTC dates, and `fromDate` cannot be after `toDate`.
+
+`GET /dairy/branches/{branchId}/batches?status={Available|Exhausted}`
+
+Returns branch batches, optionally filtered by status.
+
+`GET /dairy/batches/{batchId}`
+
+Returns a batch only when the caller has access to its branch. `batchId` is the batch public GUID.
+
+### Usage and dispatch ledger
+
+`POST /dairy/batches/{batchId}/usage`
+
+Requires `DAIRY.MANAGE`. Appends a milk usage or dispatch record.
+
+Request:
+
+```json
+{
+  "usedAtUtc": "2026-08-17T05:30:00Z",
+  "quantityUsed": 8.250,
+  "purpose": "Morning dispatch",
+  "remarks": "Route A"
+}
+```
+
+The timestamp must be UTC, cannot precede the batch production time, and cannot be more than five minutes in the future. Quantity must be positive with at most three fractional digits. Usage above current batch availability is rejected without adding a ledger row. Consuming the exact remaining quantity marks the batch `Exhausted`.
+
+`GET /dairy/branches/{branchId}/usage?fromDate={yyyy-MM-dd}&toDate={yyyy-MM-dd}`
+
+Returns the branch's append-only usage history with optional inclusive UTC date filters.
+
+Milk testing is not part of Phase 8. Doorstep and batch testing contracts belong to Phase 9 and no `/dairy/tests` endpoint is currently implemented.
+
+Order or subscription capacity reservation against dairy inventory is also outside the implemented Phase 8 contract. See the production-capacity rule and architecture boundary for the required future integration decision.
 
 ---
 

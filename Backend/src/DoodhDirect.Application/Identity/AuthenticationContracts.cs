@@ -100,9 +100,15 @@ public static class AuthorizationCodes
     public const string DeliveriesTrackAssigned = "DELIVERIES.TRACK_ASSIGNED";
     public const string DeliveriesReadBranch = "DELIVERIES.READ_BRANCH";
     public const string DeliveriesAssignBranch = "DELIVERIES.ASSIGN_BRANCH";
+    public const string MilkTestsRequestOwn = "MILK_TESTS.REQUEST_OWN";
+    public const string MilkTestsReadOwn = "MILK_TESTS.READ_OWN";
+    public const string MilkTestsDecideOwn = "MILK_TESTS.DECIDE_OWN";
+    public const string MilkTestsOperateAssigned = "MILK_TESTS.OPERATE_ASSIGNED";
     public const string WalletReadOwn = "WALLET.READ_OWN";
     public const string WalletTopUpOwn = "WALLET.TOPUP_OWN";
     public const string WalletAdjust = "WALLET.ADJUST";
+    public const string DairyRead = "DAIRY.READ";
+    public const string DairyManage = "DAIRY.MANAGE";
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -149,8 +155,14 @@ public static class AuthorizationCodes
         [DeliveriesTrackAssigned] = "Publish location for active assigned deliveries",
         [DeliveriesReadBranch] = "Read and monitor branch deliveries",
         [DeliveriesAssignBranch] = "Assign and reassign branch deliveries",
+        [MilkTestsRequestOwn] = "Request a doorstep milk test for an own eligible delivery",
+        [MilkTestsReadOwn] = "Read own doorstep milk-test status and completed evidence",
+        [MilkTestsDecideOwn] = "Confirm or reject an own completed doorstep milk test",
+        [MilkTestsOperateAssigned] = "Upload evidence and complete doorstep tests for assigned deliveries",
         [WalletReadOwn] = "Read own wallet and ledger",
         [WalletTopUpOwn] = "Top up own wallet through an approved development flow",
-        [WalletAdjust] = "Adjust customer wallets"
+        [WalletAdjust] = "Adjust customer wallets",
+        [DairyRead] = "Read branch dairy operations",
+        [DairyManage] = "Record branch dairy production and usage"
     };
 }

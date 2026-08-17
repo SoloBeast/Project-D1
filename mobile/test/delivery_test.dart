@@ -215,6 +215,7 @@ void main() {
       );
 
       expect(find.text('Live location'), findsOneWidget);
+      expect(find.text('Doorstep milk test'), findsOneWidget);
       expect(find.textContaining('18.52040'), findsNothing);
 
       await _pumpDeliveryScreen(
@@ -248,6 +249,7 @@ void main() {
       expect(find.text('Verify OTP'), findsOneWidget);
       expect(find.text('Complete delivery'), findsNothing);
       expect(find.text('Mark failed'), findsOneWidget);
+      expect(find.text('Perform milk test'), findsOneWidget);
 
       await _pumpDeliveryScreen(
         tester,
@@ -261,6 +263,19 @@ void main() {
 
       expect(find.text('Complete delivery'), findsOneWidget);
       expect(find.text('Verify OTP'), findsNothing);
+      expect(find.text('Perform milk test'), findsOneWidget);
+
+      await _pumpDeliveryScreen(
+        tester,
+        const StaffDeliveryDetailScreen(deliveryId: 'delivery-1'),
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(
+            deliveryDetailsJson(status: 'OutForDelivery'),
+          ),
+        ),
+      );
+
+      expect(find.text('Perform milk test'), findsNothing);
     });
 
     testWidgets('manager can select an employee and submit assignment', (
