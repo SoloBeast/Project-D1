@@ -1,3 +1,4 @@
+using System.Net;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Wallets;
@@ -110,6 +111,109 @@ public sealed class PaymentWalletServiceTests
             Assert.Equal(460m, exception.Shortfall);
             await harness.AssertInsufficientAttemptDidNotPersistAsync(expectedBalance: 340m);
         }
+    }
+
+    [Fact]
+    public async Task RazorpayPayment_BelowOneRupee_IsRejectedBeforeGatewayOrderCreation()
+    {
+        await using var harness = await PaymentHarness.CreateAsync(payableAmount: 0.99m);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.PaymentService.CreateAsync(
+                harness.Customer.Id,
+                new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+                "payment-below-gateway-minimum",
+                CancellationToken.None));
+
+        Assert.Equal(
+            "The payment amount must be at least 100 paise and representable by the gateway.",
+            exception.Message);
+        Assert.Equal(OrderStatus.PendingPayment, (await harness.Db.Orders.SingleAsync()).Status);
+        Assert.Equal(PaymentStatus.Initiated, (await harness.Db.Payments.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task RazorpayGateway_NonSuccessResponse_PreservesOnlySanitizedProviderDiagnostic()
+    {
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(
+                "{\"error\":{\"code\":\"BAD_REQUEST_ERROR\",\"description\":\"Invalid   key_id\\nvalue\",\"metadata\":{\"secret\":\"do-not-return\"}}}")
+        });
+        using var client = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://api.razorpay.com/v1/")
+        };
+        var gateway = new RazorpayPaymentGateway(
+            client,
+            Options.Create(new PaymentOptions
+            {
+                Provider = "Razorpay",
+                Currency = "INR",
+                RazorpayKeyId = "rzp_test_public",
+                RazorpayKeySecret = "api-secret"
+            }));
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            gateway.CreateOrderAsync(
+                new GatewayOrderRequest(
+                    Guid.NewGuid(), "DD-TEST", 100, "INR", DateTime.UtcNow.AddMinutes(15)),
+                CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Contains("HTTP 400", exception.Message);
+        Assert.Contains("Provider code: BAD_REQUEST_ERROR", exception.Message);
+        Assert.Contains("Provider description: Invalid key_id value", exception.Message);
+        Assert.DoesNotContain("do-not-return", exception.Message);
+        Assert.DoesNotContain("api-secret", exception.Message);
+    }
+
+    [Fact]
+    public async Task RazorpayGateway_NonJsonFailure_UsesStatusOnlyDiagnostic()
+    {
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent("upstream failure with sensitive detail")
+        });
+        using var client = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://api.razorpay.com/v1/")
+        };
+        var gateway = new RazorpayPaymentGateway(
+            client,
+            Options.Create(new PaymentOptions
+            {
+                Provider = "Razorpay",
+                Currency = "INR",
+                RazorpayKeyId = "rzp_test_public",
+                RazorpayKeySecret = "api-secret"
+            }));
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            gateway.CreateOrderAsync(
+                new GatewayOrderRequest(
+                    Guid.NewGuid(), "DD-TEST", 100, "INR", DateTime.UtcNow.AddMinutes(15)),
+                CancellationToken.None));
+
+        Assert.Equal("Razorpay request failed with HTTP 502.", exception.Message);
+        Assert.DoesNotContain("sensitive detail", exception.Message);
+    }
+
+    [Fact]
+    public void RazorpayWebhook_WithoutWebhookSecret_FailsClosed()
+    {
+        var options = Options.Create(new PaymentOptions
+        {
+            Provider = "Razorpay",
+            Currency = "INR",
+            RazorpayKeyId = "rzp_test_public",
+            RazorpayKeySecret = "api-secret",
+            RazorpayWebhookSecret = null,
+            MockSigningSecret = "unused"
+        });
+        var gateway = new RazorpayPaymentGateway(new HttpClient(), options);
+
+        Assert.False(gateway.VerifyWebhookSignature("{}"u8, "any-signature"));
     }
 
     [Fact]
@@ -334,5 +438,13 @@ public sealed class PaymentWalletServiceTests
             await Db.DisposeAsync();
             await connection.DisposeAsync();
         }
+    }
+
+    private sealed class StubHttpMessageHandler(
+        Func<HttpRequestMessage, HttpResponseMessage> responseFactory) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) => Task.FromResult(responseFactory(request));
     }
 }

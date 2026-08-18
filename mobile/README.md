@@ -21,9 +21,17 @@ The `mobile` project is the DoodhDirect client for Android, iOS, and web. It imp
 
 The centralized Development web API base URL defaults to `http://localhost:5209`. The `DOOHDIRECT_API_URL` Dart define can override it for Production and other deployment-specific endpoints. `DOOHDIRECT_ENABLE_DEV_TOOLS=true` exposes the quick customer login, wallet top-up, and mock payment controls; do not set it for distributable builds.
 
+Flutter Web Maps uses the existing local Dart-define configuration pattern. Supply the Google Maps JavaScript API key through `DOOHDIRECT_GOOGLE_MAPS_API_KEY`; it is injected only into the local Web build at runtime. Do not hard-code it in Dart or `web/index.html`, commit it to the repository, print it in logs, or copy it from `Project D Credentials.txt`. The Google Cloud key must allow the exact origin `http://localhost:51482/` and be restricted to the Maps JavaScript API. Places API and Geocoding API are not required by this feature.
+
+Run the Web app on port `51482` so the configured website restriction matches the browser origin. In PowerShell, store the key only in the current local shell session before starting Flutter:
+
 ```powershell
+$env:DOOHDIRECT_GOOGLE_MAPS_API_KEY = '<local key value>'
 flutter pub get
-flutter run -d chrome --dart-define=DOOHDIRECT_API_URL=http://localhost:5209 --dart-define=DOOHDIRECT_ENABLE_DEV_TOOLS=true
+flutter run -d chrome --web-port 51482 `
+  --dart-define=DOOHDIRECT_API_URL=http://localhost:5209 `
+  --dart-define=DOOHDIRECT_ENABLE_DEV_TOOLS=true `
+  --dart-define=DOOHDIRECT_GOOGLE_MAPS_API_KEY=$env:DOOHDIRECT_GOOGLE_MAPS_API_KEY
 ```
 
 For an Android emulator connecting to the Development HTTP profile, use an API hostname reachable from the emulator, commonly `http://10.0.2.2:5209`. A physical device must use the development machine's reachable LAN hostname or address.
@@ -50,14 +58,26 @@ For an Android emulator connecting to the Development HTTP profile, use an API h
 
 The backend fixture is activated only by the ASP.NET Development environment. The visual shortcuts are compiled out unless `DOOHDIRECT_ENABLE_DEV_TOOLS` is explicitly enabled.
 
+## Development UAT accounts
+
+Development startup creates these local-only accounts with the normal password hasher and JWT authentication flow. Every account uses the password `DoodhDirect@123` and is never seeded outside the ASP.NET Development environment.
+
+| Role | Email | Scope |
+| --- | --- | --- |
+| `OWNER` | `owner@doodhdirect.local` | Global |
+| `SYSTEM_ADMIN` | `system.admin@doodhdirect.local` | Global |
+| `DELIVERY_MANAGER` | `delivery.manager@doodhdirect.local` | `MAIN` branch |
+| `CUSTOMER_SUPPORT` | `support@doodhdirect.local` | `MAIN` branch |
+| `ACCOUNTANT` | `accountant@doodhdirect.local` | `MAIN` branch |
+
 ## Local dairy operations workflow
 
 Development startup creates a dairy manager scoped only to the `MAIN` branch: `dairy.manager@doodhdirect.local` / `DoodhDirect@123`. Sign in with this account to record production, inspect the automatically-created batch, review operational availability, and append batch usage. The fixture uses the normal password hasher and JWT authentication flow and is never seeded outside the ASP.NET Development environment.
 
 ## Local delivery workflow
 
-1. Complete the local payment and wallet workflow through a confirmed customer order. Development startup now also creates a branch-scoped delivery staff account for `MAIN`: `delivery@doodhdirect.local` / `DoodhDirect@123`.
-2. Use an account with `DELIVERIES.ASSIGN_BRANCH` and `DELIVERIES.READ_BRANCH` access for `MAIN` to open the manager workspace. The Development fixture intentionally does not create a manager or owner account; assign those permissions and the `MAIN` branch scope to an existing local employee before this step.
+1. Complete the local payment and wallet workflow through a confirmed customer order. Development startup also creates a branch-scoped delivery staff account for `MAIN`: `delivery@doodhdirect.local` / `DoodhDirect@123`.
+2. Sign in as `delivery.manager@doodhdirect.local` to open the manager workspace for the `MAIN` branch. The `OWNER` and `SYSTEM_ADMIN` accounts have global access for workflows that require it.
 3. In the manager workspace, materialize eligible deliveries through the order's scheduled date, open the `MAIN` branch queue, and assign the order's delivery to Development Delivery Staff.
 4. Sign out and sign in as `delivery@doodhdirect.local`. The staff workspace shows assigned deliveries for the selected date. Open the assigned delivery and perform Pickup, Start delivery, and Arrive in that order.
 5. With a configured server-side OTP delivery provider, issue the OTP and verify the customer-provided code, then complete the delivery. Alternatively, exercise the failed-delivery action with a supported failure reason and optional coordinates.
@@ -74,5 +94,7 @@ flutter analyze
 flutter test
 flutter build web --release
 ```
+
+For Maps UAT, start the Web server with `--web-port 51482`, open `http://localhost:51482/`, sign in as the Development customer, and open Customer account > Addresses > Add address. Confirm that the map loads near Faridabad, a marker is visible, tapping the map updates latitude and longitude, manual coordinate entry still works, reverse lookup still uses the backend, and saving continues through the existing address API.
 
 The client expects the API routes documented in [`Document/05_API_Specification.md`](../Document/05_API_Specification.md), including authentication, customer, catalogue, order, payment, wallet, and delivery routes.

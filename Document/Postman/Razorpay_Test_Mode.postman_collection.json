@@ -1,0 +1,442 @@
+{
+    "info": {
+        "_postman_id": "doodhdirect-razorpay-test-mode",
+        "name": "Razorpay Test Mode API",
+        "description": "Razorpay REST API requests for Test Mode. Set the collection variables before running. Never commit real secrets.",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "variable": [
+        {
+            "key": "razorpay_base_url",
+            "value": "https://api.razorpay.com/v1"
+        },
+        {
+            "key": "key_id",
+            "value": "rzp_test_REPLACE_ME"
+        },
+        {
+            "key": "key_secret",
+            "value": "REPLACE_ME",
+            "type": "secret"
+        },
+        {
+            "key": "order_id",
+            "value": ""
+        },
+        {
+            "key": "payment_id",
+            "value": ""
+        },
+        {
+            "key": "refund_id",
+            "value": ""
+        },
+        {
+            "key": "amount_minor",
+            "value": "10000"
+        },
+        {
+            "key": "currency",
+            "value": "INR"
+        },
+        {
+            "key": "receipt",
+            "value": "postman_test_receipt"
+        },
+        {
+            "key": "doodhdirect_base_url",
+            "value": "http://localhost:5209"
+        },
+        {
+            "key": "access_token",
+            "value": "",
+            "type": "secret"
+        },
+        {
+            "key": "doodhdirect_order_id",
+            "value": ""
+        },
+        {
+            "key": "doodhdirect_payment_id",
+            "value": ""
+        },
+        {
+            "key": "doodhdirect_gateway_order_id",
+            "value": ""
+        },
+        {
+            "key": "doodhdirect_gateway_key_id",
+            "value": ""
+        },
+        {
+            "key": "doodhdirect_idempotency_key",
+            "value": "postman-payment-{{$guid}}"
+        }
+    ],
+    "item": [
+        {
+            "name": "DoodhDirect Application",
+            "description": "Application-side payment creation. This creates the DoodhDirect payment and Razorpay order before Standard Checkout is opened in a browser. Raw card submission is not supported through the Razorpay REST API.",
+            "item": [
+                {
+                    "name": "Create Payment and Razorpay Order",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Authorization",
+                                "value": "Bearer {{access_token}}"
+                            },
+                            {
+                                "key": "Idempotency-Key",
+                                "value": "{{doodhdirect_idempotency_key}}"
+                            }
+                        ],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"orderId\": \"{{doodhdirect_order_id}}\",\n  \"method\": \"Razorpay\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{doodhdirect_base_url}}/api/v1/payments/create",
+                            "host": [
+                                "{{doodhdirect_base_url}}"
+                            ],
+                            "path": [
+                                "api",
+                                "v1",
+                                "payments",
+                                "create"
+                            ]
+                        },
+                        "description": "Creates the local DoodhDirect payment and its Razorpay order. Requires a customer bearer token with the PaymentsCreateOwn permission, an existing pending order UUID, and a unique Idempotency-Key. Complete card payment through Razorpay Standard Checkout in the application/browser."
+                    },
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "if (pm.response.code === 201) {",
+                                    "    const json = pm.response.json();",
+                                    "    const data = json.data;",
+                                    "    if (data && data.publicId) pm.collectionVariables.set('doodhdirect_payment_id', data.publicId);",
+                                    "    if (data && data.gatewayOrderId) {",
+                                    "        pm.collectionVariables.set('doodhdirect_gateway_order_id', data.gatewayOrderId);",
+                                    "        pm.collectionVariables.set('order_id', data.gatewayOrderId);",
+                                    "    }",
+                                    "    if (data && data.gatewayKeyId) pm.collectionVariables.set('doodhdirect_gateway_key_id', data.gatewayKeyId);",
+                                    "}"
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Orders",
+            "item": [
+                {
+                    "name": "Create Test Order",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "auth": {
+                            "type": "basic",
+                            "basic": [
+                                {
+                                    "key": "username",
+                                    "value": "{{key_id}}",
+                                    "type": "string"
+                                },
+                                {
+                                    "key": "password",
+                                    "value": "{{key_secret}}",
+                                    "type": "string"
+                                }
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"amount\": {{amount_minor}},\n  \"currency\": \"{{currency}}\",\n  \"receipt\": \"{{receipt}}\",\n  \"notes\": {\n    \"source\": \"postman\"\n  }\n}"
+                        },
+                        "url": {
+                            "raw": "{{razorpay_base_url}}/orders",
+                            "host": [
+                                "{{razorpay_base_url}}"
+                            ],
+                            "path": [
+                                "orders"
+                            ]
+                        },
+                        "description": "Creates a fresh Razorpay Test Mode order. Amount is in the smallest currency unit, so 10000 means INR 100."
+                    },
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "if (pm.response.code === 200) {",
+                                    "    const json = pm.response.json();",
+                                    "    if (json.id) pm.collectionVariables.set('order_id', json.id);",
+                                    "}"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "Fetch Order",
+                    "request": {
+                        "method": "GET",
+                        "auth": {
+                            "type": "basic",
+                            "basic": [
+                                {
+                                    "key": "username",
+                                    "value": "{{key_id}}",
+                                    "type": "string"
+                                },
+                                {
+                                    "key": "password",
+                                    "value": "{{key_secret}}",
+                                    "type": "string"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{razorpay_base_url}}/orders/{{order_id}}",
+                            "host": [
+                                "{{razorpay_base_url}}"
+                            ],
+                            "path": [
+                                "orders",
+                                "{{order_id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "List Order Payments",
+                    "request": {
+                        "method": "GET",
+                        "auth": {
+                            "type": "basic",
+                            "basic": [
+                                {
+                                    "key": "username",
+                                    "value": "{{key_id}}",
+                                    "type": "string"
+                                },
+                                {
+                                    "key": "password",
+                                    "value": "{{key_secret}}",
+                                    "type": "string"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{razorpay_base_url}}/orders/{{order_id}}/payments",
+                            "host": [
+                                "{{razorpay_base_url}}"
+                            ],
+                            "path": [
+                                "orders",
+                                "{{order_id}}",
+                                "payments"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Payments",
+            "item": [
+                {
+                    "name": "Fetch Payment",
+                    "request": {
+                        "method": "GET",
+                        "auth": {
+                            "type": "basic",
+                            "basic": [
+                                {
+                                    "key": "username",
+                                    "value": "{{key_id}}",
+                                    "type": "string"
+                                },
+                                {
+                                    "key": "password",
+                                    "value": "{{key_secret}}",
+                                    "type": "string"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{razorpay_base_url}}/payments/{{payment_id}}",
+                            "host": [
+                                "{{razorpay_base_url}}"
+                            ],
+                            "path": [
+                                "payments",
+                                "{{payment_id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "Capture Payment",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "auth": {
+                            "type": "basic",
+                            "basic": [
+                                {
+                                    "key": "username",
+                                    "value": "{{key_id}}",
+                                    "type": "string"
+                                },
+                                {
+                                    "key": "password",
+                                    "value": "{{key_secret}}",
+                                    "type": "string"
+                                }
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"amount\": {{amount_minor}},\n  \"currency\": \"{{currency}}\"\n}"
+                        },
+                        "url": {
+                            "raw": "{{razorpay_base_url}}/payments/{{payment_id}}/capture",
+                            "host": [
+                                "{{razorpay_base_url}}"
+                            ],
+                            "path": [
+                                "payments",
+                                "{{payment_id}}",
+                                "capture"
+                            ]
+                        },
+                        "description": "Captures an authorized payment. Only run this after a payment has been authorized and remains uncaptured."
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Refunds",
+            "item": [
+                {
+                    "name": "Create Refund",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "X-Razorpay-Idempotency-Key",
+                                "value": "postman-refund-{{$guid}}"
+                            }
+                        ],
+                        "auth": {
+                            "type": "basic",
+                            "basic": [
+                                {
+                                    "key": "username",
+                                    "value": "{{key_id}}",
+                                    "type": "string"
+                                },
+                                {
+                                    "key": "password",
+                                    "value": "{{key_secret}}",
+                                    "type": "string"
+                                }
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n  \"amount\": {{amount_minor}},\n  \"speed\": \"normal\",\n  \"notes\": {\n    \"source\": \"postman\"\n  }\n}"
+                        },
+                        "url": {
+                            "raw": "{{razorpay_base_url}}/payments/{{payment_id}}/refund",
+                            "host": [
+                                "{{razorpay_base_url}}"
+                            ],
+                            "path": [
+                                "payments",
+                                "{{payment_id}}",
+                                "refund"
+                            ]
+                        },
+                        "description": "Refunds a captured payment. Set amount_minor to the amount to refund."
+                    },
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "type": "text/javascript",
+                                "exec": [
+                                    "if (pm.response.code === 200) {",
+                                    "    const json = pm.response.json();",
+                                    "    if (json.id) pm.collectionVariables.set('refund_id', json.id);",
+                                    "}"
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "name": "Fetch Refund",
+                    "request": {
+                        "method": "GET",
+                        "auth": {
+                            "type": "basic",
+                            "basic": [
+                                {
+                                    "key": "username",
+                                    "value": "{{key_id}}",
+                                    "type": "string"
+                                },
+                                {
+                                    "key": "password",
+                                    "value": "{{key_secret}}",
+                                    "type": "string"
+                                }
+                            ]
+                        },
+                        "url": {
+                            "raw": "{{razorpay_base_url}}/payments/{{payment_id}}/refunds/{{refund_id}}",
+                            "host": [
+                                "{{razorpay_base_url}}"
+                            ],
+                            "path": [
+                                "payments",
+                                "{{payment_id}}",
+                                "refunds",
+                                "{{refund_id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    ]
+}

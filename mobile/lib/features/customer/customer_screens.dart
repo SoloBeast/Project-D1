@@ -1,8 +1,10 @@
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
+import 'package:doodh_direct_mobile/features/customer/google_map_coordinate_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:go_router/go_router.dart';
 
 class CustomerOverviewScreen extends ConsumerStatefulWidget {
@@ -455,8 +457,14 @@ class _CustomerAddressEditScreenState
             const SizedBox(height: 8),
             Text('Location', style: Theme.of(context).textTheme.titleMedium),
             const Text(
-              'Enter the map pin coordinates. A production map provider can be connected without changing this workflow.',
+              'Tap the map to place the delivery pin, or enter coordinates manually.',
             ),
+            const SizedBox(height: 12),
+            GoogleMapCoordinatePicker(
+              initialLocation: _initialMapLocation(),
+              onLocationSelected: _setMapLocation,
+            ),
+            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
@@ -516,6 +524,23 @@ class _CustomerAddressEditScreenState
         ),
       ),
     );
+  }
+
+  LatLng? _initialMapLocation() {
+    final latitude = double.tryParse(_fields['latitude']!.text);
+    final longitude = double.tryParse(_fields['longitude']!.text);
+    if (latitude == null || longitude == null) return null;
+    if (!latitude.isFinite || !longitude.isFinite) return null;
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return null;
+    }
+    return LatLng(latitude, longitude);
+  }
+
+  void _setMapLocation(LatLng location) {
+    _fields['latitude']!.text = location.latitude.toStringAsFixed(6);
+    _fields['longitude']!.text = location.longitude.toStringAsFixed(6);
+    setState(() {});
   }
 
   Widget _text(

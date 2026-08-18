@@ -157,7 +157,8 @@ public sealed class PaymentsWalletControllerTests
         Assert.False(isValid);
         Assert.Contains(results, result => result.MemberNames.Contains(nameof(PaymentOptions.RazorpayKeyId)));
         Assert.Contains(results, result => result.MemberNames.Contains(nameof(PaymentOptions.RazorpayKeySecret)));
-        Assert.Contains(results, result => result.MemberNames.Contains(nameof(PaymentOptions.RazorpayWebhookSecret)));
+        Assert.DoesNotContain(results, result =>
+            result.MemberNames.Contains(nameof(PaymentOptions.RazorpayWebhookSecret)));
     }
 
     [Fact]

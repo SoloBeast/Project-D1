@@ -87,7 +87,9 @@ class _RazorpayWebPaymentGatewayLauncher
 
 String? _stringProperty(JSObject object, String name) {
   final value = object.getProperty<JSAny?>(name.toJS);
-  return value is JSString && value.toDart.isNotEmpty ? value.toDart : null;
+  if (value == null || !value.isA<JSString>()) return null;
+  final text = (value as JSString).toDart;
+  return text.isNotEmpty ? text : null;
 }
 
 @JS('Razorpay')

@@ -299,9 +299,10 @@ class _SubscriptionSetupScreenState
     if (payment.method == PaymentMethod.razorpay &&
         !payment.usesMockGateway &&
         payment.status.isPending) {
-      await ref
+      final verified = await ref
           .read(paymentControllerProvider.notifier)
           .openRazorpayAndVerify();
+      if (!mounted || !verified) return;
     }
     if (!mounted) return;
     await context.push('/payments/${payment.publicId}/result');
@@ -694,9 +695,10 @@ class _SubscriptionDetailScreenState
     if (payment.method == PaymentMethod.razorpay &&
         !payment.usesMockGateway &&
         payment.status.isPending) {
-      await ref
+      final verified = await ref
           .read(paymentControllerProvider.notifier)
           .openRazorpayAndVerify();
+      if (!mounted || !verified) return;
     }
     if (!mounted) return;
     await context.push('/payments/${payment.publicId}/result');

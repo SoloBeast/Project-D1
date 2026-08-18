@@ -150,6 +150,7 @@ public static class DependencyInjection
         services.AddScoped<DevelopmentCustomerSeedService>();
         services.AddScoped<DevelopmentDeliveryStaffSeedService>();
         services.AddScoped<DevelopmentDairyManagerSeedService>();
+        services.AddScoped<DevelopmentUatUserSeedService>();
         services.AddScoped<CatalogueSeedService>();
         services.AddScoped<NotificationTemplateSeedService>();
         if (environment.IsDevelopment())

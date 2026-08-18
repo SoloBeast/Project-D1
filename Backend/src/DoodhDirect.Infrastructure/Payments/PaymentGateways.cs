@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -275,13 +276,61 @@ public sealed class RazorpayPaymentGateway(
         var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new HttpRequestException(
-                $"Razorpay request failed with HTTP {(int)response.StatusCode}.",
-                null,
-                response.StatusCode);
+            throw CreateGatewayException(response.StatusCode, bytes);
         }
 
         return JsonDocument.Parse(bytes);
+    }
+
+    private static HttpRequestException CreateGatewayException(
+        HttpStatusCode statusCode,
+        byte[] responseBody)
+    {
+        var message = $"Razorpay request failed with HTTP {(int)statusCode}.";
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            var error = document.RootElement.TryGetProperty("error", out var errorElement)
+                ? errorElement
+                : default;
+            var code = ReadSafeDiagnostic(error, "code");
+            var description = ReadSafeDiagnostic(error, "description");
+            if (code is not null || description is not null)
+            {
+                message += $" Provider code: {code ?? "unknown"}.";
+                if (description is not null)
+                {
+                    message += $" Provider description: {description}.";
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // Keep the transport error generic when the provider body is not JSON.
+        }
+
+        return new HttpRequestException(message, null, statusCode);
+    }
+
+    private static string? ReadSafeDiagnostic(JsonElement error, string propertyName)
+    {
+        if (error.ValueKind != JsonValueKind.Object ||
+            !error.TryGetProperty(propertyName, out var property) ||
+            property.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        var value = property.GetString();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = string.Join(
+            ' ',
+            value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return normalized.Length <= 240 ? normalized : normalized[..240];
     }
 
     private static string RequiredString(JsonElement element, string propertyName) =>
