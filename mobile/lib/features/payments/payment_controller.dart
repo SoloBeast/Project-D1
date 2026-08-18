@@ -21,18 +21,21 @@ final paymentControllerProvider =
 class PaymentState {
   const PaymentState({
     this.payment,
+    this.capabilities = const [],
     this.selectedMethod = PaymentMethod.wallet,
     this.isLoading = false,
     this.errorMessage,
   });
 
   final PaymentDetails? payment;
+  final List<PaymentCapability> capabilities;
   final PaymentMethod selectedMethod;
   final bool isLoading;
   final String? errorMessage;
 
   PaymentState copyWith({
     PaymentDetails? payment,
+    List<PaymentCapability>? capabilities,
     PaymentMethod? selectedMethod,
     bool? isLoading,
     String? errorMessage,
@@ -40,6 +43,7 @@ class PaymentState {
     bool clearError = false,
   }) => PaymentState(
     payment: clearPayment ? null : payment ?? this.payment,
+    capabilities: capabilities ?? this.capabilities,
     selectedMethod: selectedMethod ?? this.selectedMethod,
     isLoading: isLoading ?? this.isLoading,
     errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
@@ -53,7 +57,33 @@ class PaymentController extends Notifier<PaymentState> {
       ref.read(sessionControllerProvider).session?.accessToken;
 
   @override
-  PaymentState build() => const PaymentState();
+  PaymentState build() {
+    Future.microtask(loadCapabilities);
+    return const PaymentState();
+  }
+
+  Future<bool> loadCapabilities() async {
+    final token = _token;
+    if (token == null) return false;
+    try {
+      final capabilities = await _repository.getCapabilities(token);
+      final available = capabilities.where((item) => item.isAvailable).toList();
+      final selected = available.any((item) => item.method == state.selectedMethod)
+          ? state.selectedMethod
+          : available.firstOrNull?.method ?? PaymentMethod.wallet;
+      state = state.copyWith(
+        capabilities: capabilities,
+        selectedMethod: selected,
+        clearError: true,
+      );
+      return true;
+    } on ApiException catch (error) {
+      state = state.copyWith(errorMessage: error.message);
+    } on Object {
+      state = state.copyWith(errorMessage: _offlineMessage);
+    }
+    return false;
+  }
 
   void selectMethod(PaymentMethod method) {
     state = state.copyWith(selectedMethod: method, clearError: true);
@@ -123,8 +153,8 @@ class PaymentController extends Notifier<PaymentState> {
     final current = state.payment;
     if (token == null ||
         current == null ||
-        current.method != PaymentMethod.razorpay ||
-        current.usesMockGateway) {
+        !current.usesRazorpay ||
+        !current.status.isPending) {
       return false;
     }
 
@@ -152,21 +182,18 @@ class PaymentController extends Notifier<PaymentState> {
     return false;
   }
 
-  Future<bool> verifyDevelopmentMock() async {
+  Future<bool> completeDevelopment() async {
     final token = _token;
     final current = state.payment;
-    if (token == null || current == null || !current.usesMockGateway) {
+    if (token == null || current == null || !current.usesDevelopmentMock) {
       return false;
     }
 
     state = state.copyWith(isLoading: true, clearError: true);
     try {
-      final payment = await _repository.verify(
+      final payment = await _repository.completeDevelopment(
         token: token,
         paymentId: current.publicId,
-        gatewayOrderId: current.gatewayOrderId!,
-        gatewayPaymentId: 'pay_mock_${current.publicId.replaceAll('-', '')}',
-        signature: 'mock_verified',
       );
       state = state.copyWith(payment: payment, isLoading: false);
       return true;

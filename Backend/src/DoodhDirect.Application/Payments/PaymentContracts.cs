@@ -24,6 +24,7 @@ public sealed record PaymentResult(
     Guid? OrderId,
     string? OrderNumber,
     PaymentMethod Method,
+    string Provider,
     PaymentStatus Status,
     decimal Amount,
     decimal RefundedAmount,
@@ -37,6 +38,13 @@ public sealed record PaymentResult(
     DateTime? VerifiedAtUtc,
     DateTime CreatedAtUtc,
     Guid? SubscriptionId = null);
+
+public sealed record PaymentCapability(
+    PaymentMethod Method,
+    string Provider,
+    string Label,
+    bool IsAvailable,
+    string? UnavailableReason = null);
 
 public sealed record RefundResult(
     Guid PublicId,
@@ -150,6 +158,14 @@ public interface IPaymentService
         VerifyPaymentRequest request,
         CancellationToken cancellationToken);
 
+    Task<PaymentResult> CompleteDevelopmentAsync(
+        long customerId,
+        Guid paymentId,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<PaymentCapability>> GetCapabilitiesAsync(
+        CancellationToken cancellationToken);
+
     Task<PaymentResult> GetAsync(
         long userId,
         Guid paymentId,
@@ -170,11 +186,20 @@ public interface IPaymentService
 
 public static class PaymentMappings
 {
-    public static PaymentResult ToResult(this Payment payment, string? gatewayKeyId = null) => new(
+    public static PaymentResult ToResult(
+        this Payment payment,
+        string? gatewayKeyId = null,
+        string? provider = null) => new(
         payment.PublicId,
         payment.Order?.PublicId,
         payment.Order?.OrderNumber,
         payment.Method,
+        provider ?? payment.Method switch
+        {
+            PaymentMethod.Wallet => "Wallet",
+            PaymentMethod.Development => "Mock",
+            _ => "Razorpay"
+        },
         payment.Status,
         payment.Amount,
         payment.RefundedAmount,

@@ -9,6 +9,7 @@ import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_models.dart';
+import 'package:doodh_direct_mobile/features/payments/payment_repository.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_controller.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_models.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_repository.dart';
@@ -443,6 +444,11 @@ void main() {
         expect(find.text('Whole Milk'), findsOneWidget);
         expect(find.text('Home - Pune'), findsOneWidget);
         expect(find.text('Total deliveries'), findsOneWidget);
+        await tester.scrollUntilVisible(
+          find.text('Prepaid estimate'),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
         expect(find.text('Prepaid estimate'), findsOneWidget);
         await tester.scrollUntilVisible(
           find.text('Continue to payment'),
@@ -542,6 +548,7 @@ void main() {
         expect(find.text('Complete Payment'), findsNWidgets(2));
         expect(find.text('DoodhDirect Wallet'), findsOneWidget);
         expect(find.text('Razorpay'), findsOneWidget);
+        expect(find.text('Development payment'), findsOneWidget);
         expect(find.text('Retry Payment'), findsNothing);
       },
     );
@@ -569,6 +576,7 @@ void main() {
       expect(find.text('Retry Payment'), findsNWidgets(2));
       expect(find.text('DoodhDirect Wallet'), findsOneWidget);
       expect(find.text('Razorpay'), findsOneWidget);
+      expect(find.text('Development payment'), findsOneWidget);
       expect(find.text('Pause subscription'), findsNothing);
       expect(find.text('Resume subscription'), findsNothing);
     });
@@ -729,6 +737,7 @@ Map<String, dynamic> subscriptionJson({String status = 'Active'}) => {
 Map<String, dynamic> paymentJson({
   String publicId = 'payment-1',
   String method = 'Wallet',
+  String? provider,
   String status = 'Success',
 }) => {
   'publicId': publicId,
@@ -736,6 +745,7 @@ Map<String, dynamic> paymentJson({
   'orderNumber': null,
   'subscriptionId': 'subscription-1',
   'method': method,
+  'provider': provider ?? (method == 'Development' ? 'Mock' : method),
   'status': status,
   'amount': 2025,
   'refundedAmount': 0,
@@ -780,10 +790,12 @@ Future<ProviderContainer> authenticatedContainer(
   final container = ProviderContainer(
     overrides: [
       authRepositoryProvider.overrideWithValue(_AuthenticatedRepository()),
+      paymentRepositoryProvider.overrideWithValue(_FakePaymentRepository()),
       subscriptionRepositoryProvider.overrideWithValue(repository),
     ],
   );
   container.read(sessionControllerProvider);
+  container.listen(paymentControllerProvider, (_, _) {});
   await Future<void>.delayed(Duration.zero);
   return container;
 }
@@ -818,6 +830,29 @@ Future<void> pumpScreen(
 class _AuthenticatedRepository extends AuthRepository {
   @override
   Future<AuthSession?> restore() async => _session;
+}
+
+class _FakePaymentRepository extends PaymentRepository {
+  _FakePaymentRepository()
+    : super(api: ApiClient(baseUrl: 'https://api.example.test'));
+
+  @override
+  Future<List<PaymentCapability>> getCapabilities(String token) async => const [
+    PaymentCapability(
+      method: PaymentMethod.wallet,
+      provider: 'Wallet',
+      label: 'DoodhDirect Wallet',
+      isAvailable: true,
+      unavailableReason: null,
+    ),
+    PaymentCapability(
+      method: PaymentMethod.razorpay,
+      provider: 'Razorpay',
+      label: 'Razorpay',
+      isAvailable: true,
+      unavailableReason: null,
+    ),
+  ];
 }
 
 class _FakeSubscriptionRepository extends SubscriptionRepository {

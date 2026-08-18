@@ -211,6 +211,10 @@ class _SubscriptionSetupScreenState
                 value: PaymentMethod.razorpay,
                 title: Text('Razorpay'),
               ),
+              RadioListTile(
+                value: PaymentMethod.development,
+                title: Text('Development payment'),
+              ),
             ],
           ),
         ),
@@ -296,9 +300,7 @@ class _SubscriptionSetupScreenState
         );
     if (!mounted || created == null) return;
     final payment = created.payment;
-    if (payment.method == PaymentMethod.razorpay &&
-        !payment.usesMockGateway &&
-        payment.status.isPending) {
+    if (payment.usesRazorpay && payment.status.isPending) {
       final verified = await ref
           .read(paymentControllerProvider.notifier)
           .openRazorpayAndVerify();
@@ -605,6 +607,10 @@ class _SubscriptionDetailScreenState
                   value: PaymentMethod.razorpay,
                   title: Text('Razorpay'),
                 ),
+                RadioListTile(
+                  value: PaymentMethod.development,
+                  title: Text('Development payment'),
+                ),
               ],
             ),
           ),
@@ -692,9 +698,7 @@ class _SubscriptionDetailScreenState
     if (!mounted || created == null) return;
 
     final payment = created.payment;
-    if (payment.method == PaymentMethod.razorpay &&
-        !payment.usesMockGateway &&
-        payment.status.isPending) {
+    if (payment.usesRazorpay && payment.status.isPending) {
       final verified = await ref
           .read(paymentControllerProvider.notifier)
           .openRazorpayAndVerify();

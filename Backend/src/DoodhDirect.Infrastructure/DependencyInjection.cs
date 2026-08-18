@@ -65,6 +65,11 @@ public static class DependencyInjection
         services.AddOptions<PaymentOptions>()
             .Bind(configuration.GetSection(PaymentOptions.SectionName))
             .ValidateDataAnnotations()
+            .Validate(
+                options => options.IsValidForEnvironment(environment.IsDevelopment()),
+                environment.IsDevelopment()
+                    ? "Development payment configuration must use Mock or Razorpay with both credentials configured."
+                    : "Production payment configuration must use Razorpay with both credentials configured.")
             .ValidateOnStart();
         services.AddOptions<DeliveryOptions>()
             .Bind(configuration.GetSection(DeliveryOptions.SectionName))
@@ -139,12 +144,7 @@ public static class DependencyInjection
             client.Timeout = TimeSpan.FromSeconds(30);
         });
         services.AddScoped<IPaymentGateway>(provider =>
-        {
-            var paymentOptions = provider.GetRequiredService<IOptions<PaymentOptions>>().Value;
-            return paymentOptions.IsRazorpay
-                ? provider.GetRequiredService<RazorpayPaymentGateway>()
-                : provider.GetRequiredService<MockPaymentGateway>();
-        });
+            provider.GetRequiredService<RazorpayPaymentGateway>());
         services.AddSingleton<IAddressLocationLookup, UnconfiguredAddressLocationLookup>();
         services.AddScoped<IdentitySeedService>();
         services.AddScoped<DevelopmentCustomerSeedService>();

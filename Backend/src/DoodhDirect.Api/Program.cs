@@ -22,7 +22,10 @@ using Scalar.AspNetCore;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
-LoadLocalDotEnv(builder.Configuration, builder.Environment.ContentRootPath);
+LoadLocalDotEnv(
+    builder.Configuration,
+    builder.Environment.ContentRootPath,
+    builder.Environment.IsDevelopment());
 const string corsPolicyName = "DoodhDirectWeb";
 
 builder.Host.UseSerilog((context, services, configuration) => configuration
@@ -291,8 +294,16 @@ static void SetStringEnumSchema(
     };
 }
 
-static void LoadLocalDotEnv(ConfigurationManager configuration, string contentRootPath)
+static void LoadLocalDotEnv(
+    ConfigurationManager configuration,
+    string contentRootPath,
+    bool isDevelopment)
 {
+    if (!isDevelopment)
+    {
+        return;
+    }
+
     var directory = new DirectoryInfo(contentRootPath);
     while (directory is not null)
     {
@@ -322,7 +333,8 @@ static void LoadLocalDotEnv(ConfigurationManager configuration, string contentRo
             var mapped = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
             values.TryGetValue("RAZORPAY_KEY_ID", out var keyId);
             values.TryGetValue("RAZORPAY_KEY_SECRET", out var keySecret);
-            if (!string.IsNullOrWhiteSpace(keyId) && !string.IsNullOrWhiteSpace(keySecret))
+            if (!string.IsNullOrWhiteSpace(keyId) &&
+                !string.IsNullOrWhiteSpace(keySecret))
             {
                 mapped["Payments:Provider"] = "Razorpay";
                 mapped["Payments:RazorpayKeyId"] = keyId;

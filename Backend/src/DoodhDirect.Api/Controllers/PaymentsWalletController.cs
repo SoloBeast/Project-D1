@@ -19,6 +19,14 @@ namespace DoodhDirect.Api.Controllers;
 [Produces("application/json")]
 public sealed class PaymentsController(IPaymentService paymentService) : ControllerBase
 {
+    [HttpGet("capabilities")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsCreateOwn)]
+    [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<PaymentCapability>>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<PaymentCapability>>>> GetCapabilities(
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<IReadOnlyList<PaymentCapability>>.Ok(
+            await paymentService.GetCapabilitiesAsync(cancellationToken)));
+
     [HttpPost("create")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsCreateOwn)]
     [ProducesResponseType(typeof(ApiResponse<PaymentResult>), StatusCodes.Status201Created)]
@@ -49,6 +57,15 @@ public sealed class PaymentsController(IPaymentService paymentService) : Control
                 request.GatewayPaymentId,
                 request.Signature),
             cancellationToken)));
+
+    [HttpPost("{paymentId:guid}/complete-development")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsCreateOwn)]
+    [ProducesResponseType(typeof(ApiResponse<PaymentResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<PaymentResult>>> CompleteDevelopment(
+        Guid paymentId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<PaymentResult>.Ok(await paymentService.CompleteDevelopmentAsync(
+            RequireUserId(), paymentId, cancellationToken)));
 
     [HttpGet("{paymentId:guid}")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsReadOwn)]

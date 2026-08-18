@@ -25,6 +25,18 @@ public sealed class PaymentOptions : IValidatableObject
     public bool IsRazorpay =>
         string.Equals(Provider, "Razorpay", StringComparison.OrdinalIgnoreCase);
 
+    public bool IsMock =>
+        string.Equals(Provider, "Mock", StringComparison.OrdinalIgnoreCase);
+
+    public bool IsRazorpayConfigured =>
+        !string.IsNullOrWhiteSpace(RazorpayKeyId) &&
+        !string.IsNullOrWhiteSpace(RazorpayKeySecret);
+
+    public bool IsValidForEnvironment(bool isDevelopment) =>
+        isDevelopment
+            ? IsMock || IsRazorpay && IsRazorpayConfigured
+            : IsRazorpay && IsRazorpayConfigured;
+
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
         if (!IsRazorpay && !string.Equals(Provider, "Mock", StringComparison.OrdinalIgnoreCase))
@@ -41,24 +53,7 @@ public sealed class PaymentOptions : IValidatableObject
                 [nameof(Currency)]);
         }
 
-        if (!IsRazorpay)
-        {
-            yield break;
-        }
-
-        if (string.IsNullOrWhiteSpace(RazorpayKeyId))
-        {
-            yield return RequiredForRazorpay(nameof(RazorpayKeyId));
-        }
-
-        if (string.IsNullOrWhiteSpace(RazorpayKeySecret))
-        {
-            yield return RequiredForRazorpay(nameof(RazorpayKeySecret));
-        }
-
-        // Webhook verification fails closed when this separately managed secret is absent.
+        // Missing Razorpay credentials produce an unavailable capability. Requests still
+        // fail closed, without substituting the Development Mock provider.
     }
-
-    private static ValidationResult RequiredForRazorpay(string memberName) =>
-        new($"Payments:{memberName} is required when Payments:Provider is Razorpay.", [memberName]);
 }

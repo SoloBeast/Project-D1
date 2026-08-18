@@ -420,6 +420,12 @@ public sealed class SubscriptionServiceTests
                 null,
                 null,
                 method,
+                method switch
+                {
+                    PaymentMethod.Wallet => "Wallet",
+                    PaymentMethod.Development => "Mock",
+                    _ => "Razorpay"
+                },
                 PaymentStatus.Pending,
                 subscription.PayableAmount,
                 0m,
@@ -434,12 +440,19 @@ public sealed class SubscriptionServiceTests
                 clock.UtcNow,
                 subscription.PublicId);
         }
-
         public Task<PaymentResult> RetrySubscriptionAsync(
             long customerId,
             Guid subscriptionId,
             PaymentMethod method,
             string idempotencyKey,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<PaymentResult> CompleteDevelopmentAsync(
+            long customerId,
+            Guid paymentId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<PaymentCapability>> GetCapabilitiesAsync(
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<PaymentResult> CreateAsync(

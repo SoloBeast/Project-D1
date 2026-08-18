@@ -18,6 +18,7 @@ import 'package:http/testing.dart';
 
 Map<String, dynamic> paymentJson({
   String method = 'Razorpay',
+  String provider = 'Razorpay',
   String status = 'Pending',
   String? gatewayOrderId = 'order_mock_payment_1',
 }) => {
@@ -25,6 +26,7 @@ Map<String, dynamic> paymentJson({
   'orderId': 'order-1',
   'orderNumber': 'DD-000001',
   'method': method,
+  'provider': provider,
   'status': status,
   'amount': 90,
   'refundedAmount': 0,
@@ -75,8 +77,10 @@ void main() {
       final refunded = PaymentDetails.fromJson(paymentJson(status: 'Refunded'));
 
       expect(pending.method, PaymentMethod.razorpay);
+      expect(pending.provider, 'Razorpay');
       expect(pending.status.isPending, isTrue);
-      expect(pending.usesMockGateway, isTrue);
+      expect(pending.usesRazorpay, isTrue);
+      expect(pending.usesDevelopmentMock, isFalse);
       expect(pending.formattedAmount, '₹90.00');
       expect(failed.status.isTerminalFailure, isTrue);
       expect(refunded.status.isSuccessful, isTrue);
@@ -381,6 +385,17 @@ class _InsufficientWalletPaymentRepository extends PaymentRepository {
       );
 
   final String message;
+
+  @override
+  Future<List<PaymentCapability>> getCapabilities(String token) async => const [
+    PaymentCapability(
+      method: PaymentMethod.wallet,
+      provider: 'Wallet',
+      label: 'DoodhDirect Wallet',
+      isAvailable: true,
+      unavailableReason: null,
+    ),
+  ];
 
   @override
   Future<PaymentDetails> create({

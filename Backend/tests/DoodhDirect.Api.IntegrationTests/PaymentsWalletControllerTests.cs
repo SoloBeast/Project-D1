@@ -135,7 +135,7 @@ public sealed class PaymentsWalletControllerTests
     }
 
     [Fact]
-    public void PaymentOptions_RazorpayWithoutCredentials_FailsValidation()
+    public void PaymentOptions_RazorpayWithoutCredentials_IsUnavailable()
     {
         var options = new PaymentOptions
         {
@@ -154,15 +154,32 @@ public sealed class PaymentsWalletControllerTests
             results,
             validateAllProperties: true);
 
-        Assert.False(isValid);
-        Assert.Contains(results, result => result.MemberNames.Contains(nameof(PaymentOptions.RazorpayKeyId)));
-        Assert.Contains(results, result => result.MemberNames.Contains(nameof(PaymentOptions.RazorpayKeySecret)));
+        Assert.True(isValid);
+        Assert.Empty(results);
+        Assert.False(options.IsRazorpayConfigured);
         Assert.DoesNotContain(results, result =>
             result.MemberNames.Contains(nameof(PaymentOptions.RazorpayWebhookSecret)));
     }
 
     [Fact]
-    public void PaymentOptions_DevelopmentMockConfiguration_IsValid()
+    public void PaymentOptions_DevelopmentWithRazorpayCredentials_UsesRazorpay()
+    {
+        var options = new PaymentOptions
+        {
+            Provider = "Razorpay",
+            Currency = "INR",
+            PaymentExpiryMinutes = 15,
+            RazorpayKeyId = "rzp_test_key",
+            RazorpayKeySecret = "test-secret",
+            MockSigningSecret = "development-test-signing-secret"
+        };
+
+        Assert.True(options.IsValidForEnvironment(isDevelopment: true));
+        Assert.True(options.IsRazorpayConfigured);
+    }
+
+    [Fact]
+    public void PaymentOptions_DevelopmentWithoutRazorpayCredentials_UsesMock()
     {
         var options = new PaymentOptions
         {
@@ -171,16 +188,39 @@ public sealed class PaymentsWalletControllerTests
             PaymentExpiryMinutes = 15,
             MockSigningSecret = "development-test-signing-secret"
         };
-        var results = new List<ValidationResult>();
 
-        var isValid = Validator.TryValidateObject(
-            options,
-            new ValidationContext(options),
-            results,
-            validateAllProperties: true);
+        Assert.True(options.IsValidForEnvironment(isDevelopment: true));
+        Assert.True(options.IsMock);
+        Assert.False(options.IsRazorpayConfigured);
+    }
 
-        Assert.True(isValid);
-        Assert.Empty(results);
+    [Fact]
+    public void PaymentOptions_ProductionWithoutRazorpayCredentials_FailsClosed()
+    {
+        var options = new PaymentOptions
+        {
+            Provider = "Razorpay",
+            Currency = "INR",
+            PaymentExpiryMinutes = 15,
+            MockSigningSecret = "production-secret-placeholder"
+        };
+
+        Assert.False(options.IsValidForEnvironment(isDevelopment: false));
+        Assert.False(options.IsRazorpayConfigured);
+    }
+
+    [Fact]
+    public void PaymentOptions_ProductionMockProvider_IsRejected()
+    {
+        var options = new PaymentOptions
+        {
+            Provider = "Mock",
+            Currency = "INR",
+            PaymentExpiryMinutes = 15,
+            MockSigningSecret = "production-secret-placeholder"
+        };
+
+        Assert.False(options.IsValidForEnvironment(isDevelopment: false));
     }
 
     private static WalletController CreateWalletController(
@@ -239,6 +279,16 @@ public sealed class PaymentsWalletControllerTests
             long subscriptionId,
             PaymentMethod method,
             string idempotencyKey,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<PaymentResult> CompleteDevelopmentAsync(
+            long customerId,
+            Guid paymentId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<PaymentCapability>> GetCapabilitiesAsync(
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

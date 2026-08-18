@@ -8,7 +8,8 @@ namespace DoodhDirect.Domain.Payments;
 public enum PaymentMethod
 {
     Razorpay,
-    Wallet
+    Wallet,
+    Development
 }
 
 public enum PaymentStatus
@@ -120,9 +121,9 @@ public sealed class Payment : AuditableEntity
 
     public void AttachGatewayOrder(string gatewayOrderId, string gatewayStatus)
     {
-        if (Method != PaymentMethod.Razorpay)
+        if (Method is not (PaymentMethod.Razorpay or PaymentMethod.Development))
         {
-            throw new InvalidOperationException("Gateway references can only be attached to a Razorpay payment.");
+            throw new InvalidOperationException("Gateway references can only be attached to a gateway payment.");
         }
 
         if (Status != PaymentStatus.Initiated)
@@ -167,7 +168,8 @@ public sealed class Payment : AuditableEntity
             throw new InvalidOperationException($"A payment in status '{Status}' cannot succeed.");
         }
 
-        if (Method == PaymentMethod.Razorpay && string.IsNullOrWhiteSpace(gatewayPaymentId))
+        if (Method is PaymentMethod.Razorpay or PaymentMethod.Development &&
+            string.IsNullOrWhiteSpace(gatewayPaymentId))
         {
             throw new ArgumentException("A gateway payment reference is required.", nameof(gatewayPaymentId));
         }

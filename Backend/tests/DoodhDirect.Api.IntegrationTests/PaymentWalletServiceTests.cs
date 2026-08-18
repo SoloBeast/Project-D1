@@ -116,7 +116,18 @@ public sealed class PaymentWalletServiceTests
     [Fact]
     public async Task RazorpayPayment_BelowOneRupee_IsRejectedBeforeGatewayOrderCreation()
     {
-        await using var harness = await PaymentHarness.CreateAsync(payableAmount: 0.99m);
+        var options = Options.Create(new PaymentOptions
+        {
+            Provider = "Razorpay",
+            Currency = "INR",
+            RazorpayKeyId = "rzp_test_public",
+            RazorpayKeySecret = "api-secret",
+            MockSigningSecret = "unused"
+        });
+        await using var harness = await PaymentHarness.CreateAsync(
+            payableAmount: 0.99m,
+            paymentOptions: options,
+            gateway: new TestRazorpayGateway(options));
 
         var exception = await Assert.ThrowsAsync<BusinessRuleException>(() =>
             harness.PaymentService.CreateAsync(
@@ -166,6 +177,46 @@ public sealed class PaymentWalletServiceTests
         Assert.Contains("Provider description: Invalid key_id value", exception.Message);
         Assert.DoesNotContain("do-not-return", exception.Message);
         Assert.DoesNotContain("api-secret", exception.Message);
+    }
+
+    [Fact]
+    public async Task RazorpayCreateFailure_IsPersistedAndMappedToGenericBusinessRule()
+    {
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Unauthorized)
+        {
+            Content = new StringContent(
+                "{\"error\":{\"code\":\"AUTHENTICATION_ERROR\",\"description\":\"Invalid API key\"}}")
+        });
+        using var client = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("https://api.razorpay.com/v1/")
+        };
+        var options = Options.Create(new PaymentOptions
+        {
+            Provider = "Razorpay",
+            Currency = "INR",
+            RazorpayKeyId = "rzp_test_public",
+            RazorpayKeySecret = "api-secret",
+            MockSigningSecret = "unused"
+        });
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: new RazorpayPaymentGateway(client, options));
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.PaymentService.CreateAsync(
+                harness.Customer.Id,
+                new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+                "razorpay-401-create",
+                CancellationToken.None));
+
+        Assert.Equal("The payment gateway could not create the payment order.", exception.Message);
+        var payment = await harness.Db.Payments.SingleAsync();
+        Assert.Equal(PaymentStatus.Failed, payment.Status);
+        Assert.Equal("GATEWAY_ORDER_FAILED", payment.FailureCode);
+        Assert.Contains("HTTP 401", payment.FailureMessage);
+        Assert.Contains("AUTHENTICATION_ERROR", payment.FailureMessage);
+        Assert.DoesNotContain("api-secret", payment.FailureMessage);
     }
 
     [Fact]
@@ -219,7 +270,18 @@ public sealed class PaymentWalletServiceTests
     [Fact]
     public async Task RazorpayVerification_RequiresSignatureThenIndependentGatewayConfirmation()
     {
-        await using var harness = await PaymentHarness.CreateAsync();
+        var options = Options.Create(new PaymentOptions
+        {
+            Provider = "Razorpay",
+            Currency = "INR",
+            RazorpayKeyId = "rzp_test_public",
+            RazorpayKeySecret = "api-secret",
+            MockSigningSecret = "unused"
+        });
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
         var created = await harness.PaymentService.CreateAsync(
             harness.Customer.Id,
             new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
@@ -227,17 +289,17 @@ public sealed class PaymentWalletServiceTests
             CancellationToken.None);
 
         var invalid = new VerifyPaymentRequest(
-            created.PublicId, created.GatewayOrderId!, $"pay_mock_{created.PublicId:N}", "invalid");
+            created.PublicId, created.GatewayOrderId!, $"pay_test_{created.PublicId:N}", "invalid");
         await Assert.ThrowsAsync<ValidationAppException>(() =>
             harness.PaymentService.VerifyAsync(harness.Customer.Id, invalid, CancellationToken.None));
 
         var result = await harness.PaymentService.VerifyAsync(
             harness.Customer.Id,
-            invalid with { Signature = "mock_verified" },
+            invalid with { Signature = "test_verified" },
             CancellationToken.None);
 
         Assert.Equal(PaymentStatus.Success, result.Status);
-        Assert.Equal($"pay_mock_{created.PublicId:N}", result.GatewayPaymentId);
+        Assert.Equal($"pay_test_{created.PublicId:N}", result.GatewayPaymentId);
         Assert.Equal(OrderStatus.Confirmed, (await harness.Db.Orders.SingleAsync()).Status);
     }
 
@@ -247,7 +309,7 @@ public sealed class PaymentWalletServiceTests
         await using var harness = await PaymentHarness.CreateAsync();
         var payment = await harness.PaymentService.CreateAsync(
             harness.Customer.Id,
-            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Development),
             "payment-1",
             CancellationToken.None);
 
@@ -311,7 +373,22 @@ public sealed class PaymentWalletServiceTests
     [Fact]
     public async Task InvalidWebhookSignature_DoesNotPersistReceipt()
     {
-        await using var harness = await PaymentHarness.CreateAsync();
+        var options = Options.Create(new PaymentOptions
+        {
+            Provider = "Razorpay",
+            Currency = "INR",
+            RazorpayKeyId = "rzp_test_public",
+            RazorpayKeySecret = "api-secret",
+            MockSigningSecret = "unused"
+        });
+        using var client = new HttpClient(new StubHttpMessageHandler(_ =>
+            throw new InvalidOperationException("The invalid signature must be rejected before network access.")))
+        {
+            BaseAddress = new Uri("https://api.razorpay.com/v1/")
+        };
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: new RazorpayPaymentGateway(client, options));
         var payload = "{\"event\":\"payment.captured\",\"id\":\"evt_1\"}"u8.ToArray();
 
         await Assert.ThrowsAsync<UnauthorizedAppException>(() =>
@@ -352,7 +429,10 @@ public sealed class PaymentWalletServiceTests
         public PaymentService PaymentService { get; }
         public WalletService WalletService { get; }
 
-        public static async Task<PaymentHarness> CreateAsync(decimal payableAmount = 100m)
+        public static async Task<PaymentHarness> CreateAsync(
+            decimal payableAmount = 100m,
+            IOptions<PaymentOptions>? paymentOptions = null,
+            IPaymentGateway? gateway = null)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -384,7 +464,7 @@ public sealed class PaymentWalletServiceTests
             await db.SaveChangesAsync();
 
             var clock = new TestClock(new DateTime(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc));
-            var paymentOptions = Options.Create(new PaymentOptions
+            paymentOptions ??= Options.Create(new PaymentOptions
             {
                 Provider = "Mock",
                 Currency = "INR",
@@ -399,7 +479,7 @@ public sealed class PaymentWalletServiceTests
                 notificationEventWriter);
             var paymentService = new PaymentService(
                 db,
-                new MockPaymentGateway(paymentOptions),
+                gateway ?? new MockPaymentGateway(paymentOptions),
                 walletService,
                 clock,
                 paymentOptions,
@@ -437,6 +517,82 @@ public sealed class PaymentWalletServiceTests
         {
             await Db.DisposeAsync();
             await connection.DisposeAsync();
+        }
+    }
+
+    private sealed class TestRazorpayGateway(IOptions<PaymentOptions> options) : IPaymentGateway
+    {
+        private readonly Dictionary<Guid, GatewayOrderRequest> orders = [];
+
+        public string ProviderName => "Razorpay";
+        public string? PublicKeyId => options.Value.RazorpayKeyId;
+        public bool IsLive => true;
+
+        public Task<GatewayOrderResult> CreateOrderAsync(
+            GatewayOrderRequest request,
+            CancellationToken cancellationToken)
+        {
+            orders[request.PaymentId] = request;
+            return Task.FromResult(new GatewayOrderResult(
+                $"order_test_{request.PaymentId:N}",
+                "created",
+                request.AmountMinor,
+                request.Currency));
+        }
+
+        public bool VerifyPaymentSignature(
+            string gatewayOrderId,
+            string gatewayPaymentId,
+            string signature) =>
+            signature == "test_verified" &&
+            TryGetPaymentId(gatewayPaymentId, out var paymentId) &&
+            gatewayOrderId == $"order_test_{paymentId:N}" &&
+            orders.ContainsKey(paymentId);
+
+        public Task<GatewayPaymentStatusResult> GetPaymentStatusAsync(
+            string gatewayPaymentId,
+            CancellationToken cancellationToken)
+        {
+            if (!TryGetPaymentId(gatewayPaymentId, out var paymentId) ||
+                !orders.TryGetValue(paymentId, out var request))
+            {
+                throw new InvalidOperationException("The test payment was not created by this gateway.");
+            }
+
+            return Task.FromResult(new GatewayPaymentStatusResult(
+                gatewayPaymentId,
+                $"order_test_{paymentId:N}",
+                "captured",
+                request.AmountMinor,
+                request.Currency,
+                IsSuccessful: true,
+                IsTerminalFailure: false));
+        }
+
+        public bool VerifyWebhookSignature(ReadOnlySpan<byte> payload, string signature) => false;
+
+        public GatewayWebhookEvent ParseWebhook(ReadOnlySpan<byte> payload) =>
+            throw new NotSupportedException();
+
+        public Task<GatewayRefundResult> RefundAsync(
+            string gatewayPaymentId,
+            long amountMinor,
+            string idempotencyKey,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new GatewayRefundResult(
+                $"refund_test_{idempotencyKey}",
+                "processed",
+                IsSuccessful: true,
+                IsPending: false,
+                FailureCode: null,
+                FailureMessage: null));
+
+        private static bool TryGetPaymentId(string gatewayPaymentId, out Guid paymentId)
+        {
+            const string prefix = "pay_test_";
+            paymentId = Guid.Empty;
+            return gatewayPaymentId.StartsWith(prefix, StringComparison.Ordinal) &&
+                Guid.TryParseExact(gatewayPaymentId[prefix.Length..], "N", out paymentId);
         }
     }
 

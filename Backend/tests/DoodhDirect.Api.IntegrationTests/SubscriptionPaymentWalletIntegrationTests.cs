@@ -94,22 +94,17 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
         var created = await harness.PaymentService.CreateForSubscriptionAsync(
             harness.Customer.Id,
             harness.Subscription.Id,
-            PaymentMethod.Razorpay,
+            PaymentMethod.Development,
             "subscription-gateway-payment-1",
             CancellationToken.None);
-        var gatewayPaymentId = $"pay_mock_{created.PublicId:N}";
 
-        var verified = await harness.PaymentService.VerifyAsync(
+        var verified = await harness.PaymentService.CompleteDevelopmentAsync(
             harness.Customer.Id,
-            new DoodhDirect.Application.Payments.VerifyPaymentRequest(
-                created.PublicId,
-                created.GatewayOrderId!,
-                gatewayPaymentId,
-                "mock_verified"),
+            created.PublicId,
             CancellationToken.None);
 
         Assert.Equal(PaymentStatus.Success, verified.Status);
-        Assert.Equal(gatewayPaymentId, verified.GatewayPaymentId);
+        Assert.Equal($"pay_mock_{created.PublicId:N}", verified.GatewayPaymentId);
         Assert.Equal(harness.Subscription.PublicId, verified.SubscriptionId);
 
         harness.Db.ChangeTracker.Clear();
@@ -160,7 +155,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
                 .CreateForSubscriptionAsync(
                     customer.Id,
                     subscription.Id,
-                    PaymentMethod.Razorpay,
+                    PaymentMethod.Development,
                     $"http-payment-{Guid.NewGuid():N}",
                     CancellationToken.None);
             paymentId = payment.PublicId;
@@ -168,15 +163,9 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
             gatewayOrderId = payment.GatewayOrderId!;
         }
 
-        using var response = await client.PostAsJsonAsync(
-            "/api/v1/payments/verify",
-            new
-            {
-                paymentId,
-                gatewayOrderId,
-                gatewayPaymentId = $"pay_mock_{paymentId:N}",
-                signature = "mock_verified"
-            });
+        using var response = await client.PostAsync(
+            $"/api/v1/payments/{paymentId}/complete-development",
+            content: null);
         var responseBody = await response.Content.ReadAsStringAsync();
 
         Assert.True(
@@ -211,7 +200,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
         var original = await harness.PaymentService.CreateForSubscriptionAsync(
             harness.Customer.Id,
             harness.Subscription.Id,
-            PaymentMethod.Razorpay,
+            PaymentMethod.Development,
             "subscription-original-attempt-1",
             CancellationToken.None);
         var originalPayment = await harness.Db.Payments.SingleAsync(payment => payment.PublicId == original.PublicId);
@@ -283,7 +272,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
         var original = await harness.PaymentService.CreateForSubscriptionAsync(
             harness.Customer.Id,
             harness.Subscription.Id,
-            PaymentMethod.Razorpay,
+            PaymentMethod.Development,
             "subscription-pending-original-1",
             CancellationToken.None);
         var retry = await harness.PaymentService.RetrySubscriptionAsync(
@@ -338,7 +327,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
         var original = await harness.PaymentService.CreateForSubscriptionAsync(
             harness.Customer.Id,
             harness.Subscription.Id,
-            PaymentMethod.Razorpay,
+            PaymentMethod.Development,
             "subscription-pending-insufficient-original-1",
             CancellationToken.None);
 
@@ -379,7 +368,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
         var original = await harness.PaymentService.CreateForSubscriptionAsync(
             harness.Customer.Id,
             harness.Subscription.Id,
-            PaymentMethod.Razorpay,
+            PaymentMethod.Development,
             "subscription-original-insufficient-1",
             CancellationToken.None);
         var originalPayment = await harness.Db.Payments.SingleAsync(payment => payment.PublicId == original.PublicId);

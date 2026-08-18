@@ -1,11 +1,14 @@
 enum PaymentMethod {
   razorpay('Razorpay', 'Razorpay'),
-  wallet('Wallet', 'DoodhDirect Wallet');
+  wallet('Wallet', 'DoodhDirect Wallet'),
+  development('Development', 'Development payment');
 
   const PaymentMethod(this.apiValue, this.label);
 
   final String apiValue;
   final String label;
+
+  String get selectionLabel => label;
 }
 
 enum PaymentStatus {
@@ -45,6 +48,31 @@ enum PaymentStatus {
       this == PaymentStatus.failed || this == PaymentStatus.expired;
 }
 
+class PaymentCapability {
+  const PaymentCapability({
+    required this.method,
+    required this.provider,
+    required this.label,
+    required this.isAvailable,
+    required this.unavailableReason,
+  });
+
+  factory PaymentCapability.fromJson(Map<String, dynamic> json) =>
+      PaymentCapability(
+        method: _paymentMethod(json['method'] as String),
+        provider: json['provider'] as String,
+        label: json['label'] as String,
+        isAvailable: json['isAvailable'] as bool,
+        unavailableReason: json['unavailableReason'] as String?,
+      );
+
+  final PaymentMethod method;
+  final String provider;
+  final String label;
+  final bool isAvailable;
+  final String? unavailableReason;
+}
+
 class PaymentDetails {
   const PaymentDetails({
     required this.publicId,
@@ -52,6 +80,7 @@ class PaymentDetails {
     required this.orderNumber,
     required this.subscriptionId,
     required this.method,
+    required this.provider,
     required this.status,
     required this.amount,
     required this.refundedAmount,
@@ -72,6 +101,7 @@ class PaymentDetails {
     orderNumber: json['orderNumber'] as String?,
     subscriptionId: json['subscriptionId'] as String?,
     method: _paymentMethod(json['method'] as String),
+    provider: json['provider'] as String,
     status: PaymentStatus.fromApi(json['status'] as String),
     amount: (json['amount'] as num).toDouble(),
     refundedAmount: (json['refundedAmount'] as num).toDouble(),
@@ -93,6 +123,7 @@ class PaymentDetails {
   final String? orderNumber;
   final String? subscriptionId;
   final PaymentMethod method;
+  final String provider;
   final PaymentStatus status;
   final double amount;
   final double refundedAmount;
@@ -109,8 +140,10 @@ class PaymentDetails {
   bool get isOrderPayment => orderId != null && subscriptionId == null;
   bool get isSubscriptionPayment => subscriptionId != null && orderId == null;
   bool get hasValidTarget => isOrderPayment || isSubscriptionPayment;
-  bool get usesMockGateway =>
-      gatewayOrderId?.startsWith('order_mock_') ?? false;
+  bool get usesRazorpay =>
+      method == PaymentMethod.razorpay && provider.toLowerCase() == 'razorpay';
+  bool get usesDevelopmentMock =>
+      method == PaymentMethod.development && provider.toLowerCase() == 'mock';
   bool get isExpiredByTime => DateTime.now().toUtc().isAfter(expiresAtUtc);
   String get formattedAmount => '₹${amount.toStringAsFixed(2)}';
   String get targetLabel => isSubscriptionPayment
@@ -122,5 +155,7 @@ class PaymentDetails {
 
 PaymentMethod _paymentMethod(String value) => switch (value.toLowerCase()) {
   'wallet' => PaymentMethod.wallet,
-  _ => PaymentMethod.razorpay,
+  'development' => PaymentMethod.development,
+  'razorpay' => PaymentMethod.razorpay,
+  _ => throw FormatException('Unknown payment method: $value'),
 };

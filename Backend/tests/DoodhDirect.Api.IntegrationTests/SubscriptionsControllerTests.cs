@@ -238,6 +238,7 @@ public sealed class SubscriptionsControllerTests
                     null,
                     null,
                     PaymentMethod.Wallet,
+                    "Wallet",
                     PaymentStatus.Success,
                     Subscription.PayableAmount,
                     0m,

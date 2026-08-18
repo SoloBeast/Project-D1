@@ -7,6 +7,16 @@ class PaymentRepository {
 
   final ApiClient api;
 
+  Future<List<PaymentCapability>> getCapabilities(String token) async {
+    final response = await api.get(
+      '/api/v1/payments/capabilities',
+      accessToken: token,
+    );
+    return (response['data'] as List<dynamic>)
+        .map((item) => PaymentCapability.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
   Future<PaymentDetails> create({
     required String token,
     required String orderId,
@@ -37,6 +47,17 @@ class PaymentRepository {
         'gatewayPaymentId': gatewayPaymentId,
         'signature': signature,
       },
+      accessToken: token,
+    );
+    return PaymentDetails.fromJson(response['data'] as Map<String, dynamic>);
+  }
+
+  Future<PaymentDetails> completeDevelopment({
+    required String token,
+    required String paymentId,
+  }) async {
+    final response = await api.post(
+      '/api/v1/payments/$paymentId/complete-development',
       accessToken: token,
     );
     return PaymentDetails.fromJson(response['data'] as Map<String, dynamic>);

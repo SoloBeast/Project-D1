@@ -12,6 +12,7 @@ using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace DoodhDirect.Infrastructure.Payments;
@@ -22,9 +23,12 @@ public sealed class PaymentService(
     IWalletService walletService,
     IClock clock,
     IOptions<PaymentOptions> paymentOptions,
-    INotificationEventWriter notificationEventWriter) : IPaymentService
+    INotificationEventWriter notificationEventWriter,
+    MockPaymentGateway? mockGateway = null,
+    IHostEnvironment? hostEnvironment = null) : IPaymentService
 {
     private readonly PaymentOptions options = paymentOptions.Value;
+    private readonly bool isDevelopment = hostEnvironment?.IsDevelopment() ?? true;
 
     public async Task<PaymentResult> CreateAsync(
         long customerId,
@@ -43,7 +47,7 @@ public sealed class PaymentService(
                 throw new ConflictException("The idempotency key is already associated with a different payment request.");
             }
 
-            return existing.ToResult(existing.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+            return existing.ToResult(PublicKeyFor(existing.Method), ProviderFor(existing.Method));
         }
 
         var order = await dbContext.Orders.SingleOrDefaultAsync(
@@ -101,10 +105,11 @@ public sealed class PaymentService(
         else
         {
             await dbContext.SaveChangesAsync(cancellationToken);
+            var selectedGateway = GatewayFor(payment.Method);
             GatewayOrderResult gatewayOrder;
             try
             {
-                gatewayOrder = await gateway.CreateOrderAsync(
+                gatewayOrder = await selectedGateway.CreateOrderAsync(
                     new GatewayOrderRequest(
                         payment.PublicId,
                         order.OrderNumber,
@@ -127,7 +132,7 @@ public sealed class PaymentService(
         }
 
         await LoadPaymentNavigationsAsync(payment, cancellationToken);
-        return payment.ToResult(payment.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+        return payment.ToResult(PublicKeyFor(payment.Method), ProviderFor(payment.Method));
     }
 
     public async Task<PaymentResult> CreateForSubscriptionAsync(
@@ -150,7 +155,7 @@ public sealed class PaymentService(
                     "The idempotency key is already associated with a different payment request.");
             }
 
-            return existing.ToResult(existing.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+            return existing.ToResult(PublicKeyFor(existing.Method), ProviderFor(existing.Method));
         }
 
         var subscription = await dbContext.Subscriptions.SingleOrDefaultAsync(
@@ -209,10 +214,11 @@ public sealed class PaymentService(
         else
         {
             await dbContext.SaveChangesAsync(cancellationToken);
+            var selectedGateway = GatewayFor(payment.Method);
             GatewayOrderResult gatewayOrder;
             try
             {
-                gatewayOrder = await gateway.CreateOrderAsync(
+                gatewayOrder = await selectedGateway.CreateOrderAsync(
                     new GatewayOrderRequest(
                         payment.PublicId,
                         $"SUB-{subscription.PublicId:N}",
@@ -236,7 +242,7 @@ public sealed class PaymentService(
         }
 
         await LoadPaymentNavigationsAsync(payment, cancellationToken);
-        return payment.ToResult(payment.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+        return payment.ToResult(PublicKeyFor(payment.Method), ProviderFor(payment.Method));
     }
 
     public async Task<PaymentResult> RetrySubscriptionAsync(
@@ -259,7 +265,7 @@ public sealed class PaymentService(
                     "The idempotency key is already associated with a different payment request.");
             }
 
-            return existing.ToResult(existing.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+            return existing.ToResult(PublicKeyFor(existing.Method), ProviderFor(existing.Method));
         }
 
         var subscription = await dbContext.Subscriptions.SingleOrDefaultAsync(
@@ -337,10 +343,11 @@ public sealed class PaymentService(
                 PrepareReplacement();
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
+            var selectedGateway = GatewayFor(payment.Method);
             GatewayOrderResult gatewayOrder;
             try
             {
-                gatewayOrder = await gateway.CreateOrderAsync(
+                gatewayOrder = await selectedGateway.CreateOrderAsync(
                     new GatewayOrderRequest(
                         payment.PublicId,
                         $"SUB-{subscription.PublicId:N}",
@@ -364,7 +371,7 @@ public sealed class PaymentService(
         }
 
         await LoadPaymentNavigationsAsync(payment, cancellationToken);
-        return payment.ToResult(payment.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+        return payment.ToResult(PublicKeyFor(payment.Method), ProviderFor(payment.Method));
     }
 
     public async Task<PaymentResult> VerifyAsync(
@@ -382,8 +389,9 @@ public sealed class PaymentService(
             ?? throw new NotFoundException("The payment was not found.");
         if (payment.Method != PaymentMethod.Razorpay)
         {
-            throw new BusinessRuleException("Wallet payments do not use gateway verification.");
+            throw new BusinessRuleException("Only Razorpay payments use Razorpay verification.");
         }
+        var razorpayGateway = GatewayFor(PaymentMethod.Razorpay);
         if (payment.Status == PaymentStatus.Success)
         {
             if (!string.Equals(payment.GatewayPaymentId, request.GatewayPaymentId, StringComparison.Ordinal))
@@ -391,7 +399,7 @@ public sealed class PaymentService(
                 throw new ConflictException("A different gateway payment is already verified.");
             }
 
-            return payment.ToResult(gateway.PublicKeyId);
+            return payment.ToResult(razorpayGateway.PublicKeyId, razorpayGateway.ProviderName);
         }
         if (payment.Status != PaymentStatus.Pending)
         {
@@ -406,12 +414,17 @@ public sealed class PaymentService(
             throw new BusinessRuleException("The payment has expired.");
         }
         if (!string.Equals(payment.GatewayOrderId, request.GatewayOrderId, StringComparison.Ordinal) ||
-            !gateway.VerifyPaymentSignature(request.GatewayOrderId, request.GatewayPaymentId, request.Signature))
+            !razorpayGateway.VerifyPaymentSignature(
+                request.GatewayOrderId,
+                request.GatewayPaymentId,
+                request.Signature))
         {
             throw new ValidationAppException("The payment signature is invalid.", nameof(request.Signature));
         }
 
-        var gatewayStatus = await gateway.GetPaymentStatusAsync(request.GatewayPaymentId, cancellationToken);
+        var gatewayStatus = await razorpayGateway.GetPaymentStatusAsync(
+            request.GatewayPaymentId,
+            cancellationToken);
         EnsureGatewayIdentity(payment, request.GatewayPaymentId, gatewayStatus);
         EnsureGatewayFinancials(payment, gatewayStatus.AmountMinor, gatewayStatus.Currency);
 
@@ -436,7 +449,93 @@ public sealed class PaymentService(
             await dbContext.SaveChangesAsync(cancellationToken);
         }, cancellationToken);
 
-        return payment.ToResult(gateway.PublicKeyId);
+        return payment.ToResult(razorpayGateway.PublicKeyId, razorpayGateway.ProviderName);
+    }
+
+    public async Task<PaymentResult> CompleteDevelopmentAsync(
+        long customerId,
+        Guid paymentId,
+        CancellationToken cancellationToken)
+    {
+        var payment = await PaymentQuery().SingleOrDefaultAsync(
+            x => x.PublicId == paymentId && x.CustomerId == customerId,
+            cancellationToken)
+            ?? throw new NotFoundException("The payment was not found.");
+        if (payment.Method != PaymentMethod.Development)
+        {
+            throw new BusinessRuleException(
+                "Only Development payments can use Development completion.");
+        }
+        var developmentGateway = GatewayFor(PaymentMethod.Development);
+        if (payment.Status == PaymentStatus.Success)
+        {
+            return payment.ToResult(null, developmentGateway.ProviderName);
+        }
+        if (payment.Status != PaymentStatus.Pending)
+        {
+            throw new BusinessRuleException(
+                $"A payment in status '{payment.Status}' cannot be completed.");
+        }
+        if (clock.UtcNow > payment.ExpiresAtUtc)
+        {
+            payment.Expire(clock.UtcNow);
+            FailTarget(payment);
+            AddPaymentOutcomeEvents(payment);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            throw new BusinessRuleException("The payment has expired.");
+        }
+        if (string.IsNullOrWhiteSpace(payment.GatewayOrderId))
+        {
+            throw new ConflictException("The Development gateway order is unavailable.");
+        }
+
+        var gatewayPaymentId = $"pay_mock_{payment.PublicId:N}";
+        var gatewayStatus = await developmentGateway.GetPaymentStatusAsync(
+            gatewayPaymentId,
+            cancellationToken);
+        EnsureGatewayIdentity(payment, gatewayPaymentId, gatewayStatus);
+        EnsureGatewayFinancials(payment, gatewayStatus.AmountMinor, gatewayStatus.Currency);
+        if (!gatewayStatus.IsSuccessful)
+        {
+            throw new ConflictException("The Development payment could not be confirmed.");
+        }
+
+        await ExecuteSerializableAsync(async () =>
+        {
+            payment.Succeed(gatewayStatus.GatewayPaymentId, gatewayStatus.Status, clock.UtcNow);
+            ConfirmTarget(payment, clock.UtcNow);
+            AddPaymentOutcomeEvents(payment);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
+
+        return payment.ToResult(null, developmentGateway.ProviderName);
+    }
+
+    public Task<IReadOnlyList<PaymentCapability>> GetCapabilitiesAsync(
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<PaymentCapability> capabilities =
+        [
+            new(PaymentMethod.Wallet, "Wallet", "Wallet", true),
+            new(
+                PaymentMethod.Razorpay,
+                "Razorpay",
+                "Razorpay",
+                options.IsRazorpay && options.IsRazorpayConfigured,
+                options.IsRazorpay && options.IsRazorpayConfigured
+                    ? null
+                    : "Razorpay is unavailable because it is not the effective provider or valid credentials are not configured."),
+            new(
+                PaymentMethod.Development,
+                "Mock",
+                "Development payment",
+                isDevelopment,
+                isDevelopment
+                    ? null
+                    : "Development payment is available only in the Development environment.")
+        ];
+        return Task.FromResult(capabilities);
     }
 
     public async Task<PaymentResult> GetAsync(
@@ -449,7 +548,7 @@ public sealed class PaymentService(
             x => x.PublicId == paymentId && (bypassOwnership || x.CustomerId == userId),
             cancellationToken)
             ?? throw new NotFoundException("The payment was not found.");
-        return payment.ToResult(payment.Method == PaymentMethod.Razorpay ? gateway.PublicKeyId : null);
+        return payment.ToResult(PublicKeyFor(payment.Method), ProviderFor(payment.Method));
     }
 
     public async Task<RefundResult> RefundAsync(
@@ -528,7 +627,7 @@ public sealed class PaymentService(
             GatewayRefundResult gatewayRefund;
             try
             {
-                gatewayRefund = await gateway.RefundAsync(
+                gatewayRefund = await GatewayFor(payment.Method).RefundAsync(
                     payment.GatewayPaymentId,
                     ToMinorUnits(amount),
                     request.IdempotencyKey.Trim(),
@@ -571,7 +670,8 @@ public sealed class PaymentService(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(payload);
-        if (payload.Length == 0 || !gateway.VerifyWebhookSignature(payload, signature))
+        var razorpayGateway = GatewayFor(PaymentMethod.Razorpay);
+        if (payload.Length == 0 || !razorpayGateway.VerifyWebhookSignature(payload, signature))
         {
             throw new UnauthorizedAppException("The webhook signature is invalid.");
         }
@@ -579,7 +679,7 @@ public sealed class PaymentService(
         GatewayWebhookEvent gatewayEvent;
         try
         {
-            gatewayEvent = gateway.ParseWebhook(payload);
+            gatewayEvent = razorpayGateway.ParseWebhook(payload);
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException)
         {
@@ -587,7 +687,7 @@ public sealed class PaymentService(
         }
 
         var duplicate = await dbContext.PaymentWebhooks.AnyAsync(
-            x => x.Provider == gateway.ProviderName && x.EventId == gatewayEvent.EventId,
+            x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
             cancellationToken);
         if (duplicate)
         {
@@ -595,7 +695,7 @@ public sealed class PaymentService(
         }
 
         var webhook = new PaymentWebhook(
-            gateway.ProviderName,
+            razorpayGateway.ProviderName,
             gatewayEvent.EventId,
             gatewayEvent.EventType,
             Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant(),
@@ -609,7 +709,7 @@ public sealed class PaymentService(
         {
             dbContext.ChangeTracker.Clear();
             if (await dbContext.PaymentWebhooks.AnyAsync(
-                    x => x.Provider == gateway.ProviderName && x.EventId == gatewayEvent.EventId,
+                    x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
                     cancellationToken))
             {
                 return;
@@ -645,7 +745,7 @@ public sealed class PaymentService(
         {
             dbContext.ChangeTracker.Clear();
             webhook = await dbContext.PaymentWebhooks.SingleAsync(
-                x => x.Provider == gateway.ProviderName && x.EventId == gatewayEvent.EventId,
+                x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
                 cancellationToken);
             webhook.StartProcessing();
             webhook.Fail("WEBHOOK_PROCESSING_FAILED", exception.Message, clock.UtcNow);
@@ -680,7 +780,14 @@ public sealed class PaymentService(
             throw new ConflictException($"A payment in status '{payment.Status}' cannot process this webhook.");
         }
 
-        var status = await gateway.GetPaymentStatusAsync(gatewayEvent.GatewayPaymentId, cancellationToken);
+        if (payment.Method != PaymentMethod.Razorpay)
+        {
+            throw new ConflictException("Razorpay webhooks cannot update a non-Razorpay payment.");
+        }
+        var razorpayGateway = GatewayFor(PaymentMethod.Razorpay);
+        var status = await razorpayGateway.GetPaymentStatusAsync(
+            gatewayEvent.GatewayPaymentId,
+            cancellationToken);
         EnsureGatewayIdentity(payment, gatewayEvent.GatewayPaymentId, status);
         EnsureGatewayFinancials(payment, status.AmountMinor, status.Currency);
         if (status.IsSuccessful)
@@ -886,6 +993,34 @@ public sealed class PaymentService(
             await transaction.CommitAsync(cancellationToken);
         });
     }
+
+    private IPaymentGateway GatewayFor(PaymentMethod method) => method switch
+    {
+        PaymentMethod.Razorpay when options.IsRazorpayConfigured => gateway,
+        PaymentMethod.Razorpay => throw new BusinessRuleException(
+            "Razorpay is unavailable because valid credentials are not configured."),
+        PaymentMethod.Development when isDevelopment && mockGateway is not null => mockGateway,
+        PaymentMethod.Development when isDevelopment &&
+            string.Equals(gateway.ProviderName, "Mock", StringComparison.OrdinalIgnoreCase) => gateway,
+        PaymentMethod.Development when !isDevelopment => throw new BusinessRuleException(
+            "Development payment is available only in the Development environment."),
+        PaymentMethod.Development => throw new BusinessRuleException(
+            "Development payment is unavailable because the Mock provider is not configured."),
+        PaymentMethod.Wallet => throw new InvalidOperationException(
+            "Wallet payments do not use a gateway."),
+        _ => throw new BusinessRuleException("The selected payment method is unavailable.")
+    };
+
+    private string? PublicKeyFor(PaymentMethod method) =>
+        method == PaymentMethod.Razorpay ? GatewayFor(method).PublicKeyId : null;
+
+    private string ProviderFor(PaymentMethod method) => method switch
+    {
+        PaymentMethod.Wallet => "Wallet",
+        PaymentMethod.Razorpay => "Razorpay",
+        PaymentMethod.Development => "Mock",
+        _ => throw new BusinessRuleException("The selected payment method is unavailable.")
+    };
 
     private static void EnsureGatewayIdentity(
         Payment payment,

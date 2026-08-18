@@ -83,20 +83,16 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                           .selectMethod(value);
                     }
                   },
-                  child: const Column(
-                    children: [
-                      _PaymentMethodTile(
-                        method: PaymentMethod.wallet,
-                        icon: Icons.account_balance_wallet_outlined,
-                        subtitle: 'Pay securely from your DoodhDirect balance',
-                      ),
-                      _PaymentMethodTile(
-                        method: PaymentMethod.razorpay,
-                        icon: Icons.payments_outlined,
-                        subtitle:
-                            'UPI, cards, netbanking, and supported wallets',
-                      ),
-                    ],
+                  child: Column(
+                    children: paymentState.capabilities
+                        .where((capability) => capability.isAvailable)
+                        .map(
+                          (capability) => _PaymentMethodTile(
+                            method: capability.method,
+                            label: capability.label,
+                          ),
+                        )
+                        .toList(growable: false),
                   ),
                 ),
                 if (paymentState.errorMessage != null) ...[
@@ -122,13 +118,10 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                               .read(paymentControllerProvider)
                               .payment;
                           if (payment == null) return;
-                          if (payment.method == PaymentMethod.razorpay &&
-                              !payment.usesMockGateway &&
-                              payment.status.isPending) {
-                            final verified = await ref
+                          if (payment.usesRazorpay && payment.status.isPending) {
+                            await ref
                                 .read(paymentControllerProvider.notifier)
                                 .openRazorpayAndVerify();
-                            if (!context.mounted || !verified) return;
                           }
                           if (context.mounted) {
                             context.push(
@@ -156,24 +149,25 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
 }
 
 class _PaymentMethodTile extends StatelessWidget {
-  const _PaymentMethodTile({
-    required this.method,
-    required this.icon,
-    required this.subtitle,
-  });
+  const _PaymentMethodTile({required this.method, required this.label});
 
   final PaymentMethod method;
-  final IconData icon;
-  final String subtitle;
+  final String label;
 
   @override
-  Widget build(BuildContext context) => Card(
-    child: RadioListTile<PaymentMethod>(
-      value: method,
-      secondary: Icon(icon),
-      title: Text(method.label),
-      subtitle: Text(subtitle),
-    ),
+  Widget build(BuildContext context) => RadioListTile<PaymentMethod>(
+    value: method,
+    secondary: Icon(switch (method) {
+      PaymentMethod.wallet => Icons.account_balance_wallet_outlined,
+      PaymentMethod.razorpay => Icons.payments_outlined,
+      PaymentMethod.development => Icons.developer_mode_outlined,
+    }),
+    title: Text(label),
+    subtitle: Text(switch (method) {
+      PaymentMethod.wallet => 'Pay securely from your DoodhDirect balance',
+      PaymentMethod.razorpay => 'UPI, cards, netbanking, and supported wallets',
+      PaymentMethod.development => 'Complete a local Development payment',
+    }),
   );
 }
 
@@ -301,13 +295,23 @@ class _PaymentResultBody extends ConsumerWidget {
               icon: const Icon(Icons.refresh),
               label: const Text('Check status'),
             ),
-            if (payment.usesMockGateway)
+            if (payment.usesRazorpay)
               OutlinedButton.icon(
                 onPressed: isLoading
                     ? null
                     : () => ref
                           .read(paymentControllerProvider.notifier)
-                          .verifyDevelopmentMock(),
+                          .openRazorpayAndVerify(),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Continue Razorpay payment'),
+              ),
+            if (payment.usesDevelopmentMock)
+              OutlinedButton.icon(
+                onPressed: isLoading
+                    ? null
+                    : () => ref
+                          .read(paymentControllerProvider.notifier)
+                          .completeDevelopment(),
                 icon: const Icon(Icons.developer_mode_outlined),
                 label: const Text('Complete development payment'),
               ),
