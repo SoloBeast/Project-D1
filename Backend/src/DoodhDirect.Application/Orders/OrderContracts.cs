@@ -40,7 +40,7 @@ public sealed record OrderResult(
     string OrderNumber,
     OrderType Type,
     OrderStatus Status,
-    DateTime CreatedAtUtc,
+    DateTime CreatedAt,
     Guid BranchId,
     string BranchCode,
     string BranchName,
@@ -62,7 +62,7 @@ public sealed record OrderResult(
     decimal Subtotal,
     decimal DiscountAmount,
     decimal PayableAmount,
-    DateTime? CancelledAtUtc);
+    DateTime? CancelledAt);
 
 public sealed record OrderItemResult(
     Guid ProductId,
@@ -119,7 +119,7 @@ public static class OrderMappings
         order.OrderNumber,
         order.Type,
         order.Status,
-        order.CreatedAtUtc,
+        order.CreatedAt,
         order.Branch.PublicId,
         order.BranchCodeSnapshot,
         order.BranchNameSnapshot,
@@ -141,7 +141,7 @@ public static class OrderMappings
         order.Subtotal,
         order.DiscountAmount,
         order.PayableAmount,
-        order.CancelledAtUtc);
+        order.CancelledAt);
 }
 
 public static class OrderValidation

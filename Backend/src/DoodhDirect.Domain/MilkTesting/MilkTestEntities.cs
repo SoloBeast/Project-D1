@@ -26,19 +26,19 @@ public sealed class MilkTest : AuditableEntity
         long customerId,
         long branchId,
         long requestedByUserId,
-        DateTime requestedAtUtc)
+        DateTime requestedAt)
     {
         if (deliveryId <= 0) throw new ArgumentOutOfRangeException(nameof(deliveryId));
         if (customerId <= 0) throw new ArgumentOutOfRangeException(nameof(customerId));
         if (branchId <= 0) throw new ArgumentOutOfRangeException(nameof(branchId));
         if (requestedByUserId <= 0) throw new ArgumentOutOfRangeException(nameof(requestedByUserId));
-        EnsureUtc(requestedAtUtc, nameof(requestedAtUtc));
+        EnsureIndiaLocal(requestedAt, nameof(requestedAt));
 
         DeliveryId = deliveryId;
         CustomerId = customerId;
         BranchId = branchId;
         RequestedByUserId = requestedByUserId;
-        RequestedAtUtc = requestedAtUtc;
+        RequestedAt = requestedAt;
         Status = MilkTestStatus.Requested;
         CustomerDecision = MilkTestCustomerDecision.Pending;
     }
@@ -47,14 +47,14 @@ public sealed class MilkTest : AuditableEntity
     public long CustomerId { get; private set; }
     public long BranchId { get; private set; }
     public long RequestedByUserId { get; private set; }
-    public DateTime RequestedAtUtc { get; private set; }
+    public DateTime RequestedAt { get; private set; }
     public MilkTestStatus Status { get; private set; }
     public long? CompletedByUserId { get; private set; }
-    public DateTime? CompletedAtUtc { get; private set; }
+    public DateTime? CompletedAt { get; private set; }
     public string? StaffRemarks { get; private set; }
     public MilkTestCustomerDecision CustomerDecision { get; private set; }
-    public DateTime? ConfirmedAtUtc { get; private set; }
-    public DateTime? RejectedAtUtc { get; private set; }
+    public DateTime? ConfirmedAt { get; private set; }
+    public DateTime? RejectedAt { get; private set; }
     public string? CustomerRemarks { get; private set; }
 
     public Delivery Delivery { get; private set; } = null!;
@@ -83,14 +83,14 @@ public sealed class MilkTest : AuditableEntity
         Images.Add(image);
     }
 
-    public void Complete(long completedByUserId, DateTime completedAtUtc, string? remarks)
+    public void Complete(long completedByUserId, DateTime completedAt, string? remarks)
     {
         EnsureRequested();
         if (completedByUserId <= 0) throw new ArgumentOutOfRangeException(nameof(completedByUserId));
-        EnsureUtc(completedAtUtc, nameof(completedAtUtc));
-        if (completedAtUtc < RequestedAtUtc)
+        EnsureIndiaLocal(completedAt, nameof(completedAt));
+        if (completedAt < RequestedAt)
         {
-            throw new ArgumentException("Completion cannot precede the test request.", nameof(completedAtUtc));
+            throw new ArgumentException("Completion cannot precede the test request.", nameof(completedAt));
         }
         if (Parameters.Count == 0)
         {
@@ -103,35 +103,35 @@ public sealed class MilkTest : AuditableEntity
 
         Status = MilkTestStatus.Completed;
         CompletedByUserId = completedByUserId;
-        CompletedAtUtc = completedAtUtc;
+        CompletedAt = completedAt;
         StaffRemarks = Optional(remarks);
     }
 
-    public void Confirm(DateTime confirmedAtUtc, string? remarks)
+    public void Confirm(DateTime confirmedAt, string? remarks)
     {
         EnsureCompletedForDecision();
-        EnsureUtc(confirmedAtUtc, nameof(confirmedAtUtc));
-        if (confirmedAtUtc < CompletedAtUtc)
+        EnsureIndiaLocal(confirmedAt, nameof(confirmedAt));
+        if (confirmedAt < CompletedAt)
         {
-            throw new ArgumentException("Confirmation cannot precede test completion.", nameof(confirmedAtUtc));
+            throw new ArgumentException("Confirmation cannot precede test completion.", nameof(confirmedAt));
         }
 
         CustomerDecision = MilkTestCustomerDecision.Confirmed;
-        ConfirmedAtUtc = confirmedAtUtc;
+        ConfirmedAt = confirmedAt;
         CustomerRemarks = Optional(remarks);
     }
 
-    public void Reject(DateTime rejectedAtUtc, string? remarks)
+    public void Reject(DateTime rejectedAt, string? remarks)
     {
         EnsureCompletedForDecision();
-        EnsureUtc(rejectedAtUtc, nameof(rejectedAtUtc));
-        if (rejectedAtUtc < CompletedAtUtc)
+        EnsureIndiaLocal(rejectedAt, nameof(rejectedAt));
+        if (rejectedAt < CompletedAt)
         {
-            throw new ArgumentException("Rejection cannot precede test completion.", nameof(rejectedAtUtc));
+            throw new ArgumentException("Rejection cannot precede test completion.", nameof(rejectedAt));
         }
 
         CustomerDecision = MilkTestCustomerDecision.Rejected;
-        RejectedAtUtc = rejectedAtUtc;
+        RejectedAt = rejectedAt;
         CustomerRemarks = Optional(remarks);
     }
 
@@ -163,11 +163,13 @@ public sealed class MilkTest : AuditableEntity
     private static string? Optional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static void EnsureUtc(DateTime value, string parameterName)
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
     {
-        if (value.Kind != DateTimeKind.Utc)
+        if (value.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("Timestamp must be UTC.", parameterName);
+            throw new ArgumentException(
+                "The timestamp must be India-local with an unspecified DateTime kind.",
+                parameterName);
         }
     }
 }
@@ -211,14 +213,16 @@ public sealed class MilkTestImage : PublicEntity
         string contentType,
         long fileSize,
         long uploadedByUserId,
-        DateTime uploadedAtUtc)
+        DateTime uploadedAt)
     {
         if (milkTestId < 0) throw new ArgumentOutOfRangeException(nameof(milkTestId));
         if (fileSize <= 0) throw new ArgumentOutOfRangeException(nameof(fileSize));
         if (uploadedByUserId <= 0) throw new ArgumentOutOfRangeException(nameof(uploadedByUserId));
-        if (uploadedAtUtc.Kind != DateTimeKind.Utc)
+        if (uploadedAt.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("Timestamp must be UTC.", nameof(uploadedAtUtc));
+            throw new ArgumentException(
+                "The timestamp must be India-local with an unspecified DateTime kind.",
+                nameof(uploadedAt));
         }
 
         MilkTestId = milkTestId;
@@ -227,7 +231,7 @@ public sealed class MilkTestImage : PublicEntity
         ContentType = Required(contentType, nameof(contentType)).ToLowerInvariant();
         FileSize = fileSize;
         UploadedByUserId = uploadedByUserId;
-        UploadedAtUtc = uploadedAtUtc;
+        UploadedAt = uploadedAt;
     }
 
     public long MilkTestId { get; private set; }
@@ -236,7 +240,7 @@ public sealed class MilkTestImage : PublicEntity
     public string ContentType { get; private set; } = string.Empty;
     public long FileSize { get; private set; }
     public long UploadedByUserId { get; private set; }
-    public DateTime UploadedAtUtc { get; private set; }
+    public DateTime UploadedAt { get; private set; }
 
     public MilkTest MilkTest { get; private set; } = null!;
     public User UploadedByUser { get; private set; } = null!;

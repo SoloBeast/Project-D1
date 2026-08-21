@@ -157,7 +157,7 @@ class OrderSummary {
     required this.orderNumber,
     required this.type,
     required this.status,
-    required this.createdAtUtc,
+    required this.createdAt,
     required this.addressLabel,
     required this.city,
     required this.branchName,
@@ -165,7 +165,7 @@ class OrderSummary {
     required this.subtotal,
     required this.discountAmount,
     required this.payableAmount,
-    required this.cancelledAtUtc,
+    required this.cancelledAt,
   });
 
   factory OrderSummary.fromJson(Map<String, dynamic> json) => OrderSummary(
@@ -173,7 +173,7 @@ class OrderSummary {
     orderNumber: json['orderNumber'] as String,
     type: json['type'] as String,
     status: json['status'] as String,
-    createdAtUtc: DateTime.parse(json['createdAtUtc'] as String),
+    createdAt: DateTime.parse(json['createdAt'] as String),
     addressLabel: json['addressLabel'] as String,
     city: json['city'] as String,
     branchName: json['branchName'] as String,
@@ -184,16 +184,16 @@ class OrderSummary {
     subtotal: (json['subtotal'] as num).toDouble(),
     discountAmount: (json['discountAmount'] as num).toDouble(),
     payableAmount: (json['payableAmount'] as num).toDouble(),
-    cancelledAtUtc: json['cancelledAtUtc'] == null
+    cancelledAt: json['cancelledAt'] == null
         ? null
-        : DateTime.parse(json['cancelledAtUtc'] as String),
+        : DateTime.parse(json['cancelledAt'] as String),
   );
 
   final String publicId;
   final String orderNumber;
   final String type;
   final String status;
-  final DateTime createdAtUtc;
+  final DateTime createdAt;
   final String addressLabel;
   final String city;
   final String branchName;
@@ -201,7 +201,7 @@ class OrderSummary {
   final double subtotal;
   final double discountAmount;
   final double payableAmount;
-  final DateTime? cancelledAtUtc;
+  final DateTime? cancelledAt;
 
   bool get canCancel => status.toLowerCase() == 'confirmed';
   String get formattedTotal => '₹${payableAmount.toStringAsFixed(2)}';
@@ -220,5 +220,26 @@ class OrderCartItem {
       OrderCartItem(product: product, quantity: quantity ?? this.quantity);
 }
 
-String formatOrderDate(DateTime value) =>
-    '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}';
+String formatOrderDate(DateTime value) {
+  final local = value;
+  final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+  final period = local.hour < 12 ? 'AM' : 'PM';
+  const months = <String>[
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${local.day.toString().padLeft(2, '0')}-'
+      '${months[local.month - 1]}-${local.year} '
+      '${hour.toString().padLeft(2, '0')}:'
+      '${local.minute.toString().padLeft(2, '0')} $period';
+}

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:doodh_direct_mobile/core/device/device_metadata_service.dart';
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
@@ -170,7 +171,7 @@ class NotificationController extends Notifier<NotificationState> {
     try {
       await _repository.markRead(token, notification.notificationId);
       if (!_isActive(userId)) return deepLink;
-      final readAt = DateTime.now().toUtc();
+      final readAt = indiaNow();
       state = state.copyWith(
         items: [
           for (final item in state.items)

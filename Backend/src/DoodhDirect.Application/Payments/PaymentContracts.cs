@@ -34,9 +34,9 @@ public sealed record PaymentResult(
     string? GatewayKeyId,
     string? FailureCode,
     string? FailureMessage,
-    DateTime ExpiresAtUtc,
-    DateTime? VerifiedAtUtc,
-    DateTime CreatedAtUtc,
+    DateTime ExpiresAt,
+    DateTime? VerifiedAt,
+    DateTime CreatedAt,
     Guid? SubscriptionId = null);
 
 public sealed record PaymentCapability(
@@ -56,8 +56,8 @@ public sealed record RefundResult(
     string? GatewayRefundId,
     string? FailureCode,
     string? FailureMessage,
-    DateTime? CompletedAtUtc,
-    DateTime CreatedAtUtc);
+    DateTime? CompletedAt,
+    DateTime CreatedAt);
 
 public sealed record GatewayOrderRequest(
     Guid PaymentId,
@@ -209,9 +209,9 @@ public static class PaymentMappings
         gatewayKeyId,
         payment.FailureCode,
         payment.FailureMessage,
-        payment.ExpiresAtUtc,
-        payment.VerifiedAtUtc,
-        payment.CreatedAtUtc,
+        payment.ExpiresAt,
+        payment.VerifiedAt,
+        payment.CreatedAt,
         payment.Subscription?.PublicId);
 
     public static RefundResult ToResult(this Refund refund) => new(
@@ -224,6 +224,6 @@ public static class PaymentMappings
         refund.GatewayRefundId,
         refund.FailureCode,
         refund.FailureMessage,
-        refund.CompletedAtUtc,
-        refund.CreatedAtUtc);
+        refund.CompletedAt,
+        refund.CreatedAt);
 }

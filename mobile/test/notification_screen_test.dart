@@ -117,6 +117,38 @@ void main() {
       expect(controller.permissionRequestCalls, 1);
     });
 
+    testWidgets('notification cards remain usable on a narrow screen', (
+      tester,
+    ) async {
+      final controller = _SeededNotificationController(
+        NotificationState(
+          items: [
+            _notification(
+              'notification-1',
+              title: 'Order confirmed',
+              body: 'Order DD-1001 is confirmed and ready for delivery.',
+            ),
+            _notification(
+              'notification-2',
+              title: 'Delivery complete',
+              body: 'Your delivery was completed.',
+              isRead: true,
+            ),
+          ],
+          unreadCount: 1,
+          permissionStatus: PushPermissionStatus.notDetermined,
+          page: 1,
+        ),
+      );
+
+      await _pumpInbox(tester, controller, surfaceSize: const Size(360, 800));
+
+      expect(find.text('Order confirmed'), findsOneWidget);
+      expect(find.text('Delivery complete'), findsOneWidget);
+      expect(find.text('Enable'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('invokes refresh and pagination controls', (tester) async {
       final controller = _SeededNotificationController(
         NotificationState(
@@ -181,8 +213,9 @@ Future<void> _pumpInbox(
   WidgetTester tester,
   _SeededNotificationController controller, {
   bool withDestination = false,
+  Size surfaceSize = const Size(800, 1200),
 }) async {
-  await tester.binding.setSurfaceSize(const Size(800, 1200));
+  await tester.binding.setSurfaceSize(surfaceSize);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   final router = GoRouter(
     initialLocation: '/notifications',
@@ -331,6 +364,6 @@ AppNotification _notification(
   body: body,
   deepLink: deepLink,
   isRead: isRead,
-  createdAtUtc: DateTime.utc(2026, 8, 17, 10),
-  readAtUtc: isRead ? DateTime.utc(2026, 8, 17, 11) : null,
+  createdAt: DateTime(2026, 8, 17, 10),
+  readAt: isRead ? DateTime(2026, 8, 17, 11) : null,
 );

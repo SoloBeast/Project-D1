@@ -81,16 +81,20 @@ Apply migrations only after configuring a reachable SQL Server connection:
 dotnet ef database update --project Backend\src\DoodhDirect.Infrastructure\DoodhDirect.Infrastructure.csproj --startup-project Backend\src\DoodhDirect.Api\DoodhDirect.Api.csproj
 ```
 
-The migrations use `bigint` identity keys, GUID public IDs, UTC `datetime2` timestamps, filtered role-assignment uniqueness, restrictive identity/RBAC deletes, and bounded token hashes. Refresh tokens are stored only as hashes and are linked to device-bound sessions.
+The migrations use `bigint` identity keys, GUID public IDs, `datetime2` timestamp columns, filtered role-assignment uniqueness, restrictive identity/RBAC deletes, and bounded token hashes. New application-owned business timestamps use India-local wall-clock semantics from `IIndiaTimeProvider`; provider/external and deferred infrastructure timestamps retain UTC semantics. Refresh tokens are stored only as hashes and are linked to device-bound sessions.
 
 ## Flutter application
 
-The Flutter app implements registration, password login, OTP login/registration, secure session persistence, refresh-based restoration, logout, expired-session handling, and server-derived role navigation. Development web defaults centrally to `http://localhost:5209`; the optional `DOOHDIRECT_API_URL` Dart define remains available for Production and other deployment-specific endpoints:
+The Flutter app implements registration, password login, OTP login/registration, secure session persistence, refresh-based restoration, logout, expired-session handling, and server-derived role navigation. Development Web uses one canonical launcher so the repository-root `.env` Maps browser key is loaded once and passed as the `DOOHDIRECT_GOOGLE_MAPS_API_KEY` Dart define. The launcher also supplies the Development API URL and development tools define:
 
 ```powershell
-cd mobile
-flutter pub get
-flutter run -d chrome --dart-define=DOOHDIRECT_API_URL=http://localhost:5209
+.\scripts\run-flutter-web-development.ps1
+```
+
+The same launcher is available through VS Code as **Flutter Web: Development** in Run and Debug and as the default **Flutter Web: Development** build task. Do not use a direct `flutter run -d chrome` command for Development Web because it omits the `.env`-derived Maps define. Verify the configuration without launching Flutter or printing the value with:
+
+```powershell
+.\scripts\run-flutter-web-development.ps1 -CheckConfiguration
 ```
 
 Use an Android emulator/device or an iOS simulator/device instead of `chrome` for mobile targets. An Android emulator connecting to the Development HTTP profile commonly uses `http://10.0.2.2:5209` because emulator `localhost` refers to the emulator itself. Physical devices require the development machine's reachable LAN hostname or address. Session and device identifiers are stored with `flutter_secure_storage`.

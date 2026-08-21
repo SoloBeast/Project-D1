@@ -11,19 +11,19 @@ public sealed record AssignDeliveryRequest(Guid EmployeeId, string? Reason);
 public sealed record DeliveryNotesRequest(string? Remarks);
 public sealed record FailDeliveryRequest(string Reason, string? Remarks, decimal? Latitude, decimal? Longitude);
 public sealed record VerifyDeliveryOtpRequest(string Code);
-public sealed record DeliveryLocationRequest(decimal Latitude, decimal Longitude, decimal? AccuracyMetres, DateTime RecordedAtUtc);
+public sealed record DeliveryLocationRequest(decimal Latitude, decimal Longitude, decimal? AccuracyMetres, DateTime RecordedAt);
 
 public sealed record DeliveryLocationResult(
     decimal Latitude,
     decimal Longitude,
     decimal? AccuracyMetres,
-    DateTime RecordedAtUtc);
+    DateTime RecordedAt);
 
 public sealed record DeliveryAssignmentResult(
     Guid EmployeeId,
     string? EmployeeName,
     Guid AssignedByUserId,
-    DateTime AssignedAtUtc,
+    DateTime AssignedAt,
     string? Reason);
 
 public sealed record DeliveryResult(
@@ -42,13 +42,13 @@ public sealed record DeliveryResult(
     decimal DestinationLongitude,
     Guid? AssignedEmployeeId,
     string? AssignedEmployeeName,
-    DateTime? AssignedAtUtc,
-    DateTime? PickedUpAtUtc,
-    DateTime? OutForDeliveryAtUtc,
-    DateTime? ArrivedAtUtc,
-    DateTime? OtpVerifiedAtUtc,
-    DateTime? CompletedAtUtc,
-    DateTime? FailedAtUtc,
+    DateTime? AssignedAt,
+    DateTime? PickedUpAt,
+    DateTime? OutForDeliveryAt,
+    DateTime? ArrivedAt,
+    DateTime? OtpVerifiedAt,
+    DateTime? CompletedAt,
+    DateTime? FailedAt,
     string? FailureReason,
     string? Remarks,
     string? OperationalNotes,
@@ -67,8 +67,8 @@ public sealed record CustomerDeliveryResult(
     string? AssignedEmployeeName,
     bool IsTrackingActive,
     DeliveryLocationResult? LatestLocation,
-    DateTime? CompletedAtUtc,
-    DateTime? FailedAtUtc,
+    DateTime? CompletedAt,
+    DateTime? FailedAt,
     string? FailureReason);
 
 public sealed record DeliveryEmployeeResult(

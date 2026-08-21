@@ -6,8 +6,8 @@ public sealed record WalletResult(
     Guid PublicId,
     decimal Balance,
     string Currency,
-    DateTime CreatedAtUtc,
-    DateTime UpdatedAtUtc);
+    DateTime CreatedAt,
+    DateTime UpdatedAt);
 
 public sealed record WalletTransactionResult(
     Guid PublicId,
@@ -17,7 +17,7 @@ public sealed record WalletTransactionResult(
     decimal BalanceAfter,
     string Currency,
     string Description,
-    DateTime OccurredAtUtc,
+    DateTime OccurredAt,
     Guid? PaymentId,
     Guid? OrderId,
     Guid? SubscriptionId = null);
@@ -95,8 +95,8 @@ public static class WalletMappings
         wallet.PublicId,
         wallet.Balance,
         wallet.Currency,
-        wallet.CreatedAtUtc,
-        wallet.UpdatedAtUtc);
+        wallet.CreatedAt,
+        wallet.UpdatedAt);
 
     public static WalletTransactionResult ToResult(this WalletTransaction transaction) => new(
         transaction.PublicId,
@@ -106,7 +106,7 @@ public static class WalletMappings
         transaction.BalanceAfter,
         transaction.Currency,
         transaction.Description,
-        transaction.OccurredAtUtc,
+        transaction.OccurredAt,
         transaction.Payment?.PublicId,
         transaction.Order?.PublicId,
         transaction.Subscription?.PublicId);

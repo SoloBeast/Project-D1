@@ -158,7 +158,9 @@ void main() {
       final repository = _FakeCameraRepository();
       final container = ProviderContainer(
         overrides: [
-          authRepositoryProvider.overrideWithValue(_UnauthenticatedRepository()),
+          authRepositoryProvider.overrideWithValue(
+            _UnauthenticatedRepository(),
+          ),
           cameraRepositoryProvider.overrideWithValue(repository),
         ],
       );
@@ -326,8 +328,8 @@ ManagedCamera _managedCamera({
   protocol: CameraStreamProtocol.hls,
   providerCode: 'gateway',
   providerStreamReference: 'opaque-stream-1',
-  createdAtUtc: DateTime.utc(2026, 8, 17, 9),
-  updatedAtUtc: DateTime.utc(2026, 8, 17, 10),
+  createdAt: DateTime(2026, 8, 17, 9),
+  updatedAt: DateTime(2026, 8, 17, 10),
 );
 
 const _request = SaveCameraRequest(

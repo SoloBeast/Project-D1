@@ -8,7 +8,7 @@ public sealed record DairyActor(
     bool HasGlobalAccess = false);
 
 public sealed record RecordMilkProductionRequest(
-    DateTime ProductionAtUtc,
+    DateTime ProductionAt,
     string? Shift,
     int BuffaloCount,
     decimal QuantityProduced,
@@ -16,7 +16,7 @@ public sealed record RecordMilkProductionRequest(
     string? Remarks);
 
 public sealed record RecordMilkUsageRequest(
-    DateTime UsedAtUtc,
+    DateTime UsedAt,
     decimal QuantityUsed,
     string Purpose,
     string? Remarks);
@@ -24,14 +24,14 @@ public sealed record RecordMilkUsageRequest(
 public sealed record MilkProductionResult(
     Guid PublicId,
     long BranchId,
-    DateTime ProductionAtUtc,
+    DateTime ProductionAt,
     string? Shift,
     int BuffaloCount,
     decimal QuantityProduced,
     string Unit,
     long RecordedByUserId,
     string? Remarks,
-    DateTime CreatedAtUtc,
+    DateTime CreatedAt,
     MilkBatchResult Batch);
 
 public sealed record MilkBatchResult(
@@ -39,25 +39,25 @@ public sealed record MilkBatchResult(
     string BatchNumber,
     long BranchId,
     Guid ProductionPublicId,
-    DateTime ProductionAtUtc,
+    DateTime ProductionAt,
     decimal QuantityProduced,
     decimal AvailableQuantity,
     string Unit,
     MilkBatchStatus Status,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAt);
 
 public sealed record MilkUsageResult(
     Guid PublicId,
     Guid BatchPublicId,
     string BatchNumber,
     long BranchId,
-    DateTime UsedAtUtc,
+    DateTime UsedAt,
     decimal QuantityUsed,
     string Unit,
     string Purpose,
     long RecordedByUserId,
     string? Remarks,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAt);
 
 public sealed record MilkAvailabilityResult(
     long BranchId,
@@ -66,7 +66,7 @@ public sealed record MilkAvailabilityResult(
     decimal AvailableQuantity,
     string Unit,
     int AvailableBatchCount,
-    DateTime CalculatedAtUtc);
+    DateTime CalculatedAt);
 
 public sealed record DairyDashboardResult(
     long BranchId,
@@ -76,7 +76,7 @@ public sealed record DairyDashboardResult(
     string Unit,
     int ProductionEntryCount,
     int AvailableBatchCount,
-    DateTime CalculatedAtUtc);
+    DateTime CalculatedAt);
 
 public interface IDairyService
 {

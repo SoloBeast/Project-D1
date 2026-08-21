@@ -6,6 +6,7 @@ import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_models.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_repository.dart';
+import 'package:doodh_direct_mobile/features/payments/payment_screens.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_controller.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_models.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_repository.dart';
@@ -13,6 +14,7 @@ import 'package:doodh_direct_mobile/features/wallet/wallet_screens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -21,10 +23,14 @@ Map<String, dynamic> paymentJson({
   String provider = 'Razorpay',
   String status = 'Pending',
   String? gatewayOrderId = 'order_mock_payment_1',
+  String? orderId = 'order-1',
+  String? subscriptionId,
+  String? orderNumber = 'DD-000001',
 }) => {
   'publicId': 'payment-1',
-  'orderId': 'order-1',
-  'orderNumber': 'DD-000001',
+  'orderId': orderId,
+  'subscriptionId': subscriptionId,
+  'orderNumber': orderNumber,
   'method': method,
   'provider': provider,
   'status': status,
@@ -41,12 +47,33 @@ Map<String, dynamic> paymentJson({
   'createdAtUtc': '2026-08-16T00:00:00Z',
 };
 
+Map<String, dynamic> exactSuccessfulWalletPaymentJson() => {
+  'publicId': 'payment-wallet-success',
+  'orderId': 'order-1',
+  'orderNumber': 'DD-20260820175544-C9DBB63',
+  'method': 'Wallet',
+  'provider': 'Wallet',
+  'status': 'Success',
+  'amount': 240.00,
+  'refundedAmount': 0,
+  'currency': 'INR',
+  'gatewayOrderId': null,
+  'gatewayPaymentId': null,
+  'gatewayKeyId': null,
+  'failureCode': null,
+  'failureMessage': null,
+  'expiresAt': '2026-08-20T18:10:49.528',
+  'verifiedAt': '2026-08-20T17:55:49.557',
+  'createdAt': '2026-08-20T17:55:49.529',
+  'subscriptionId': null,
+};
+
 Map<String, dynamic> walletJson() => {
   'publicId': 'wallet-1',
   'balance': 410.5,
   'currency': 'INR',
-  'createdAtUtc': '2026-08-16T00:00:00Z',
-  'updatedAtUtc': '2026-08-16T00:05:00Z',
+  'createdAt': '2026-08-16T05:30:00',
+  'updatedAt': '2026-08-16T05:35:00',
 };
 
 Map<String, dynamic> walletTransactionJson({double amount = 500}) => {
@@ -57,7 +84,7 @@ Map<String, dynamic> walletTransactionJson({double amount = 500}) => {
   'balanceAfter': amount,
   'currency': 'INR',
   'description': 'Development wallet top-up',
-  'occurredAtUtc': '2026-08-16T00:05:00Z',
+  'occurredAt': '2026-08-16T07:35:00.000',
   'paymentId': null,
   'orderId': null,
 };
@@ -70,7 +97,106 @@ http.Response successResponse(Object data, {int statusCode = 200}) =>
     );
 
 void main() {
+  group('payment result navigation', () {
+    testWidgets('successful order payment offers order and home actions', (
+      tester,
+    ) async {
+      final payment = PaymentDetails.fromJson(
+        paymentJson(status: 'Success', orderNumber: 'DD-000001'),
+      );
+      final router = _paymentResultRouter(payment);
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _AuthenticatedAuthRepository(),
+            ),
+            paymentControllerProvider.overrideWith(
+              () => _SeededPaymentController(payment),
+            ),
+          ],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Payment successful'), findsNWidgets(2));
+      expect(find.text('DD-000001'), findsOneWidget);
+      expect(find.text('₹90.00'), findsOneWidget);
+      expect(find.text('View Order'), findsOneWidget);
+      expect(find.text('Go to Home'), findsOneWidget);
+
+      await tester.tap(find.text('View Order'));
+      await tester.pumpAndSettle();
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        '/orders/order-1',
+      );
+    });
+
+    testWidgets(
+      'successful subscription payment offers subscription and home actions',
+      (tester) async {
+        final payment = PaymentDetails.fromJson(
+          paymentJson(
+            status: 'Success',
+            orderId: null,
+            orderNumber: null,
+            subscriptionId: 'subscription-1',
+          ),
+        );
+        final router = _paymentResultRouter(payment);
+        addTearDown(router.dispose);
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              authRepositoryProvider.overrideWithValue(
+                _AuthenticatedAuthRepository(),
+              ),
+              paymentControllerProvider.overrideWith(
+                () => _SeededPaymentController(payment),
+              ),
+            ],
+            child: MaterialApp.router(routerConfig: router),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('View Subscription'), findsOneWidget);
+        await tester.tap(find.text('Go to Home'));
+        await tester.pumpAndSettle();
+        expect(router.routerDelegate.currentConfiguration.uri.path, '/home');
+      },
+    );
+  });
+
   group('payment models', () {
+    test('parses the exact successful Wallet response without gateway fields', () {
+      final payment = PaymentDetails.fromJson(
+        exactSuccessfulWalletPaymentJson(),
+      );
+
+      expect(payment.method, PaymentMethod.wallet);
+      expect(payment.provider, 'Wallet');
+      expect(payment.status, PaymentStatus.success);
+      expect(payment.status.isSuccessful, isTrue);
+      expect(payment.amount, 240.00);
+      expect(payment.orderId, 'order-1');
+      expect(payment.orderNumber, 'DD-20260820175544-C9DBB63');
+      expect(payment.subscriptionId, isNull);
+      expect(payment.gatewayOrderId, isNull);
+      expect(payment.gatewayPaymentId, isNull);
+      expect(payment.gatewayKeyId, isNull);
+      expect(payment.failureCode, isNull);
+      expect(payment.failureMessage, isNull);
+      expect(payment.expiresAtUtc.isUtc, isTrue);
+      expect(payment.verifiedAtUtc?.isUtc, isTrue);
+      expect(payment.createdAtUtc.isUtc, isTrue);
+      expect(payment.usesRazorpay, isFalse);
+      expect(payment.isOrderPayment, isTrue);
+    });
+
     test('parse backend state and expose status semantics', () {
       final pending = PaymentDetails.fromJson(paymentJson());
       final failed = PaymentDetails.fromJson(paymentJson(status: 'Failed'));
@@ -122,6 +248,69 @@ void main() {
 
         expect(payment.method, PaymentMethod.wallet);
         expect(payment.status, PaymentStatus.success);
+      },
+    );
+
+    test(
+      'create and refresh Wallet payment use only payment API requests',
+      () async {
+        var requestCount = 0;
+        final client = MockClient((request) async {
+          requestCount++;
+          expect(request.headers['Authorization'], 'Bearer customer-token');
+          if (requestCount == 1) {
+            expect(request.method, 'POST');
+            expect(request.url.path, '/api/v1/payments/create');
+            return successResponse(exactSuccessfulWalletPaymentJson());
+          }
+
+          expect(request.method, 'GET');
+          expect(request.url.path, '/api/v1/payments/payment-wallet-success');
+          return successResponse(exactSuccessfulWalletPaymentJson());
+        });
+        final repository = PaymentRepository(
+          api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
+        );
+
+        final payment = await repository.create(
+          token: 'customer-token',
+          orderId: 'order-1',
+          method: PaymentMethod.wallet,
+          idempotencyKey: 'payment-attempt-1',
+        );
+        final refreshed = await repository.get(
+          'customer-token',
+          payment.publicId,
+        );
+
+        expect(payment.status, PaymentStatus.success);
+        expect(refreshed.status, PaymentStatus.success);
+        expect(requestCount, 2);
+      },
+    );
+
+    test(
+      'malformed payment response fails as a parse error rather than success',
+      () async {
+        final client = MockClient(
+          (_) async => successResponse({
+            ...exactSuccessfulWalletPaymentJson(),
+            'createdAt': null,
+          }),
+        );
+        final repository = PaymentRepository(
+          api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
+        );
+
+        expect(
+          () => repository.create(
+            token: 'customer-token',
+            orderId: 'order-1',
+            method: PaymentMethod.wallet,
+            idempotencyKey: 'payment-attempt-1',
+          ),
+          throwsA(isA<FormatException>()),
+        );
       },
     );
 
@@ -249,6 +438,36 @@ void main() {
       expect(state.errorMessage, isNot(contains('Internal Server Error')));
       expect(state.errorMessage, isNot(contains('500')));
     });
+
+    test('maps a network failure to the offline message', () async {
+      final container = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            _AuthenticatedAuthRepository(),
+          ),
+          paymentRepositoryProvider.overrideWithValue(
+            _NetworkFailurePaymentRepository(),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(sessionControllerProvider);
+      await Future<void>.delayed(Duration.zero);
+
+      final created = await container
+          .read(paymentControllerProvider.notifier)
+          .createForOrder('order-1');
+      final state = container.read(paymentControllerProvider);
+
+      expect(created, isFalse);
+      expect(state.payment, isNull);
+      expect(
+        state.errorMessage,
+        'Unable to reach DoodhDirect. Check your connection and try again.',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    });
   });
 
   group('wallet models and repository', () {
@@ -363,6 +582,30 @@ class _AuthenticatedAuthRepository extends AuthRepository {
   Future<AuthSession?> restore() async => _authenticatedSession;
 }
 
+GoRouter _paymentResultRouter(PaymentDetails payment) => GoRouter(
+  initialLocation: '/payments/${payment.publicId}/result',
+  routes: [
+    GoRoute(
+      path: '/payments/:paymentId/result',
+      builder: (context, state) =>
+          PaymentResultScreen(paymentId: state.pathParameters['paymentId']!),
+    ),
+    GoRoute(
+      path: '/orders/:orderId',
+      builder: (context, state) => const Scaffold(body: Text('Order target')),
+    ),
+    GoRoute(
+      path: '/subscriptions/:subscriptionId',
+      builder: (context, state) =>
+          const Scaffold(body: Text('Subscription target')),
+    ),
+    GoRoute(
+      path: '/home',
+      builder: (context, state) => const Scaffold(body: Text('Home target')),
+    ),
+  ],
+);
+
 class _SeededWalletController extends WalletController {
   _SeededWalletController(this.initialState);
 
@@ -373,6 +616,19 @@ class _SeededWalletController extends WalletController {
 
   @override
   Future<void> load() async {}
+}
+
+class _SeededPaymentController extends PaymentController {
+  _SeededPaymentController(this.payment);
+
+  final PaymentDetails payment;
+
+  @override
+  PaymentState build() =>
+      PaymentState(payment: payment, selectedMethod: payment.method);
+
+  @override
+  Future<bool> refresh() async => true;
 }
 
 class _InsufficientWalletPaymentRepository extends PaymentRepository {
@@ -409,4 +665,22 @@ class _InsufficientWalletPaymentRepository extends PaymentRepository {
     expect(method, PaymentMethod.wallet);
     throw ApiException(422, 'INSUFFICIENT_WALLET_BALANCE', message);
   }
+}
+
+class _NetworkFailurePaymentRepository extends PaymentRepository {
+  _NetworkFailurePaymentRepository()
+    : super(
+        api: ApiClient(
+          client: MockClient((_) async => throw http.ClientException('offline')),
+          baseUrl: 'https://api.example.test',
+        ),
+      );
+
+  @override
+  Future<PaymentDetails> create({
+    required String token,
+    required String orderId,
+    required PaymentMethod method,
+    required String idempotencyKey,
+  }) => throw http.ClientException('offline');
 }

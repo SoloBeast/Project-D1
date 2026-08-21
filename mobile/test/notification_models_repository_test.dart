@@ -18,15 +18,15 @@ void main() {
         'body': 'Your order has been confirmed.',
         'deepLink': '  /orders/order-1  ',
         'isRead': true,
-        'createdAtUtc': '2026-08-17T10:00:00+05:30',
-        'readAtUtc': '2026-08-17T05:00:30Z',
+        'createdAt': '2026-08-17T10:00:00',
+        'readAt': '2026-08-17T10:30:30',
       });
 
       expect(notification.notificationId, 'notification-1');
       expect(notification.eventType, 'ORDER_CONFIRMED');
       expect(notification.deepLink, '/orders/order-1');
-      expect(notification.createdAtUtc, DateTime.utc(2026, 8, 17, 4, 30));
-      expect(notification.readAtUtc, DateTime.utc(2026, 8, 17, 5, 0, 30));
+      expect(notification.createdAt, DateTime(2026, 8, 17, 10));
+      expect(notification.readAt, DateTime(2026, 8, 17, 10, 30, 30));
     });
 
     test(
@@ -35,17 +35,17 @@ void main() {
         final notification = AppNotification.fromJson({
           ..._notificationJson('notification-1'),
           'deepLink': '   ',
-          'readAtUtc': null,
+          'readAt': null,
         });
 
         expect(notification.deepLink, isNull);
-        expect(notification.readAtUtc, isNull);
+        expect(notification.readAt, isNull);
         expect(notification.isRead, isFalse);
 
         final readAt = DateTime.parse('2026-08-17T12:30:00+05:30');
         final read = notification.markRead(readAt);
         expect(read.isRead, isTrue);
-        expect(read.readAtUtc, DateTime.utc(2026, 8, 17, 7));
+        expect(read.readAt, readAt);
         expect(read.notificationId, notification.notificationId);
       },
     );
@@ -153,7 +153,8 @@ void main() {
             'platform': 'android',
             'deviceName': 'Test phone',
             'isActive': true,
-            'lastSeenAtUtc': '2026-08-17T09:00:00Z',
+            'registeredAt': '2026-08-17T08:00:00',
+            'lastSeenAt': '2026-08-17T09:00:00',
           },
           'errors': [],
         });
@@ -173,7 +174,8 @@ void main() {
       expect(device.platform, 'android');
       expect(device.deviceName, 'Test phone');
       expect(device.isActive, isTrue);
-      expect(device.lastSeenAtUtc, DateTime.utc(2026, 8, 17, 9));
+      expect(device.registeredAt, DateTime(2026, 8, 17, 8));
+      expect(device.lastSeenAt, DateTime(2026, 8, 17, 9));
     });
   });
 }
@@ -196,6 +198,6 @@ Map<String, dynamic> _notificationJson(String notificationId) => {
   'body': 'Your order has been confirmed.',
   'deepLink': '/orders/order-1',
   'isRead': false,
-  'createdAtUtc': '2026-08-17T05:00:00Z',
-  'readAtUtc': null,
+  'createdAt': '2026-08-17T05:00:00',
+  'readAt': null,
 };

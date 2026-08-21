@@ -77,7 +77,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
         Assert.Equal(harness.Subscription.PayableAmount, payment.Amount);
         Assert.Equal(PaymentStatus.Success, payment.Status);
         Assert.Equal(SubscriptionStatus.Active, subscription.Status);
-        Assert.Equal(harness.Clock.UtcNow, subscription.ActivatedAtUtc);
+        Assert.Equal(harness.TimeProvider.Now, subscription.ActivatedAt);
         Assert.Equal(1_000m - harness.Subscription.PayableAmount, wallet.Balance);
         Assert.Equal(-harness.Subscription.PayableAmount, debit.Amount);
         Assert.Equal(harness.Subscription.Id, debit.SubscriptionId);
@@ -112,7 +112,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
         var subscription = await harness.Db.Subscriptions.AsNoTracking().SingleAsync();
         Assert.Equal(PaymentStatus.Success, payment.Status);
         Assert.Equal(SubscriptionStatus.Active, subscription.Status);
-        Assert.Equal(harness.Clock.UtcNow, subscription.ActivatedAtUtc);
+        Assert.Equal(harness.TimeProvider.Now, subscription.ActivatedAt);
     }
 
     [Fact]
@@ -204,7 +204,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
             "subscription-original-attempt-1",
             CancellationToken.None);
         var originalPayment = await harness.Db.Payments.SingleAsync(payment => payment.PublicId == original.PublicId);
-        originalPayment.Fail("PAYMENT_DECLINED", "The gateway declined the payment.", "failed", harness.Clock.UtcNow);
+        originalPayment.Fail("PAYMENT_DECLINED", "The gateway declined the payment.", "failed", harness.TimeProvider.Now);
         harness.Subscription.FailPayment();
         await harness.Db.SaveChangesAsync();
 
@@ -248,7 +248,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
         Assert.Equal("subscription-retry-attempt-1", payments[1].IdempotencyKey);
         Assert.All(payments, payment => Assert.Equal(harness.Subscription.Id, payment.SubscriptionId));
         Assert.Equal(SubscriptionStatus.Active, subscription.Status);
-        Assert.Equal(harness.Clock.UtcNow, subscription.ActivatedAtUtc);
+        Assert.Equal(harness.TimeProvider.Now, subscription.ActivatedAt);
         Assert.Equal(1_000m - harness.Subscription.PayableAmount, wallet.Balance);
 
         var debit = Assert.Single(debits);
@@ -372,7 +372,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
             "subscription-original-insufficient-1",
             CancellationToken.None);
         var originalPayment = await harness.Db.Payments.SingleAsync(payment => payment.PublicId == original.PublicId);
-        originalPayment.Fail("PAYMENT_DECLINED", "The gateway declined the payment.", "failed", harness.Clock.UtcNow);
+        originalPayment.Fail("PAYMENT_DECLINED", "The gateway declined the payment.", "failed", harness.TimeProvider.Now);
         harness.Subscription.FailPayment();
         await harness.Db.SaveChangesAsync();
 
@@ -442,6 +442,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
             User customer,
             Subscription subscription,
             TestClock clock,
+            TestIndiaTimeProvider timeProvider,
             PaymentService paymentService,
             WalletService walletService)
         {
@@ -450,6 +451,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
             Customer = customer;
             Subscription = subscription;
             Clock = clock;
+            TimeProvider = timeProvider;
             PaymentService = paymentService;
             WalletService = walletService;
         }
@@ -458,6 +460,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
         public User Customer { get; }
         public Subscription Subscription { get; }
         public TestClock Clock { get; }
+        public TestIndiaTimeProvider TimeProvider { get; }
         public PaymentService PaymentService { get; }
         public WalletService WalletService { get; }
 
@@ -538,16 +541,17 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
                 MockSigningSecret = "test-signing-secret"
             });
             var notificationEventWriter = new TestNotificationEventWriter(db, clock);
+            var indiaTime = new TestIndiaTimeProvider(clock);
             var walletService = new WalletService(
                 db,
-                clock,
+                indiaTime,
                 paymentOptions,
                 notificationEventWriter);
             var paymentService = new PaymentService(
                 db,
                 new MockPaymentGateway(paymentOptions),
                 walletService,
-                clock,
+                indiaTime,
                 paymentOptions,
                 notificationEventWriter);
 
@@ -557,6 +561,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
                 customer,
                 subscription,
                 clock,
+                indiaTime,
                 paymentService,
                 walletService);
         }

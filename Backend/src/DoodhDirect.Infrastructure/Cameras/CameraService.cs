@@ -1,5 +1,6 @@
 using System.Data;
 using System.Text.Json;
+using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Cameras;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Domain.Auditing;
@@ -11,7 +12,8 @@ namespace DoodhDirect.Infrastructure.Cameras;
 
 public sealed class CameraService(
     DoodhDirectDbContext dbContext,
-    ICameraStreamGateway streamGateway) : ICameraService
+    ICameraStreamGateway streamGateway,
+    IIndiaTimeProvider timeProvider) : ICameraService
 {
     public async Task<IReadOnlyCollection<PublicCameraResult>> GetPublicAsync(
         CancellationToken cancellationToken)
@@ -116,8 +118,8 @@ public sealed class CameraService(
                 camera.Stream.Protocol,
                 camera.Stream.ProviderCode,
                 camera.Stream.ProviderStreamReference,
-                camera.CreatedAtUtc,
-                camera.UpdatedAtUtc);
+                camera.CreatedAt,
+                camera.UpdatedAt);
 
         return await query.ToArrayAsync(cancellationToken);
     }
@@ -371,7 +373,7 @@ public sealed class CameraService(
             null,
             null,
             null,
-            DateTime.UtcNow));
+            timeProvider.Now));
 
     private static T Mutate<T>(Func<T> operation)
     {
@@ -409,8 +411,8 @@ public sealed class CameraService(
         stream.Protocol,
         stream.ProviderCode,
         stream.ProviderStreamReference,
-        camera.CreatedAtUtc,
-        camera.UpdatedAtUtc);
+        camera.CreatedAt,
+        camera.UpdatedAt);
 
     private sealed record PublicCameraMetadata(
         Guid CameraId,

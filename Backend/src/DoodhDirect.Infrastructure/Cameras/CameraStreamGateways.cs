@@ -8,7 +8,7 @@ namespace DoodhDirect.Infrastructure.Cameras;
 
 public sealed class DevelopmentCameraStreamGateway(
     IOptions<CameraStreamOptions> options,
-    IClock clock) : ICameraStreamGateway
+    IIndiaTimeProvider timeProvider) : ICameraStreamGateway
 {
     private readonly CameraStreamOptions _options = options.Value;
 
@@ -46,7 +46,10 @@ public sealed class DevelopmentCameraStreamGateway(
         return Task.FromResult(new CameraStreamDescriptor(
             CameraStreamProtocol.Hls,
             playbackUri,
-            clock.UtcNow.AddMinutes(_options.DescriptorLifetimeMinutes),
+            new DateTimeOffset(
+                timeProvider.ToUtc(
+                    timeProvider.Now.AddMinutes(_options.DescriptorLifetimeMinutes)),
+                TimeSpan.Zero),
             true));
     }
 }

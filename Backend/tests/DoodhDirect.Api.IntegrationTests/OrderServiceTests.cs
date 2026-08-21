@@ -1,3 +1,5 @@
+using System.Text.Json;
+using DoodhDirect.Api.Serialization;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Domain.Catalogue;
@@ -88,6 +90,7 @@ public sealed class OrderServiceTests
 
         Assert.Equal(harness.NearBranch.PublicId, result.BranchId);
         Assert.Equal(OrderStatus.PendingPayment, result.Status);
+        Assert.StartsWith("DD-202608200241", result.OrderNumber, StringComparison.Ordinal);
         Assert.Equal(100m, result.Subtotal);
         Assert.Equal("Home", result.AddressLabel);
         Assert.Equal("Fresh Milk", Assert.Single(result.Items).ProductName);
@@ -99,6 +102,9 @@ public sealed class OrderServiceTests
         Assert.Equal("Home", stored.AddressLabelSnapshot);
         Assert.Equal(80m, stored.Items.Single().UnitPrice);
         Assert.Equal(100m, stored.Items.Single().LineTotal);
+        var expectedCreatedAt = new DateTime(2026, 8, 20, 2, 41, 0, DateTimeKind.Unspecified);
+        Assert.Equal(expectedCreatedAt, stored.CreatedAt);
+        Assert.Equal(expectedCreatedAt, result.CreatedAt);
     }
 
     [Fact]
@@ -121,11 +127,79 @@ public sealed class OrderServiceTests
 
         var cancelled = await harness.Service.CancelAsync(
             harness.Customer.Id, order.PublicId, CancellationToken.None);
+        var expectedCancelledAt = new DateTime(2026, 8, 20, 2, 41, 0, DateTimeKind.Unspecified);
         Assert.Equal(OrderStatus.Cancelled, cancelled.Status);
+        Assert.Equal(expectedCancelledAt, cancelled.CancelledAt);
+        Assert.Equal(DateTimeKind.Unspecified, cancelled.CancelledAt!.Value.Kind);
+
+        var cancelledOrder = await harness.Db.Orders.SingleAsync(x => x.PublicId == order.PublicId);
+        Assert.Equal(expectedCancelledAt, cancelledOrder.CancelledAt);
 
         await Assert.ThrowsAsync<BusinessRuleException>(() =>
             harness.Service.CancelAsync(harness.Customer.Id, order.PublicId, CancellationToken.None));
     }
+
+    [Fact]
+    public void IndiaLocalDateTimeJsonConverter_EmitsSuffixFreeApplicationTime()
+    {
+        var value = new DateTime(2026, 8, 20, 2, 41, 0, DateTimeKind.Unspecified);
+        var options = new JsonSerializerOptions();
+        options.Converters.Add(
+            new IndiaLocalDateTimeJsonConverter(
+                TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")));
+
+        var json = JsonSerializer.Serialize(value, options);
+        var roundTrip = JsonSerializer.Deserialize<DateTime>(json, options);
+
+        Assert.Equal("\"2026-08-20T02:41:00.000\"", json);
+        Assert.Equal(DateTimeKind.Unspecified, roundTrip.Kind);
+        Assert.Equal(value, roundTrip);
+    }
+
+    [Fact]
+    public void IndiaLocalDateTimeJsonConverter_ConvertsUtcInputToIndiaLocal()
+    {
+        var options = new JsonSerializerOptions();
+        options.Converters.Add(
+            new IndiaLocalDateTimeJsonConverter(
+                TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")));
+
+        var value = JsonSerializer.Deserialize<DateTime>(
+            "\"2026-08-17T03:00:00.000Z\"", options);
+
+        Assert.Equal(
+            new DateTime(2026, 8, 17, 8, 30, 0, DateTimeKind.Unspecified),
+            value);
+        Assert.Equal(DateTimeKind.Unspecified, value.Kind);
+    }
+
+    [Fact]
+    public void ApiJson_UsesOneIndiaLocalPolicyForEveryTimestampProperty()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(
+            new IndiaLocalDateTimeJsonConverter(
+                TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata")));
+        var value = new TimestampContract(
+            new DateTime(2026, 8, 20, 2, 41, 0, DateTimeKind.Unspecified),
+            new DateTime(2026, 8, 20, 6, 21, 55, DateTimeKind.Unspecified),
+            new DateTime(2026, 8, 20, 7, 0, 0, DateTimeKind.Unspecified));
+
+        var json = JsonSerializer.Serialize(value, options);
+        var roundTrip = JsonSerializer.Deserialize<TimestampContract>(json, options);
+
+        Assert.NotNull(roundTrip);
+        Assert.DoesNotContain("Z", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("+00:00", json, StringComparison.Ordinal);
+        Assert.Equal(value, roundTrip);
+        Assert.Equal(DateTimeKind.Unspecified, roundTrip.ExpiresAt.Kind);
+        Assert.Equal(DateTimeKind.Unspecified, roundTrip.ProcessedAt!.Value.Kind);
+    }
+
+    private sealed record TimestampContract(
+        DateTime BusinessAt,
+        DateTime ExpiresAt,
+        DateTime? ProcessedAt);
 
     private sealed class OrderHarness : IAsyncDisposable
     {
@@ -170,7 +244,8 @@ public sealed class OrderServiceTests
                 .UseInMemoryDatabase($"order-tests-{Guid.NewGuid():N}")
                 .ConfigureWarnings(warnings => warnings.Ignore(InMemoryEventId.TransactionIgnoredWarning))
                 .Options;
-            var db = new DoodhDirectDbContext(options);
+            var clock = new TestClock(new DateTime(2026, 8, 20, 2, 41, 0, DateTimeKind.Unspecified));
+            var db = new DoodhDirectDbContext(options, new TestIndiaTimeProvider(clock));
 
             var customer = new User(UserType.Customer);
             customer.SetProfile("Customer");
@@ -203,11 +278,11 @@ public sealed class OrderServiceTests
             await db.SaveChangesAsync();
 
             var allocation = new BranchAllocationService(db);
-            var clock = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Utc));
             var notificationEventWriter = new TestNotificationEventWriter(db, clock);
+            var timeProvider = new TestIndiaTimeProvider(clock);
             return new OrderHarness(
                 db, customer, otherCustomer, address, product, nearBranch, nearAvailability,
-                farAvailability, new OrderService(db, allocation, notificationEventWriter));
+                farAvailability, new OrderService(db, allocation, notificationEventWriter, timeProvider));
         }
 
         public ValueTask DisposeAsync() => Db.DisposeAsync();

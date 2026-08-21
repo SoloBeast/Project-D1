@@ -1,3 +1,19 @@
+class DeliveryFailureReasons {
+  static const customerNotAvailable = 'Customer not available';
+  static const addressNotFound = 'Address not found';
+  static const vehicleIssue = 'Vehicle issue';
+  static const productDamaged = 'Product damaged';
+  static const other = 'Other';
+
+  static const all = <String>[
+    customerNotAvailable,
+    addressNotFound,
+    vehicleIssue,
+    productDamaged,
+    other,
+  ];
+}
+
 enum DeliverySourceType {
   oneTimeOrder,
   subscriptionOccurrence,
@@ -55,19 +71,19 @@ class DeliveryLocation {
     required this.latitude,
     required this.longitude,
     required this.accuracyMetres,
-    required this.recordedAtUtc,
+    required this.recordedAt,
   });
   factory DeliveryLocation.fromJson(Map<String, dynamic> json) =>
       DeliveryLocation(
         latitude: (json['latitude'] as num).toDouble(),
         longitude: (json['longitude'] as num).toDouble(),
         accuracyMetres: (json['accuracyMetres'] as num?)?.toDouble(),
-        recordedAtUtc: DateTime.parse(json['recordedAtUtc'] as String),
+        recordedAt: DateTime.parse(json['recordedAt'] as String),
       );
   final double latitude;
   final double longitude;
   final double? accuracyMetres;
-  final DateTime recordedAtUtc;
+  final DateTime recordedAt;
 }
 
 class DeliveryAssignment {
@@ -75,7 +91,7 @@ class DeliveryAssignment {
     required this.employeeId,
     required this.employeeName,
     required this.assignedByUserId,
-    required this.assignedAtUtc,
+    required this.assignedAt,
     required this.reason,
   });
   factory DeliveryAssignment.fromJson(Map<String, dynamic> json) =>
@@ -83,13 +99,13 @@ class DeliveryAssignment {
         employeeId: json['employeeId'] as String,
         employeeName: json['employeeName'] as String?,
         assignedByUserId: json['assignedByUserId'] as String,
-        assignedAtUtc: DateTime.parse(json['assignedAtUtc'] as String),
+        assignedAt: DateTime.parse(json['assignedAt'] as String),
         reason: json['reason'] as String?,
       );
   final String employeeId;
   final String? employeeName;
   final String assignedByUserId;
-  final DateTime assignedAtUtc;
+  final DateTime assignedAt;
   final String? reason;
 }
 
@@ -105,8 +121,8 @@ class CustomerDelivery {
     required this.assignedEmployeeName,
     required this.isTrackingActive,
     required this.latestLocation,
-    required this.completedAtUtc,
-    required this.failedAtUtc,
+    required this.completedAt,
+    required this.failedAt,
     required this.failureReason,
   });
   factory CustomerDelivery.fromJson(Map<String, dynamic> json) =>
@@ -121,8 +137,8 @@ class CustomerDelivery {
         assignedEmployeeName: json['assignedEmployeeName'] as String?,
         isTrackingActive: json['isTrackingActive'] as bool,
         latestLocation: _location(json['latestLocation']),
-        completedAtUtc: _date(json['completedAtUtc']),
-        failedAtUtc: _date(json['failedAtUtc']),
+        completedAt: _date(json['completedAt']),
+        failedAt: _date(json['failedAt']),
         failureReason: json['failureReason'] as String?,
       );
   final String deliveryId;
@@ -135,8 +151,8 @@ class CustomerDelivery {
   final String? assignedEmployeeName;
   final bool isTrackingActive;
   final DeliveryLocation? latestLocation;
-  final DateTime? completedAtUtc;
-  final DateTime? failedAtUtc;
+  final DateTime? completedAt;
+  final DateTime? failedAt;
   final String? failureReason;
 }
 
@@ -157,13 +173,13 @@ class DeliveryDetails {
     required this.destinationLongitude,
     required this.assignedEmployeeId,
     required this.assignedEmployeeName,
-    required this.assignedAtUtc,
-    required this.pickedUpAtUtc,
-    required this.outForDeliveryAtUtc,
-    required this.arrivedAtUtc,
-    required this.otpVerifiedAtUtc,
-    required this.completedAtUtc,
-    required this.failedAtUtc,
+    required this.assignedAt,
+    required this.pickedUpAt,
+    required this.outForDeliveryAt,
+    required this.arrivedAt,
+    required this.otpVerifiedAt,
+    required this.completedAt,
+    required this.failedAt,
     required this.failureReason,
     required this.remarks,
     required this.operationalNotes,
@@ -188,13 +204,13 @@ class DeliveryDetails {
         destinationLongitude: (json['destinationLongitude'] as num).toDouble(),
         assignedEmployeeId: json['assignedEmployeeId'] as String?,
         assignedEmployeeName: json['assignedEmployeeName'] as String?,
-        assignedAtUtc: _date(json['assignedAtUtc']),
-        pickedUpAtUtc: _date(json['pickedUpAtUtc']),
-        outForDeliveryAtUtc: _date(json['outForDeliveryAtUtc']),
-        arrivedAtUtc: _date(json['arrivedAtUtc']),
-        otpVerifiedAtUtc: _date(json['otpVerifiedAtUtc']),
-        completedAtUtc: _date(json['completedAtUtc']),
-        failedAtUtc: _date(json['failedAtUtc']),
+        assignedAt: _date(json['assignedAt']),
+        pickedUpAt: _date(json['pickedUpAt']),
+        outForDeliveryAt: _date(json['outForDeliveryAt']),
+        arrivedAt: _date(json['arrivedAt']),
+        otpVerifiedAt: _date(json['otpVerifiedAt']),
+        completedAt: _date(json['completedAt']),
+        failedAt: _date(json['failedAt']),
         failureReason: json['failureReason'] as String?,
         remarks: json['remarks'] as String?,
         operationalNotes: json['operationalNotes'] as String?,
@@ -220,13 +236,13 @@ class DeliveryDetails {
   final double destinationLongitude;
   final String? assignedEmployeeId;
   final String? assignedEmployeeName;
-  final DateTime? assignedAtUtc;
-  final DateTime? pickedUpAtUtc;
-  final DateTime? outForDeliveryAtUtc;
-  final DateTime? arrivedAtUtc;
-  final DateTime? otpVerifiedAtUtc;
-  final DateTime? completedAtUtc;
-  final DateTime? failedAtUtc;
+  final DateTime? assignedAt;
+  final DateTime? pickedUpAt;
+  final DateTime? outForDeliveryAt;
+  final DateTime? arrivedAt;
+  final DateTime? otpVerifiedAt;
+  final DateTime? completedAt;
+  final DateTime? failedAt;
   final String? failureReason;
   final String? remarks;
   final String? operationalNotes;

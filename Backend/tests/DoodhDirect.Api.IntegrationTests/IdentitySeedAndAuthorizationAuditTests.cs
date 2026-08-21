@@ -165,7 +165,7 @@ public sealed class AuditingAuthorizationMiddlewareResultHandlerTests
         Assert.Equal("AUTHORIZATION_CHALLENGED", audit.Action);
         Assert.Equal("Endpoint", audit.EntityType);
         Assert.Equal("GET /api/v1/auth/me", audit.Reason);
-        Assert.Equal(harness.Clock.UtcNow, audit.CreatedAtUtc);
+        Assert.Equal(harness.Clock.Now, audit.CreatedAt);
     }
 
     [Fact]
@@ -223,7 +223,7 @@ public sealed class AuditingAuthorizationMiddlewareResultHandlerTests
     {
         var handler = new AuditingAuthorizationMiddlewareResultHandler(
             new ThrowingScopeFactory(),
-            new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Utc)),
+            new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified)),
             NullLogger<AuditingAuthorizationMiddlewareResultHandler>.Instance);
         var context = CreateHttpContext(new ServiceCollection().BuildServiceProvider(), "/protected");
 
@@ -244,7 +244,7 @@ public sealed class AuditingAuthorizationMiddlewareResultHandlerTests
         services.AddDbContext<DoodhDirectDbContext>(options =>
             options.UseInMemoryDatabase(databaseName));
         var provider = services.BuildServiceProvider();
-        var clock = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Utc));
+        var clock = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
         var logger = new CapturingLogger<AuditingAuthorizationMiddlewareResultHandler>();
         var handler = new AuditingAuthorizationMiddlewareResultHandler(
             provider.GetRequiredService<IServiceScopeFactory>(),

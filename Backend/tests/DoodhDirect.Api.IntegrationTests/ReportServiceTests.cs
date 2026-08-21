@@ -97,9 +97,40 @@ public sealed class ReportServiceTests
         var csv = Encoding.UTF8.GetString(content.AsSpan(3));
 
         Assert.Equal(
-            "Id,DisplayName,Mobile,Email,IsActive,CreatedAtUtc,OrderCount,LifetimeOrderValue,WalletBalance" +
+            "Id,DisplayName,Mobile,Email,IsActive,CreatedAt,OrderCount,LifetimeOrderValue,WalletBalance" +
             Environment.NewLine,
             csv);
+    }
+
+    [Fact]
+    public void Csv_export_accepts_only_india_local_timestamps()
+    {
+        static CustomerReportRow Row(DateTime createdAt) => new(
+            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            "Customer",
+            null,
+            "customer@example.test",
+            true,
+            createdAt,
+            0,
+            0m,
+            0m);
+
+        var indiaLocalCsv = Encoding.UTF8.GetString(
+            ReportTabularExporter.Csv(
+                ReportModule.Customers,
+                [Row(new DateTime(2026, 8, 20, 0, 1, 0, DateTimeKind.Unspecified))])
+                .AsSpan(3));
+        Assert.Contains("2026-08-20T00:01:00.000", indiaLocalCsv, StringComparison.Ordinal);
+        Assert.DoesNotContain("Z", indiaLocalCsv, StringComparison.Ordinal);
+        Assert.Throws<InvalidOperationException>(() =>
+            ReportTabularExporter.Csv(
+                ReportModule.Customers,
+                [Row(new DateTime(2026, 8, 19, 18, 31, 0, DateTimeKind.Utc))]));
+        Assert.Throws<InvalidOperationException>(() =>
+            ReportTabularExporter.Csv(
+                ReportModule.Customers,
+                [Row(new DateTime(2026, 8, 20, 0, 1, 0, DateTimeKind.Local))]));
     }
 
     [Fact]
@@ -111,7 +142,7 @@ public sealed class ReportServiceTests
             null,
             "customer@example.test",
             true,
-            new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc),
+            new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Unspecified),
             4,
             125.50m,
             20m);
@@ -207,8 +238,8 @@ public sealed class ReportServiceTests
         await using var harness = await ReportHarness.CreateAsync();
         var actor = new ReportActor(1, [], true);
         var reversedRange = new ReportDateRange(
-            new DateTime(2026, 8, 18, 0, 0, 0, DateTimeKind.Utc),
-            new DateTime(2026, 8, 17, 0, 0, 0, DateTimeKind.Utc));
+            new DateTime(2026, 8, 18, 0, 0, 0, DateTimeKind.Unspecified),
+            new DateTime(2026, 8, 17, 0, 0, 0, DateTimeKind.Unspecified));
         var localRange = new ReportDateRange(
             new DateTime(2026, 8, 17, 0, 0, 0, DateTimeKind.Local),
             null);
@@ -234,7 +265,7 @@ public sealed class ReportServiceTests
     public async Task Customer_sort_is_case_insensitive_directional_and_stable_across_pages()
     {
         await using var harness = await ReportHarness.CreateAsync();
-        var createdAt = new DateTime(2026, 8, 1, 9, 0, 0, DateTimeKind.Utc);
+        var createdAt = new DateTime(2026, 8, 1, 9, 0, 0, DateTimeKind.Unspecified);
         var alpha = Customer("Alpha", createdAt);
         var betaFirst = Customer("Beta", createdAt);
         var betaSecond = Customer("Beta", createdAt);
@@ -269,6 +300,60 @@ public sealed class ReportServiceTests
         Assert.Equal(betaSecond.PublicId, Assert.Single(descendingFirstPage.Items).Id);
         Assert.Equal(betaFirst.PublicId, Assert.Single(descendingSecondPage.Items).Id);
         Assert.True(descendingFirstPage.HasNextPage);
+    }
+
+    [Fact]
+    public async Task India_midnight_report_ranges_are_half_open()
+    {
+        await using var harness = await ReportHarness.CreateAsync();
+        var beforeMidnight = Customer(
+            "Before Midnight",
+            new DateTime(2026, 8, 19, 23, 59, 0, DateTimeKind.Unspecified));
+        var atMidnight = Customer(
+            "At Midnight",
+            new DateTime(2026, 8, 20, 0, 0, 0, DateTimeKind.Unspecified));
+        var afterMidnight = Customer(
+            "After Midnight",
+            new DateTime(2026, 8, 20, 0, 1, 0, DateTimeKind.Unspecified));
+        harness.Db.Users.AddRange(beforeMidnight, atMidnight, afterMidnight);
+        await harness.Db.SaveChangesAsync();
+        await harness.Db.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE User
+            SET CreatedAtUtc = CASE PublicId
+                WHEN {beforeMidnight.PublicId} THEN {"2026-08-19T23:59:00.000"}
+                WHEN {atMidnight.PublicId} THEN {"2026-08-20T00:00:00.000"}
+                WHEN {afterMidnight.PublicId} THEN {"2026-08-20T00:01:00.000"}
+            END,
+            UpdatedAtUtc = CASE PublicId
+                WHEN {beforeMidnight.PublicId} THEN {"2026-08-19T23:59:00.000"}
+                WHEN {atMidnight.PublicId} THEN {"2026-08-20T00:00:00.000"}
+                WHEN {afterMidnight.PublicId} THEN {"2026-08-20T00:01:00.000"}
+            END
+            WHERE PublicId IN ({beforeMidnight.PublicId}, {atMidnight.PublicId}, {afterMidnight.PublicId})
+            """);
+        var actor = new ReportActor(1, [], true);
+
+        var previousDay = await harness.Service.GetCustomersAsync(
+            actor,
+            new ReportFilter(
+                DateRange: new ReportDateRange(
+                    new DateTime(2026, 8, 19, 0, 0, 0, DateTimeKind.Unspecified),
+                    new DateTime(2026, 8, 20, 0, 0, 0, DateTimeKind.Unspecified)),
+                PageSize: 10),
+            CancellationToken.None);
+        var currentDay = await harness.Service.GetCustomersAsync(
+            actor,
+            new ReportFilter(
+                DateRange: new ReportDateRange(
+                    new DateTime(2026, 8, 20, 0, 0, 0, DateTimeKind.Unspecified),
+                    new DateTime(2026, 8, 21, 0, 0, 0, DateTimeKind.Unspecified)),
+                PageSize: 10),
+            CancellationToken.None);
+
+        Assert.Equal([beforeMidnight.PublicId], previousDay.Items.Select(x => x.Id).ToArray());
+        Assert.Equal(
+            [atMidnight.PublicId, afterMidnight.PublicId],
+            currentDay.Items.OrderBy(x => x.CreatedAt).Select(x => x.Id).ToArray());
     }
 
     [Fact]
@@ -332,8 +417,8 @@ public sealed class ReportServiceTests
         await using var harness = await ReportHarness.CreateAsync();
         var actor = new ReportActor(1, [], true);
         var request = new DashboardRequest(new ReportDateRange(
-            new DateTime(2026, 8, 18, 0, 0, 0, DateTimeKind.Utc),
-            new DateTime(2026, 8, 17, 0, 0, 0, DateTimeKind.Utc)));
+            new DateTime(2026, 8, 18, 0, 0, 0, DateTimeKind.Unspecified),
+            new DateTime(2026, 8, 17, 0, 0, 0, DateTimeKind.Unspecified)));
 
         await Assert.ThrowsAsync<ValidationAppException>(() =>
             harness.Service.GetDashboardAsync(
@@ -381,12 +466,12 @@ public sealed class ReportServiceTests
                 CancellationToken.None));
     }
 
-    private static User Customer(string displayName, DateTime createdAtUtc)
+    private static User Customer(string displayName, DateTime createdAt)
     {
         var customer = new User(UserType.Customer);
         customer.SetProfile(displayName);
         customer.SetContact(null, $"{displayName.ToLowerInvariant()}-{Guid.NewGuid():N}@example.test");
-        customer.SetCreated(createdAtUtc);
+        customer.SetCreated(createdAt);
         return customer;
     }
 
@@ -417,7 +502,7 @@ public sealed class ReportServiceTests
             var db = new DoodhDirectDbContext(options);
             await db.Database.EnsureCreatedAsync();
             var clock = new ReportTestClock(
-                new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc));
+                new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Unspecified));
 
             return new ReportHarness(
                 connection,
@@ -432,8 +517,32 @@ public sealed class ReportServiceTests
         }
     }
 
-    private sealed class ReportTestClock(DateTime utcNow) : IClock
+    private sealed class ReportTestClock(DateTime now) : IIndiaTimeProvider
     {
-        public DateTime UtcNow { get; } = utcNow;
+        private static readonly TimeZoneInfo IndiaTimeZone =
+            TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+
+        public DateTime Now { get; } = DateTime.SpecifyKind(now, DateTimeKind.Unspecified);
+
+        public DateTime ToUtc(DateTime indiaLocal) =>
+            TimeZoneInfo.ConvertTimeToUtc(
+                DateTime.SpecifyKind(indiaLocal, DateTimeKind.Unspecified),
+                IndiaTimeZone);
+
+        public DateOnly Today => DateOnly.FromDateTime(Now);
+        public DateOnly CurrentDate => Today;
+        public DateTime CurrentDateTime => Now;
+
+        public string FormatDateTime(DateTime value) =>
+            DateTime.SpecifyKind(value, DateTimeKind.Unspecified)
+                .ToString("yyyy-MM-dd'T'HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
+
+        public string FormatDate(DateOnly value) =>
+            value.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+        public DateTime ParseApplicationDateTime(string value) =>
+            DateTime.SpecifyKind(
+                DateTime.Parse(value, System.Globalization.CultureInfo.InvariantCulture),
+                DateTimeKind.Unspecified);
     }
 }

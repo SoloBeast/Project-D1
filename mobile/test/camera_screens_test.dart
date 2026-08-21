@@ -323,6 +323,6 @@ ManagedCamera _managedCamera() => ManagedCamera(
   protocol: CameraStreamProtocol.hls,
   providerCode: 'gateway',
   providerStreamReference: 'opaque-stream-1',
-  createdAtUtc: DateTime.utc(2026, 8, 17, 9),
-  updatedAtUtc: DateTime.utc(2026, 8, 17, 10),
+  createdAt: DateTime(2026, 8, 17, 9),
+  updatedAt: DateTime(2026, 8, 17, 10),
 );

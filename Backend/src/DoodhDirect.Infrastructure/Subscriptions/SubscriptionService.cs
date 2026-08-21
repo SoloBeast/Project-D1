@@ -16,7 +16,7 @@ public sealed class SubscriptionService(
     DoodhDirectDbContext dbContext,
     IBranchAllocationService branchAllocationService,
     IPaymentService paymentService,
-    IClock clock,
+    IIndiaTimeProvider timeProvider,
     INotificationEventWriter notificationEventWriter) : ISubscriptionService
 {
     private const string CutoffConfigurationKey = "Subscription.SkipPauseCutoffHours";
@@ -151,7 +151,7 @@ public sealed class SubscriptionService(
     public async Task<IReadOnlyList<SubscriptionResult>> GetForCustomerAsync(long customerId, CancellationToken cancellationToken) =>
         (await Query()
             .Where(x => x.CustomerId == customerId)
-            .OrderByDescending(x => x.CreatedAtUtc)
+            .OrderByDescending(x => x.CreatedAt)
             .ToListAsync(cancellationToken))
         .Select(x => x.ToResult())
         .ToArray();
@@ -209,18 +209,18 @@ public sealed class SubscriptionService(
     {
         var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
         await EnsureCutoffAsync(subscription, cancellationToken);
-        subscription.Pause(clock.UtcNow);
+        subscription.Pause(timeProvider.Now);
         notificationEventWriter.Add(new NotificationEventRequest(
             customerId,
             NotificationEventTypes.SubscriptionPaused,
-            $"subscription:{subscription.PublicId:N}:paused:{subscription.PausedAtUtc!.Value.Ticks}",
+            $"subscription:{subscription.PublicId:N}:paused:{subscription.PausedAt!.Value.Ticks}",
             new Dictionary<string, string>
             {
                 ["message"] = $"Your {subscription.ProductNameSnapshot} subscription has been paused.",
                 ["subscriptionId"] = subscription.PublicId.ToString()
             },
             $"/subscriptions/{subscription.PublicId}",
-            subscription.PausedAtUtc));
+            subscription.PausedAt));
         await dbContext.SaveChangesAsync(cancellationToken);
         return subscription.ToResult();
     }
@@ -228,13 +228,13 @@ public sealed class SubscriptionService(
     public async Task<SubscriptionResult> ResumeAsync(long customerId, Guid subscriptionId, CancellationToken cancellationToken)
     {
         var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
-        var pausedAtUtc = subscription.PausedAtUtc
+        var pausedAt = subscription.PausedAt
             ?? throw new BusinessRuleException("Only a paused subscription can be resumed.");
         subscription.Resume();
         notificationEventWriter.Add(new NotificationEventRequest(
             customerId,
             NotificationEventTypes.SubscriptionResumed,
-            $"subscription:{subscription.PublicId:N}:resumed:{pausedAtUtc.Ticks}",
+            $"subscription:{subscription.PublicId:N}:resumed:{pausedAt.Ticks}",
             new Dictionary<string, string>
             {
                 ["message"] = $"Your {subscription.ProductNameSnapshot} subscription has resumed.",
@@ -248,7 +248,7 @@ public sealed class SubscriptionService(
     public async Task<SubscriptionResult> CancelAsync(long customerId, Guid subscriptionId, CancellationToken cancellationToken)
     {
         var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
-        subscription.Cancel(clock.UtcNow);
+        subscription.Cancel(timeProvider.Now);
         await dbContext.SaveChangesAsync(cancellationToken);
         return subscription.ToResult();
     }
@@ -262,7 +262,7 @@ public sealed class SubscriptionService(
         var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
         var delivery = subscription.Deliveries.SingleOrDefault(x => x.PublicId == request.DeliveryId)
             ?? throw new NotFoundException("The subscription delivery was not found.");
-        subscription.Skip(delivery, clock.UtcNow, await GetCutoffAsync(cancellationToken));
+        subscription.Skip(delivery, timeProvider.Now, await GetCutoffAsync(cancellationToken));
         notificationEventWriter.Add(new NotificationEventRequest(
             customerId,
             NotificationEventTypes.SubscriptionSkipped,
@@ -274,7 +274,7 @@ public sealed class SubscriptionService(
                 ["subscriptionId"] = subscription.PublicId.ToString()
             },
             $"/subscriptions/{subscription.PublicId}",
-            delivery.StatusChangedAtUtc));
+            delivery.StatusChangedAt));
         await dbContext.SaveChangesAsync(cancellationToken);
         await LoadDeliveryNavigationAsync(delivery, cancellationToken);
         return delivery.ToResult();
@@ -294,7 +294,7 @@ public sealed class SubscriptionService(
         var delivery = await dbContext.SubscriptionDeliveries
             .Include(x => x.Subscription)
             .SingleAsync(x => x.Id == deliveryId, cancellationToken);
-        delivery.Subscription.MarkFailed(delivery, clock.UtcNow);
+        delivery.Subscription.MarkFailed(delivery, timeProvider.Now);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -303,7 +303,7 @@ public sealed class SubscriptionService(
         var delivery = await dbContext.SubscriptionDeliveries
             .Include(x => x.Subscription)
             .SingleAsync(x => x.Id == deliveryId, cancellationToken);
-        delivery.Subscription.MarkDelivered(delivery, clock.UtcNow);
+        delivery.Subscription.MarkDelivered(delivery, timeProvider.Now);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -371,8 +371,10 @@ public sealed class SubscriptionService(
             .FirstOrDefault();
         if (next is null) return;
 
-        var deliveryStart = DateTime.SpecifyKind(next.ScheduledDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
-        if (clock.UtcNow > deliveryStart - await GetCutoffAsync(cancellationToken))
+        var deliveryStart = DateTime.SpecifyKind(
+            next.ScheduledDate.ToDateTime(TimeOnly.MinValue),
+            DateTimeKind.Unspecified);
+        if (timeProvider.Now > deliveryStart - await GetCutoffAsync(cancellationToken))
         {
             throw new BusinessRuleException("The pause cutoff has passed for the next delivery.");
         }
@@ -419,7 +421,7 @@ public sealed class SubscriptionService(
     {
         if (request.ProductId == Guid.Empty) throw new ValidationAppException("A product is required.", "ProductId");
         if (request.AddressId == Guid.Empty) throw new ValidationAppException("An active address is required.", "AddressId");
-        if (request.StartDate < DateOnly.FromDateTime(clock.UtcNow.Date)) throw new ValidationAppException("Start date cannot be in the past.", "StartDate");
+        if (request.StartDate < timeProvider.Today) throw new ValidationAppException("Start date cannot be in the past.", "StartDate");
         if (request.TotalEntitlement is < 1 or > 366) throw new ValidationAppException("Entitlement must be between 1 and 366.", "TotalEntitlement");
         if (request.Quantity <= 0 || decimal.Round(request.Quantity, 3) != request.Quantity) throw new ValidationAppException("Quantity must be positive and use at most three decimal places.", "Quantity");
         ValidateDays(request.DeliveryDays);

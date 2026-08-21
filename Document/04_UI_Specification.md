@@ -32,7 +32,7 @@ Dashboard | Customers | Orders | Subscriptions | Delivery | Dairy | Products | P
 - Never trust client-side business validation alone; repeat critical validation on the backend.
 - Currency: INR.
 - Quantity: litres for milk, decimal with up to 3 fractional digits.
-- Display dates/times in India local time for current deployment; backend stores UTC.
+- Display dates/times in India local time. Application-owned business timestamps are stored and transported as India-local wall-clock values without a `Z` suffix or offset; provider/external and deferred infrastructure timestamps remain UTC until their dedicated migration slices are completed.
 - Destructive actions require confirmation.
 - Owner/admin sees explicit audit-relevant warning before financial overrides.
 

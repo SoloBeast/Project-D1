@@ -317,6 +317,8 @@ Server performs:
 
 ### Other order APIs
 
+Order response timestamps such as `createdAt` and `cancelledAt` are application-owned India-local wall-clock values serialized as `YYYY-MM-DDTHH:mm:ss.fff` without a `Z` suffix or offset. Date-only scheduling fields remain `YYYY-MM-DD`.
+
 `GET /orders`
 
 `GET /orders/{orderId}`
@@ -356,6 +358,8 @@ Server owns entitlement calculation.
 ---
 
 ## 8. Wallet APIs
+
+Wallet transaction results expose `occurredAt` as an India-local wall-clock timestamp serialized as `YYYY-MM-DDTHH:mm:ss.fff` without a `Z` suffix or offset. Wallet occurrence values are application-owned and are not converted with `.toLocal()` on the client. Wallet audit fields remain UTC-suffixed until the shared audit migration slice.
 
 `GET /wallet`
 
@@ -404,7 +408,7 @@ Delivery status values are `ReadyForAssignment`, `Assigned`, `PickedUp`, `OutFor
 
 ### Delivery staff operations
 
-- `GET /delivery/my-today?date=YYYY-MM-DD` lists deliveries assigned to the authenticated employee. The date defaults to the current UTC date.
+- `GET /delivery/my-today?date=YYYY-MM-DD` lists deliveries assigned to the authenticated employee. The date defaults to the current India-local date from `IIndiaTimeProvider`.
 - `GET /delivery/{deliveryId}` returns one delivery assigned to the authenticated employee.
 - `POST /delivery/{deliveryId}/pickup` accepts `{ "remarks": "optional operational notes" }`.
 - `POST /delivery/{deliveryId}/start` transitions a picked-up delivery to `OutForDelivery`.
@@ -518,7 +522,7 @@ All dairy endpoints require JWT authentication and `DAIRY.READ`. Write endpoints
 
 `GET /dairy/branches/{branchId}/dashboard?productionDate={yyyy-MM-dd}`
 
-Returns production and available quantity totals, entry and available-batch counts, and calculation time for the requested UTC production date. `productionDate` is optional and defaults to the current UTC date.
+Returns production and available quantity totals, entry and available-batch counts, and calculation time for the requested India-local production date. `productionDate` is optional and defaults to the current India date.
 
 `GET /dairy/branches/{branchId}/availability`
 
@@ -534,7 +538,7 @@ Request:
 
 ```json
 {
-  "productionAtUtc": "2026-08-17T03:00:00Z",
+  "productionAt": "2026-08-17T03:00:00.000Z",
   "shift": "Morning",
   "buffaloCount": 12,
   "quantityProduced": 24.500,
@@ -543,11 +547,11 @@ Request:
 }
 ```
 
-The timestamp must be UTC and cannot be more than five minutes in the future. Quantity must be positive with at most three fractional digits. `buffaloCount` must be positive. The API accepts `L`, `LITRE`, or `LITRES` case-insensitively and normalizes stored results to `L`.
+The timestamp is an India-local wall-clock business time and cannot be more than five minutes in the future. Clients send it as a UTC `Z` timestamp at the mobile/API boundary; the server converts it to an India-local wall-clock value for validation and storage. Responses expose the India-local value without a `Z` suffix or offset. Quantity must be positive with at most three fractional digits. `buffaloCount` must be positive. The API accepts `L`, `LITRE`, or `LITRES` case-insensitively and normalizes stored results to `L`.
 
 `GET /dairy/branches/{branchId}/production?fromDate={yyyy-MM-dd}&toDate={yyyy-MM-dd}`
 
-Returns production entries and their automatically created batches. Date filters are optional, inclusive UTC dates, and `fromDate` cannot be after `toDate`.
+Returns production entries and their automatically created batches. Date filters are optional, inclusive India-local calendar dates, and `fromDate` cannot be after `toDate`.
 
 `GET /dairy/branches/{branchId}/batches?status={Available|Exhausted}`
 
@@ -567,18 +571,18 @@ Request:
 
 ```json
 {
-  "usedAtUtc": "2026-08-17T05:30:00Z",
+  "usedAt": "2026-08-17T05:30:00.000Z",
   "quantityUsed": 8.250,
   "purpose": "Morning dispatch",
   "remarks": "Route A"
 }
 ```
 
-The timestamp must be UTC, cannot precede the batch production time, and cannot be more than five minutes in the future. Quantity must be positive with at most three fractional digits. Usage above current batch availability is rejected without adding a ledger row. Consuming the exact remaining quantity marks the batch `Exhausted`.
+The timestamp is an India-local wall-clock business time, cannot precede the batch production time, and cannot be more than five minutes in the future. Clients send it as a UTC `Z` timestamp at the mobile/API boundary; the server converts it to an India-local wall-clock value for validation and storage. Responses expose the India-local value without a `Z` suffix or offset. Quantity must be positive with at most three fractional digits. Usage above current batch availability is rejected without adding a ledger row. Consuming the exact remaining quantity marks the batch `Exhausted`.
 
 `GET /dairy/branches/{branchId}/usage?fromDate={yyyy-MM-dd}&toDate={yyyy-MM-dd}`
 
-Returns the branch's append-only usage history with optional inclusive UTC date filters.
+Returns the branch's append-only usage history with optional inclusive India-local calendar date filters.
 
 Milk testing is not part of Phase 8. Doorstep and batch testing contracts belong to Phase 9 and no `/dairy/tests` endpoint is currently implemented.
 
@@ -764,7 +768,7 @@ All report endpoints are authenticated and rooted at `/admin/reports`. The serve
 
 ### Dashboard
 
-`GET /admin/reports/dashboard` requires `REPORTS.DASHBOARD.READ`. Optional query fields are `fromUtc`, `toUtc`, and repeated `branchIds`. The response contains permission-filtered metrics for customers, employees, orders, subscriptions, payments, wallets, deliveries, dairy, milk tests, cameras, and notifications. Requested branches are intersected with the actor's server-authorized scope; `ACCESS.GLOBAL` permits global scope.
+`GET /admin/reports/dashboard` requires `REPORTS.DASHBOARD.READ`. Optional query fields are `dateRange.from`, `dateRange.to`, and repeated `branchIds`. Both date fields are India-local wall-clock timestamps in `Asia/Kolkata` with no offset or `Z` suffix. `dateRange.from` is inclusive and `dateRange.to` is exclusive; the server applies the half-open range `from <= value < to`, including technical UTC-backed events after converting these boundaries at the query boundary. The response contains permission-filtered metrics for customers, employees, orders, subscriptions, payments, wallets, deliveries, dairy, milk tests, cameras, and notifications. Requested branches are intersected with the actor's server-authorized scope; `ACCESS.GLOBAL` permits global scope.
 
 ### Report modules
 
@@ -783,7 +787,7 @@ All report endpoints are authenticated and rooted at `/admin/reports`. The serve
 | `GET /admin/reports/notifications` | `REPORTS.OPERATIONS.READ` |
 | `GET /admin/reports/audit` | `REPORTS.AUDIT.READ` |
 
-Report reads accept query-bound filter fields: optional `fromUtc`, `toUtc`, repeated `branchIds`, `search`, repeated `statuses`, `customerId`, `employeeId`, `productId`, `paymentState`, `page` (default `1`), `pageSize` (default `50`), `sortBy`, and `sortDirection` (`Ascending` or `Descending`, default `Descending`). Responses contain `items`, `page`, `pageSize`, `totalCount`, and `hasNextPage`.
+Report reads accept query-bound filter fields: optional `dateRange.from`, `dateRange.to`, repeated `branchIds`, `search`, repeated `statuses`, `customerId`, `employeeId`, `productId`, `paymentState`, `page` (default `1`), `pageSize` (default `50`), `sortBy`, and `sortDirection` (`Ascending` or `Descending`, default `Descending`). Report dates are India-local wall-clock values in `Asia/Kolkata` without an offset or `Z` suffix. The start boundary is inclusive, the end boundary is exclusive, and filtering uses `from <= value < to`; a reversed range or offset-bearing/local-kind value is rejected. Responses contain `items`, `page`, `pageSize`, `totalCount`, and `hasNextPage`.
 
 ### Synchronous exports
 

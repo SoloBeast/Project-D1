@@ -312,7 +312,7 @@ public sealed class PaymentsWalletControllerTests
 
     private sealed class CapturingWalletService : IWalletService
     {
-        private static readonly DateTime OccurredAtUtc = new(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc);
+        private static readonly DateTime OccurredAt = new(2026, 8, 16, 7, 30, 0, DateTimeKind.Unspecified);
 
         public long? TopUpCustomerId { get; private set; }
         public WalletTopUpRequest? TopUpRequest { get; private set; }
@@ -331,7 +331,7 @@ public sealed class PaymentsWalletControllerTests
                 request.Amount,
                 "INR",
                 "Wallet top-up",
-                OccurredAtUtc,
+                OccurredAt,
                 null,
                 null));
         }

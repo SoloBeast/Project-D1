@@ -81,7 +81,7 @@ public sealed class SubscriptionServiceTests
         Assert.All(events, notificationEvent =>
         {
             Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
-            Assert.Equal(harness.Clock.UtcNow, notificationEvent.OccurredAtUtc);
+            Assert.Equal(harness.TimeProvider.Now, notificationEvent.OccurredAt);
             Assert.Equal(
                 $"/subscriptions/{first.Subscription.PublicId}",
                 Payload(notificationEvent).GetProperty("DeepLink").GetString());
@@ -215,19 +215,19 @@ public sealed class SubscriptionServiceTests
         Assert.Contains(events, notificationEvent =>
             notificationEvent.EventType == NotificationEventTypes.SubscriptionPaused &&
             notificationEvent.EventKey ==
-                $"subscription:{created.Subscription.PublicId:N}:paused:{harness.Clock.UtcNow.Ticks}" &&
-            notificationEvent.OccurredAtUtc == harness.Clock.UtcNow);
+                $"subscription:{created.Subscription.PublicId:N}:paused:{harness.TimeProvider.Now.Ticks}" &&
+            notificationEvent.OccurredAt == harness.TimeProvider.Now);
         Assert.Contains(events, notificationEvent =>
             notificationEvent.EventType == NotificationEventTypes.SubscriptionResumed &&
             notificationEvent.EventKey ==
-                $"subscription:{created.Subscription.PublicId:N}:resumed:{harness.Clock.UtcNow.Ticks}" &&
-            notificationEvent.OccurredAtUtc == harness.Clock.UtcNow);
+                $"subscription:{created.Subscription.PublicId:N}:resumed:{harness.TimeProvider.Now.Ticks}" &&
+            notificationEvent.OccurredAt == harness.TimeProvider.Now);
         var skippedEvent = Assert.Single(events, notificationEvent =>
             notificationEvent.EventType == NotificationEventTypes.SubscriptionSkipped);
         Assert.Equal(
             $"subscription-delivery:{firstDelivery.PublicId:N}:skipped",
             skippedEvent.EventKey);
-        Assert.Equal(harness.Clock.UtcNow, skippedEvent.OccurredAtUtc);
+        Assert.Equal(harness.TimeProvider.Now, skippedEvent.OccurredAt);
         Assert.Equal(
             "2026-08-17",
             Variables(skippedEvent).GetProperty("date").GetString());
@@ -273,6 +273,7 @@ public sealed class SubscriptionServiceTests
             Product product,
             CustomerAddress address,
             TestClock clock,
+            TestIndiaTimeProvider timeProvider,
             CapturingSubscriptionPaymentService paymentService,
             SubscriptionService service)
         {
@@ -283,6 +284,7 @@ public sealed class SubscriptionServiceTests
             Product = product;
             Address = address;
             Clock = clock;
+            TimeProvider = timeProvider;
             PaymentService = paymentService;
             Service = service;
         }
@@ -293,6 +295,7 @@ public sealed class SubscriptionServiceTests
         public Product Product { get; }
         public CustomerAddress Address { get; }
         public TestClock Clock { get; }
+        public TestIndiaTimeProvider TimeProvider { get; }
         public CapturingSubscriptionPaymentService PaymentService { get; }
         public SubscriptionService Service { get; }
 
@@ -313,7 +316,7 @@ public sealed class SubscriptionServiceTests
         public async Task ActivateAsync()
         {
             var subscription = await Db.Subscriptions.SingleAsync();
-            subscription.Activate(Clock.UtcNow);
+            subscription.Activate(TimeProvider.Now);
             await Db.SaveChangesAsync();
             Db.ChangeTracker.Clear();
         }
@@ -367,6 +370,7 @@ public sealed class SubscriptionServiceTests
             await db.SaveChangesAsync();
 
             var clock = new TestClock(utcNow ?? new DateTime(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc));
+            var timeProvider = new TestIndiaTimeProvider(clock);
             var paymentService = new CapturingSubscriptionPaymentService(db, clock);
             var allocation = new FixedBranchAllocationService(branch);
             var notificationEventWriter = new TestNotificationEventWriter(db, clock);
@@ -374,10 +378,10 @@ public sealed class SubscriptionServiceTests
                 db,
                 allocation,
                 paymentService,
-                clock,
+                timeProvider,
                 notificationEventWriter);
             return new SubscriptionHarness(
-                connection, db, customer, otherCustomer, product, address, clock, paymentService, service);
+                connection, db, customer, otherCustomer, product, address, clock, timeProvider, paymentService, service);
         }
 
         public async ValueTask DisposeAsync()

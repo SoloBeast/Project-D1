@@ -114,7 +114,7 @@ public sealed class NotificationServiceTests
         Assert.True(customerDevice.IsActive);
         Assert.Equal(harness.TokenGenerator.Hash("token-two"), customerDevice.TokenHash);
         Assert.Equal("token-two", harness.TokenProtector.Unprotect(customerDevice.ProtectedToken));
-        Assert.Equal(harness.Clock.UtcNow, customerDevice.LastSeenAtUtc);
+        Assert.Equal(harness.Clock.Now, customerDevice.LastSeenAt);
 
         harness.Clock.Advance(TimeSpan.FromMinutes(5));
         await harness.RegisterDeviceAsync(harness.OtherCustomer, "other-device", "token-two");
@@ -123,9 +123,9 @@ public sealed class NotificationServiceTests
         var oldOwner = devices.Single(x => x.UserId == harness.Customer.Id);
         var newOwner = devices.Single(x => x.UserId == harness.OtherCustomer.Id);
         Assert.False(oldOwner.IsActive);
-        Assert.Equal(harness.Clock.UtcNow, oldOwner.InvalidatedAtUtc);
+        Assert.Equal(harness.Clock.Now, oldOwner.InvalidatedAt);
         Assert.True(newOwner.IsActive);
-        Assert.Null(newOwner.InvalidatedAtUtc);
+        Assert.Null(newOwner.InvalidatedAt);
         Assert.Equal(harness.TokenGenerator.Hash("token-two"), newOwner.TokenHash);
     }
 
@@ -152,13 +152,13 @@ public sealed class NotificationServiceTests
         Assert.Equal(1, await harness.Processor.ProcessDueDeliveriesAsync(default));
         var delivery = await harness.ReloadDeliveryAsync();
         Assert.Equal(NotificationDeliveryStatus.RetryScheduled, delivery.Status);
-        Assert.Equal(harness.Clock.UtcNow.AddMinutes(2), delivery.NextAttemptAtUtc);
+        Assert.Equal(harness.Clock.Now.AddMinutes(2), delivery.NextAttemptAt);
 
         harness.Clock.Advance(TimeSpan.FromMinutes(2));
         Assert.Equal(1, await harness.Processor.ProcessDueDeliveriesAsync(default));
         delivery = await harness.ReloadDeliveryAsync();
         Assert.Equal(NotificationDeliveryStatus.RetryScheduled, delivery.Status);
-        Assert.Equal(harness.Clock.UtcNow.AddMinutes(4), delivery.NextAttemptAtUtc);
+        Assert.Equal(harness.Clock.Now.AddMinutes(4), delivery.NextAttemptAt);
 
         harness.Clock.Advance(TimeSpan.FromMinutes(4));
         Assert.Equal(1, await harness.Processor.ProcessDueDeliveriesAsync(default));
@@ -166,7 +166,7 @@ public sealed class NotificationServiceTests
         Assert.Equal(NotificationDeliveryStatus.Failed, delivery.Status);
         Assert.Equal(3, delivery.AttemptCount);
         Assert.Equal("TEMPORARY_THREE", delivery.FailureCode);
-        Assert.Null(delivery.NextAttemptAtUtc);
+        Assert.Null(delivery.NextAttemptAt);
 
         var attempts = await harness.Db.NotificationAttempts.AsNoTracking().OrderBy(x => x.AttemptNumber).ToListAsync();
         Assert.Equal([1, 2, 3], attempts.Select(x => x.AttemptNumber).ToArray());
@@ -200,7 +200,7 @@ public sealed class NotificationServiceTests
         Assert.Equal(NotificationDeliveryStatus.Failed, delivery.Status);
         Assert.Equal("TOKEN_INVALID", delivery.FailureCode);
         Assert.False(device.IsActive);
-        Assert.Equal(harness.Clock.UtcNow, device.InvalidatedAtUtc);
+        Assert.Equal(harness.Clock.Now, device.InvalidatedAt);
     }
 
     [Fact]
@@ -233,11 +233,11 @@ public sealed class NotificationServiceTests
             default));
 
         await harness.Service.MarkReadAsync(actor, notificationId, default);
-        var firstReadAt = (await harness.Db.Notifications.AsNoTracking().SingleAsync()).ReadAtUtc;
+        var firstReadAt = (await harness.Db.Notifications.AsNoTracking().SingleAsync()).ReadAt;
         harness.Clock.Advance(TimeSpan.FromMinutes(1));
         await harness.Service.MarkReadAsync(actor, notificationId, default);
         var notification = await harness.Db.Notifications.AsNoTracking().SingleAsync();
-        Assert.Equal(firstReadAt, notification.ReadAtUtc);
+        Assert.Equal(firstReadAt, notification.ReadAt);
         Assert.Equal(0, (await harness.Service.GetUnreadCountAsync(actor, default)).UnreadCount);
     }
 
@@ -275,14 +275,14 @@ public sealed class NotificationServiceTests
             "event:invalid-json",
             "{",
             false,
-            harness.Clock.UtcNow));
+            harness.Clock.Now));
         harness.Db.NotificationEvents.Add(new NotificationEvent(
             harness.Customer.Id,
             NotificationEventTypes.SubscriptionCreated,
             "event:missing-template",
             "{\"Variables\":{},\"DeepLink\":null}",
             false,
-            harness.Clock.UtcNow));
+            harness.Clock.Now));
         await harness.Db.SaveChangesAsync();
 
         Assert.Equal(2, await harness.Processor.ProcessPendingEventsAsync(default));
@@ -366,14 +366,14 @@ public sealed class NotificationServiceTests
             IReadOnlyDictionary<string, string>? variables = null,
             string? deepLink = null)
         {
-            var writer = new NotificationEventWriter(Db, Clock);
+            var writer = new NotificationEventWriter(Db, new TestIndiaTimeProvider(Clock));
             writer.Add(new NotificationEventRequest(
                 userId,
                 eventType,
                 eventKey ?? $"notification-test:{Interlocked.Increment(ref _eventSequence)}",
                 variables ?? new Dictionary<string, string>(),
                 deepLink,
-                Clock.UtcNow));
+                Clock.Now));
             await Db.SaveChangesAsync();
         }
 
@@ -400,7 +400,7 @@ public sealed class NotificationServiceTests
             db.Users.AddRange(customer, otherCustomer);
             await db.SaveChangesAsync();
 
-            var clock = new TestClock(new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc));
+            var clock = new TestClock(new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Unspecified));
             var tokenGenerator = new SecureTokenGenerator();
             var tokenProtector = new NotificationTokenProtector(new EphemeralDataProtectionProvider());
             var gateways = Enum.GetValues<NotificationChannel>()

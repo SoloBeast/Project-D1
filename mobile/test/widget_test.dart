@@ -77,6 +77,32 @@ void main() {
       expect(harness.orders.requestedOrderIds, isEmpty);
     });
 
+    testWidgets(
+      'customer shell exposes logout and protects the route after sign out',
+      (tester) async {
+        final harness = await _pumpAuthenticatedApp(tester);
+
+        expect(find.byTooltip('Sign out'), findsOneWidget);
+        await tester.tap(find.byTooltip('Sign out'));
+        await tester.pumpAndSettle();
+
+        expect(harness.auth.loggedOut, isTrue);
+        expect(
+          harness.router.routerDelegate.currentConfiguration.uri.path,
+          '/login',
+        );
+        expect(find.text('Sign in to your account'), findsOneWidget);
+
+        harness.router.go('/home');
+        await tester.pumpAndSettle();
+        expect(
+          harness.router.routerDelegate.currentConfiguration.uri.path,
+          '/login',
+        );
+        expect(find.text('Sign in to your account'), findsOneWidget);
+      },
+    );
+
     testWidgets('restored payment URL loads order when extra is absent', (
       tester,
     ) async {
@@ -157,9 +183,47 @@ void main() {
       harness.router.push('/customer/addresses/new');
       await tester.pumpAndSettle();
       expect(find.text('Add address'), findsOneWidget);
+      expect(find.text('Latitude'), findsNothing);
+      expect(find.text('Longitude'), findsNothing);
+      expect(find.textContaining('enter coordinates manually'), findsNothing);
       harness.router.pop();
       await tester.pumpAndSettle();
       expect(find.text('My account'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('profile and address forms remain usable on narrow screens', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(360, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final harness = await _pumpAuthenticatedApp(tester);
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'customer home overflowed',
+      );
+
+      harness.router.go('/customer/profile/edit');
+      await tester.pumpAndSettle();
+      expect(find.text('Edit profile'), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'profile form overflowed');
+      await tester.ensureVisible(find.text('Save profile'));
+      expect(find.text('Save profile'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      harness.router.go('/customer/addresses/new');
+      await tester.pumpAndSettle();
+      expect(find.text('Add address'), findsOneWidget);
+      expect(find.text('Latitude'), findsNothing);
+      expect(find.text('Longitude'), findsNothing);
+      expect(find.textContaining('enter coordinates manually'), findsNothing);
+      await tester.scrollUntilVisible(
+        find.text('Save address'),
+        500,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Save address'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });
@@ -182,19 +246,29 @@ Future<_RouterHarness> _pumpAuthenticatedApp(WidgetTester tester) async {
     ),
   );
   await tester.pumpAndSettle();
-  return _RouterHarness(container.read(routerProvider), orders);
+  return _RouterHarness(container, orders, auth);
 }
 
 class _RouterHarness {
-  const _RouterHarness(this.router, this.orders);
+  const _RouterHarness(this.container, this.orders, this.auth);
 
-  final GoRouter router;
+  final ProviderContainer container;
   final _FakeOrderRepository orders;
+  final _AuthenticatedCustomerRepository auth;
+
+  GoRouter get router => container.read(routerProvider);
 }
 
 class _AuthenticatedCustomerRepository extends AuthRepository {
+  bool loggedOut = false;
+
   @override
   Future<AuthSession?> restore() async => _customerSession;
+
+  @override
+  Future<void> logout(AuthSession session) async {
+    loggedOut = true;
+  }
 }
 
 class _FakeOrderRepository extends OrderRepository {
@@ -218,7 +292,7 @@ final _order = OrderSummary(
   orderNumber: 'ORD-TEST-10',
   type: 'OneTime',
   status: 'PendingPayment',
-  createdAtUtc: DateTime.utc(2026, 8, 16),
+  createdAt: DateTime(2026, 8, 16),
   addressLabel: 'Home',
   city: 'Pune',
   branchName: 'Central Dairy',
@@ -236,7 +310,7 @@ final _order = OrderSummary(
   subtotal: 60,
   discountAmount: 0,
   payableAmount: 60,
-  cancelledAtUtc: null,
+  cancelledAt: null,
 );
 
 final _customerSession = AuthSession(

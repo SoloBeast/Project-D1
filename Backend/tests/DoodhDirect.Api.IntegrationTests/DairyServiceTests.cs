@@ -44,7 +44,7 @@ public sealed class DairyServiceTests
     {
         await using var harness = await DairyHarness.CreateAsync();
         var request = new RecordMilkProductionRequest(
-            harness.Clock.UtcNow,
+            harness.IndiaNow,
             "Morning",
             buffaloCount,
             quantity,
@@ -65,16 +65,22 @@ public sealed class DairyServiceTests
     }
 
     [Fact]
-    public async Task RecordProduction_RejectsNonUtcAndFutureTimestamps()
+    public async Task RecordProduction_AcceptsIndiaLocalAndRejectsUtcLocalAndFutureTimestamps()
     {
         await using var harness = await DairyHarness.CreateAsync();
-        var local = DateTime.SpecifyKind(harness.Clock.UtcNow, DateTimeKind.Local);
-        var future = harness.Clock.UtcNow.AddMinutes(6);
+        var indiaLocal = harness.IndiaNow.AddHours(-1);
+        var utc = harness.Clock.UtcNow;
+        var local = DateTime.SpecifyKind(indiaLocal, DateTimeKind.Local);
+        var future = harness.IndiaNow.AddMinutes(6);
 
+        var result = await harness.RecordProductionAsync(10m, indiaLocal);
+
+        Assert.Equal(indiaLocal, result.ProductionAt);
+        Assert.Equal(DateTimeKind.Unspecified, result.ProductionAt.Kind);
+        await Assert.ThrowsAsync<ValidationAppException>(() => harness.RecordProductionAsync(10m, utc));
         await Assert.ThrowsAsync<ValidationAppException>(() => harness.RecordProductionAsync(10m, local));
         await Assert.ThrowsAsync<ValidationAppException>(() => harness.RecordProductionAsync(10m, future));
-
-        Assert.Empty(await harness.Db.MilkProductions.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.MilkProductions.AsNoTracking().ToListAsync());
     }
 
     [Fact]
@@ -105,7 +111,7 @@ public sealed class DairyServiceTests
             harness.Branch.Id,
             production.Id,
             "MB-DUPLICATE",
-            production.ProductionAtUtc,
+            production.ProductionAt,
             production.QuantityProduced,
             "L"));
 
@@ -164,7 +170,7 @@ public sealed class DairyServiceTests
     public async Task Usage_RejectsTimestampBeforeProduction()
     {
         await using var harness = await DairyHarness.CreateAsync();
-        var productionAt = harness.Clock.UtcNow.AddHours(-1);
+        var productionAt = harness.IndiaNow.AddHours(-1);
         var production = await harness.RecordProductionAsync(8m, productionAt);
 
         await Assert.ThrowsAsync<ValidationAppException>(() => harness.RecordUsageAsync(
@@ -236,6 +242,7 @@ public sealed class DairyServiceTests
 
         public DoodhDirectDbContext Db { get; }
         public TestClock Clock { get; }
+        public DateTime IndiaNow => new TestIndiaTimeProvider(Clock).Now;
         public DairyService Service { get; }
         public User Manager { get; }
         public Branch Branch { get; }
@@ -246,8 +253,8 @@ public sealed class DairyServiceTests
 
         public RecordMilkProductionRequest ProductionRequest(
             decimal quantity,
-            DateTime? productionAtUtc = null) => new(
-                productionAtUtc ?? Clock.UtcNow.AddHours(-1),
+            DateTime? productionAt = null) => new(
+                productionAt ?? IndiaNow.AddHours(-1),
                 "Morning",
                 12,
                 quantity,
@@ -257,28 +264,28 @@ public sealed class DairyServiceTests
         public RecordMilkUsageRequest UsageRequest(
             decimal quantity,
             string purpose,
-            DateTime? usedAtUtc = null) => new(
-                usedAtUtc ?? Clock.UtcNow,
+            DateTime? usedAt = null) => new(
+                usedAt ?? IndiaNow,
                 quantity,
                 purpose,
                 null);
 
         public Task<MilkProductionResult> RecordProductionAsync(
             decimal quantity,
-            DateTime? productionAtUtc = null) => Service.RecordProductionAsync(
+            DateTime? productionAt = null) => Service.RecordProductionAsync(
                 ManagerActor,
                 Branch.Id,
-                ProductionRequest(quantity, productionAtUtc),
+                ProductionRequest(quantity, productionAt),
                 CancellationToken.None);
 
         public Task<MilkUsageResult> RecordUsageAsync(
             Guid batchId,
             decimal quantity,
             string purpose,
-            DateTime? usedAtUtc = null) => Service.RecordUsageAsync(
+            DateTime? usedAt = null) => Service.RecordUsageAsync(
                 ManagerActor,
                 batchId,
-                UsageRequest(quantity, purpose, usedAtUtc),
+                UsageRequest(quantity, purpose, usedAt),
                 CancellationToken.None);
 
         public static async Task<DairyHarness> CreateAsync()
@@ -314,7 +321,7 @@ public sealed class DairyServiceTests
                 connection,
                 db,
                 clock,
-                new DairyService(db, clock),
+                new DairyService(db, new TestIndiaTimeProvider(clock)),
                 manager,
                 branch,
                 otherBranch);

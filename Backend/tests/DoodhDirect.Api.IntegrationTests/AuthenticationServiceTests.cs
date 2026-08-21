@@ -94,9 +94,9 @@ public sealed class AuthenticationServiceTests
         Assert.NotEqual(registered.Tokens.RefreshToken, refreshed.Tokens.RefreshToken);
         var tokens = await harness.Db.RefreshTokens.OrderBy(x => x.Id).ToListAsync();
         Assert.Equal(2, tokens.Count);
-        Assert.NotNull(tokens[0].RevokedAtUtc);
+        Assert.NotNull(tokens[0].RevokedAt);
         Assert.Equal(harness.Tokens.HashRefreshToken(refreshed.Tokens.RefreshToken), tokens[0].ReplacedByTokenHash);
-        Assert.Null(tokens[1].RevokedAtUtc);
+        Assert.Null(tokens[1].RevokedAt);
         Assert.Contains(await harness.Db.AuditLogs.ToListAsync(), x => x.Action == "AUTH_REFRESH_ROTATED");
     }
 
@@ -119,9 +119,9 @@ public sealed class AuthenticationServiceTests
                 CancellationToken.None));
 
         var session = await harness.Db.UserSessions.SingleAsync();
-        Assert.NotNull(session.RevokedAtUtc);
+        Assert.NotNull(session.RevokedAt);
         Assert.Equal("REFRESH_TOKEN_REUSE", session.RevocationReason);
-        Assert.All(await harness.Db.RefreshTokens.ToListAsync(), token => Assert.NotNull(token.RevokedAtUtc));
+        Assert.All(await harness.Db.RefreshTokens.ToListAsync(), token => Assert.NotNull(token.RevokedAt));
         Assert.Contains(await harness.Db.AuditLogs.ToListAsync(), x => x.Action == "AUTH_REFRESH_REUSE");
     }
 
@@ -139,7 +139,7 @@ public sealed class AuthenticationServiceTests
 
         Assert.False(session.IsActive);
         Assert.Equal("USER_LOGOUT", session.RevocationReason);
-        Assert.All(await harness.Db.RefreshTokens.ToListAsync(), token => Assert.NotNull(token.RevokedAtUtc));
+        Assert.All(await harness.Db.RefreshTokens.ToListAsync(), token => Assert.NotNull(token.RevokedAt));
         Assert.Contains(await harness.Db.AuditLogs.ToListAsync(), x => x.Action == "AUTH_LOGOUT");
         await Assert.ThrowsAsync<UnauthorizedAppException>(() =>
             harness.Authentication.RefreshAsync(registered.Tokens.RefreshToken, Device, CancellationToken.None));
@@ -170,7 +170,7 @@ public sealed class OtpServiceTests
 
         Assert.Equal(mobile, result.User.Mobile);
         Assert.Contains(AuthorizationCodes.Customer, result.User.Roles);
-        Assert.NotNull((await harness.Db.OtpChallenges.SingleAsync()).ConsumedAtUtc);
+        Assert.NotNull((await harness.Db.OtpChallenges.SingleAsync()).ConsumedAt);
         Assert.Contains(await harness.Db.AuditLogs.ToListAsync(), x => x.Action == "AUTH_OTP_LOGIN");
     }
 
@@ -277,7 +277,7 @@ internal sealed class AuthenticationHarness : IAsyncDisposable
         db.RolePermissions.Add(new RolePermission(role.Id, permission.Id));
         await db.SaveChangesAsync();
 
-        var clock = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Utc));
+        var clock = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
         var hasher = new TestPasswordHasher();
         var tokens = new TestTokenService();
         var delivery = new CapturingOtpDelivery();
@@ -315,11 +315,31 @@ internal sealed class AuthenticationHarness : IAsyncDisposable
     public ValueTask DisposeAsync() => Db.DisposeAsync();
 }
 
-internal sealed class TestClock(DateTime utcNow) : IClock
+internal sealed class TestClock(DateTime now) : IClock, IIndiaTimeProvider
 {
-    public DateTime UtcNow { get; private set; } = utcNow;
+    public DateTime Now { get; private set; } = DateTime.SpecifyKind(now, DateTimeKind.Unspecified);
 
-    public void Advance(TimeSpan duration) => UtcNow = UtcNow.Add(duration);
+    public DateTime UtcNow => ToUtc(Now);
+
+    public DateOnly Today => DateOnly.FromDateTime(Now);
+
+    public DateOnly CurrentDate => Today;
+
+    public DateTime CurrentDateTime => Now;
+
+    public DateTime ToUtc(DateTime indiaLocal) => DateTime.SpecifyKind(
+        indiaLocal.AddHours(-5).AddMinutes(-30),
+        DateTimeKind.Utc);
+
+    public string FormatDateTime(DateTime value) => value.ToString("yyyy-MM-dd'T'HH:mm:ss.fff");
+
+    public string FormatDate(DateOnly value) => value.ToString("yyyy-MM-dd");
+
+    public DateTime ParseApplicationDateTime(string value) => DateTime.SpecifyKind(
+        DateTime.Parse(value, System.Globalization.CultureInfo.InvariantCulture),
+        DateTimeKind.Unspecified);
+
+    public void Advance(TimeSpan duration) => Now = Now.Add(duration);
 }
 
 internal sealed class TestPasswordHasher : IPasswordHasher
@@ -342,14 +362,14 @@ internal sealed class TestTokenService : ITokenService
         IReadOnlyCollection<string> roles,
         IReadOnlyCollection<string> permissions,
         IReadOnlyCollection<long> branchIds,
-        DateTime utcNow)
+        DateTime now)
     {
         var sequence = Interlocked.Increment(ref _sequence);
         return new TokenPair(
             $"access-token-{sequence}",
             $"refresh-token-{sequence}",
-            utcNow.AddMinutes(15),
-            utcNow.AddDays(30));
+            now.AddMinutes(15),
+            now.AddDays(30));
     }
 
     public string HashRefreshToken(string token) => $"hashed:{token}";

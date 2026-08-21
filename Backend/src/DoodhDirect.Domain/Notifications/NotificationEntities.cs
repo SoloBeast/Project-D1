@@ -48,7 +48,7 @@ public sealed class NotificationEvent : AuditableEntity
         string eventKey,
         string payloadJson,
         bool isCritical,
-        DateTime occurredAtUtc)
+        DateTime occurredAt)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(userId);
         UserId = userId;
@@ -56,7 +56,7 @@ public sealed class NotificationEvent : AuditableEntity
         EventKey = NormalizeRequired(eventKey, nameof(eventKey));
         PayloadJson = NormalizeRequired(payloadJson, nameof(payloadJson));
         IsCritical = isCritical;
-        OccurredAtUtc = EnsureUtc(occurredAtUtc, nameof(occurredAtUtc));
+        OccurredAt = EnsureIndiaLocal(occurredAt, nameof(occurredAt));
         Status = NotificationEventStatus.Pending;
     }
 
@@ -66,8 +66,8 @@ public sealed class NotificationEvent : AuditableEntity
     public string PayloadJson { get; private set; } = string.Empty;
     public bool IsCritical { get; private set; }
     public NotificationEventStatus Status { get; private set; }
-    public DateTime OccurredAtUtc { get; private set; }
-    public DateTime? ProcessedAtUtc { get; private set; }
+    public DateTime OccurredAt { get; private set; }
+    public DateTime? ProcessedAt { get; private set; }
     public string? FailureCode { get; private set; }
     public string? FailureMessage { get; private set; }
 
@@ -86,20 +86,20 @@ public sealed class NotificationEvent : AuditableEntity
         FailureMessage = null;
     }
 
-    public void Complete(DateTime processedAtUtc)
+    public void Complete(DateTime processedAt)
     {
         Status = NotificationEventStatus.Processed;
-        ProcessedAtUtc = EnsureUtc(processedAtUtc, nameof(processedAtUtc));
+        ProcessedAt = EnsureIndiaLocal(processedAt, nameof(processedAt));
         FailureCode = null;
         FailureMessage = null;
     }
 
-    public void Fail(string failureCode, string failureMessage, DateTime processedAtUtc)
+    public void Fail(string failureCode, string failureMessage, DateTime processedAt)
     {
         Status = NotificationEventStatus.Failed;
         FailureCode = NormalizeCode(failureCode, nameof(failureCode));
         FailureMessage = NormalizeRequired(failureMessage, nameof(failureMessage));
-        ProcessedAtUtc = EnsureUtc(processedAtUtc, nameof(processedAtUtc));
+        ProcessedAt = EnsureIndiaLocal(processedAt, nameof(processedAt));
     }
 
     internal static string NormalizeCode(string value, string parameterName) =>
@@ -111,11 +111,11 @@ public sealed class NotificationEvent : AuditableEntity
         return value.Trim();
     }
 
-    internal static DateTime EnsureUtc(DateTime value, string parameterName)
+    internal static DateTime EnsureIndiaLocal(DateTime value, string parameterName)
     {
-        if (value.Kind != DateTimeKind.Utc)
+        if (value.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("The timestamp must be UTC.", parameterName);
+            throw new ArgumentException("The timestamp must be India-local with an unspecified DateTime kind.", parameterName);
         }
 
         return value;
@@ -133,7 +133,7 @@ public sealed class Notification : AuditableEntity
         string title,
         string body,
         string? deepLink,
-        DateTime createdAtUtc)
+        DateTime createdAt)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(notificationEventId);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(userId);
@@ -143,7 +143,7 @@ public sealed class Notification : AuditableEntity
         Title = NotificationEvent.NormalizeRequired(title, nameof(title));
         Body = NotificationEvent.NormalizeRequired(body, nameof(body));
         DeepLink = NormalizeOptional(deepLink);
-        NotificationEvent.EnsureUtc(createdAtUtc, nameof(createdAtUtc));
+        CreatedAt = NotificationEvent.EnsureIndiaLocal(createdAt, nameof(createdAt));
     }
 
     public long NotificationEventId { get; private set; }
@@ -152,15 +152,15 @@ public sealed class Notification : AuditableEntity
     public string Title { get; private set; } = string.Empty;
     public string Body { get; private set; } = string.Empty;
     public string? DeepLink { get; private set; }
-    public DateTime? ReadAtUtc { get; private set; }
+    public DateTime? ReadAt { get; private set; }
 
     public NotificationEvent Event { get; private set; } = null!;
     public User User { get; private set; } = null!;
     public ICollection<NotificationDelivery> Deliveries { get; private set; } = [];
 
-    public void MarkRead(DateTime readAtUtc)
+    public void MarkRead(DateTime readAt)
     {
-        ReadAtUtc ??= NotificationEvent.EnsureUtc(readAtUtc, nameof(readAtUtc));
+        ReadAt ??= NotificationEvent.EnsureIndiaLocal(readAt, nameof(readAt));
     }
 
     private static string? NormalizeOptional(string? value) =>
@@ -256,12 +256,12 @@ public sealed class UserDevice : AuditableEntity
         string protectedToken,
         string platform,
         string? deviceName,
-        DateTime registeredAtUtc)
+        DateTime registeredAt)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(userId);
         UserId = userId;
         DeviceIdentifierHash = NotificationEvent.NormalizeRequired(deviceIdentifierHash, nameof(deviceIdentifierHash));
-        RotateToken(tokenHash, protectedToken, registeredAtUtc);
+        RotateToken(tokenHash, protectedToken, registeredAt);
         Platform = NotificationEvent.NormalizeCode(platform, nameof(platform));
         DeviceName = NormalizeOptional(deviceName);
     }
@@ -273,30 +273,30 @@ public sealed class UserDevice : AuditableEntity
     public string Platform { get; private set; } = string.Empty;
     public string? DeviceName { get; private set; }
     public bool IsActive { get; private set; }
-    public DateTime RegisteredAtUtc { get; private set; }
-    public DateTime? LastSeenAtUtc { get; private set; }
-    public DateTime? InvalidatedAtUtc { get; private set; }
+    public DateTime RegisteredAt { get; private set; }
+    public DateTime? LastSeenAt { get; private set; }
+    public DateTime? InvalidatedAt { get; private set; }
 
     public User User { get; private set; } = null!;
     public ICollection<NotificationDelivery> Deliveries { get; private set; } = [];
 
-    public void RotateToken(string tokenHash, string protectedToken, DateTime seenAtUtc)
+    public void RotateToken(string tokenHash, string protectedToken, DateTime seenAt)
     {
         TokenHash = NotificationEvent.NormalizeRequired(tokenHash, nameof(tokenHash));
         ProtectedToken = NotificationEvent.NormalizeRequired(protectedToken, nameof(protectedToken));
-        LastSeenAtUtc = NotificationEvent.EnsureUtc(seenAtUtc, nameof(seenAtUtc));
-        RegisteredAtUtc = RegisteredAtUtc == default ? seenAtUtc : RegisteredAtUtc;
-        InvalidatedAtUtc = null;
+        LastSeenAt = NotificationEvent.EnsureIndiaLocal(seenAt, nameof(seenAt));
+        RegisteredAt = RegisteredAt == default ? seenAt : RegisteredAt;
+        InvalidatedAt = null;
         IsActive = true;
     }
 
-    public void Touch(DateTime seenAtUtc) =>
-        LastSeenAtUtc = NotificationEvent.EnsureUtc(seenAtUtc, nameof(seenAtUtc));
+    public void Touch(DateTime seenAt) =>
+        LastSeenAt = NotificationEvent.EnsureIndiaLocal(seenAt, nameof(seenAt));
 
-    public void Invalidate(DateTime invalidatedAtUtc)
+    public void Invalidate(DateTime invalidatedAt)
     {
         IsActive = false;
-        InvalidatedAtUtc = NotificationEvent.EnsureUtc(invalidatedAtUtc, nameof(invalidatedAtUtc));
+        InvalidatedAt = NotificationEvent.EnsureIndiaLocal(invalidatedAt, nameof(invalidatedAt));
     }
 
     private static string? NormalizeOptional(string? value) =>
@@ -313,7 +313,7 @@ public sealed class NotificationDelivery : AuditableEntity
         string providerCode,
         string destinationReference,
         long? userDeviceId,
-        DateTime createdAtUtc)
+        DateTime createdAt)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(notificationId);
         NotificationId = notificationId;
@@ -326,7 +326,7 @@ public sealed class NotificationDelivery : AuditableEntity
         ProviderCode = NotificationEvent.NormalizeCode(providerCode, nameof(providerCode));
         DestinationReference = NotificationEvent.NormalizeRequired(destinationReference, nameof(destinationReference));
         UserDeviceId = userDeviceId;
-        NextAttemptAtUtc = NotificationEvent.EnsureUtc(createdAtUtc, nameof(createdAtUtc));
+        NextAttemptAt = NotificationEvent.EnsureIndiaLocal(createdAt, nameof(createdAt));
         Status = NotificationDeliveryStatus.Pending;
     }
 
@@ -337,8 +337,8 @@ public sealed class NotificationDelivery : AuditableEntity
     public string DestinationReference { get; private set; } = string.Empty;
     public NotificationDeliveryStatus Status { get; private set; }
     public int AttemptCount { get; private set; }
-    public DateTime? NextAttemptAtUtc { get; private set; }
-    public DateTime? DeliveredAtUtc { get; private set; }
+    public DateTime? NextAttemptAt { get; private set; }
+    public DateTime? DeliveredAt { get; private set; }
     public string? ProviderMessageId { get; private set; }
     public string? FailureCode { get; private set; }
     public string? FailureMessage { get; private set; }
@@ -361,45 +361,45 @@ public sealed class NotificationDelivery : AuditableEntity
 
         Status = NotificationDeliveryStatus.Processing;
         AttemptCount++;
-        NextAttemptAtUtc = null;
+        NextAttemptAt = null;
     }
 
-    public void MarkDelivered(string? providerMessageId, DateTime deliveredAtUtc)
+    public void MarkDelivered(string? providerMessageId, DateTime deliveredAt)
     {
         Status = NotificationDeliveryStatus.Delivered;
         ProviderMessageId = string.IsNullOrWhiteSpace(providerMessageId) ? null : providerMessageId.Trim();
-        DeliveredAtUtc = NotificationEvent.EnsureUtc(deliveredAtUtc, nameof(deliveredAtUtc));
+        DeliveredAt = NotificationEvent.EnsureIndiaLocal(deliveredAt, nameof(deliveredAt));
         FailureCode = null;
         FailureMessage = null;
-        NextAttemptAtUtc = null;
+        NextAttemptAt = null;
     }
 
-    public void ScheduleRetry(string failureCode, string failureMessage, DateTime nextAttemptAtUtc)
+    public void ScheduleRetry(string failureCode, string failureMessage, DateTime nextAttemptAt)
     {
         Status = NotificationDeliveryStatus.RetryScheduled;
         SetFailure(failureCode, failureMessage);
-        NextAttemptAtUtc = NotificationEvent.EnsureUtc(nextAttemptAtUtc, nameof(nextAttemptAtUtc));
+        NextAttemptAt = NotificationEvent.EnsureIndiaLocal(nextAttemptAt, nameof(nextAttemptAt));
     }
 
     public void MarkFailed(string failureCode, string failureMessage)
     {
         Status = NotificationDeliveryStatus.Failed;
         SetFailure(failureCode, failureMessage);
-        NextAttemptAtUtc = null;
+        NextAttemptAt = null;
     }
 
     public void MarkSuppressed(string reason)
     {
         Status = NotificationDeliveryStatus.Suppressed;
         SetFailure("PREFERENCE_SUPPRESSED", reason);
-        NextAttemptAtUtc = null;
+        NextAttemptAt = null;
     }
 
     public void MarkUnconfigured(string failureMessage)
     {
         Status = NotificationDeliveryStatus.Unconfigured;
         SetFailure("PROVIDER_UNCONFIGURED", failureMessage);
-        NextAttemptAtUtc = null;
+        NextAttemptAt = null;
     }
 
     private void SetFailure(string failureCode, string failureMessage)
@@ -420,7 +420,7 @@ public sealed class NotificationAttempt : PublicEntity
         string? providerMessageId,
         string? failureCode,
         string? failureMessage,
-        DateTime attemptedAtUtc)
+        DateTime attemptedAt)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(notificationDeliveryId);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(attemptNumber);
@@ -435,7 +435,7 @@ public sealed class NotificationAttempt : PublicEntity
         ProviderMessageId = NormalizeOptional(providerMessageId);
         FailureCode = NormalizeOptional(failureCode)?.ToUpperInvariant();
         FailureMessage = NormalizeOptional(failureMessage);
-        AttemptedAtUtc = NotificationEvent.EnsureUtc(attemptedAtUtc, nameof(attemptedAtUtc));
+        AttemptedAt = NotificationEvent.EnsureIndiaLocal(attemptedAt, nameof(attemptedAt));
     }
 
     public long NotificationDeliveryId { get; private set; }
@@ -444,7 +444,7 @@ public sealed class NotificationAttempt : PublicEntity
     public string? ProviderMessageId { get; private set; }
     public string? FailureCode { get; private set; }
     public string? FailureMessage { get; private set; }
-    public DateTime AttemptedAtUtc { get; private set; }
+    public DateTime AttemptedAt { get; private set; }
 
     public NotificationDelivery Delivery { get; private set; } = null!;
 

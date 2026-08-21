@@ -19,7 +19,7 @@ namespace DoodhDirect.Infrastructure.Deliveries;
 
 public sealed class DeliveryService(
     DoodhDirectDbContext dbContext,
-    IClock clock,
+    IIndiaTimeProvider timeProvider,
     IPasswordHasher passwordHasher,
     IOtpDeliveryService otpDeliveryService,
     IDeliveryRealtimePublisher realtimePublisher,
@@ -34,7 +34,7 @@ public sealed class DeliveryService(
         CancellationToken cancellationToken)
     {
         EnsureActorHasBranches(actor);
-        var today = DateOnly.FromDateTime(clock.UtcNow);
+        var today = timeProvider.Today;
         if (throughDate < today)
         {
             throw new ValidationAppException("The materialization date cannot be in the past.", "throughDate");
@@ -61,7 +61,7 @@ public sealed class DeliveryService(
 
         var orders = await orderQuery.ToListAsync(cancellationToken);
         var occurrences = await occurrenceQuery.ToListAsync(cancellationToken);
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
 
         foreach (var order in orders)
         {
@@ -115,7 +115,7 @@ public sealed class DeliveryService(
         var deliveries = await OperationsQuery()
             .Where(x => x.AssignedEmployeeId == actor.UserId && x.ScheduledDate == date)
             .OrderBy(x => x.Status)
-            .ThenBy(x => x.AssignedAtUtc)
+            .ThenBy(x => x.AssignedAt)
             .ToListAsync(cancellationToken);
         return deliveries.Select(ToResult).ToArray();
     }
@@ -167,7 +167,7 @@ public sealed class DeliveryService(
         var deliveries = await OperationsQuery()
             .Where(x => x.CustomerId == customerId)
             .OrderByDescending(x => x.ScheduledDate)
-            .ThenByDescending(x => x.CreatedAtUtc)
+            .ThenByDescending(x => x.CreatedAt)
             .ToListAsync(cancellationToken);
         return deliveries.Select(ToCustomerResult).ToArray();
     }
@@ -193,7 +193,7 @@ public sealed class DeliveryService(
         EnsureBranchAccess(actor, delivery.BranchId);
         var employee = await FindEligibleEmployeeAsync(request.EmployeeId, delivery.BranchId, cancellationToken);
         var previousEmployeeId = delivery.AssignedEmployeeId;
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         Mutate(() => delivery.Assign(employee.Id, actor.UserId, now, request.Reason));
         if (delivery.Order is not null) Mutate(delivery.Order.AssignForDelivery);
         AddAudit(actor.UserId, previousEmployeeId.HasValue ? "DELIVERY.REASSIGN" : "DELIVERY.ASSIGN", "Delivery",
@@ -218,15 +218,15 @@ public sealed class DeliveryService(
         Guid deliveryId,
         DeliveryNotesRequest request,
         CancellationToken cancellationToken) =>
-        TransitionAsync(actor, deliveryId, "DELIVERY.PICK_UP", d => d.PickUp(actor.UserId, clock.UtcNow, request.Remarks), cancellationToken);
+        TransitionAsync(actor, deliveryId, "DELIVERY.PICK_UP", (d, now) => d.PickUp(actor.UserId, now, request.Remarks), cancellationToken);
 
     public async Task<DeliveryResult> StartAsync(DeliveryActor actor, Guid deliveryId, CancellationToken cancellationToken)
     {
         var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         Mutate(() => delivery.Start(actor.UserId, now));
         if (delivery.Order is not null) Mutate(delivery.Order.StartDelivery);
-        AddTransitionAudit(actor.UserId, "DELIVERY.START", delivery);
+        AddTransitionAudit(actor.UserId, "DELIVERY.START", delivery, now);
         AddDeliveryEvent(
             delivery,
             NotificationEventTypes.DeliveryStarted,
@@ -243,9 +243,9 @@ public sealed class DeliveryService(
         CancellationToken cancellationToken)
     {
         var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         Mutate(() => delivery.Arrive(actor.UserId, now));
-        AddTransitionAudit(actor.UserId, "DELIVERY.ARRIVE", delivery);
+        AddTransitionAudit(actor.UserId, "DELIVERY.ARRIVE", delivery, now);
         AddDeliveryEvent(
             delivery,
             NotificationEventTypes.DeliveryNearCustomer,
@@ -263,16 +263,16 @@ public sealed class DeliveryService(
         {
             throw new BusinessRuleException("Delivery OTP can only be issued after arrival.");
         }
-        if (delivery.OtpVerifiedAtUtc.HasValue)
+        if (delivery.OtpVerifiedAt.HasValue)
         {
             throw new ConflictException("The delivery OTP has already been verified.");
         }
 
-        var now = clock.UtcNow;
-        var activeOtps = delivery.Otps.Where(x => !x.ConsumedAtUtc.HasValue).ToArray();
+        var now = timeProvider.Now;
+        var activeOtps = delivery.Otps.Where(x => !x.ConsumedAt.HasValue).ToArray();
         foreach (var activeOtp in activeOtps)
         {
-            if (activeOtp.ExpiresAtUtc > now && activeOtp.AttemptCount < activeOtp.MaximumAttempts)
+            if (activeOtp.ExpiresAt > now && activeOtp.AttemptCount < activeOtp.MaximumAttempts)
             {
                 throw new ConflictException("An active delivery OTP already exists.");
             }
@@ -282,7 +282,7 @@ public sealed class DeliveryService(
         var otp = new DeliveryOtp(delivery.Id, passwordHasher.Hash(code), now.AddMinutes(_options.OtpExpiryMinutes), _options.OtpMaximumAttempts, now);
         dbContext.DeliveryOtps.Add(otp);
         AddAudit(actor.UserId, "DELIVERY.OTP_ISSUE", "Delivery", delivery.PublicId.ToString(), null,
-            new { otp.ExpiresAtUtc, otp.MaximumAttempts }, null, now);
+            new { otp.ExpiresAt, otp.MaximumAttempts }, null, now);
         await dbContext.SaveChangesAsync(cancellationToken);
         await otpDeliveryService.SendAsync(delivery.CustomerMobileSnapshot, code, cancellationToken);
     }
@@ -303,10 +303,10 @@ public sealed class DeliveryService(
         {
             throw new BusinessRuleException("Delivery OTP can only be verified after arrival.");
         }
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         var otp = delivery.Otps
-            .Where(x => !x.ConsumedAtUtc.HasValue)
-            .OrderByDescending(x => x.CreatedAtUtc)
+            .Where(x => !x.ConsumedAt.HasValue)
+            .OrderByDescending(x => x.CreatedAt)
             .FirstOrDefault() ?? throw new NotFoundException("No delivery OTP is available for verification.");
 
         try
@@ -343,7 +343,7 @@ public sealed class DeliveryService(
         await ExecuteSerializableAsync(async () =>
         {
             var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
-            var now = clock.UtcNow;
+            var now = timeProvider.Now;
             Mutate(() => delivery.Complete(actor.UserId, now, request.Remarks));
             if (delivery.Order is not null)
             {
@@ -354,7 +354,7 @@ public sealed class DeliveryService(
                 var occurrence = delivery.SubscriptionDelivery!;
                 Mutate(() => occurrence.Subscription.MarkDelivered(occurrence, now));
             }
-            AddTransitionAudit(actor.UserId, "DELIVERY.COMPLETE", delivery);
+            AddTransitionAudit(actor.UserId, "DELIVERY.COMPLETE", delivery, now);
             AddDeliveryEvent(
                 delivery,
                 NotificationEventTypes.DeliveryCompleted,
@@ -375,7 +375,7 @@ public sealed class DeliveryService(
         await ExecuteSerializableAsync(async () =>
         {
             var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
-            var now = clock.UtcNow;
+            var now = timeProvider.Now;
             Mutate(() => delivery.Fail(actor.UserId, now, request.Reason, request.Remarks, request.Latitude, request.Longitude));
             if (delivery.Order is not null)
             {
@@ -411,18 +411,22 @@ public sealed class DeliveryService(
     {
         var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
         Mutate(() => delivery.EnsureCanRecordLocation(actor.UserId));
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         var minimum = now.AddMinutes(-_options.MaximumLocationAgeMinutes);
         var maximum = now.AddMinutes(_options.MaximumLocationFutureSkewMinutes);
-        if (request.RecordedAtUtc.Kind != DateTimeKind.Utc || request.RecordedAtUtc < minimum || request.RecordedAtUtc > maximum)
+        if (request.RecordedAt.Kind != DateTimeKind.Unspecified
+            || request.RecordedAt < minimum
+            || request.RecordedAt > maximum)
         {
-            throw new ValidationAppException("The location timestamp is outside the permitted UTC window.", "recordedAtUtc");
+            throw new ValidationAppException(
+                "The location timestamp is outside the permitted India-local window.",
+                "recordedAt");
         }
 
         DeliveryLocation location;
         try
         {
-            location = new DeliveryLocation(delivery.Id, actor.UserId, request.Latitude, request.Longitude, request.AccuracyMetres, request.RecordedAtUtc);
+            location = new DeliveryLocation(delivery.Id, actor.UserId, request.Latitude, request.Longitude, request.AccuracyMetres, request.RecordedAt);
         }
         catch (ArgumentException exception)
         {
@@ -440,12 +444,13 @@ public sealed class DeliveryService(
         DeliveryActor actor,
         Guid deliveryId,
         string action,
-        Action<Delivery> transition,
+        Action<Delivery, DateTime> transition,
         CancellationToken cancellationToken)
     {
         var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
-        Mutate(() => transition(delivery));
-        AddTransitionAudit(actor.UserId, action, delivery);
+        var now = timeProvider.Now;
+        Mutate(() => transition(delivery, now));
+        AddTransitionAudit(actor.UserId, action, delivery, now);
         await dbContext.SaveChangesAsync(cancellationToken);
         return await PublishChangedAsync(delivery.PublicId, cancellationToken);
     }
@@ -519,13 +524,13 @@ public sealed class DeliveryService(
     private async Task PruneLocationsAsync(long deliveryId, DateTime now, CancellationToken cancellationToken)
     {
         var expired = await dbContext.DeliveryLocations
-            .Where(x => x.RecordedAtUtc < now.AddDays(-_options.LocationRetentionDays))
+            .Where(x => x.RecordedAt < now.AddDays(-_options.LocationRetentionDays))
             .ToListAsync(cancellationToken);
         if (expired.Count > 0) dbContext.DeliveryLocations.RemoveRange(expired);
 
         var excess = await dbContext.DeliveryLocations
             .Where(x => x.DeliveryId == deliveryId)
-            .OrderByDescending(x => x.RecordedAtUtc)
+            .OrderByDescending(x => x.RecordedAt)
             .Skip(_options.MaximumLocationsPerDelivery - 1)
             .ToListAsync(cancellationToken);
         if (excess.Count > 0) dbContext.DeliveryLocations.RemoveRange(excess);
@@ -550,15 +555,15 @@ public sealed class DeliveryService(
         });
     }
 
-    private void AddTransitionAudit(long userId, string action, Delivery delivery) =>
-        AddAudit(userId, action, "Delivery", delivery.PublicId.ToString(), null, new { delivery.Status }, null, clock.UtcNow);
+    private void AddTransitionAudit(long userId, string action, Delivery delivery, DateTime occurredAt) =>
+        AddAudit(userId, action, "Delivery", delivery.PublicId.ToString(), null, new { delivery.Status }, null, occurredAt);
 
     private void AddDeliveryEvent(
         Delivery delivery,
         string eventType,
         string eventKey,
         string message,
-        DateTime occurredAtUtc,
+        DateTime occurredAt,
         IReadOnlyDictionary<string, string>? additionalVariables = null)
     {
         var variables = new Dictionary<string, string>
@@ -581,7 +586,7 @@ public sealed class DeliveryService(
             eventKey,
             variables,
             $"/deliveries/{delivery.PublicId}",
-            occurredAtUtc));
+            occurredAt));
     }
 
     private void AddAudit(
@@ -592,7 +597,7 @@ public sealed class DeliveryService(
         object? oldValue,
         object? newValue,
         string? reason,
-        DateTime createdAtUtc) =>
+        DateTime createdAt) =>
         dbContext.AuditLogs.Add(new AuditLog(
             userId,
             action,
@@ -603,7 +608,7 @@ public sealed class DeliveryService(
             null,
             null,
             reason,
-            createdAtUtc));
+            createdAt));
 
     private static void Mutate(Action operation)
     {
@@ -623,7 +628,7 @@ public sealed class DeliveryService(
 
     private static DeliveryResult ToResult(Delivery delivery)
     {
-        var latest = delivery.Locations.OrderByDescending(x => x.RecordedAtUtc).FirstOrDefault();
+        var latest = delivery.Locations.OrderByDescending(x => x.RecordedAt).FirstOrDefault();
         return new DeliveryResult(
             delivery.PublicId,
             delivery.SourceType,
@@ -640,30 +645,30 @@ public sealed class DeliveryService(
             delivery.DestinationLongitude,
             delivery.AssignedEmployee?.PublicId,
             delivery.AssignedEmployee?.DisplayName,
-            delivery.AssignedAtUtc,
-            delivery.PickedUpAtUtc,
-            delivery.OutForDeliveryAtUtc,
-            delivery.ArrivedAtUtc,
-            delivery.OtpVerifiedAtUtc,
-            delivery.CompletedAtUtc,
-            delivery.FailedAtUtc,
+            delivery.AssignedAt,
+            delivery.PickedUpAt,
+            delivery.OutForDeliveryAt,
+            delivery.ArrivedAt,
+            delivery.OtpVerifiedAt,
+            delivery.CompletedAt,
+            delivery.FailedAt,
             delivery.FailureReason,
             delivery.Remarks,
             delivery.OperationalNotes,
             delivery.IsTrackingActive,
             latest is null ? null : ToLocationResult(latest),
-            delivery.Assignments.OrderBy(x => x.AssignedAtUtc).Select(x => new DeliveryAssignmentResult(
+            delivery.Assignments.OrderBy(x => x.AssignedAt).Select(x => new DeliveryAssignmentResult(
                 x.Employee.PublicId,
                 x.Employee.DisplayName,
                 x.AssignedByUser.PublicId,
-                x.AssignedAtUtc,
+                x.AssignedAt,
                 x.Reason)).ToArray());
     }
 
     private static CustomerDeliveryResult ToCustomerResult(Delivery delivery)
     {
         var latest = delivery.IsTrackingActive
-            ? delivery.Locations.OrderByDescending(x => x.RecordedAtUtc).FirstOrDefault()
+            ? delivery.Locations.OrderByDescending(x => x.RecordedAt).FirstOrDefault()
             : null;
         return new CustomerDeliveryResult(
             delivery.PublicId,
@@ -676,13 +681,13 @@ public sealed class DeliveryService(
             delivery.AssignedEmployee?.DisplayName,
             delivery.IsTrackingActive,
             latest is null ? null : ToLocationResult(latest),
-            delivery.CompletedAtUtc,
-            delivery.FailedAtUtc,
+            delivery.CompletedAt,
+            delivery.FailedAt,
             delivery.FailureReason);
     }
 
     private static DeliveryLocationResult ToLocationResult(DeliveryLocation location) =>
-        new(location.Latitude, location.Longitude, location.AccuracyMetres, location.RecordedAtUtc);
+        new(location.Latitude, location.Longitude, location.AccuracyMetres, location.RecordedAt);
 
     private static string CreateNumericCode(int length)
     {

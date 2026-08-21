@@ -2,7 +2,13 @@ openapi: 3.0.3
 info:
   title: DoodhDirect API
   version: 1.0.0
-  description: Farm-to-home dairy platform API.
+  description: >-
+    Farm-to-home dairy platform API. Application-owned business timestamps use
+    India-local wall-clock values in Asia/Kolkata. Dairy business timestamps are
+    accepted from clients as UTC instants and converted to India-local wall-clock
+    values at the API boundary; responses serialize them without a Z suffix or
+    offset. Provider/external and deferred infrastructure timestamps retain UTC
+    semantics and their existing UTC-suffixed field names.
 servers:
   - url: https://api.example.com/api/v1
 paths:
@@ -1548,8 +1554,8 @@ paths:
       security:
         - bearerAuth: []
       parameters: &reportDashboardParameters
-        - $ref: '#/components/parameters/reportFromUtc'
-        - $ref: '#/components/parameters/reportToUtc'
+        - $ref: '#/components/parameters/reportFrom'
+        - $ref: '#/components/parameters/reportTo'
         - $ref: '#/components/parameters/reportBranchIds'
       responses:
         '200':
@@ -1567,8 +1573,8 @@ paths:
       description: Requires REPORTS.ADMINISTRATION.READ.
       security: [{ bearerAuth: [] }]
       parameters: &reportReadParameters
-        - $ref: '#/components/parameters/reportFromUtc'
-        - $ref: '#/components/parameters/reportToUtc'
+        - $ref: '#/components/parameters/reportFrom'
+        - $ref: '#/components/parameters/reportTo'
         - $ref: '#/components/parameters/reportBranchIds'
         - $ref: '#/components/parameters/reportSearch'
         - $ref: '#/components/parameters/reportStatuses'
@@ -1934,17 +1940,17 @@ components:
       required: true
       description: Client-generated key used to make subscription creation idempotent.
       schema: { type: string, minLength: 1, maxLength: 100 }
-    reportFromUtc:
-      name: dateRange.fromUtc
+    reportFrom:
+      name: dateRange.from
       in: query
       required: false
-      description: Inclusive UTC start of the report range.
+      description: Inclusive India-local start boundary of the report range. The value is a wall-clock timestamp in Asia/Kolkata without an offset; the server compares it using a half-open range.
       schema: { type: string, format: date-time }
-    reportToUtc:
-      name: dateRange.toUtc
+    reportTo:
+      name: dateRange.to
       in: query
       required: false
-      description: Inclusive UTC end of the report range.
+      description: Exclusive India-local end boundary of the report range. The value is a wall-clock timestamp in Asia/Kolkata without an offset.
       schema: { type: string, format: date-time }
     reportBranchIds:
       name: branchIds
@@ -2081,7 +2087,7 @@ components:
       enum: [Push, Sms, WhatsApp, Email]
     NotificationListItem:
       type: object
-      required: [notificationId, eventType, title, body, isRead, createdAtUtc]
+      required: [notificationId, eventType, title, body, isRead, createdAt]
       properties:
         notificationId: { type: string, format: uuid }
         eventType: { type: string }
@@ -2089,8 +2095,8 @@ components:
         body: { type: string }
         deepLink: { type: string, nullable: true, description: Internal application route validated by the client allowlist. }
         isRead: { type: boolean }
-        createdAtUtc: { type: string, format: date-time }
-        readAtUtc: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        readAt: { type: string, format: date-time, nullable: true }
     NotificationPage:
       type: object
       required: [items, page, pageSize, totalCount]
@@ -2116,14 +2122,14 @@ components:
         deviceName: { type: string, nullable: true, maxLength: 160 }
     NotificationDevice:
       type: object
-      required: [deviceId, platform, isActive, registeredAtUtc]
+      required: [deviceId, platform, isActive, registeredAt]
       properties:
         deviceId: { type: string, format: uuid }
         platform: { type: string }
         deviceName: { type: string, nullable: true }
         isActive: { type: boolean }
-        registeredAtUtc: { type: string, format: date-time }
-        lastSeenAtUtc: { type: string, format: date-time, nullable: true }
+        registeredAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time, nullable: true }
     NotificationPreference:
       type: object
       required: [eventType, channel, isEnabled, isCritical]
@@ -2141,7 +2147,7 @@ components:
         isEnabled: { type: boolean }
     NotificationTemplate:
       type: object
-      required: [templateId, eventType, channel, language, bodyTemplate, isActive, createdAtUtc, updatedAtUtc]
+      required: [templateId, eventType, channel, language, bodyTemplate, isActive, createdAt, updatedAt]
       properties:
         templateId: { type: string, format: uuid }
         eventType: { type: string }
@@ -2150,8 +2156,8 @@ components:
         titleTemplate: { type: string, nullable: true }
         bodyTemplate: { type: string }
         isActive: { type: boolean }
-        createdAtUtc: { type: string, format: date-time }
-        updatedAtUtc: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     UpdateNotificationTemplateRequest:
       type: object
       required: [bodyTemplate, isActive, reason]
@@ -2231,7 +2237,7 @@ components:
         stream: { $ref: '#/components/schemas/CameraStreamDescriptor' }
     ManagedCamera:
       type: object
-      required: [cameraId, branchId, branchName, internalIdentifier, displayName, isPublic, isActive, displayOrder, protocol, providerCode, providerStreamReference, createdAtUtc, updatedAtUtc]
+      required: [cameraId, branchId, branchName, internalIdentifier, displayName, isPublic, isActive, displayOrder, protocol, providerCode, providerStreamReference, createdAt, updatedAt]
       properties:
         cameraId: { type: string, format: uuid }
         branchId: { type: integer, format: int64, minimum: 1 }
@@ -2244,8 +2250,8 @@ components:
         protocol: { $ref: '#/components/schemas/CameraStreamProtocol' }
         providerCode: { type: string, maxLength: 80, description: Non-secret provider code. }
         providerStreamReference: { type: string, maxLength: 240, description: Opaque non-secret provider reference; never credentials or a raw/private stream URL. }
-        createdAtUtc: { type: string, format: date-time }
-        updatedAtUtc: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     CreateCameraRequest:
       type: object
       required: [branchId, internalIdentifier, displayName, isPublic, displayOrder, protocol, providerCode, providerStreamReference]
@@ -2293,9 +2299,9 @@ components:
           properties: { data: { type: array, items: { $ref: '#/components/schemas/ManagedCamera' } } }
     RecordMilkProductionRequest:
       type: object
-      required: [productionAtUtc, buffaloCount, quantityProduced, unit]
+      required: [productionAt, buffaloCount, quantityProduced, unit]
       properties:
-        productionAtUtc: { type: string, format: date-time, description: UTC timestamp; cannot be more than five minutes in the future. }
+        productionAt: { type: string, format: date-time, description: India-local business timestamp represented on the wire as a UTC instant; cannot be more than five minutes in the future. }
         shift: { type: string, nullable: true, maxLength: 40 }
         buffaloCount: { type: integer, format: int32, minimum: 1 }
         quantityProduced: { type: number, format: double, exclusiveMinimum: 0, multipleOf: 0.001 }
@@ -2303,9 +2309,9 @@ components:
         remarks: { type: string, nullable: true, maxLength: 1000 }
     RecordMilkUsageRequest:
       type: object
-      required: [usedAtUtc, quantityUsed, purpose]
+      required: [usedAt, quantityUsed, purpose]
       properties:
-        usedAtUtc: { type: string, format: date-time, description: UTC timestamp; must not precede production or be more than five minutes in the future. }
+        usedAt: { type: string, format: date-time, description: India-local business timestamp represented on the wire as a UTC instant; must not precede production or be more than five minutes in the future. }
         quantityUsed: { type: number, format: double, exclusiveMinimum: 0, multipleOf: 0.001 }
         purpose: { type: string, minLength: 1, maxLength: 120 }
         remarks: { type: string, nullable: true, maxLength: 1000 }
@@ -2314,51 +2320,51 @@ components:
       enum: [Available, Exhausted]
     MilkProduction:
       type: object
-      required: [publicId, branchId, productionAtUtc, buffaloCount, quantityProduced, unit, recordedByUserId, createdAtUtc, batch]
+      required: [publicId, branchId, productionAt, buffaloCount, quantityProduced, unit, recordedByUserId, createdAt, batch]
       properties:
         publicId: { type: string, format: uuid }
         branchId: { type: integer, format: int64 }
-        productionAtUtc: { type: string, format: date-time }
+        productionAt: { type: string, format: date-time, description: India-local wall-clock business timestamp; responses omit the UTC suffix and offset. }
         shift: { type: string, nullable: true }
         buffaloCount: { type: integer, format: int32, minimum: 0 }
         quantityProduced: { type: number, format: double, minimum: 0.001, multipleOf: 0.001 }
         unit: { type: string, enum: [L] }
         recordedByUserId: { type: integer, format: int64 }
         remarks: { type: string, nullable: true }
-        createdAtUtc: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time, description: India-local wall-clock business timestamp; responses omit the UTC suffix and offset. }
         batch: { $ref: '#/components/schemas/MilkBatch' }
     MilkBatch:
       type: object
-      required: [publicId, batchNumber, branchId, productionPublicId, productionAtUtc, quantityProduced, availableQuantity, unit, status, createdAtUtc]
+      required: [publicId, batchNumber, branchId, productionPublicId, productionAt, quantityProduced, availableQuantity, unit, status, createdAt]
       properties:
         publicId: { type: string, format: uuid }
         batchNumber: { type: string }
         branchId: { type: integer, format: int64 }
         productionPublicId: { type: string, format: uuid }
-        productionAtUtc: { type: string, format: date-time }
+        productionAt: { type: string, format: date-time, description: India-local wall-clock business timestamp; responses omit the UTC suffix and offset. }
         quantityProduced: { type: number, format: double, minimum: 0.001, multipleOf: 0.001 }
         availableQuantity: { type: number, format: double, minimum: 0, multipleOf: 0.001 }
         unit: { type: string, enum: [L] }
         status: { $ref: '#/components/schemas/MilkBatchStatus' }
-        createdAtUtc: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time, description: India-local wall-clock business timestamp; responses omit the UTC suffix and offset. }
     MilkUsage:
       type: object
-      required: [publicId, batchPublicId, batchNumber, branchId, usedAtUtc, quantityUsed, unit, purpose, recordedByUserId, createdAtUtc]
+      required: [publicId, batchPublicId, batchNumber, branchId, usedAt, quantityUsed, unit, purpose, recordedByUserId, createdAt]
       properties:
         publicId: { type: string, format: uuid }
         batchPublicId: { type: string, format: uuid }
         batchNumber: { type: string }
         branchId: { type: integer, format: int64 }
-        usedAtUtc: { type: string, format: date-time }
+        usedAt: { type: string, format: date-time, description: India-local wall-clock business timestamp; responses omit the UTC suffix and offset. }
         quantityUsed: { type: number, format: double, minimum: 0.001, multipleOf: 0.001 }
         unit: { type: string, enum: [L] }
         purpose: { type: string }
         recordedByUserId: { type: integer, format: int64 }
         remarks: { type: string, nullable: true }
-        createdAtUtc: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time, description: India-local wall-clock business timestamp; responses omit the UTC suffix and offset. }
     MilkAvailability:
       type: object
-      required: [branchId, quantityProduced, quantityUsed, availableQuantity, unit, availableBatchCount, calculatedAtUtc]
+      required: [branchId, quantityProduced, quantityUsed, availableQuantity, unit, availableBatchCount, calculatedAt]
       properties:
         branchId: { type: integer, format: int64 }
         quantityProduced: { type: number, format: double, minimum: 0, multipleOf: 0.001 }
@@ -2366,10 +2372,10 @@ components:
         availableQuantity: { type: number, format: double, minimum: 0, multipleOf: 0.001 }
         unit: { type: string, enum: [L] }
         availableBatchCount: { type: integer, format: int32, minimum: 0 }
-        calculatedAtUtc: { type: string, format: date-time }
+        calculatedAt: { type: string, format: date-time }
     DairyDashboard:
       type: object
-      required: [branchId, productionDate, quantityProduced, availableQuantity, unit, productionEntryCount, availableBatchCount, calculatedAtUtc]
+      required: [branchId, productionDate, quantityProduced, availableQuantity, unit, productionEntryCount, availableBatchCount, calculatedAt]
       properties:
         branchId: { type: integer, format: int64 }
         productionDate: { type: string, format: date }
@@ -2378,7 +2384,7 @@ components:
         unit: { type: string, enum: [L] }
         productionEntryCount: { type: integer, format: int32, minimum: 0 }
         availableBatchCount: { type: integer, format: int32, minimum: 0 }
-        calculatedAtUtc: { type: string, format: date-time }
+        calculatedAt: { type: string, format: date-time }
     MilkProductionResponse:
       allOf:
         - $ref: '#/components/schemas/SuccessResponse'
@@ -3236,10 +3242,10 @@ components:
         branchCode: { type: string }
         branchName: { type: string }
         address: { type: string }
-        statusChangedAtUtc: { type: string, format: date-time, nullable: true }
+        statusChangedAt: { type: string, format: date-time, nullable: true }
     Subscription:
       type: object
-      required: [publicId, status, productId, productSku, productName, unitOfMeasure, quantity, unitPrice, payableAmount, startDate, endDate, totalEntitlement, usedEntitlement, remainingEntitlement, addressId, address, branchId, branchCode, branchName, schedules, createdAtUtc]
+      required: [publicId, status, productId, productSku, productName, unitOfMeasure, quantity, unitPrice, payableAmount, startDate, endDate, totalEntitlement, usedEntitlement, remainingEntitlement, addressId, address, branchId, branchCode, branchName, schedules, createdAt]
       properties:
         publicId: { type: string, format: uuid }
         status: { $ref: '#/components/schemas/SubscriptionStatus' }
@@ -3263,11 +3269,11 @@ components:
         schedules:
           type: array
           items: { $ref: '#/components/schemas/SubscriptionSchedule' }
-        activatedAtUtc: { type: string, format: date-time, nullable: true }
-        pausedAtUtc: { type: string, format: date-time, nullable: true }
-        cancelledAtUtc: { type: string, format: date-time, nullable: true }
-        completedAtUtc: { type: string, format: date-time, nullable: true }
-        createdAtUtc: { type: string, format: date-time }
+        activatedAt: { type: string, format: date-time, nullable: true }
+        pausedAt: { type: string, format: date-time, nullable: true }
+        cancelledAt: { type: string, format: date-time, nullable: true }
+        completedAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
     Payment:
       type: object
       required: [publicId, method, status, amount, refundedAmount, currency, expiresAtUtc, createdAtUtc]

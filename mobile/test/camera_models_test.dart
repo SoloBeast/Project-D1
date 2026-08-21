@@ -34,7 +34,7 @@ void main() {
     expect(camera.isAvailable, isTrue);
   });
 
-  test('parses managed camera and normalizes timestamps to UTC', () {
+  test('parses managed camera timestamps as India-local wall-clock values', () {
     final camera = ManagedCamera.fromJson(_managedJson);
 
     expect(camera.cameraId, 'camera-managed-1');
@@ -44,8 +44,9 @@ void main() {
     expect(camera.protocol, CameraStreamProtocol.hls);
     expect(camera.providerCode, 'gateway');
     expect(camera.providerStreamReference, 'opaque-stream-1');
-    expect(camera.createdAtUtc.isUtc, isTrue);
-    expect(camera.updatedAtUtc, DateTime.utc(2026, 8, 17, 10, 15));
+    expect(camera.createdAt.isUtc, isFalse);
+    expect(camera.updatedAt.isUtc, isFalse);
+    expect(camera.updatedAt, DateTime(2026, 8, 17, 15, 45));
   });
 
   test('parses nested short-lived public stream descriptor', () {
@@ -55,7 +56,7 @@ void main() {
       'stream': {
         'protocol': 'Hls',
         'playbackUri': 'https://stream.example.test/session/index.m3u8',
-        'expiresAtUtc': '2099-08-17T10:05:00Z',
+        'expiresAtUtc': '2099-08-17T10:05:00.000Z',
         'isDevelopmentStream': true,
       },
     });
@@ -68,15 +69,31 @@ void main() {
     expect(result.stream.isExpired, isFalse);
   });
 
-  test('identifies expired descriptors', () {
-    final descriptor = CameraStreamDescriptor(
-      protocol: CameraStreamProtocol.hls,
-      playbackUri: Uri.parse('https://stream.example.test/expired.m3u8'),
-      expiresAtUtc: DateTime.utc(2000),
-      isDevelopmentStream: false,
-    );
+  test('treats a future descriptor as active', () {
+    final descriptor = _descriptor(DateTime.utc(2026, 8, 17, 10, 5));
 
-    expect(descriptor.isExpired, isTrue);
+    expect(
+      descriptor.isExpiredAt(DateTime.utc(2026, 8, 17, 10, 4, 59)),
+      isFalse,
+    );
+  });
+
+  test('treats a descriptor at its expiry instant as expired', () {
+    final descriptor = _descriptor(DateTime.utc(2026, 8, 17, 10, 5));
+
+    expect(
+      descriptor.isExpiredAt(DateTime.utc(2026, 8, 17, 10, 5)),
+      isTrue,
+    );
+  });
+
+  test('treats a past descriptor as expired', () {
+    final descriptor = _descriptor(DateTime.utc(2026, 8, 17, 10, 5));
+
+    expect(
+      descriptor.isExpiredAt(DateTime.utc(2026, 8, 17, 10, 5, 1)),
+      isTrue,
+    );
   });
 
   test('serializes create and update requests with trimmed metadata', () {
@@ -107,6 +124,14 @@ void main() {
   });
 }
 
+CameraStreamDescriptor _descriptor(DateTime expiresAtUtc) =>
+    CameraStreamDescriptor(
+      protocol: CameraStreamProtocol.hls,
+      playbackUri: Uri.parse('https://stream.example.test/session/index.m3u8'),
+      expiresAtUtc: expiresAtUtc,
+      isDevelopmentStream: false,
+    );
+
 final _managedJson = <String, dynamic>{
   'cameraId': 'camera-managed-1',
   'branchId': 7,
@@ -119,6 +144,6 @@ final _managedJson = <String, dynamic>{
   'protocol': 'Hls',
   'providerCode': 'gateway',
   'providerStreamReference': 'opaque-stream-1',
-  'createdAtUtc': '2026-08-17T09:00:00+00:00',
-  'updatedAtUtc': '2026-08-17T15:45:00+05:30',
+  'createdAt': '2026-08-17T09:00:00.000',
+  'updatedAt': '2026-08-17T15:45:00.000',
 };

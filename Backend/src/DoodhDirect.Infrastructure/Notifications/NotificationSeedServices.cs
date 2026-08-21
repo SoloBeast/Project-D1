@@ -57,7 +57,7 @@ public sealed class NotificationTemplateSeedService(DoodhDirectDbContext dbConte
 
 internal sealed class DevelopmentNotificationService(
     DoodhDirectDbContext dbContext,
-    IClock clock) : IDevelopmentNotificationService
+    IIndiaTimeProvider timeProvider) : IDevelopmentNotificationService
 {
     private static readonly string[] SampleEventTypes =
     [
@@ -76,7 +76,7 @@ internal sealed class DevelopmentNotificationService(
             throw new Application.Common.UnauthorizedAppException();
         }
 
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         var events = SampleEventTypes.Select((eventType, index) => new NotificationEvent(
             actor.UserId,
             eventType,

@@ -11,7 +11,7 @@ namespace DoodhDirect.Api.Authorization;
 
 public sealed class AuditingAuthorizationMiddlewareResultHandler(
     IServiceScopeFactory scopeFactory,
-    IClock clock,
+    IIndiaTimeProvider timeProvider,
     ILogger<AuditingAuthorizationMiddlewareResultHandler> logger)
     : IAuthorizationMiddlewareResultHandler
 {
@@ -77,7 +77,7 @@ public sealed class AuditingAuthorizationMiddlewareResultHandler(
                 context.Connection.RemoteIpAddress?.ToString(),
                 context.Request.Headers.UserAgent.ToString(),
                 $"{context.Request.Method} {context.Request.Path}",
-                clock.UtcNow));
+                timeProvider.Now));
             await dbContext.SaveChangesAsync(cancellationToken);
         }
         catch (Exception exception)

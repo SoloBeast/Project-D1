@@ -106,11 +106,22 @@ public static class DependencyInjection
                 "Notifications DevelopmentMock providers are prohibited outside Development.")
             .ValidateOnStart();
 
+        var timeZoneId = configuration["TimeZone"]
+            ?? throw new InvalidOperationException("TimeZone configuration is required.");
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        if (!string.Equals(timeZone.Id, timeZoneId, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(timeZoneId, "Asia/Calcutta", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Configured TimeZone '{timeZoneId}' could not be resolved consistently.");
+        }
+
         services.AddHealthChecks()
             .AddDbContextCheck<DoodhDirectDbContext>("sql-server", tags: ["ready"]);
         services.AddDataProtection()
             .SetApplicationName("DoodhDirect");
-        services.AddSingleton<IClock, SystemClock>();
+        services.AddSingleton<IIndiaTimeProvider>(_ => new IndiaTimeProvider(timeZone));
+        services.AddSingleton<IClock, SystemUtcClock>();
         services.AddSingleton<SecureTokenGenerator>();
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
         services.AddSingleton<ITokenService, JwtTokenService>();
@@ -184,7 +195,7 @@ public static class DependencyInjection
         string.Equals(provider, "Unconfigured", StringComparison.OrdinalIgnoreCase)
         || NotificationOptions.IsDevelopmentMock(provider);
 
-    private sealed class SystemClock : IClock
+    private sealed class SystemUtcClock : IClock
     {
         public DateTime UtcNow => DateTime.UtcNow;
     }

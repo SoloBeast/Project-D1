@@ -20,7 +20,9 @@ artifacts/
 
 # IDE and OS metadata
 .vs/
-.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
 .idea/
 *.user
 *.suo

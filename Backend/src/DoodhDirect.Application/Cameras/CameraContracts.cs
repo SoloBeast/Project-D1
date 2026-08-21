@@ -37,7 +37,7 @@ public sealed record PublicCameraResult(
 public sealed record CameraStreamDescriptor(
     CameraStreamProtocol Protocol,
     Uri PlaybackUri,
-    DateTime ExpiresAtUtc,
+    DateTimeOffset ExpiresAtUtc,
     bool IsDevelopmentStream);
 
 public sealed record PublicCameraStreamResult(
@@ -57,8 +57,8 @@ public sealed record ManagedCameraResult(
     CameraStreamProtocol Protocol,
     string ProviderCode,
     string ProviderStreamReference,
-    DateTime CreatedAtUtc,
-    DateTime UpdatedAtUtc);
+    DateTime CreatedAt,
+    DateTime UpdatedAt);
 
 public sealed record CameraStreamRequest(
     Guid CameraId,

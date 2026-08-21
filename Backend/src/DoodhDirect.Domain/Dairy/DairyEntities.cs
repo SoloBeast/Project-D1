@@ -14,7 +14,7 @@ public sealed class MilkProduction : AuditableEntity
 
     public MilkProduction(
         long branchId,
-        DateTime productionAtUtc,
+        DateTime productionAt,
         int buffaloCount,
         decimal quantityProduced,
         string unit,
@@ -22,8 +22,9 @@ public sealed class MilkProduction : AuditableEntity
         string? shift,
         string? remarks)
     {
+        EnsureIndiaLocal(productionAt, nameof(productionAt));
         BranchId = branchId;
-        ProductionAtUtc = productionAtUtc;
+        ProductionAt = productionAt;
         BuffaloCount = buffaloCount;
         QuantityProduced = quantityProduced;
         Unit = unit.Trim().ToUpperInvariant();
@@ -33,7 +34,7 @@ public sealed class MilkProduction : AuditableEntity
     }
 
     public long BranchId { get; private set; }
-    public DateTime ProductionAtUtc { get; private set; }
+    public DateTime ProductionAt { get; private set; }
     public int BuffaloCount { get; private set; }
     public decimal QuantityProduced { get; private set; }
     public string Unit { get; private set; } = string.Empty;
@@ -42,6 +43,14 @@ public sealed class MilkProduction : AuditableEntity
     public string? Remarks { get; private set; }
 
     public ICollection<MilkBatch> Batches { get; private set; } = [];
+
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
+    {
+        if (value.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException("The timestamp must be India-local.", parameterName);
+        }
+    }
 }
 
 public sealed class MilkBatch : AuditableEntity
@@ -52,14 +61,19 @@ public sealed class MilkBatch : AuditableEntity
         long branchId,
         long productionId,
         string batchNumber,
-        DateTime productionAtUtc,
+        DateTime productionAt,
         decimal quantityProduced,
         string unit)
     {
+        if (productionAt.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException("The timestamp must be India-local.", nameof(productionAt));
+        }
+
         BranchId = branchId;
         ProductionId = productionId;
         BatchNumber = batchNumber.Trim().ToUpperInvariant();
-        ProductionAtUtc = productionAtUtc;
+        ProductionAt = productionAt;
         QuantityProduced = quantityProduced;
         Unit = unit.Trim().ToUpperInvariant();
         Status = MilkBatchStatus.Available;
@@ -68,7 +82,7 @@ public sealed class MilkBatch : AuditableEntity
     public long BranchId { get; private set; }
     public long ProductionId { get; private set; }
     public string BatchNumber { get; private set; } = string.Empty;
-    public DateTime ProductionAtUtc { get; private set; }
+    public DateTime ProductionAt { get; private set; }
     public decimal QuantityProduced { get; private set; }
     public string Unit { get; private set; } = string.Empty;
     public MilkBatchStatus Status { get; private set; }
@@ -86,15 +100,20 @@ public sealed class MilkUsage : AuditableEntity
     public MilkUsage(
         long branchId,
         long batchId,
-        DateTime usedAtUtc,
+        DateTime usedAt,
         decimal quantityUsed,
         string purpose,
         long recordedByUserId,
         string? remarks)
     {
+        if (usedAt.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException("The timestamp must be India-local.", nameof(usedAt));
+        }
+
         BranchId = branchId;
         BatchId = batchId;
-        UsedAtUtc = usedAtUtc;
+        UsedAt = usedAt;
         QuantityUsed = quantityUsed;
         Purpose = purpose.Trim();
         RecordedByUserId = recordedByUserId;
@@ -103,7 +122,7 @@ public sealed class MilkUsage : AuditableEntity
 
     public long BranchId { get; private set; }
     public long BatchId { get; private set; }
-    public DateTime UsedAtUtc { get; private set; }
+    public DateTime UsedAt { get; private set; }
     public decimal QuantityUsed { get; private set; }
     public string Purpose { get; private set; } = string.Empty;
     public long RecordedByUserId { get; private set; }

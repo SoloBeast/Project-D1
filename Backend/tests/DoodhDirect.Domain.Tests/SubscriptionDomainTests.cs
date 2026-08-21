@@ -4,7 +4,8 @@ namespace DoodhDirect.Domain.Tests;
 
 public sealed class SubscriptionDomainTests
 {
-    private static readonly DateTime UtcNow = new(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime IndiaNow =
+        new(2026, 8, 16, 7, 30, 0, DateTimeKind.Unspecified);
 
     [Fact]
     public void Constructor_CreatesPaymentPendingSubscriptionWithPrepaidTotalsAndSnapshots()
@@ -40,16 +41,16 @@ public sealed class SubscriptionDomainTests
     {
         var subscription = CreateSubscription();
 
-        subscription.Activate(UtcNow);
-        subscription.Activate(UtcNow.AddMinutes(1));
-        subscription.Pause(UtcNow.AddHours(1));
-        subscription.Pause(UtcNow.AddHours(2));
+        subscription.Activate(IndiaNow);
+        subscription.Activate(IndiaNow.AddMinutes(1));
+        subscription.Pause(IndiaNow.AddHours(1));
+        subscription.Pause(IndiaNow.AddHours(2));
         subscription.Resume();
         subscription.Resume();
 
         Assert.Equal(SubscriptionStatus.Active, subscription.Status);
-        Assert.Equal(UtcNow, subscription.ActivatedAtUtc);
-        Assert.Null(subscription.PausedAtUtc);
+        Assert.Equal(IndiaNow, subscription.ActivatedAt);
+        Assert.Null(subscription.PausedAt);
         Assert.Throws<InvalidOperationException>(() => subscription.FailPayment());
     }
 
@@ -74,15 +75,15 @@ public sealed class SubscriptionDomainTests
         var subscription = CreateSubscription();
         if (status == SubscriptionStatus.Active || status == SubscriptionStatus.Paused || status == SubscriptionStatus.Cancelled)
         {
-            subscription.Activate(UtcNow);
+            subscription.Activate(IndiaNow);
         }
         if (status == SubscriptionStatus.Paused || status == SubscriptionStatus.Cancelled)
         {
-            subscription.Pause(UtcNow.AddMinutes(1));
+            subscription.Pause(IndiaNow.AddMinutes(1));
         }
         if (status == SubscriptionStatus.Cancelled)
         {
-            subscription.Cancel(UtcNow.AddMinutes(2));
+            subscription.Cancel(IndiaNow.AddMinutes(2));
         }
 
         Assert.Throws<InvalidOperationException>(() => subscription.RetryPayment());
@@ -95,7 +96,7 @@ public sealed class SubscriptionDomainTests
         var subscription = CreateActiveSubscription();
         subscription.AddDelivery(new DateOnly(2026, 8, 18));
         var delivery = Assert.Single(subscription.Deliveries);
-        var beforeCutoff = new DateTime(2026, 8, 16, 23, 59, 0, DateTimeKind.Utc);
+        var beforeCutoff = new DateTime(2026, 8, 16, 23, 59, 0, DateTimeKind.Unspecified);
 
         subscription.Skip(delivery, beforeCutoff, TimeSpan.FromHours(24));
         subscription.Skip(delivery, beforeCutoff.AddMinutes(1), TimeSpan.FromHours(24));
@@ -111,7 +112,7 @@ public sealed class SubscriptionDomainTests
         var subscription = CreateActiveSubscription();
         subscription.AddDelivery(new DateOnly(2026, 8, 18));
         var delivery = Assert.Single(subscription.Deliveries);
-        var afterCutoff = new DateTime(2026, 8, 17, 0, 0, 1, DateTimeKind.Utc);
+        var afterCutoff = new DateTime(2026, 8, 17, 0, 0, 1, DateTimeKind.Unspecified);
 
         Assert.Throws<InvalidOperationException>(() =>
             subscription.Skip(delivery, afterCutoff, TimeSpan.FromHours(24)));
@@ -126,14 +127,14 @@ public sealed class SubscriptionDomainTests
         subscription.AddDelivery(new DateOnly(2026, 8, 18));
         var deliveries = subscription.Deliveries.OrderBy(x => x.ScheduledDate).ToArray();
 
-        subscription.MarkDelivered(deliveries[0], UtcNow);
-        subscription.MarkDelivered(deliveries[0], UtcNow.AddMinutes(1));
-        subscription.MarkDelivered(deliveries[1], UtcNow.AddDays(1));
+        subscription.MarkDelivered(deliveries[0], IndiaNow);
+        subscription.MarkDelivered(deliveries[0], IndiaNow.AddMinutes(1));
+        subscription.MarkDelivered(deliveries[1], IndiaNow.AddDays(1));
 
         Assert.Equal(2, subscription.UsedEntitlement);
         Assert.Equal(0, subscription.RemainingEntitlement);
         Assert.Equal(SubscriptionStatus.Completed, subscription.Status);
-        Assert.Equal(UtcNow.AddDays(1), subscription.CompletedAtUtc);
+        Assert.Equal(IndiaNow.AddDays(1), subscription.CompletedAt);
     }
 
     [Fact]
@@ -143,13 +144,13 @@ public sealed class SubscriptionDomainTests
         subscription.AddDelivery(new DateOnly(2026, 8, 17));
         var delivery = Assert.Single(subscription.Deliveries);
 
-        subscription.MarkFailed(delivery, UtcNow);
-        subscription.MarkFailed(delivery, UtcNow.AddMinutes(1));
+        subscription.MarkFailed(delivery, IndiaNow);
+        subscription.MarkFailed(delivery, IndiaNow.AddMinutes(1));
 
         Assert.Equal(SubscriptionDeliveryStatus.Failed, delivery.Status);
         Assert.Equal(0, subscription.UsedEntitlement);
         Assert.Throws<InvalidOperationException>(() =>
-            subscription.MarkDelivered(delivery, UtcNow.AddMinutes(2)));
+            subscription.MarkDelivered(delivery, IndiaNow.AddMinutes(2)));
     }
 
     [Fact]
@@ -160,11 +161,11 @@ public sealed class SubscriptionDomainTests
         subscription.AddDelivery(new DateOnly(2026, 8, 18));
         subscription.AddDelivery(new DateOnly(2026, 8, 19));
         var deliveries = subscription.Deliveries.OrderBy(x => x.ScheduledDate).ToArray();
-        subscription.MarkDelivered(deliveries[0], UtcNow);
-        subscription.MarkFailed(deliveries[1], UtcNow);
+        subscription.MarkDelivered(deliveries[0], IndiaNow);
+        subscription.MarkFailed(deliveries[1], IndiaNow);
 
-        subscription.Cancel(UtcNow.AddHours(1));
-        subscription.Cancel(UtcNow.AddHours(2));
+        subscription.Cancel(IndiaNow.AddHours(1));
+        subscription.Cancel(IndiaNow.AddHours(2));
 
         Assert.Equal(SubscriptionStatus.Cancelled, subscription.Status);
         Assert.Equal(3, subscription.Deliveries.Count);
@@ -175,17 +176,17 @@ public sealed class SubscriptionDomainTests
     }
 
     [Fact]
-    public void StateTransitions_RejectNonUtcTimestamps()
+    public void StateTransitions_RejectNonIndiaLocalTimestamps()
     {
         var subscription = CreateSubscription();
 
-        Assert.Throws<ArgumentException>(() => subscription.Activate(DateTime.Now));
+        Assert.Throws<ArgumentException>(() => subscription.Activate(new DateTime(2026, 8, 16, 7, 30, 0, DateTimeKind.Utc)));
     }
 
     private static Subscription CreateActiveSubscription(int totalEntitlement = 4)
     {
         var subscription = CreateSubscription(totalEntitlement);
-        subscription.Activate(UtcNow);
+        subscription.Activate(IndiaNow);
         return subscription;
     }
 

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Identity;
@@ -53,6 +54,36 @@ public sealed class DeliveryServiceTests
             .ToListAsync());
     }
 
+    [Theory]
+    [InlineData("2026-08-20T00:00:00", 2026, 8, 20)]
+    [InlineData("2026-08-20T00:01:00", 2026, 8, 20)]
+    [InlineData("2026-08-20T03:32:00", 2026, 8, 20)]
+    [InlineData("2026-08-20T23:59:00", 2026, 8, 20)]
+    [InlineData("2026-08-21T00:00:00", 2026, 8, 21)]
+    public async Task MaterializeEligible_UsesIndiaLocalBusinessDateAtMidnightBoundaries(
+        string indiaLocalTimestamp,
+        int year,
+        int month,
+        int day)
+    {
+        var indiaLocalNow = DateTime.SpecifyKind(
+            DateTime.Parse(indiaLocalTimestamp, System.Globalization.CultureInfo.InvariantCulture),
+            DateTimeKind.Unspecified);
+        var expectedDate = new DateOnly(year, month, day);
+        await using var harness = await DeliveryHarness.CreateAsync(indiaLocalNow);
+
+        var result = await harness.Service.MaterializeEligibleAsync(
+            harness.ManagerActor,
+            harness.Today,
+            CancellationToken.None);
+
+        Assert.Equal(expectedDate, harness.Today);
+        Assert.Equal(new DeliveryMaterializationResult(1, 1), result);
+        Assert.All(
+            await harness.Db.Deliveries.AsNoTracking().ToListAsync(),
+            delivery => Assert.Equal(expectedDate, delivery.ScheduledDate));
+    }
+
     [Fact]
     public async Task MaterializeEligible_RestrictsBranchActorAndAllowsGlobalActor()
     {
@@ -85,6 +116,29 @@ public sealed class DeliveryServiceTests
 
         Assert.Contains("branch assignment", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task BranchReads_UsesIndiaLocalDeliveryDateAt0332IstRegression()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync(
+            new DateTime(2026, 8, 20, 3, 32, 0, DateTimeKind.Unspecified));
+        var indiaLocalDate = new DateOnly(2026, 8, 20);
+
+        await harness.Service.MaterializeEligibleAsync(
+            harness.ManagerActor,
+            indiaLocalDate,
+            CancellationToken.None);
+
+        var deliveries = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            indiaLocalDate,
+            DeliveryStatus.ReadyForAssignment,
+            CancellationToken.None);
+
+        Assert.Equal(2, deliveries.Count);
+        Assert.All(deliveries, delivery => Assert.Equal(indiaLocalDate, delivery.ScheduledDate));
     }
 
     [Fact]
@@ -172,13 +226,13 @@ public sealed class DeliveryServiceTests
         var assignedEvents = await harness.Db.NotificationEvents
             .AsNoTracking()
             .Where(x => x.EventType == NotificationEventTypes.DeliveryAssigned)
-            .OrderBy(x => x.OccurredAtUtc)
+            .OrderBy(x => x.OccurredAt)
             .ToListAsync();
         Assert.Equal(2, assignedEvents.Count);
         Assert.Equal(
             [
-                $"delivery:{deliveryId:N}:assigned:{assigned.AssignedAtUtc!.Value.Ticks}",
-                $"delivery:{deliveryId:N}:assigned:{reassigned.AssignedAtUtc!.Value.Ticks}"
+                $"delivery:{deliveryId:N}:assigned:{assigned.AssignedAt!.Value.Ticks}",
+                $"delivery:{deliveryId:N}:assigned:{reassigned.AssignedAt!.Value.Ticks}"
             ],
             assignedEvents.Select(x => x.EventKey));
         Assert.All(assignedEvents, notificationEvent =>
@@ -255,7 +309,7 @@ public sealed class DeliveryServiceTests
             new DeliveryNotesRequest("Handed to customer"),
             CancellationToken.None);
 
-        Assert.NotNull(verified.OtpVerifiedAtUtc);
+        Assert.NotNull(verified.OtpVerifiedAt);
         Assert.Equal(DeliveryStatus.Delivered, completed.Status);
         Assert.False(completed.IsTrackingActive);
         harness.Db.ChangeTracker.Clear();
@@ -263,7 +317,7 @@ public sealed class DeliveryServiceTests
             (await harness.Db.Orders.AsNoTracking().SingleAsync(x => x.Id == harness.Order.Id)).Status);
         var otp = await harness.Db.DeliveryOtps.AsNoTracking().SingleAsync();
         Assert.Equal(1, otp.AttemptCount);
-        Assert.NotNull(otp.ConsumedAtUtc);
+        Assert.NotNull(otp.ConsumedAt);
 
         var events = await harness.Db.NotificationEvents
             .AsNoTracking()
@@ -274,7 +328,7 @@ public sealed class DeliveryServiceTests
         {
             Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
             Assert.True(notificationEvent.IsCritical);
-            Assert.Equal(harness.Clock.UtcNow, notificationEvent.OccurredAtUtc);
+            Assert.Equal(harness.TimeProvider.Now, notificationEvent.OccurredAt);
             Assert.Equal(
                 $"/deliveries/{deliveryId}",
                 Payload(notificationEvent).GetProperty("DeepLink").GetString());
@@ -285,19 +339,19 @@ public sealed class DeliveryServiceTests
         Assert.Contains(events, notificationEvent =>
             notificationEvent.EventType == NotificationEventTypes.DeliveryAssigned &&
             notificationEvent.EventKey ==
-                $"delivery:{deliveryId:N}:assigned:{harness.Clock.UtcNow.Ticks}");
+                $"delivery:{deliveryId:N}:assigned:{harness.TimeProvider.Now.Ticks}");
         Assert.Contains(events, notificationEvent =>
             notificationEvent.EventType == NotificationEventTypes.DeliveryStarted &&
             notificationEvent.EventKey ==
-                $"delivery:{deliveryId:N}:started:{harness.Clock.UtcNow.Ticks}");
+                $"delivery:{deliveryId:N}:started:{harness.TimeProvider.Now.Ticks}");
         Assert.Contains(events, notificationEvent =>
             notificationEvent.EventType == NotificationEventTypes.DeliveryNearCustomer &&
             notificationEvent.EventKey ==
-                $"delivery:{deliveryId:N}:near-customer:{harness.Clock.UtcNow.Ticks}");
+                $"delivery:{deliveryId:N}:near-customer:{harness.TimeProvider.Now.Ticks}");
         Assert.Contains(events, notificationEvent =>
             notificationEvent.EventType == NotificationEventTypes.DeliveryCompleted &&
             notificationEvent.EventKey ==
-                $"delivery:{deliveryId:N}:completed:{harness.Clock.UtcNow.Ticks}");
+                $"delivery:{deliveryId:N}:completed:{harness.TimeProvider.Now.Ticks}");
     }
 
     [Fact]
@@ -319,7 +373,7 @@ public sealed class DeliveryServiceTests
         var location = await harness.Service.RecordLocationAsync(
             harness.StaffActor(harness.Staff),
             deliveryId,
-            new DeliveryLocationRequest(12.972m, 77.595m, 8m, harness.Clock.UtcNow),
+            new DeliveryLocationRequest(12.972m, 77.595m, 8m, harness.TimeProvider.Now),
             CancellationToken.None);
         var active = await harness.Service.GetForCustomerAsync(harness.Customer.Id, deliveryId, CancellationToken.None);
 
@@ -329,9 +383,9 @@ public sealed class DeliveryServiceTests
         var stale = await Assert.ThrowsAsync<ValidationAppException>(() => harness.Service.RecordLocationAsync(
             harness.StaffActor(harness.Staff),
             deliveryId,
-            new DeliveryLocationRequest(12.972m, 77.595m, null, harness.Clock.UtcNow.AddMinutes(-16)),
+            new DeliveryLocationRequest(12.972m, 77.595m, null, harness.TimeProvider.Now.AddMinutes(-16)),
             CancellationToken.None));
-        Assert.Equal("recordedAtUtc", stale.Field);
+        Assert.Equal("recordedAt", stale.Field);
     }
 
     [Fact]
@@ -368,9 +422,9 @@ public sealed class DeliveryServiceTests
                 .ToListAsync());
         Assert.Equal(harness.Customer.Id, failedEvent.UserId);
         Assert.True(failedEvent.IsCritical);
-        Assert.Equal(harness.Clock.UtcNow, failedEvent.OccurredAtUtc);
+        Assert.Equal(harness.TimeProvider.Now, failedEvent.OccurredAt);
         Assert.Equal(
-            $"delivery:{deliveryId:N}:failed:{harness.Clock.UtcNow.Ticks}",
+            $"delivery:{deliveryId:N}:failed:{harness.TimeProvider.Now.Ticks}",
             failedEvent.EventKey);
         Assert.Equal(
             DeliveryFailureReasons.CustomerNotAvailable,
@@ -396,6 +450,7 @@ public sealed class DeliveryServiceTests
             SqliteConnection connection,
             DoodhDirectDbContext db,
             TestClock clock,
+            TestIndiaTimeProvider timeProvider,
             CapturingOtpDeliveryService otpDelivery,
             CapturingRealtimePublisher realtime,
             DeliveryService service,
@@ -414,6 +469,7 @@ public sealed class DeliveryServiceTests
             this.connection = connection;
             Db = db;
             Clock = clock;
+            TimeProvider = timeProvider;
             OtpDelivery = otpDelivery;
             Realtime = realtime;
             Service = service;
@@ -432,6 +488,7 @@ public sealed class DeliveryServiceTests
 
         public DoodhDirectDbContext Db { get; }
         public TestClock Clock { get; }
+        public TestIndiaTimeProvider TimeProvider { get; }
         public CapturingOtpDeliveryService OtpDelivery { get; }
         public CapturingRealtimePublisher Realtime { get; }
         public DeliveryService Service { get; }
@@ -446,7 +503,7 @@ public sealed class DeliveryServiceTests
         public Order Order { get; }
         public Subscription Subscription { get; }
         public SubscriptionDelivery SubscriptionDelivery { get; }
-        public DateOnly Today => DateOnly.FromDateTime(Clock.UtcNow);
+        public DateOnly Today => TimeProvider.Today;
         public DeliveryActor ManagerActor => new(Manager.Id, [Branch.Id]);
         public DeliveryActor StaffActor(User employee) => new(employee.Id, [Branch.Id]);
 
@@ -489,8 +546,11 @@ public sealed class DeliveryServiceTests
             await Service.ArriveAsync(actor, deliveryId, CancellationToken.None);
         }
 
-        public static async Task<DeliveryHarness> CreateAsync()
+        public static async Task<DeliveryHarness> CreateAsync(DateTime? indiaLocalNow = null)
         {
+            var clock = new TestClock(
+                indiaLocalNow ?? new DateTime(2026, 8, 16, 9, 30, 0, DateTimeKind.Unspecified));
+            var timeProvider = new TestIndiaTimeProvider(clock);
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
             var options = new DbContextOptionsBuilder<DoodhDirectDbContext>()
@@ -559,7 +619,7 @@ public sealed class DeliveryServiceTests
                 address.Latitude,
                 address.Longitude);
             order.ConfirmPayment();
-            var today = new DateOnly(2026, 8, 16);
+            var today = timeProvider.Today;
             var subscription = new Subscription(
                 customer.Id,
                 product.Id,
@@ -578,18 +638,17 @@ public sealed class DeliveryServiceTests
                 branch.Name,
                 "1 Main Road, Central, Bengaluru, Karnataka 560001");
             subscription.AddDelivery(today);
-            subscription.Activate(new DateTime(2026, 8, 16, 3, 0, 0, DateTimeKind.Utc));
+            subscription.Activate(timeProvider.Now);
             db.AddRange(order, subscription);
             await db.SaveChangesAsync();
             var subscriptionDelivery = subscription.Deliveries.Single();
             db.ChangeTracker.Clear();
 
-            var clock = new TestClock(new DateTime(2026, 8, 16, 4, 0, 0, DateTimeKind.Utc));
             var otpDelivery = new CapturingOtpDeliveryService();
             var realtime = new CapturingRealtimePublisher();
             var service = new DeliveryService(
                 db,
-                clock,
+                timeProvider,
                 new TestPasswordHasher(),
                 otpDelivery,
                 realtime,
@@ -608,6 +667,7 @@ public sealed class DeliveryServiceTests
                 connection,
                 db,
                 clock,
+                timeProvider,
                 otpDelivery,
                 realtime,
                 service,
@@ -670,4 +730,37 @@ public sealed class DeliveryServiceTests
             return Task.CompletedTask;
         }
     }
+}
+
+internal sealed class TestIndiaTimeProvider(IClock clock) : IIndiaTimeProvider
+{
+    private static readonly TimeZoneInfo IndiaTimeZone =
+        TimeZoneInfo.FindSystemTimeZoneById("Asia/Kolkata");
+
+    public DateTime Now => DateTime.SpecifyKind(
+        TimeZoneInfo.ConvertTimeFromUtc(clock.UtcNow, IndiaTimeZone),
+        DateTimeKind.Unspecified);
+
+    public DateTime ToUtc(DateTime indiaLocal) =>
+        TimeZoneInfo.ConvertTimeToUtc(
+            DateTime.SpecifyKind(indiaLocal, DateTimeKind.Unspecified),
+            IndiaTimeZone);
+
+    public DateOnly Today => DateOnly.FromDateTime(Now);
+
+    public DateOnly CurrentDate => Today;
+
+    public DateTime CurrentDateTime => Now;
+
+    public string FormatDateTime(DateTime value) =>
+        DateTime.SpecifyKind(value, DateTimeKind.Unspecified)
+            .ToString("yyyy-MM-dd'T'HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
+
+    public string FormatDate(DateOnly value) =>
+        value.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+    public DateTime ParseApplicationDateTime(string value) =>
+        DateTime.SpecifyKind(
+            DateTime.Parse(value, System.Globalization.CultureInfo.InvariantCulture),
+            DateTimeKind.Unspecified);
 }

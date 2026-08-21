@@ -12,7 +12,7 @@ Map<String, dynamic> orderJson() => {
   'orderNumber': 'DD-000001',
   'type': 'OneTime',
   'status': 'Confirmed',
-  'createdAtUtc': '2026-08-16T00:00:00Z',
+  'createdAt': '2026-08-16T00:00:00.000',
   'addressLabel': 'Home',
   'city': 'Bengaluru',
   'branchName': 'Main Branch',
@@ -20,7 +20,7 @@ Map<String, dynamic> orderJson() => {
   'subtotal': 90,
   'discountAmount': 0,
   'payableAmount': 90,
-  'cancelledAtUtc': null,
+  'cancelledAt': null,
 };
 
 void main() {

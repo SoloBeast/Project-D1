@@ -1,6 +1,9 @@
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
+import 'package:doodh_direct_mobile/features/wallet/wallet_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -30,9 +33,11 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
   void initState() {
     super.initState();
     _order = widget.initialOrder;
-    if (_order == null) {
-      Future.microtask(_loadOrder);
-    }
+    Future.microtask(() {
+      ref.read(paymentControllerProvider.notifier).loadCapabilities();
+      ref.read(walletControllerProvider.notifier).load();
+      if (_order == null) _loadOrder();
+    });
   }
 
   Future<void> _loadOrder() async {
@@ -48,6 +53,7 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
   Widget build(BuildContext context) {
     final paymentState = ref.watch(paymentControllerProvider);
     final orderState = ref.watch(orderControllerProvider);
+    final walletState = ref.watch(walletControllerProvider);
     final order = _order;
     return Scaffold(
       appBar: AppBar(title: const Text('Payment')),
@@ -60,20 +66,79 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                     onRetry: _loadOrder,
                   )
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
-                Text(
-                  order.orderNumber,
-                  style: Theme.of(context).textTheme.titleLarge,
+                Card(
+                  color: DoodhColors.tealDark,
+                  child: Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.lock_outline,
+                          color: Colors.white,
+                          size: 28,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Ready to pay',
+                                style: Theme.of(context).textTheme.titleMedium
+                                    ?.copyWith(color: Colors.white),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                order.orderNumber,
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Amount due: ${order.formattedTotal}',
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          order.formattedTotal,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 4),
-                Text('Amount due: ${order.formattedTotal}'),
-                const SizedBox(height: 24),
-                Text(
-                  'Payment method',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
+                const SizedBox(height: 20),
+                DoodhSectionHeader(title: 'Choose how to pay'),
                 const SizedBox(height: 8),
+                if (paymentState.capabilities.isEmpty &&
+                    paymentState.errorMessage == null)
+                  const LinearProgressIndicator(),
+                if (paymentState.selectedMethod == PaymentMethod.wallet &&
+                    walletState.wallet != null)
+                  Card(
+                    color: DoodhColors.mint,
+                    child: ListTile(
+                      leading: const Icon(
+                        Icons.account_balance_wallet_outlined,
+                        color: DoodhColors.tealDark,
+                      ),
+                      title: const Text('DoodhDirect Wallet balance'),
+                      trailing: Text(
+                        walletState.wallet!.formattedBalance,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: DoodhColors.tealDark,
+                        ),
+                      ),
+                    ),
+                  ),
                 RadioGroup<PaymentMethod>(
                   groupValue: paymentState.selectedMethod,
                   onChanged: (value) {
@@ -90,6 +155,9 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                           (capability) => _PaymentMethodTile(
                             method: capability.method,
                             label: capability.label,
+                            balance: capability.method == PaymentMethod.wallet
+                                ? walletState.wallet?.formattedBalance
+                                : null,
                           ),
                         )
                         .toList(growable: false),
@@ -118,15 +186,14 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                               .read(paymentControllerProvider)
                               .payment;
                           if (payment == null) return;
-                          if (payment.usesRazorpay && payment.status.isPending) {
+                          if (payment.usesRazorpay &&
+                              payment.status.isPending) {
                             await ref
                                 .read(paymentControllerProvider.notifier)
                                 .openRazorpayAndVerify();
                           }
                           if (context.mounted) {
-                            context.push(
-                              '/payments/${payment.publicId}/result',
-                            );
+                            context.go('/payments/${payment.publicId}/result');
                           }
                         },
                   icon: paymentState.isLoading
@@ -149,10 +216,15 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
 }
 
 class _PaymentMethodTile extends StatelessWidget {
-  const _PaymentMethodTile({required this.method, required this.label});
+  const _PaymentMethodTile({
+    required this.method,
+    required this.label,
+    this.balance,
+  });
 
   final PaymentMethod method;
   final String label;
+  final String? balance;
 
   @override
   Widget build(BuildContext context) => RadioListTile<PaymentMethod>(
@@ -164,7 +236,10 @@ class _PaymentMethodTile extends StatelessWidget {
     }),
     title: Text(label),
     subtitle: Text(switch (method) {
-      PaymentMethod.wallet => 'Pay securely from your DoodhDirect balance',
+      PaymentMethod.wallet =>
+        balance == null
+            ? 'Pay securely from your DoodhDirect balance'
+            : 'Available balance: $balance',
       PaymentMethod.razorpay => 'UPI, cards, netbanking, and supported wallets',
       PaymentMethod.development => 'Complete a local Development payment',
     }),
@@ -260,13 +335,28 @@ class _PaymentResultBody extends ConsumerWidget {
             'The $targetName remains payment pending until DoodhDirect verifies the payment.',
           );
 
+    final tone = status.isSuccessful
+        ? DoodhStatusTone.success
+        : status.isTerminalFailure
+        ? DoodhStatusTone.error
+        : DoodhStatusTone.warning;
     return RefreshIndicator(
       onRefresh: () => ref.read(paymentControllerProvider.notifier).refresh(),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
         children: [
-          Icon(icon, size: 64, color: Theme.of(context).colorScheme.primary),
+          Center(
+            child: DoodhStatusPill(label: title, tone: tone),
+          ),
+          const SizedBox(height: 18),
+          Center(
+            child: Icon(
+              icon,
+              size: 64,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
           const SizedBox(height: 16),
           Text(
             title,
@@ -326,13 +416,36 @@ class _PaymentResultBody extends ConsumerWidget {
               label: Text('Return to $targetName'),
             ),
           ],
-          const SizedBox(height: 8),
-          TextButton(
-            onPressed: payment.hasValidTarget
-                ? () => context.go(targetRoute)
-                : null,
-            child: Text('View $targetName'),
-          ),
+          if (status.isSuccessful) ...[
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: payment.hasValidTarget
+                  ? () => context.go(targetRoute)
+                  : null,
+              icon: Icon(
+                payment.isSubscriptionPayment
+                    ? Icons.event_repeat_outlined
+                    : Icons.receipt_long_outlined,
+              ),
+              label: Text(
+                'View ${targetName[0].toUpperCase()}${targetName.substring(1)}',
+              ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: () => context.go('/home'),
+              icon: const Icon(Icons.home_outlined),
+              label: const Text('Go to Home'),
+            ),
+          ] else ...[
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: payment.hasValidTarget
+                  ? () => context.go(targetRoute)
+                  : null,
+              child: Text('View $targetName'),
+            ),
+          ],
         ],
       ),
     );

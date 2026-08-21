@@ -80,7 +80,7 @@ public sealed record NotificationEventRequest(
     string EventKey,
     IReadOnlyDictionary<string, string> Variables,
     string? DeepLink = null,
-    DateTime? OccurredAtUtc = null);
+    DateTime? OccurredAt = null);
 
 public sealed record NotificationListRequest(
     int Page = 1,
@@ -94,8 +94,8 @@ public sealed record NotificationListItem(
     string Body,
     string? DeepLink,
     bool IsRead,
-    DateTime CreatedAtUtc,
-    DateTime? ReadAtUtc);
+    DateTime CreatedAt,
+    DateTime? ReadAt);
 
 public sealed record NotificationPageResult(
     IReadOnlyCollection<NotificationListItem> Items,
@@ -116,8 +116,8 @@ public sealed record UserDeviceResult(
     string Platform,
     string? DeviceName,
     bool IsActive,
-    DateTime RegisteredAtUtc,
-    DateTime? LastSeenAtUtc);
+    DateTime RegisteredAt,
+    DateTime? LastSeenAt);
 
 public sealed record NotificationPreferenceResult(
     string EventType,
@@ -138,8 +138,8 @@ public sealed record NotificationTemplateResult(
     string? TitleTemplate,
     string BodyTemplate,
     bool IsActive,
-    DateTime CreatedAtUtc,
-    DateTime UpdatedAtUtc);
+    DateTime CreatedAt,
+    DateTime UpdatedAt);
 
 public sealed record UpdateNotificationTemplateRequest(
     string? TitleTemplate,

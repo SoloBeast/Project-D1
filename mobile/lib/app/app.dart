@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/admin_reports/admin_report_screens.dart';
 import 'package:doodh_direct_mobile/features/auth/login_screen.dart';
@@ -408,10 +409,7 @@ class DoodhDirectApp extends ConsumerWidget {
     return MaterialApp.router(
       title: 'DoodhDirect',
       routerConfig: ref.watch(routerProvider),
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF087F8C)),
-        useMaterial3: true,
-      ),
+      theme: buildDoodhTheme(),
     );
   }
 }

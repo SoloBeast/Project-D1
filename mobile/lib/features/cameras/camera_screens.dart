@@ -1,3 +1,5 @@
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
@@ -69,30 +71,76 @@ class _CameraListBody extends StatelessWidget {
 
     return RefreshIndicator(
       onRefresh: onRetry,
-      child: ListView.builder(
+      child: ListView.separated(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(12),
-        itemCount: state.publicCameras.length,
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
+        itemCount: state.publicCameras.length + 1,
+        separatorBuilder: (_, index) => const SizedBox(height: 10),
         itemBuilder: (context, index) {
-          final camera = state.publicCameras[index];
+          if (index == 0) {
+            return Row(
+              children: [
+                const Icon(Icons.live_tv_outlined, color: DoodhColors.teal),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Watch dairy activity live',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+              ],
+            );
+          }
+          final camera = state.publicCameras[index - 1];
+          final available = camera.isAvailable;
           return Card(
-            child: ListTile(
-              leading: Icon(
-                camera.isAvailable
-                    ? Icons.videocam_outlined
-                    : Icons.videocam_off_outlined,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      color: available ? DoodhColors.mint : DoodhColors.line,
+                      borderRadius: DoodhRadii.sm,
+                    ),
+                    child: Icon(
+                      available
+                          ? Icons.videocam_outlined
+                          : Icons.videocam_off_outlined,
+                      color: available
+                          ? DoodhColors.tealDark
+                          : DoodhColors.muted,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      enabled: available,
+                      title: Text(
+                        camera.displayName,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      subtitle: Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: DoodhStatusPill(
+                          label: available ? 'Live now' : 'Temporarily offline',
+                          tone: available
+                              ? DoodhStatusTone.success
+                              : DoodhStatusTone.neutral,
+                        ),
+                      ),
+                      onTap: available
+                          ? () => context.push('/cameras/${camera.cameraId}')
+                          : null,
+                    ),
+                  ),
+                  if (available)
+                    const Icon(Icons.chevron_right, color: DoodhColors.teal),
+                ],
               ),
-              title: Text(camera.displayName),
-              subtitle: Text(
-                camera.isAvailable ? 'Live now' : 'Temporarily offline',
-              ),
-              trailing: camera.isAvailable
-                  ? const Icon(Icons.chevron_right)
-                  : null,
-              enabled: camera.isAvailable,
-              onTap: camera.isAvailable
-                  ? () => context.push('/cameras/${camera.cameraId}')
-                  : null,
             ),
           );
         },

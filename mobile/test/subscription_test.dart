@@ -581,7 +581,7 @@ void main() {
       expect(find.text('Resume subscription'), findsNothing);
     });
 
-    testWidgets('reloads subscription after payment result route returns', (
+    testWidgets('replaces subscription detail with the payment result route', (
       tester,
     ) async {
       final pendingSubscription = SubscriptionDetails.fromJson(
@@ -632,13 +632,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Complete Payment'));
       await tester.pumpAndSettle();
+
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        '/payments/payment-retry-1/result',
+      );
       expect(find.text('Payment result'), findsOneWidget);
-
-      router.pop();
-      await tester.pumpAndSettle();
-
-      expect(controller.loadedSubscriptionIds, hasLength(initialLoads + 1));
-      expect(controller.loadedSubscriptionIds.last, 'subscription-1');
+      expect(controller.loadedSubscriptionIds, hasLength(initialLoads));
     });
 
     testWidgets('calendar offers skip only for scheduled deliveries', (
@@ -727,11 +727,11 @@ Map<String, dynamic> subscriptionJson({String status = 'Active'}) => {
     {'dayOfWeek': 'Wednesday'},
     {'dayOfWeek': 'Friday'},
   ],
-  'activatedAtUtc': '2026-08-16T10:00:00Z',
-  'pausedAtUtc': null,
-  'cancelledAtUtc': null,
-  'completedAtUtc': null,
-  'createdAtUtc': '2026-08-16T09:00:00Z',
+  'activatedAt': '2026-08-16T10:00:00',
+  'pausedAt': null,
+  'cancelledAt': null,
+  'completedAt': null,
+  'createdAt': '2026-08-16T09:00:00',
 };
 
 Map<String, dynamic> paymentJson({
@@ -769,7 +769,7 @@ Map<String, dynamic> deliveryJson({String status = 'Scheduled'}) => {
   'branchCode': 'CENTRAL',
   'branchName': 'Central Dairy',
   'address': 'Home, 1 Main Street, Pune 411001',
-  'statusChangedAtUtc': null,
+  'statusChangedAt': null,
 };
 
 http.Response successResponse(Object data, {int statusCode = 200}) =>

@@ -4,7 +4,7 @@ namespace DoodhDirect.Domain.Tests;
 
 public sealed class MilkTestDomainTests
 {
-    private static readonly DateTime RequestedAt = new(2026, 8, 17, 10, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime RequestedAt = new(2026, 8, 17, 10, 0, 0, DateTimeKind.Unspecified);
 
     [Fact]
     public void Constructor_InitializesRequestedTestAndRejectsInvalidIdentityOrTimestamp()
@@ -59,7 +59,7 @@ public sealed class MilkTestDomainTests
 
         Assert.Equal(MilkTestStatus.Completed, test.Status);
         Assert.Equal(4, test.CompletedByUserId);
-        Assert.Equal(completedAt, test.CompletedAtUtc);
+        Assert.Equal(completedAt, test.CompletedAt);
         Assert.Equal("Tested at doorstep", test.StaffRemarks);
         Assert.Equal(4, Assert.Single(test.Images).UploadedByUserId);
     }
@@ -93,7 +93,7 @@ public sealed class MilkTestDomainTests
         confirmed.Confirm(RequestedAt.AddMinutes(6), " Looks good ");
 
         Assert.Equal(MilkTestCustomerDecision.Confirmed, confirmed.CustomerDecision);
-        Assert.Equal(RequestedAt.AddMinutes(6), confirmed.ConfirmedAtUtc);
+        Assert.Equal(RequestedAt.AddMinutes(6), confirmed.ConfirmedAt);
         Assert.Equal("Looks good", confirmed.CustomerRemarks);
         Assert.Throws<InvalidOperationException>(() =>
             confirmed.Reject(RequestedAt.AddMinutes(7), "Changed mind"));
@@ -110,7 +110,7 @@ public sealed class MilkTestDomainTests
 
         test.Reject(RequestedAt.AddMinutes(6), " Image does not match ");
         Assert.Equal(MilkTestCustomerDecision.Rejected, test.CustomerDecision);
-        Assert.Equal(RequestedAt.AddMinutes(6), test.RejectedAtUtc);
+        Assert.Equal(RequestedAt.AddMinutes(6), test.RejectedAt);
         Assert.Equal("Image does not match", test.CustomerRemarks);
         Assert.Throws<InvalidOperationException>(() =>
             test.Confirm(RequestedAt.AddMinutes(7), null));
@@ -121,7 +121,7 @@ public sealed class MilkTestDomainTests
         customerId: 2,
         branchId: 3,
         requestedByUserId: 2,
-        requestedAtUtc: RequestedAt);
+        requestedAt: RequestedAt);
 
     private static MilkTest CreateReadyTest()
     {
@@ -138,5 +138,5 @@ public sealed class MilkTestDomainTests
         contentType: "image/jpeg",
         fileSize: 3,
         uploadedByUserId: 4,
-        uploadedAtUtc: RequestedAt.AddMinutes(2));
+        uploadedAt: RequestedAt.AddMinutes(2));
 }

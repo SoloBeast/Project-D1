@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Identity;
 using DoodhDirect.Domain.Identity;
 using Microsoft.Extensions.Options;
@@ -8,7 +9,10 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace DoodhDirect.Infrastructure.Identity;
 
-public sealed class JwtTokenService(IOptions<JwtOptions> jwtOptions, SecureTokenGenerator tokenGenerator) : ITokenService
+public sealed class JwtTokenService(
+    IOptions<JwtOptions> jwtOptions,
+    SecureTokenGenerator tokenGenerator,
+    IIndiaTimeProvider timeProvider) : ITokenService
 {
     private readonly JwtOptions _options = jwtOptions.Value;
 
@@ -18,10 +22,16 @@ public sealed class JwtTokenService(IOptions<JwtOptions> jwtOptions, SecureToken
         IReadOnlyCollection<string> roles,
         IReadOnlyCollection<string> permissions,
         IReadOnlyCollection<long> branchIds,
-        DateTime utcNow)
+        DateTime now)
     {
-        var accessExpiry = utcNow.AddMinutes(_options.AccessTokenMinutes);
-        var refreshExpiry = utcNow.AddDays(_options.RefreshTokenDays);
+        var accessExpiry = DateTime.SpecifyKind(
+            now.AddMinutes(_options.AccessTokenMinutes),
+            DateTimeKind.Unspecified);
+        var refreshExpiry = DateTime.SpecifyKind(
+            now.AddDays(_options.RefreshTokenDays),
+            DateTimeKind.Unspecified);
+        var jwtNotBefore = timeProvider.ToUtc(now);
+        var jwtAccessExpiry = timeProvider.ToUtc(accessExpiry);
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.PublicId.ToString()),
@@ -45,8 +55,8 @@ public sealed class JwtTokenService(IOptions<JwtOptions> jwtOptions, SecureToken
             issuer: _options.Issuer,
             audience: _options.Audience,
             claims: claims,
-            notBefore: utcNow,
-            expires: accessExpiry,
+            notBefore: jwtNotBefore,
+            expires: jwtAccessExpiry,
             signingCredentials: signingCredentials);
 
         return new TokenPair(

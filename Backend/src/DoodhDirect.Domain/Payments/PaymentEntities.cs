@@ -52,8 +52,8 @@ public sealed class Payment : AuditableEntity
         decimal amount,
         string currency,
         string idempotencyKey,
-        DateTime expiresAtUtc)
-        : this(orderId, null, customerId, method, amount, currency, idempotencyKey, expiresAtUtc)
+        DateTime expiresAt)
+        : this(orderId, null, customerId, method, amount, currency, idempotencyKey, expiresAt)
     {
     }
 
@@ -65,7 +65,7 @@ public sealed class Payment : AuditableEntity
         decimal amount,
         string currency,
         string idempotencyKey,
-        DateTime expiresAtUtc)
+        DateTime expiresAt)
     {
         if ((orderId is > 0) == (subscriptionId is > 0))
         {
@@ -73,7 +73,7 @@ public sealed class Payment : AuditableEntity
         }
         if (customerId <= 0) throw new ArgumentOutOfRangeException(nameof(customerId));
         if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(amount));
-        EnsureUtc(expiresAtUtc, nameof(expiresAtUtc));
+        EnsureIndiaLocal(expiresAt, nameof(expiresAt));
 
         OrderId = orderId;
         SubscriptionId = subscriptionId;
@@ -83,7 +83,7 @@ public sealed class Payment : AuditableEntity
         Currency = Required(currency, nameof(currency)).ToUpperInvariant();
         IdempotencyKey = Required(idempotencyKey, nameof(idempotencyKey));
         Status = PaymentStatus.Initiated;
-        ExpiresAtUtc = expiresAtUtc;
+        ExpiresAt = expiresAt;
     }
 
     public static Payment CreateForSubscription(
@@ -93,8 +93,8 @@ public sealed class Payment : AuditableEntity
         decimal amount,
         string currency,
         string idempotencyKey,
-        DateTime expiresAtUtc) =>
-        new(null, subscriptionId, customerId, method, amount, currency, idempotencyKey, expiresAtUtc);
+        DateTime expiresAt) =>
+        new(null, subscriptionId, customerId, method, amount, currency, idempotencyKey, expiresAt);
 
     public long? OrderId { get; private set; }
     public long? SubscriptionId { get; private set; }
@@ -110,9 +110,9 @@ public sealed class Payment : AuditableEntity
     public string? GatewayStatus { get; private set; }
     public string? FailureCode { get; private set; }
     public string? FailureMessage { get; private set; }
-    public DateTime ExpiresAtUtc { get; private set; }
-    public DateTime? VerifiedAtUtc { get; private set; }
-    public DateTime? FailedAtUtc { get; private set; }
+    public DateTime ExpiresAt { get; private set; }
+    public DateTime? VerifiedAt { get; private set; }
+    public DateTime? FailedAt { get; private set; }
 
     public Order? Order { get; private set; }
     public Subscription? Subscription { get; private set; }
@@ -149,9 +149,9 @@ public sealed class Payment : AuditableEntity
     public void Succeed(
         string? gatewayPaymentId,
         string gatewayStatus,
-        DateTime verifiedAtUtc)
+        DateTime verifiedAt)
     {
-        EnsureUtc(verifiedAtUtc, nameof(verifiedAtUtc));
+        EnsureIndiaLocal(verifiedAt, nameof(verifiedAt));
 
         if (Status == PaymentStatus.Success)
         {
@@ -177,7 +177,7 @@ public sealed class Payment : AuditableEntity
         GatewayPaymentId = Optional(gatewayPaymentId);
         GatewayStatus = Required(gatewayStatus, nameof(gatewayStatus));
         Status = PaymentStatus.Success;
-        VerifiedAtUtc = verifiedAtUtc;
+        VerifiedAt = verifiedAt;
         FailureCode = null;
         FailureMessage = null;
     }
@@ -186,9 +186,9 @@ public sealed class Payment : AuditableEntity
         string failureCode,
         string? failureMessage,
         string? gatewayStatus,
-        DateTime failedAtUtc)
+        DateTime failedAt)
     {
-        EnsureUtc(failedAtUtc, nameof(failedAtUtc));
+        EnsureIndiaLocal(failedAt, nameof(failedAt));
 
         if (Status == PaymentStatus.Failed)
         {
@@ -204,12 +204,12 @@ public sealed class Payment : AuditableEntity
         FailureCode = Required(failureCode, nameof(failureCode));
         FailureMessage = Optional(failureMessage);
         GatewayStatus = Optional(gatewayStatus);
-        FailedAtUtc = failedAtUtc;
+        FailedAt = failedAt;
     }
 
-    public void Expire(DateTime expiredAtUtc)
+    public void Expire(DateTime expiredAt)
     {
-        EnsureUtc(expiredAtUtc, nameof(expiredAtUtc));
+        EnsureIndiaLocal(expiredAt, nameof(expiredAt));
 
         if (Status == PaymentStatus.Expired)
         {
@@ -223,7 +223,7 @@ public sealed class Payment : AuditableEntity
 
         Status = PaymentStatus.Expired;
         FailureCode = "PAYMENT_EXPIRED";
-        FailedAtUtc = expiredAtUtc;
+        FailedAt = expiredAt;
     }
 
     public Refund StartRefund(
@@ -288,11 +288,11 @@ public sealed class Payment : AuditableEntity
     private static string? Optional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static void EnsureUtc(DateTime value, string parameterName)
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
     {
-        if (value.Kind != DateTimeKind.Utc)
+        if (value.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("Timestamp must be UTC.", parameterName);
+            throw new ArgumentException("Timestamp must be an India-local wall-clock value.", parameterName);
         }
     }
 }
@@ -332,7 +332,7 @@ public sealed class Refund : AuditableEntity
     public string? GatewayRefundId { get; private set; }
     public string? FailureCode { get; private set; }
     public string? FailureMessage { get; private set; }
-    public DateTime? CompletedAtUtc { get; private set; }
+    public DateTime? CompletedAt { get; private set; }
 
     public Payment Payment { get; private set; } = null!;
     public User RequestedByUser { get; private set; } = null!;
@@ -348,9 +348,9 @@ public sealed class Refund : AuditableEntity
         Status = RefundStatus.Processing;
     }
 
-    public void Succeed(DateTime completedAtUtc)
+    public void Succeed(DateTime completedAt)
     {
-        EnsureUtc(completedAtUtc, nameof(completedAtUtc));
+        EnsureIndiaLocal(completedAt, nameof(completedAt));
 
         if (Status == RefundStatus.Succeeded)
         {
@@ -363,14 +363,14 @@ public sealed class Refund : AuditableEntity
         }
 
         Status = RefundStatus.Succeeded;
-        CompletedAtUtc = completedAtUtc;
+        CompletedAt = completedAt;
         FailureCode = null;
         FailureMessage = null;
     }
 
-    public void Fail(string failureCode, string? failureMessage, DateTime completedAtUtc)
+    public void Fail(string failureCode, string? failureMessage, DateTime completedAt)
     {
-        EnsureUtc(completedAtUtc, nameof(completedAtUtc));
+        EnsureIndiaLocal(completedAt, nameof(completedAt));
 
         if (Status == RefundStatus.Failed)
         {
@@ -385,7 +385,7 @@ public sealed class Refund : AuditableEntity
         Status = RefundStatus.Failed;
         FailureCode = Required(failureCode, nameof(failureCode));
         FailureMessage = string.IsNullOrWhiteSpace(failureMessage) ? null : failureMessage.Trim();
-        CompletedAtUtc = completedAtUtc;
+        CompletedAt = completedAt;
     }
 
     private static string Required(string value, string parameterName) =>
@@ -393,11 +393,11 @@ public sealed class Refund : AuditableEntity
             ? throw new ArgumentException("A value is required.", parameterName)
             : value.Trim();
 
-    private static void EnsureUtc(DateTime value, string parameterName)
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
     {
-        if (value.Kind != DateTimeKind.Utc)
+        if (value.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("Timestamp must be UTC.", parameterName);
+            throw new ArgumentException("Timestamp must be an India-local wall-clock value.", parameterName);
         }
     }
 }
@@ -411,19 +411,16 @@ public sealed class PaymentWebhook : AuditableEntity
         string eventId,
         string eventType,
         string payloadHash,
-        DateTime receivedAtUtc)
+        DateTime receivedAt)
     {
-        if (receivedAtUtc.Kind != DateTimeKind.Utc)
-        {
-            throw new ArgumentException("Timestamp must be UTC.", nameof(receivedAtUtc));
-        }
+        EnsureIndiaLocal(receivedAt, nameof(receivedAt));
 
         Provider = Required(provider, nameof(provider));
         EventId = Required(eventId, nameof(eventId));
         EventType = Required(eventType, nameof(eventType));
         PayloadHash = Required(payloadHash, nameof(payloadHash));
         Status = PaymentWebhookStatus.Received;
-        ReceivedAtUtc = receivedAtUtc;
+        ReceivedAt = receivedAt;
     }
 
     public string Provider { get; private set; } = string.Empty;
@@ -431,8 +428,8 @@ public sealed class PaymentWebhook : AuditableEntity
     public string EventType { get; private set; } = string.Empty;
     public string PayloadHash { get; private set; } = string.Empty;
     public PaymentWebhookStatus Status { get; private set; }
-    public DateTime ReceivedAtUtc { get; private set; }
-    public DateTime? ProcessedAtUtc { get; private set; }
+    public DateTime ReceivedAt { get; private set; }
+    public DateTime? ProcessedAt { get; private set; }
     public string? ErrorCode { get; private set; }
     public string? ErrorMessage { get; private set; }
 
@@ -446,37 +443,34 @@ public sealed class PaymentWebhook : AuditableEntity
         Status = PaymentWebhookStatus.Processing;
     }
 
-    public void Complete(DateTime processedAtUtc)
+    public void Complete(DateTime processedAt)
     {
-        EnsureCompletable(processedAtUtc);
+        EnsureCompletable(processedAt);
         Status = PaymentWebhookStatus.Processed;
-        ProcessedAtUtc = processedAtUtc;
+        ProcessedAt = processedAt;
     }
 
-    public void Reject(string errorCode, string? errorMessage, DateTime processedAtUtc)
+    public void Reject(string errorCode, string? errorMessage, DateTime processedAt)
     {
-        EnsureCompletable(processedAtUtc);
+        EnsureCompletable(processedAt);
         Status = PaymentWebhookStatus.Rejected;
         ErrorCode = Required(errorCode, nameof(errorCode));
         ErrorMessage = string.IsNullOrWhiteSpace(errorMessage) ? null : errorMessage.Trim();
-        ProcessedAtUtc = processedAtUtc;
+        ProcessedAt = processedAt;
     }
 
-    public void Fail(string errorCode, string? errorMessage, DateTime processedAtUtc)
+    public void Fail(string errorCode, string? errorMessage, DateTime processedAt)
     {
-        EnsureCompletable(processedAtUtc);
+        EnsureCompletable(processedAt);
         Status = PaymentWebhookStatus.Failed;
         ErrorCode = Required(errorCode, nameof(errorCode));
         ErrorMessage = string.IsNullOrWhiteSpace(errorMessage) ? null : errorMessage.Trim();
-        ProcessedAtUtc = processedAtUtc;
+        ProcessedAt = processedAt;
     }
 
-    private void EnsureCompletable(DateTime processedAtUtc)
+    private void EnsureCompletable(DateTime processedAt)
     {
-        if (processedAtUtc.Kind != DateTimeKind.Utc)
-        {
-            throw new ArgumentException("Timestamp must be UTC.", nameof(processedAtUtc));
-        }
+        EnsureIndiaLocal(processedAt, nameof(processedAt));
 
         if (Status != PaymentWebhookStatus.Processing)
         {
@@ -488,4 +482,14 @@ public sealed class PaymentWebhook : AuditableEntity
         string.IsNullOrWhiteSpace(value)
             ? throw new ArgumentException("A value is required.", parameterName)
             : value.Trim();
+
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
+    {
+        if (value.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "Timestamp must be an India-local wall-clock value.",
+                parameterName);
+        }
+    }
 }

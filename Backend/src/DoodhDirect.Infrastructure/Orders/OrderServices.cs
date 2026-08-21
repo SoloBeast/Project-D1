@@ -1,3 +1,4 @@
+using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
@@ -84,7 +85,8 @@ public sealed class BranchAllocationService(DoodhDirectDbContext dbContext) : IB
 public sealed class OrderService(
     DoodhDirectDbContext dbContext,
     IBranchAllocationService branchAllocationService,
-    INotificationEventWriter notificationEventWriter) : IOrderService
+    INotificationEventWriter notificationEventWriter,
+    IIndiaTimeProvider timeProvider) : IOrderService
 {
     public async Task<CheckoutResult> PreviewAsync(long customerId, CheckoutRequest request, CancellationToken cancellationToken)
     {
@@ -192,14 +194,14 @@ public sealed class OrderService(
     public async Task<IReadOnlyList<OrderResult>> GetForCustomerAsync(long customerId, CancellationToken cancellationToken) =>
         (await QueryOrders()
             .Where(order => order.CustomerId == customerId)
-            .OrderByDescending(order => order.CreatedAtUtc)
+            .OrderByDescending(order => order.CreatedAt)
             .ToListAsync(cancellationToken))
         .Select(order => order.ToResult())
         .ToArray();
 
     public async Task<IReadOnlyList<OrderResult>> GetForAdministrationAsync(CancellationToken cancellationToken) =>
         (await QueryOrders()
-            .OrderByDescending(order => order.CreatedAtUtc)
+            .OrderByDescending(order => order.CreatedAt)
             .ToListAsync(cancellationToken))
         .Select(order => order.ToResult())
         .ToArray();
@@ -218,7 +220,7 @@ public sealed class OrderService(
             ?? throw new NotFoundException("Order was not found.");
         try
         {
-            order.Cancel(DateTime.UtcNow);
+            order.Cancel(timeProvider.Now);
         }
         catch (InvalidOperationException exception)
         {
@@ -290,7 +292,7 @@ public sealed class OrderService(
     private async Task<Order?> LoadOrderAsync(long customerId, string idempotencyKey, CancellationToken cancellationToken) =>
         await QueryOrders().SingleOrDefaultAsync(order => order.CustomerId == customerId && order.IdempotencyKey == idempotencyKey, cancellationToken);
 
-    private static string CreateOrderNumber() => $"DD-{DateTime.UtcNow:yyyyMMddHHmmss}-{Guid.NewGuid():N}"[..25].ToUpperInvariant();
+    private string CreateOrderNumber() => $"DD-{timeProvider.Now:yyyyMMddHHmmss}-{Guid.NewGuid():N}"[..25].ToUpperInvariant();
 
     private sealed record Calculation(
         CustomerAddress Address,

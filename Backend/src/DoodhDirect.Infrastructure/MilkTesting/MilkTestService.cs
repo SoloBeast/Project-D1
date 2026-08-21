@@ -14,7 +14,7 @@ namespace DoodhDirect.Infrastructure.MilkTesting;
 
 public sealed class MilkTestService(
     DoodhDirectDbContext dbContext,
-    IClock clock,
+    IIndiaTimeProvider timeProvider,
     IMediaStorage mediaStorage,
     IMilkTestImageValidator imageValidator,
     INotificationEventWriter notificationEventWriter) : IMilkTestService
@@ -42,7 +42,7 @@ public sealed class MilkTestService(
                 throw new ConflictException("A doorstep test has already been requested for this delivery.");
             }
 
-            var now = clock.UtcNow;
+            var now = timeProvider.Now;
             var milkTest = new MilkTest(delivery.Id, delivery.CustomerId, delivery.BranchId, actor.UserId, now);
             dbContext.MilkTests.Add(milkTest);
             AddAudit(actor.UserId, "MILK_TEST.REQUEST", milkTest.PublicId, null,
@@ -116,7 +116,7 @@ public sealed class MilkTestService(
             throw new BusinessRuleException("Images cannot be added to a terminal delivery.");
         }
 
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         var extension = validated.ContentType switch
         {
             "image/jpeg" => ".jpg",
@@ -202,11 +202,11 @@ public sealed class MilkTestService(
             {
                 Mutate(() => milkTest.AddParameter(parameter.Code, parameter.Name, parameter.Value, parameter.Unit));
             }
-            var now = clock.UtcNow;
+            var now = timeProvider.Now;
             Mutate(() => milkTest.Complete(actor.UserId, now, request.Remarks));
             AddAudit(actor.UserId, "MILK_TEST.COMPLETE", milkTest.PublicId,
                 new { Status = MilkTestStatus.Requested },
-                new { milkTest.Status, milkTest.CompletedAtUtc, ReadingCount = milkTest.Parameters.Count, ImageCount = milkTest.Images.Count },
+                new { milkTest.Status, milkTest.CompletedAt, ReadingCount = milkTest.Parameters.Count, ImageCount = milkTest.Images.Count },
                 request.Remarks,
                 now);
             AddMilkTestEvent(
@@ -255,7 +255,7 @@ public sealed class MilkTestService(
                 x => x.PublicId == milkTestId && x.CustomerId == actor.UserId,
                 cancellationToken) ?? throw new NotFoundException("The doorstep test was not found.");
             var previousDecision = milkTest.CustomerDecision;
-            var now = clock.UtcNow;
+            var now = timeProvider.Now;
             Mutate(() =>
             {
                 if (confirm)
@@ -269,7 +269,7 @@ public sealed class MilkTestService(
             });
             AddAudit(actor.UserId, confirm ? "MILK_TEST.CONFIRM" : "MILK_TEST.REJECT", milkTest.PublicId,
                 new { CustomerDecision = previousDecision },
-                new { milkTest.CustomerDecision, milkTest.ConfirmedAtUtc, milkTest.RejectedAtUtc },
+                new { milkTest.CustomerDecision, milkTest.ConfirmedAt, milkTest.RejectedAt },
                 request.Remarks,
                 now);
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -368,7 +368,7 @@ public sealed class MilkTestService(
         string eventType,
         string eventKey,
         string message,
-        DateTime occurredAtUtc,
+        DateTime occurredAt,
         IReadOnlyDictionary<string, string>? additionalVariables = null)
     {
         var variables = new Dictionary<string, string>
@@ -391,7 +391,7 @@ public sealed class MilkTestService(
             eventKey,
             variables,
             $"/deliveries/{deliveryId}/milk-test",
-            occurredAtUtc));
+            occurredAt));
     }
 
     private void AddAudit(
@@ -401,7 +401,7 @@ public sealed class MilkTestService(
         object? oldValue,
         object? newValue,
         string? reason,
-        DateTime createdAtUtc) =>
+        DateTime createdAt) =>
         dbContext.AuditLogs.Add(new AuditLog(
             userId,
             action,
@@ -412,7 +412,7 @@ public sealed class MilkTestService(
             null,
             null,
             string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
-            createdAtUtc));
+            createdAt));
 
     private static void Mutate(Action operation)
     {
@@ -435,18 +435,18 @@ public sealed class MilkTestService(
         deliveryId,
         milkTest.Status,
         milkTest.CustomerDecision,
-        milkTest.RequestedAtUtc,
-        milkTest.CompletedAtUtc,
+        milkTest.RequestedAt,
+        milkTest.CompletedAt,
         milkTest.StaffRemarks,
-        milkTest.ConfirmedAtUtc,
-        milkTest.RejectedAtUtc,
+        milkTest.ConfirmedAt,
+        milkTest.RejectedAt,
         milkTest.CustomerRemarks,
         milkTest.Parameters
             .OrderBy(x => x.Code)
             .Select(x => new MilkTestParameterResult(x.Code, x.Name, x.Value, x.Unit))
             .ToArray(),
         milkTest.Images
-            .OrderBy(x => x.UploadedAtUtc)
+            .OrderBy(x => x.UploadedAt)
             .Select(x => ToImageResult(milkTest.PublicId, x))
             .ToArray());
 
@@ -455,14 +455,14 @@ public sealed class MilkTestService(
         deliveryId,
         milkTest.Status,
         milkTest.CustomerDecision,
-        milkTest.RequestedAtUtc,
-        milkTest.CompletedAtUtc,
-        milkTest.ConfirmedAtUtc,
-        milkTest.RejectedAtUtc,
+        milkTest.RequestedAt,
+        milkTest.CompletedAt,
+        milkTest.ConfirmedAt,
+        milkTest.RejectedAt,
         milkTest.CustomerRemarks,
         milkTest.Status == MilkTestStatus.Completed
             ? milkTest.Images
-                .OrderBy(x => x.UploadedAtUtc)
+                .OrderBy(x => x.UploadedAt)
                 .Select(x => ToImageResult(milkTest.PublicId, x))
                 .ToArray()
             : []);
@@ -472,6 +472,6 @@ public sealed class MilkTestService(
         image.FileName,
         image.ContentType,
         image.FileSize,
-        image.UploadedAtUtc,
+        image.UploadedAt,
         $"/api/v1/milk-tests/{milkTestId}/images/{image.PublicId}/content");
 }

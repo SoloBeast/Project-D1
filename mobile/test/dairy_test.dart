@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/dairy/dairy_controller.dart';
@@ -37,21 +38,21 @@ void main() {
       'serializes request timestamps as UTC and fixes production unit to L',
       () {
         final production = RecordMilkProductionRequest(
-          productionAtUtc: DateTime.parse('2026-08-17T08:30:00+05:30'),
+          productionAt: DateTime.parse('2026-08-17T08:30:00+05:30'),
           shift: 'Morning',
           buffaloCount: 12,
           quantityProduced: 24.5,
           remarks: 'First collection',
         );
         final usage = RecordMilkUsageRequest(
-          usedAtUtc: DateTime.parse('2026-08-17T10:15:00+05:30'),
+          usedAt: DateTime.parse('2026-08-17T10:15:00+05:30'),
           quantityUsed: 5.75,
           purpose: 'Dispatch',
           remarks: null,
         );
 
         expect(production.toJson(), {
-          'productionAtUtc': '2026-08-17T03:00:00.000Z',
+          'productionAt': '2026-08-17T03:00:00.000Z',
           'shift': 'Morning',
           'buffaloCount': 12,
           'quantityProduced': 24.5,
@@ -59,7 +60,7 @@ void main() {
           'remarks': 'First collection',
         });
         expect(usage.toJson(), {
-          'usedAtUtc': '2026-08-17T04:45:00.000Z',
+          'usedAt': '2026-08-17T04:45:00.000Z',
           'quantityUsed': 5.75,
           'purpose': 'Dispatch',
           'remarks': null,
@@ -160,7 +161,7 @@ void main() {
           'dairy-token',
           7,
           RecordMilkProductionRequest(
-            productionAtUtc: DateTime.parse('2026-08-17T08:30:00+05:30'),
+            productionAt: DateTime.parse('2026-08-17T08:30:00+05:30'),
             shift: 'Morning',
             buffaloCount: 12,
             quantityProduced: 24.5,
@@ -171,7 +172,7 @@ void main() {
           'dairy-token',
           'batch-1',
           RecordMilkUsageRequest(
-            usedAtUtc: DateTime.parse('2026-08-17T10:15:00+05:30'),
+            usedAt: DateTime.parse('2026-08-17T10:15:00+05:30'),
             quantityUsed: 5.75,
             purpose: 'Dispatch',
             remarks: 'Route 1',
@@ -183,7 +184,7 @@ void main() {
           'POST /api/v1/dairy/batches/batch-1/usage',
         ]);
         expect(bodies[0], {
-          'productionAtUtc': '2026-08-17T03:00:00.000Z',
+          'productionAt': '2026-08-17T03:00:00.000Z',
           'shift': 'Morning',
           'buffaloCount': 12,
           'quantityProduced': 24.5,
@@ -191,7 +192,7 @@ void main() {
           'remarks': 'First collection',
         });
         expect(bodies[1], {
-          'usedAtUtc': '2026-08-17T04:45:00.000Z',
+          'usedAt': '2026-08-17T04:45:00.000Z',
           'quantityUsed': 5.75,
           'purpose': 'Dispatch',
           'remarks': 'Route 1',
@@ -214,7 +215,7 @@ void main() {
         final productionSaved = await controller.recordProduction(
           7,
           RecordMilkProductionRequest(
-            productionAtUtc: DateTime.utc(2026, 8, 17, 3),
+            productionAt: DateTime.utc(2026, 8, 17, 3),
             shift: 'Morning',
             buffaloCount: 12,
             quantityProduced: 24.5,
@@ -223,7 +224,7 @@ void main() {
         final usageSaved = await controller.recordUsage(
           'batch-1',
           RecordMilkUsageRequest(
-            usedAtUtc: DateTime.utc(2026, 8, 17, 4, 45),
+            usedAt: DateTime.utc(2026, 8, 17, 4, 45),
             quantityUsed: 5.75,
             purpose: 'Dispatch',
           ),
@@ -276,7 +277,7 @@ void main() {
           .recordUsage(
             'batch-1',
             RecordMilkUsageRequest(
-              usedAtUtc: DateTime.utc(2026, 8, 17, 4, 45),
+              usedAt: DateTime.utc(2026, 8, 17, 4, 45),
               quantityUsed: 5,
               purpose: 'Dispatch',
             ),
@@ -380,7 +381,14 @@ void main() {
         expect(controller.recordedUsage?.quantityUsed, 4.25);
         expect(controller.recordedUsage?.purpose, 'Dispatch');
         expect(controller.recordedUsage?.remarks, 'Route 1');
-        expect(controller.recordedUsage?.usedAtUtc.isUtc, isTrue);
+        final usedAt = controller.recordedUsage!.usedAt;
+        expect(usedAt.isUtc, isFalse);
+        expect(
+          DateTime.parse(
+            controller.recordedUsage!.toJson()['usedAt'] as String,
+          ),
+          indiaToUtc(usedAt),
+        );
       },
     );
   });
@@ -391,25 +399,25 @@ Map<String, dynamic> batchJson({String status = 'Available'}) => {
   'batchNumber': 'MB-20260817-001',
   'branchId': 7,
   'productionPublicId': 'production-1',
-  'productionAtUtc': '2026-08-17T03:00:00Z',
+  'productionAt': '2026-08-17T03:00:00Z',
   'quantityProduced': 24.5,
   'availableQuantity': 18.75,
   'unit': 'L',
   'status': status,
-  'createdAtUtc': '2026-08-17T03:01:00Z',
+  'createdAt': '2026-08-17T03:01:00Z',
 };
 
 Map<String, dynamic> productionJson() => {
   'publicId': 'production-1',
   'branchId': 7,
-  'productionAtUtc': '2026-08-17T03:00:00Z',
+  'productionAt': '2026-08-17T03:00:00Z',
   'shift': 'Morning',
   'buffaloCount': 12,
   'quantityProduced': 24.5,
   'unit': 'L',
   'recordedByUserId': 51,
   'remarks': 'First collection',
-  'createdAtUtc': '2026-08-17T03:01:00Z',
+  'createdAt': '2026-08-17T03:01:00Z',
   'batch': batchJson(),
 };
 
@@ -418,13 +426,13 @@ Map<String, dynamic> usageJson() => {
   'batchPublicId': 'batch-1',
   'batchNumber': 'MB-20260817-001',
   'branchId': 7,
-  'usedAtUtc': '2026-08-17T04:45:00Z',
+  'usedAt': '2026-08-17T04:45:00Z',
   'quantityUsed': 5.75,
   'unit': 'L',
   'purpose': 'Dispatch',
   'recordedByUserId': 51,
   'remarks': 'Route 1',
-  'createdAtUtc': '2026-08-17T04:46:00Z',
+  'createdAt': '2026-08-17T04:46:00Z',
 };
 
 Map<String, dynamic> availabilityJson() => {
@@ -434,7 +442,7 @@ Map<String, dynamic> availabilityJson() => {
   'availableQuantity': 18.75,
   'unit': 'L',
   'availableBatchCount': 1,
-  'calculatedAtUtc': '2026-08-17T05:00:00Z',
+  'calculatedAt': '2026-08-17T05:00:00',
 };
 
 Map<String, dynamic> dashboardJson() => {
@@ -445,7 +453,7 @@ Map<String, dynamic> dashboardJson() => {
   'unit': 'L',
   'productionEntryCount': 2,
   'availableBatchCount': 1,
-  'calculatedAtUtc': '2026-08-17T05:00:00Z',
+  'calculatedAt': '2026-08-17T05:00:00',
 };
 
 http.Response successResponse(Object data) => http.Response(

@@ -466,7 +466,8 @@ class _FakeNotificationRepository extends NotificationRepository {
       platform: device.platform,
       deviceName: device.deviceName,
       isActive: true,
-      lastSeenAtUtc: DateTime.utc(2026, 8, 17),
+      registeredAt: DateTime(2026, 8, 17, 8),
+      lastSeenAt: DateTime(2026, 8, 17),
     );
   }
 }
@@ -489,8 +490,8 @@ AppNotification _notification(String id) => AppNotification(
   body: 'Your order has been confirmed.',
   deepLink: '/orders/order-1',
   isRead: false,
-  createdAtUtc: DateTime.utc(2026, 8, 17, 10),
-  readAtUtc: null,
+  createdAt: DateTime(2026, 8, 17, 10),
+  readAt: null,
 );
 
 final _session = AuthSession(

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_navigation.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_controller.dart';
@@ -30,9 +31,9 @@ void main() {
       );
       expect(customer.status, DeliveryStatus.outForDelivery);
       expect(customer.latestLocation?.latitude, 18.5204);
-      expect(customer.completedAtUtc, isNull);
+      expect(customer.completedAt, isNull);
       expect(details.status, DeliveryStatus.arrived);
-      expect(details.otpVerifiedAtUtc, isNotNull);
+      expect(details.otpVerifiedAt, isNotNull);
       expect(details.assignments.single.employeeName, 'Delivery Agent');
       expect(DeliveryStatus.fromApi('unexpected'), DeliveryStatus.unknown);
       expect(
@@ -87,7 +88,29 @@ void main() {
       ]);
     });
 
-    test('posts lifecycle, assignment, and UTC location payloads', () async {
+    test('posts the canonical failure reason and optional remarks', () async {
+      Map<String, dynamic>? body;
+      final client = MockClient((request) async {
+        body = jsonDecode(request.body) as Map<String, dynamic>;
+        return successResponse(deliveryDetailsJson(status: 'Failed'));
+      });
+      final repository = testRepository(client);
+
+      final result = await repository.fail(
+        'delivery-token',
+        'delivery-1',
+        reason: DeliveryFailureReasons.customerNotAvailable,
+        remarks: 'No response',
+      );
+
+      expect(result.status, DeliveryStatus.failed);
+      expect(body, {
+        'reason': 'Customer not available',
+        'remarks': 'No response',
+      });
+    });
+
+    test('posts lifecycle, assignment, and India-local location payloads', () async {
       final requests = <String>[];
       final bodies = <Map<String, dynamic>>[];
       final client = MockClient((request) async {
@@ -114,7 +137,7 @@ void main() {
         latitude: 18.5,
         longitude: 73.8,
         accuracyMetres: 4.5,
-        recordedAtUtc: DateTime.parse('2026-08-16T12:30:00+05:30'),
+        recordedAt: DateTime(2026, 8, 16, 12, 30),
       );
 
       expect(requests, [
@@ -131,10 +154,45 @@ void main() {
         'latitude': 18.5,
         'longitude': 73.8,
         'accuracyMetres': 4.5,
-        'recordedAtUtc': '2026-08-16T07:00:00.000Z',
+        'recordedAt': '2026-08-16T12:30:00.000',
       });
       expect(location.accuracyMetres, 5.5);
     });
+  });
+
+  group('delivery navigation', () {
+    test('prefers valid coordinates and excludes internal identifiers', () {
+      final uri = deliveryNavigationUri(
+        latitude: 18.5204,
+        longitude: 73.8567,
+        address: '1 Main Street, Pune',
+      );
+
+      expect(uri.toString(), contains('destination=18.5204%2C73.8567'));
+      expect(uri.toString(), isNot(contains('delivery')));
+      expect(uri?.queryParameters['api'], '1');
+    });
+
+    test('falls back to an encoded address when coordinates are invalid', () {
+      final uri = deliveryNavigationUri(
+        latitude: double.nan,
+        longitude: double.infinity,
+        address: '1 Main Street, Pune & East',
+      );
+
+      expect(uri?.queryParameters['query'], '1 Main Street, Pune & East');
+      expect(uri?.queryParameters['api'], '1');
+    });
+
+    test(
+      'returns no destination when location and address are unavailable',
+      () {
+        expect(
+          deliveryNavigationUri(latitude: 91, longitude: 181, address: '  '),
+          isNull,
+        );
+      },
+    );
   });
 
   group('delivery controller', () {
@@ -215,8 +273,10 @@ void main() {
       );
 
       expect(find.text('Live location'), findsOneWidget);
-      expect(find.text('Doorstep milk test'), findsOneWidget);
       expect(find.textContaining('18.52040'), findsNothing);
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(find.text('Doorstep milk test'), findsOneWidget);
 
       await _pumpDeliveryScreen(
         tester,
@@ -228,8 +288,15 @@ void main() {
         ),
       );
 
-      expect(find.text('Latest live location'), findsOneWidget);
-      expect(find.textContaining('18.52040, 73.85670'), findsOneWidget);
+      expect(find.text('Live tracking is active'), findsOneWidget);
+      expect(
+        find.text(
+          'Your delivery partner is currently sharing an updated location.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('18.52040'), findsNothing);
+      expect(find.textContaining('73.85670'), findsNothing);
     });
 
     testWidgets('staff actions follow server status and OTP verification', (
@@ -327,7 +394,7 @@ Map<String, dynamic> locationJson() => {
   'latitude': 18.5204,
   'longitude': 73.8567,
   'accuracyMetres': 5.5,
-  'recordedAtUtc': '2026-08-16T10:15:00Z',
+  'recordedAt': '2026-08-16T10:15:00.000',
 };
 
 Map<String, dynamic> customerDeliveryJson({required bool tracking}) => {
@@ -341,8 +408,8 @@ Map<String, dynamic> customerDeliveryJson({required bool tracking}) => {
   'assignedEmployeeName': 'Delivery Agent',
   'isTrackingActive': tracking,
   'latestLocation': locationJson(),
-  'completedAtUtc': null,
-  'failedAtUtc': null,
+  'completedAt': null,
+  'failedAt': null,
   'failureReason': null,
 };
 
@@ -366,15 +433,15 @@ Map<String, dynamic> deliveryDetailsJson({
   'destinationLongitude': 73.8567,
   'assignedEmployeeId': assigned ? 'employee-1' : null,
   'assignedEmployeeName': assigned ? 'Delivery Agent' : null,
-  'assignedAtUtc': assigned ? '2026-08-16T08:00:00Z' : null,
-  'pickedUpAtUtc': null,
-  'outForDeliveryAtUtc': status == 'OutForDelivery'
-      ? '2026-08-16T09:00:00Z'
+  'assignedAt': assigned ? '2026-08-16T08:00:00.000' : null,
+  'pickedUpAt': null,
+  'outForDeliveryAt': status == 'OutForDelivery'
+      ? '2026-08-16T09:00:00.000'
       : null,
-  'arrivedAtUtc': status == 'Arrived' ? '2026-08-16T10:00:00Z' : null,
-  'otpVerifiedAtUtc': otpVerified ? '2026-08-16T10:10:00Z' : null,
-  'completedAtUtc': null,
-  'failedAtUtc': null,
+  'arrivedAt': status == 'Arrived' ? '2026-08-16T10:00:00.000' : null,
+  'otpVerifiedAt': otpVerified ? '2026-08-16T10:10:00.000' : null,
+  'completedAt': null,
+  'failedAt': null,
   'failureReason': null,
   'remarks': null,
   'operationalNotes': null,
@@ -386,7 +453,7 @@ Map<String, dynamic> deliveryDetailsJson({
             'employeeId': 'employee-1',
             'employeeName': 'Delivery Agent',
             'assignedByUserId': 'manager-1',
-            'assignedAtUtc': '2026-08-16T08:00:00Z',
+            'assignedAt': '2026-08-16T08:00:00.000',
             'reason': 'Morning route',
           },
         ]

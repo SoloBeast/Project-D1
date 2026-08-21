@@ -8,7 +8,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DoodhDirect.Infrastructure.Dairy;
 
-public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) : IDairyService
+public sealed class DairyService(
+    DoodhDirectDbContext dbContext,
+    IIndiaTimeProvider timeProvider) : IDairyService
 {
     private const string MilkUnit = "L";
 
@@ -19,12 +21,12 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
         CancellationToken cancellationToken)
     {
         await RequireBranchAsync(actor, branchId, cancellationToken);
-        var date = productionDate ?? DateOnly.FromDateTime(clock.UtcNow);
-        var (fromUtc, toUtc) = DateRange(date, date);
+        var date = productionDate ?? timeProvider.Today;
+        var (from, to) = DateRange(date, date);
 
         var entries = await dbContext.MilkProductions
             .AsNoTracking()
-            .Where(x => x.BranchId == branchId && x.ProductionAtUtc >= fromUtc && x.ProductionAtUtc < toUtc)
+            .Where(x => x.BranchId == branchId && x.ProductionAt >= from && x.ProductionAt < to)
             .ToListAsync(cancellationToken);
         var availability = await CalculateAvailabilityAsync(branchId, cancellationToken);
 
@@ -36,7 +38,7 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
             MilkUnit,
             entries.Count,
             availability.AvailableBatchCount,
-            clock.UtcNow);
+            timeProvider.Now);
     }
 
     public async Task<MilkProductionResult> RecordProductionAsync(
@@ -58,7 +60,7 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
 
             var production = new MilkProduction(
                 branchId,
-                request.ProductionAtUtc,
+                request.ProductionAt,
                 request.BuffaloCount,
                 request.QuantityProduced,
                 MilkUnit,
@@ -71,8 +73,8 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
             var batch = new MilkBatch(
                 branchId,
                 production.Id,
-                CreateBatchNumber(request.ProductionAtUtc, production.PublicId),
-                request.ProductionAtUtc,
+                CreateBatchNumber(request.ProductionAt, production.PublicId),
+                request.ProductionAt,
                 request.QuantityProduced,
                 MilkUnit);
             dbContext.MilkBatches.Add(batch);
@@ -84,12 +86,12 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
                 batch.BatchNumber,
                 batch.BranchId,
                 production.PublicId,
-                batch.ProductionAtUtc,
+                batch.ProductionAt,
                 batch.QuantityProduced,
                 batch.QuantityProduced,
                 batch.Unit,
                 batch.Status,
-                batch.CreatedAtUtc));
+                batch.CreatedAt));
         });
 
         return result!;
@@ -110,10 +112,10 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
             .Include(x => x.Batches)
                 .ThenInclude(x => x.Usages)
             .Where(x => x.BranchId == branchId);
-        query = ApplyDateRange(query, x => x.ProductionAtUtc, fromDate, toDate);
+        query = ApplyDateRange(query, x => x.ProductionAt, fromDate, toDate);
 
         var productions = await query
-            .OrderByDescending(x => x.ProductionAtUtc)
+            .OrderByDescending(x => x.ProductionAt)
             .ThenByDescending(x => x.Id)
             .ToListAsync(cancellationToken);
 
@@ -136,7 +138,7 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
             .Include(x => x.Production)
             .Include(x => x.Usages)
             .Where(x => x.BranchId == branchId && (!status.HasValue || x.Status == status.Value))
-            .OrderByDescending(x => x.ProductionAtUtc)
+            .OrderByDescending(x => x.ProductionAt)
             .ThenByDescending(x => x.Id)
             .ToListAsync(cancellationToken);
 
@@ -189,8 +191,8 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
                 ?? throw new NotFoundException("Milk batch was not found.");
             RequireBranch(actor, batch.BranchId);
 
-            if (request.UsedAtUtc < batch.ProductionAtUtc)
-                throw new ValidationAppException("Usage time cannot precede production time.", nameof(request.UsedAtUtc));
+            if (request.UsedAt < batch.ProductionAt)
+                throw new ValidationAppException("Usage time cannot precede production time.", nameof(request.UsedAt));
 
             var available = batch.QuantityProduced - batch.Usages.Sum(x => x.QuantityUsed);
             if (request.QuantityUsed > available)
@@ -199,7 +201,7 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
             var usage = new MilkUsage(
                 batch.BranchId,
                 batch.Id,
-                request.UsedAtUtc,
+                request.UsedAt,
                 request.QuantityUsed,
                 request.Purpose,
                 actor.UserId,
@@ -230,10 +232,10 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
             .AsNoTracking()
             .Include(x => x.Batch)
             .Where(x => x.BranchId == branchId);
-        query = ApplyDateRange(query, x => x.UsedAtUtc, fromDate, toDate);
+        query = ApplyDateRange(query, x => x.UsedAt, fromDate, toDate);
 
         var usages = await query
-            .OrderByDescending(x => x.UsedAtUtc)
+            .OrderByDescending(x => x.UsedAt)
             .ThenByDescending(x => x.Id)
             .ToListAsync(cancellationToken);
         return usages.Select(x => MapUsage(x, x.Batch)).ToArray();
@@ -258,7 +260,7 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
             produced - used,
             MilkUnit,
             availableBatchCount,
-            clock.UtcNow);
+            timeProvider.Now);
     }
 
     private async Task RequireBranchAsync(DairyActor actor, long branchId, CancellationToken cancellationToken)
@@ -279,7 +281,7 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
 
     private void ValidateProduction(RecordMilkProductionRequest request)
     {
-        ValidateUtcTimestamp(request.ProductionAtUtc, nameof(request.ProductionAtUtc));
+        ValidateIndiaLocalTimestamp(request.ProductionAt, nameof(request.ProductionAt));
         ValidateQuantity(request.QuantityProduced, nameof(request.QuantityProduced));
         if (request.BuffaloCount <= 0)
             throw new ValidationAppException("Buffalo count must be positive.", nameof(request.BuffaloCount));
@@ -293,18 +295,18 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
 
     private void ValidateUsage(RecordMilkUsageRequest request)
     {
-        ValidateUtcTimestamp(request.UsedAtUtc, nameof(request.UsedAtUtc));
+        ValidateIndiaLocalTimestamp(request.UsedAt, nameof(request.UsedAt));
         ValidateQuantity(request.QuantityUsed, nameof(request.QuantityUsed));
         if (string.IsNullOrWhiteSpace(request.Purpose) || request.Purpose.Trim().Length > 120)
             throw new ValidationAppException("Purpose is required and cannot exceed 120 characters.", nameof(request.Purpose));
         ValidateLength(request.Remarks, nameof(request.Remarks), 1000);
     }
 
-    private void ValidateUtcTimestamp(DateTime value, string field)
+    private void ValidateIndiaLocalTimestamp(DateTime value, string field)
     {
-        if (value.Kind != DateTimeKind.Utc)
-            throw new ValidationAppException("Timestamp must include the UTC timezone.", field);
-        if (value > clock.UtcNow.AddMinutes(5))
+        if (value.Kind != DateTimeKind.Unspecified)
+            throw new ValidationAppException("Timestamp must be India-local without a timezone offset.", field);
+        if (value > timeProvider.Now.AddMinutes(5))
             throw new ValidationAppException("Timestamp cannot be in the future.", field);
     }
 
@@ -328,7 +330,7 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
             throw new ValidationAppException("From date cannot be after to date.", nameof(fromDate));
     }
 
-    private static IQueryable<T> ApplyDateRange<T>(
+    private IQueryable<T> ApplyDateRange<T>(
         IQueryable<T> query,
         System.Linq.Expressions.Expression<Func<T, DateTime>> selector,
         DateOnly? fromDate,
@@ -336,13 +338,13 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
     {
         if (fromDate.HasValue)
         {
-            var fromUtc = fromDate.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-            query = query.Where(BuildComparison(selector, fromUtc, greaterThanOrEqual: true));
+            var from = fromDate.Value.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+            query = query.Where(BuildComparison(selector, from, greaterThanOrEqual: true));
         }
         if (toDate.HasValue)
         {
-            var toUtc = toDate.Value.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
-            query = query.Where(BuildComparison(selector, toUtc, greaterThanOrEqual: false));
+            var to = toDate.Value.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);
+            query = query.Where(BuildComparison(selector, to, greaterThanOrEqual: false));
         }
         return query;
     }
@@ -358,24 +360,24 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
         return System.Linq.Expressions.Expression.Lambda<Func<T, bool>>(comparison, selector.Parameters);
     }
 
-    private static (DateTime FromUtc, DateTime ToUtc) DateRange(DateOnly fromDate, DateOnly toDate) =>
-        (fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc),
-            toDate.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc));
+    private static (DateTime From, DateTime To) DateRange(DateOnly fromDate, DateOnly toDate) =>
+        (fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified),
+            toDate.AddDays(1).ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified));
 
-    private static string CreateBatchNumber(DateTime productionAtUtc, Guid productionPublicId) =>
-        $"MB-{productionAtUtc:yyyyMMdd}-{productionPublicId:N}"[..20].ToUpperInvariant();
+    private static string CreateBatchNumber(DateTime productionAt, Guid productionPublicId) =>
+        $"MB-{productionAt:yyyyMMdd}-{productionPublicId:N}"[..20].ToUpperInvariant();
 
     private static MilkProductionResult MapProduction(MilkProduction production, MilkBatchResult batch) => new(
         production.PublicId,
         production.BranchId,
-        production.ProductionAtUtc,
+        production.ProductionAt,
         production.Shift,
         production.BuffaloCount,
         production.QuantityProduced,
         production.Unit,
         production.RecordedByUserId,
         production.Remarks,
-        production.CreatedAtUtc,
+        production.CreatedAt,
         batch);
 
     private static MilkBatchResult MapBatch(MilkBatch batch, decimal quantityUsed)
@@ -386,12 +388,12 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
             batch.BatchNumber,
             batch.BranchId,
             batch.Production.PublicId,
-            batch.ProductionAtUtc,
+            batch.ProductionAt,
             batch.QuantityProduced,
             available,
             batch.Unit,
             available == 0 ? MilkBatchStatus.Exhausted : MilkBatchStatus.Available,
-            batch.CreatedAtUtc);
+            batch.CreatedAt);
     }
 
     private static MilkUsageResult MapUsage(MilkUsage usage, MilkBatch batch) => new(
@@ -399,11 +401,11 @@ public sealed class DairyService(DoodhDirectDbContext dbContext, IClock clock) :
         batch.PublicId,
         batch.BatchNumber,
         usage.BranchId,
-        usage.UsedAtUtc,
+        usage.UsedAt,
         usage.QuantityUsed,
         batch.Unit,
         usage.Purpose,
         usage.RecordedByUserId,
         usage.Remarks,
-        usage.CreatedAtUtc);
+        usage.CreatedAt);
 }

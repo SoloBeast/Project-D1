@@ -165,7 +165,7 @@ class SubscriptionDelivery {
     required this.branchCode,
     required this.branchName,
     required this.address,
-    required this.statusChangedAtUtc,
+    required this.statusChangedAt,
   });
 
   factory SubscriptionDelivery.fromJson(Map<String, dynamic> json) =>
@@ -178,9 +178,7 @@ class SubscriptionDelivery {
         branchCode: json['branchCode'] as String,
         branchName: json['branchName'] as String,
         address: json['address'] as String,
-        statusChangedAtUtc: json['statusChangedAtUtc'] == null
-            ? null
-            : DateTime.parse(json['statusChangedAtUtc'] as String),
+        statusChangedAt: _optionalDateTime(json['statusChangedAt']),
       );
 
   final String publicId;
@@ -191,7 +189,7 @@ class SubscriptionDelivery {
   final String branchCode;
   final String branchName;
   final String address;
-  final DateTime? statusChangedAtUtc;
+  final DateTime? statusChangedAt;
 }
 
 class SubscriptionDetails {
@@ -216,11 +214,11 @@ class SubscriptionDetails {
     required this.branchCode,
     required this.branchName,
     required this.schedules,
-    required this.activatedAtUtc,
-    required this.pausedAtUtc,
-    required this.cancelledAtUtc,
-    required this.completedAtUtc,
-    required this.createdAtUtc,
+    required this.activatedAt,
+    required this.pausedAt,
+    required this.cancelledAt,
+    required this.completedAt,
+    required this.createdAt,
   });
 
   factory SubscriptionDetails.fromJson(Map<String, dynamic> json) =>
@@ -248,11 +246,11 @@ class SubscriptionDetails {
             .cast<Map<String, dynamic>>()
             .map(SubscriptionSchedule.fromJson)
             .toList(growable: false),
-        activatedAtUtc: _optionalDateTime(json['activatedAtUtc']),
-        pausedAtUtc: _optionalDateTime(json['pausedAtUtc']),
-        cancelledAtUtc: _optionalDateTime(json['cancelledAtUtc']),
-        completedAtUtc: _optionalDateTime(json['completedAtUtc']),
-        createdAtUtc: DateTime.parse(json['createdAtUtc'] as String),
+        activatedAt: _optionalDateTime(json['activatedAt']),
+        pausedAt: _optionalDateTime(json['pausedAt']),
+        cancelledAt: _optionalDateTime(json['cancelledAt']),
+        completedAt: _optionalDateTime(json['completedAt']),
+        createdAt: DateTime.parse(json['createdAt'] as String),
       );
 
   final String publicId;
@@ -275,11 +273,11 @@ class SubscriptionDetails {
   final String branchCode;
   final String branchName;
   final List<SubscriptionSchedule> schedules;
-  final DateTime? activatedAtUtc;
-  final DateTime? pausedAtUtc;
-  final DateTime? cancelledAtUtc;
-  final DateTime? completedAtUtc;
-  final DateTime createdAtUtc;
+  final DateTime? activatedAt;
+  final DateTime? pausedAt;
+  final DateTime? cancelledAt;
+  final DateTime? completedAt;
+  final DateTime createdAt;
 
   String get formattedQuantity =>
       '${formatQuantity(quantity)} $unitOfMeasure per delivery';

@@ -21,7 +21,7 @@ public sealed class PaymentService(
     DoodhDirectDbContext dbContext,
     IPaymentGateway gateway,
     IWalletService walletService,
-    IClock clock,
+    IIndiaTimeProvider timeProvider,
     IOptions<PaymentOptions> paymentOptions,
     INotificationEventWriter notificationEventWriter,
     MockPaymentGateway? mockGateway = null,
@@ -80,7 +80,7 @@ public sealed class PaymentService(
             order.PayableAmount,
             options.Currency,
             idempotencyKey.Trim(),
-            clock.UtcNow.AddMinutes(options.PaymentExpiryMinutes));
+            timeProvider.Now.AddMinutes(options.PaymentExpiryMinutes));
         dbContext.Payments.Add(payment);
 
         if (request.Method == PaymentMethod.Wallet)
@@ -96,8 +96,8 @@ public sealed class PaymentService(
                     payment.Amount,
                     $"payment:{payment.PublicId:N}",
                     cancellationToken);
-                payment.Succeed(null, "wallet_debited", clock.UtcNow);
-                ConfirmTarget(payment, clock.UtcNow);
+                payment.Succeed(null, "wallet_debited", timeProvider.Now);
+                ConfirmTarget(payment, timeProvider.Now);
                 AddPaymentOutcomeEvents(payment);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
@@ -115,12 +115,12 @@ public sealed class PaymentService(
                         order.OrderNumber,
                         ToMinorUnits(payment.Amount),
                         payment.Currency,
-                        payment.ExpiresAtUtc),
+                        ToUtc(payment.ExpiresAt)),
                     cancellationToken);
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
-                payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, clock.UtcNow);
+                payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, timeProvider.Now);
                 AddPaymentOutcomeEvents(payment);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 throw new BusinessRuleException("The payment gateway could not create the payment order.");
@@ -189,7 +189,7 @@ public sealed class PaymentService(
             subscription.PayableAmount,
             options.Currency,
             normalizedIdempotencyKey,
-            clock.UtcNow.AddMinutes(options.PaymentExpiryMinutes));
+            timeProvider.Now.AddMinutes(options.PaymentExpiryMinutes));
         dbContext.Payments.Add(payment);
 
         if (method == PaymentMethod.Wallet)
@@ -205,8 +205,8 @@ public sealed class PaymentService(
                     payment.Amount,
                     $"payment:{payment.PublicId:N}",
                     cancellationToken);
-                payment.Succeed(null, "wallet_debited", clock.UtcNow);
-                ConfirmTarget(payment, clock.UtcNow);
+                payment.Succeed(null, "wallet_debited", timeProvider.Now);
+                ConfirmTarget(payment, timeProvider.Now);
                 AddPaymentOutcomeEvents(payment, subscription);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
@@ -224,12 +224,12 @@ public sealed class PaymentService(
                         $"SUB-{subscription.PublicId:N}",
                         ToMinorUnits(payment.Amount),
                         payment.Currency,
-                        payment.ExpiresAtUtc),
+                        ToUtc(payment.ExpiresAt)),
                     cancellationToken);
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
-                payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, clock.UtcNow);
+                payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, timeProvider.Now);
                 subscription.FailPayment();
                 AddPaymentOutcomeEvents(payment, subscription);
                 await dbContext.SaveChangesAsync(cancellationToken);
@@ -300,14 +300,14 @@ public sealed class PaymentService(
             subscription.PayableAmount,
             options.Currency,
             normalizedIdempotencyKey,
-            clock.UtcNow.AddMinutes(options.PaymentExpiryMinutes));
+            timeProvider.Now.AddMinutes(options.PaymentExpiryMinutes));
         dbContext.Payments.Add(payment);
 
         void PrepareReplacement()
         {
             foreach (var activePayment in activePayments)
             {
-                activePayment.Expire(clock.UtcNow);
+                activePayment.Expire(timeProvider.Now);
                 AddPaymentOutcomeEvents(activePayment, subscription);
             }
             if (subscription.Status == SubscriptionStatus.PaymentFailed)
@@ -330,8 +330,8 @@ public sealed class PaymentService(
                     payment.Amount,
                     $"payment:{payment.PublicId:N}",
                     cancellationToken);
-                payment.Succeed(null, "wallet_debited", clock.UtcNow);
-                ConfirmTarget(payment, clock.UtcNow);
+                payment.Succeed(null, "wallet_debited", timeProvider.Now);
+                ConfirmTarget(payment, timeProvider.Now);
                 AddPaymentOutcomeEvents(payment, subscription);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
@@ -353,12 +353,12 @@ public sealed class PaymentService(
                         $"SUB-{subscription.PublicId:N}",
                         ToMinorUnits(payment.Amount),
                         payment.Currency,
-                        payment.ExpiresAtUtc),
+                        ToUtc(payment.ExpiresAt)),
                     cancellationToken);
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
-                payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, clock.UtcNow);
+                payment.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, timeProvider.Now);
                 subscription.FailPayment();
                 AddPaymentOutcomeEvents(payment, subscription);
                 await dbContext.SaveChangesAsync(cancellationToken);
@@ -405,9 +405,10 @@ public sealed class PaymentService(
         {
             throw new BusinessRuleException($"A payment in status '{payment.Status}' cannot be verified.");
         }
-        if (clock.UtcNow > payment.ExpiresAtUtc)
+        var now = timeProvider.Now;
+        if (now > payment.ExpiresAt)
         {
-            payment.Expire(clock.UtcNow);
+            payment.Expire(now);
             FailTarget(payment);
             AddPaymentOutcomeEvents(payment);
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -432,12 +433,12 @@ public sealed class PaymentService(
         {
             if (gatewayStatus.IsSuccessful)
             {
-                payment.Succeed(gatewayStatus.GatewayPaymentId, gatewayStatus.Status, clock.UtcNow);
-                ConfirmTarget(payment, clock.UtcNow);
+                payment.Succeed(gatewayStatus.GatewayPaymentId, gatewayStatus.Status, timeProvider.Now);
+                ConfirmTarget(payment, timeProvider.Now);
             }
             else if (gatewayStatus.IsTerminalFailure)
             {
-                payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", gatewayStatus.Status, clock.UtcNow);
+                payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", gatewayStatus.Status, timeProvider.Now);
                 FailTarget(payment);
             }
             else
@@ -476,9 +477,10 @@ public sealed class PaymentService(
             throw new BusinessRuleException(
                 $"A payment in status '{payment.Status}' cannot be completed.");
         }
-        if (clock.UtcNow > payment.ExpiresAtUtc)
+        var now = timeProvider.Now;
+        if (now > payment.ExpiresAt)
         {
-            payment.Expire(clock.UtcNow);
+            payment.Expire(now);
             FailTarget(payment);
             AddPaymentOutcomeEvents(payment);
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -502,8 +504,8 @@ public sealed class PaymentService(
 
         await ExecuteSerializableAsync(async () =>
         {
-            payment.Succeed(gatewayStatus.GatewayPaymentId, gatewayStatus.Status, clock.UtcNow);
-            ConfirmTarget(payment, clock.UtcNow);
+            payment.Succeed(gatewayStatus.GatewayPaymentId, gatewayStatus.Status, timeProvider.Now);
+            ConfirmTarget(payment, timeProvider.Now);
             AddPaymentOutcomeEvents(payment);
             await dbContext.SaveChangesAsync(cancellationToken);
         }, cancellationToken);
@@ -610,7 +612,7 @@ public sealed class PaymentService(
                     throw new InvalidOperationException("The payment has no payable target.");
                 }
 
-                refund.Succeed(clock.UtcNow);
+                refund.Succeed(timeProvider.Now);
                 payment.CompleteRefund(amount);
                 WriteRefundAudit(payment, refund, requestedByUserId, request);
                 await dbContext.SaveChangesAsync(cancellationToken);
@@ -635,7 +637,7 @@ public sealed class PaymentService(
             }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
             {
-                refund.Fail("GATEWAY_REFUND_FAILED", exception.Message, clock.UtcNow);
+                refund.Fail("GATEWAY_REFUND_FAILED", exception.Message, timeProvider.Now);
                 payment.FailRefund();
                 await dbContext.SaveChangesAsync(cancellationToken);
                 throw new BusinessRuleException("The payment gateway could not submit the refund.");
@@ -644,7 +646,7 @@ public sealed class PaymentService(
             refund.MarkProcessing(gatewayRefund.GatewayRefundId);
             if (gatewayRefund.IsSuccessful)
             {
-                refund.Succeed(clock.UtcNow);
+                refund.Succeed(timeProvider.Now);
                 payment.CompleteRefund(amount);
             }
             else if (!gatewayRefund.IsPending)
@@ -652,7 +654,7 @@ public sealed class PaymentService(
                 refund.Fail(
                     gatewayRefund.FailureCode ?? "GATEWAY_REFUND_FAILED",
                     gatewayRefund.FailureMessage,
-                    clock.UtcNow);
+                    timeProvider.Now);
                 payment.FailRefund();
             }
 
@@ -699,7 +701,7 @@ public sealed class PaymentService(
             gatewayEvent.EventId,
             gatewayEvent.EventType,
             Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant(),
-            clock.UtcNow);
+            timeProvider.Now);
         dbContext.PaymentWebhooks.Add(webhook);
         try
         {
@@ -726,16 +728,16 @@ public sealed class PaymentService(
                 if (gatewayEvent.EventType.StartsWith("payment.", StringComparison.OrdinalIgnoreCase))
                 {
                     await ProcessPaymentWebhookAsync(gatewayEvent, cancellationToken);
-                    webhook.Complete(clock.UtcNow);
+                    webhook.Complete(timeProvider.Now);
                 }
                 else if (gatewayEvent.EventType.StartsWith("refund.", StringComparison.OrdinalIgnoreCase))
                 {
                     await ProcessRefundWebhookAsync(gatewayEvent, cancellationToken);
-                    webhook.Complete(clock.UtcNow);
+                    webhook.Complete(timeProvider.Now);
                 }
                 else
                 {
-                    webhook.Reject("UNSUPPORTED_EVENT", "The webhook event type is not handled.", clock.UtcNow);
+                    webhook.Reject("UNSUPPORTED_EVENT", "The webhook event type is not handled.", timeProvider.Now);
                 }
 
                 await dbContext.SaveChangesAsync(cancellationToken);
@@ -748,7 +750,7 @@ public sealed class PaymentService(
                 x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
                 cancellationToken);
             webhook.StartProcessing();
-            webhook.Fail("WEBHOOK_PROCESSING_FAILED", exception.Message, clock.UtcNow);
+            webhook.Fail("WEBHOOK_PROCESSING_FAILED", exception.Message, timeProvider.Now);
             await dbContext.SaveChangesAsync(cancellationToken);
             throw;
         }
@@ -792,13 +794,13 @@ public sealed class PaymentService(
         EnsureGatewayFinancials(payment, status.AmountMinor, status.Currency);
         if (status.IsSuccessful)
         {
-            payment.Succeed(status.GatewayPaymentId, status.Status, clock.UtcNow);
-            ConfirmTarget(payment, clock.UtcNow);
+            payment.Succeed(status.GatewayPaymentId, status.Status, timeProvider.Now);
+            ConfirmTarget(payment, timeProvider.Now);
             AddPaymentOutcomeEvents(payment);
         }
         else if (status.IsTerminalFailure)
         {
-            payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", status.Status, clock.UtcNow);
+            payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", status.Status, timeProvider.Now);
             FailTarget(payment);
             AddPaymentOutcomeEvents(payment);
         }
@@ -833,12 +835,12 @@ public sealed class PaymentService(
 
         if (string.Equals(gatewayEvent.Status, "processed", StringComparison.OrdinalIgnoreCase))
         {
-            refund.Succeed(clock.UtcNow);
+            refund.Succeed(timeProvider.Now);
             refund.Payment.CompleteRefund(refund.Amount);
         }
         else if (string.Equals(gatewayEvent.Status, "failed", StringComparison.OrdinalIgnoreCase))
         {
-            refund.Fail("GATEWAY_REFUND_FAILED", "The gateway reported a refund failure.", clock.UtcNow);
+            refund.Fail("GATEWAY_REFUND_FAILED", "The gateway reported a refund failure.", timeProvider.Now);
             refund.Payment.FailRefund();
         }
     }
@@ -885,7 +887,7 @@ public sealed class PaymentService(
                 $"payment:{payment.PublicId:N}:succeeded",
                 variables,
                 deepLink,
-                payment.VerifiedAtUtc));
+                payment.VerifiedAt));
 
             if (subscription?.Status == SubscriptionStatus.Active)
             {
@@ -899,7 +901,7 @@ public sealed class PaymentService(
                         ["subscriptionId"] = subscription.PublicId.ToString()
                     },
                     $"/subscriptions/{subscription.PublicId}",
-                    subscription.ActivatedAtUtc));
+                    subscription.ActivatedAt));
             }
 
             return;
@@ -920,10 +922,10 @@ public sealed class PaymentService(
             $"payment:{payment.PublicId:N}:failed",
             variables,
             deepLink,
-            payment.FailedAtUtc));
+            payment.FailedAt));
     }
 
-    private static void ConfirmTarget(Payment payment, DateTime utcNow)
+    private static void ConfirmTarget(Payment payment, DateTime indiaLocalNow)
     {
         if (payment.Order is not null)
         {
@@ -932,7 +934,7 @@ public sealed class PaymentService(
         }
         if (payment.Subscription is not null)
         {
-            payment.Subscription.Activate(utcNow);
+            payment.Subscription.Activate(indiaLocalNow);
             return;
         }
 
@@ -978,7 +980,19 @@ public sealed class PaymentService(
             request.IpAddress,
             request.UserAgent,
             request.Reason.Trim(),
-            clock.UtcNow));
+            timeProvider.Now));
+    }
+
+    private DateTime ToUtc(DateTime indiaLocal)
+    {
+        if (indiaLocal.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "Timestamp must be an India-local wall-clock value.",
+                nameof(indiaLocal));
+        }
+
+        return timeProvider.ToUtc(indiaLocal);
     }
 
     private async Task ExecuteSerializableAsync(Func<Task> operation, CancellationToken cancellationToken)

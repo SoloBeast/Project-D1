@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:flutter/material.dart';
 
 class DashboardMetrics {
@@ -68,8 +69,8 @@ class ReportFilter {
   const ReportFilter({
     this.search,
     this.statuses = const [],
-    this.fromUtc,
-    this.toUtc,
+    this.from,
+    this.to,
     this.page = 1,
     this.pageSize = 25,
     this.sortBy,
@@ -78,8 +79,8 @@ class ReportFilter {
 
   final String? search;
   final List<String> statuses;
-  final DateTime? fromUtc;
-  final DateTime? toUtc;
+  final DateTime? from;
+  final DateTime? to;
   final int page;
   final int pageSize;
   final String? sortBy;
@@ -88,8 +89,8 @@ class ReportFilter {
   ReportFilter copyWith({
     String? search,
     List<String>? statuses,
-    DateTime? fromUtc,
-    DateTime? toUtc,
+    DateTime? from,
+    DateTime? to,
     int? page,
     int? pageSize,
     String? sortBy,
@@ -101,8 +102,8 @@ class ReportFilter {
   }) => ReportFilter(
     search: clearSearch ? null : search ?? this.search,
     statuses: statuses ?? this.statuses,
-    fromUtc: clearFrom ? null : fromUtc ?? this.fromUtc,
-    toUtc: clearTo ? null : toUtc ?? this.toUtc,
+    from: clearFrom ? null : from ?? this.from,
+    to: clearTo ? null : to ?? this.to,
     page: page ?? this.page,
     pageSize: pageSize ?? this.pageSize,
     sortBy: clearSort ? null : sortBy ?? this.sortBy,
@@ -112,9 +113,8 @@ class ReportFilter {
   Map<String, dynamic> toQuery() => {
     if (search != null && search!.trim().isNotEmpty) 'search': search!.trim(),
     if (statuses.isNotEmpty) 'statuses': statuses,
-    if (fromUtc != null)
-      'dateRange.fromUtc': fromUtc!.toUtc().toIso8601String(),
-    if (toUtc != null) 'dateRange.toUtc': toUtc!.toUtc().toIso8601String(),
+    if (from != null) 'dateRange.from': _indiaLocalIso(from!),
+    if (to != null) 'dateRange.to': _indiaLocalIso(to!),
     'page': '$page',
     'pageSize': '$pageSize',
     'sortBy': ?sortBy,
@@ -124,10 +124,10 @@ class ReportFilter {
   Map<String, dynamic> toJson() => {
     if (search != null && search!.trim().isNotEmpty) 'search': search!.trim(),
     if (statuses.isNotEmpty) 'statuses': statuses,
-    if (fromUtc != null || toUtc != null)
+    if (from != null || to != null)
       'dateRange': {
-        if (fromUtc != null) 'fromUtc': fromUtc!.toUtc().toIso8601String(),
-        if (toUtc != null) 'toUtc': toUtc!.toUtc().toIso8601String(),
+        if (from != null) 'from': _indiaLocalIso(from!),
+        if (to != null) 'to': _indiaLocalIso(to!),
       },
     'page': page,
     'pageSize': pageSize,
@@ -135,6 +135,9 @@ class ReportFilter {
     'sortDirection': descending ? 'Descending' : 'Ascending',
   };
 }
+
+String _indiaLocalIso(DateTime value) =>
+    indiaWallClock(value).toIso8601String();
 
 class ReportPageData {
   const ReportPageData({
@@ -439,7 +442,9 @@ String displayReportValue(dynamic value) {
   if (value is bool) return value ? 'Yes' : 'No';
   if (value is String && value.contains('T')) {
     final date = DateTime.tryParse(value);
-    if (date != null) return '${date.toLocal()}'.split('.').first;
+    if (date != null) {
+      return indiaWallClock(date).toIso8601String().split('.').first;
+    }
   }
   return '$value';
 }

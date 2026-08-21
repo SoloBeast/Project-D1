@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -70,20 +71,19 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(walletControllerProvider);
     final wallet = state.wallet;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Wallet'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh wallet',
-            onPressed: state.isLoading
-                ? null
-                : () => ref.read(walletControllerProvider.notifier).load(),
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      body: state.isLoading && wallet == null
+    return CustomerShell(
+      currentPath: '/wallet',
+      title: 'Wallet',
+      actions: [
+        IconButton(
+          tooltip: 'Refresh wallet',
+          onPressed: state.isLoading
+              ? null
+              : () => ref.read(walletControllerProvider.notifier).load(),
+          icon: const Icon(Icons.refresh),
+        ),
+      ],
+      child: state.isLoading && wallet == null
           ? const LoadingStatePanel(message: 'Loading wallet...')
           : wallet == null
           ? ErrorStatePanel(
@@ -191,7 +191,7 @@ class _TransactionTile extends StatelessWidget {
         child: Icon(transaction.isCredit ? Icons.south_west : Icons.north_east),
       ),
       title: Text(transaction.description),
-      subtitle: Text(formatWalletDate(transaction.occurredAtUtc)),
+      subtitle: Text(formatWalletDate(transaction.occurredAt)),
       trailing: Text(
         transaction.formattedAmount,
         style: TextStyle(color: color, fontWeight: FontWeight.w700),

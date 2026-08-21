@@ -1,5 +1,8 @@
 import 'dart:typed_data';
 
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
@@ -646,25 +649,58 @@ class _StatusHeader extends StatelessWidget {
   final MilkTestCustomerDecision decision;
 
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      Expanded(
-        child: Text(
-          'Milk test',
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
+  Widget build(BuildContext context) => Card(
+    color: DoodhColors.mint,
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          const CircleAvatar(
+            backgroundColor: DoodhColors.teal,
+            foregroundColor: Colors.white,
+            child: Icon(Icons.science_outlined),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Doorstep milk test',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  status == MilkTestStatus.completed
+                      ? 'Results are ready to review.'
+                      : 'Your delivery test status',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          DoodhStatusPill(
+            label: decision.isTerminal ? decision.label : status.label,
+            tone: _milkTestTone(status, decision),
+          ),
+        ],
       ),
-      Chip(
-        avatar: Icon(
-          status == MilkTestStatus.completed
-              ? Icons.task_alt
-              : Icons.science_outlined,
-          size: 18,
-        ),
-        label: Text(decision.isTerminal ? decision.label : status.label),
-      ),
-    ],
+    ),
   );
+}
+
+DoodhStatusTone _milkTestTone(
+  MilkTestStatus status,
+  MilkTestCustomerDecision decision,
+) {
+  if (decision == MilkTestCustomerDecision.confirmed) {
+    return DoodhStatusTone.success;
+  }
+  if (decision == MilkTestCustomerDecision.rejected) {
+    return DoodhStatusTone.error;
+  }
+  if (status == MilkTestStatus.completed) return DoodhStatusTone.warning;
+  return DoodhStatusTone.neutral;
 }
 
 class _TimelineRow extends StatelessWidget {
@@ -830,7 +866,7 @@ String milkTestImageUrl(String contentPath) {
 }
 
 String formatMilkTestDateTime(DateTime value) {
-  final local = value.toLocal();
+  final local = toIndiaTime(value);
   String two(int number) => number.toString().padLeft(2, '0');
   return '${two(local.day)}/${two(local.month)}/${local.year} '
       '${two(local.hour)}:${two(local.minute)}';

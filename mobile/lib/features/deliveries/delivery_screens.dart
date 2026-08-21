@@ -1,3 +1,6 @@
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import 'delivery_controller.dart';
 import 'delivery_models.dart';
+import 'delivery_navigation.dart';
 
 class CustomerDeliveryListScreen extends ConsumerStatefulWidget {
   const CustomerDeliveryListScreen({super.key});
@@ -93,7 +97,7 @@ class _CustomerDeliveryDetailScreenState
                   .read(deliveryControllerProvider.notifier)
                   .loadCustomerDelivery(widget.deliveryId),
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
                 children: [
                   _DeliveryHeader(
                     reference: delivery.referenceNumber,
@@ -101,7 +105,9 @@ class _CustomerDeliveryDetailScreenState
                     status: delivery.status,
                     date: delivery.scheduledDate,
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 16),
+                  _DeliveryProgress(status: delivery.status),
+                  const SizedBox(height: 16),
                   _InfoTile(
                     icon: Icons.location_on_outlined,
                     title: 'Delivery address',
@@ -114,12 +120,12 @@ class _CustomerDeliveryDetailScreenState
                   ),
                   if (delivery.isTrackingActive &&
                       delivery.latestLocation != null)
-                    _LocationPanel(location: delivery.latestLocation!)
+                    const _LiveLocationCard()
                   else
                     const _InfoTile(
                       icon: Icons.location_searching_outlined,
                       title: 'Live location',
-                      text: 'Location is shown only while delivery tracking is active.',
+                      text: 'Location becomes available while your delivery is on the way.',
                     ),
                   if (delivery.failureReason != null)
                     _InfoTile(
@@ -238,6 +244,7 @@ class _StaffDeliveryDetailScreenState
                   title: 'Destination',
                   text: delivery.destinationAddress,
                 ),
+                _NavigateButton(delivery: delivery),
                 if (delivery.deliveryInstructions != null)
                   _InfoTile(
                     icon: Icons.notes_outlined,
@@ -283,7 +290,7 @@ class _DeliveryManagementScreenState
 
   Future<void> _load() => ref
       .read(deliveryControllerProvider.notifier)
-      .loadBranch(widget.branchId, date: DateTime.now(), status: _status);
+      .loadBranch(widget.branchId, date: indiaNow(), status: _status);
 
   @override
   Widget build(BuildContext context) {
@@ -300,7 +307,7 @@ class _DeliveryManagementScreenState
                 : () async {
                     await ref
                         .read(deliveryControllerProvider.notifier)
-                        .materialize(DateTime.now());
+                        .materialize(indiaNow());
                     await _load();
                   },
           ),
@@ -496,7 +503,7 @@ class _StaffActions extends ConsumerWidget {
       );
     }
     if (delivery.status == DeliveryStatus.arrived &&
-        delivery.otpVerifiedAtUtc == null) {
+        delivery.otpVerifiedAt == null) {
       actions.addAll([
         OutlinedButton.icon(
           icon: const Icon(Icons.sms_outlined),
@@ -522,7 +529,7 @@ class _StaffActions extends ConsumerWidget {
       ]);
     }
     if (delivery.status == DeliveryStatus.arrived &&
-        delivery.otpVerifiedAtUtc != null) {
+        delivery.otpVerifiedAt != null) {
       actions.add(
         FilledButton.icon(
           icon: const Icon(Icons.check_circle_outline),
@@ -613,9 +620,15 @@ class _DeliveryHeader extends StatelessWidget {
       const SizedBox(height: 4),
       Text('${source.label} · ${formatDeliveryDate(date)}'),
       const SizedBox(height: 8),
-      Chip(
-        label: Text(status.label),
-        avatar: const Icon(Icons.local_shipping_outlined, size: 18),
+      DoodhStatusPill(
+        label: status.label,
+        tone: switch (status) {
+          DeliveryStatus.delivered => DoodhStatusTone.success,
+          DeliveryStatus.failed => DoodhStatusTone.error,
+          DeliveryStatus.outForDelivery ||
+          DeliveryStatus.arrived => DoodhStatusTone.warning,
+          _ => DoodhStatusTone.neutral,
+        },
       ),
     ],
   );
@@ -639,15 +652,115 @@ class _InfoTile extends StatelessWidget {
   );
 }
 
-class _LocationPanel extends StatelessWidget {
-  const _LocationPanel({required this.location});
-  final DeliveryLocation location;
+class _LiveLocationCard extends StatelessWidget {
+  const _LiveLocationCard();
+
   @override
-  Widget build(BuildContext context) => _InfoTile(
-    icon: Icons.my_location_outlined,
-    title: 'Latest live location',
-    text:
-        '${location.latitude.toStringAsFixed(5)}, ${location.longitude.toStringAsFixed(5)}\nUpdated ${location.recordedAtUtc.toLocal()}',
+  Widget build(BuildContext context) => Card(
+    color: DoodhColors.mint,
+    child: const ListTile(
+      leading: Icon(Icons.my_location_outlined, color: DoodhColors.tealDark),
+      title: Text('Live tracking is active'),
+      subtitle: Text(
+        'Your delivery partner is currently sharing an updated location.',
+      ),
+      trailing: Icon(Icons.circle, size: 12, color: DoodhColors.teal),
+    ),
+  );
+}
+
+class _DeliveryProgress extends StatelessWidget {
+  const _DeliveryProgress({required this.status});
+  final DeliveryStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final stages = [
+      (DeliveryStatus.assigned, 'Assigned', Icons.assignment_ind_outlined),
+      (DeliveryStatus.pickedUp, 'Picked up', Icons.inventory_2_outlined),
+      (DeliveryStatus.outForDelivery, 'Out for delivery', Icons.route_outlined),
+      (DeliveryStatus.arrived, 'Arrived', Icons.location_on_outlined),
+      (DeliveryStatus.delivered, 'Delivered', Icons.check_circle_outline),
+    ];
+    final current = stages.indexWhere((stage) => stage.$1 == status);
+    final activeIndex = current < 0
+        ? (status == DeliveryStatus.failed ? 3 : 0)
+        : current;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Delivery progress',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 14),
+            for (var index = 0; index < stages.length; index++)
+              _ProgressStage(
+                icon: stages[index].$3,
+                label: stages[index].$2,
+                active: index <= activeIndex,
+                current: index == activeIndex,
+                last: index == stages.length - 1,
+              ),
+            if (status == DeliveryStatus.failed)
+              const DoodhStatusPill(
+                label: 'Delivery needs attention',
+                tone: DoodhStatusTone.error,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProgressStage extends StatelessWidget {
+  const _ProgressStage({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.current,
+    required this.last,
+  });
+  final IconData icon;
+  final String label;
+  final bool active;
+  final bool current;
+  final bool last;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      SizedBox(
+        width: 28,
+        child: Icon(
+          icon,
+          size: 19,
+          color: active ? DoodhColors.tealDark : DoodhColors.muted,
+        ),
+      ),
+      Expanded(
+        child: Text(
+          label,
+          style: TextStyle(
+            fontWeight: current ? FontWeight.w800 : FontWeight.w500,
+            color: active ? DoodhColors.ink : DoodhColors.muted,
+          ),
+        ),
+      ),
+      if (!last)
+        SizedBox(
+          width: 30,
+          child: Icon(
+            Icons.chevron_right,
+            size: 18,
+            color: active ? DoodhColors.teal : DoodhColors.line,
+          ),
+        ),
+    ],
   );
 }
 
@@ -733,60 +846,108 @@ Future<void> _showOtpDialog(
   }
 }
 
+class _NavigateButton extends ConsumerWidget {
+  const _NavigateButton({required this.delivery});
+  final DeliveryDetails delivery;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Align(
+    alignment: Alignment.centerLeft,
+    child: OutlinedButton.icon(
+      icon: const Icon(Icons.navigation_outlined),
+      label: const Text('Navigate'),
+      onPressed: () async {
+        final destination = deliveryNavigationUri(
+          latitude: delivery.destinationLatitude,
+          longitude: delivery.destinationLongitude,
+          address: delivery.destinationAddress,
+        );
+        if (destination == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('A delivery address is not available.'),
+            ),
+          );
+          return;
+        }
+        final opened = await ref
+            .read(deliveryNavigationLauncherProvider)
+            .open(destination);
+        if (!context.mounted || opened) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Unable to open maps.')));
+      },
+    ),
+  );
+}
+
 Future<void> _showFailureDialog(
   BuildContext context,
   WidgetRef ref,
   String id,
 ) async {
-  final reason = TextEditingController();
+  var reason = DeliveryFailureReasons.customerNotAvailable;
   final remarks = TextEditingController();
   final confirmed = await showDialog<bool>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Mark delivery failed'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: reason,
-            decoration: const InputDecoration(
-              labelText: 'Failure reason',
-              border: OutlineInputBorder(),
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: const Text('Mark delivery failed'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: reason,
+              decoration: const InputDecoration(
+                labelText: 'Failure reason',
+                border: OutlineInputBorder(),
+              ),
+              items: DeliveryFailureReasons.all
+                  .map(
+                    (value) => DropdownMenuItem<String>(
+                      value: value,
+                      child: Text(value),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) setState(() => reason = value);
+              },
             ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: remarks,
+              decoration: const InputDecoration(
+                labelText: 'Remarks (optional)',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: remarks,
-            decoration: const InputDecoration(
-              labelText: 'Remarks',
-              border: OutlineInputBorder(),
-            ),
-            maxLines: 2,
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Mark failed'),
           ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: const Text('Mark failed'),
-        ),
-      ],
     ),
   );
-  if (confirmed == true && reason.text.trim().isNotEmpty) {
+  if (confirmed == true) {
     await ref
         .read(deliveryControllerProvider.notifier)
         .fail(
           id,
-          reason: reason.text.trim(),
+          reason: reason,
           remarks: remarks.text.trim().isEmpty ? null : remarks.text.trim(),
         );
   }
-  reason.dispose();
   remarks.dispose();
 }
 

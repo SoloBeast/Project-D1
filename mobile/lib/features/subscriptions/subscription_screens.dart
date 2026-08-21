@@ -1,3 +1,6 @@
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_controller.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
@@ -72,7 +75,7 @@ class _SubscriptionSetupScreenState
   String? _addressId;
   double _quantity = 1;
   int _entitlement = 30;
-  DateTime _startDate = _dateOnly(DateTime.now());
+  DateTime _startDate = _dateOnly(indiaNow());
   final Set<DeliveryWeekday> _days = {
     DeliveryWeekday.monday,
     DeliveryWeekday.wednesday,
@@ -253,11 +256,12 @@ class _SubscriptionSetupScreenState
   }
 
   Future<void> _pickStartDate() async {
+    final today = _dateOnly(indiaNow());
     final selected = await showDatePicker(
       context: context,
       initialDate: _startDate,
-      firstDate: _dateOnly(DateTime.now()),
-      lastDate: DateTime.now().add(const Duration(days: 366)),
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 366)),
     );
     if (selected != null && mounted) {
       setState(() => _startDate = _dateOnly(selected));
@@ -275,7 +279,7 @@ class _SubscriptionSetupScreenState
         _entitlement < 1 ||
         _entitlement > 366 ||
         _days.isEmpty ||
-        _startDate.isBefore(_dateOnly(DateTime.now()))) {
+        _startDate.isBefore(_dateOnly(indiaNow()))) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -307,12 +311,7 @@ class _SubscriptionSetupScreenState
       if (!mounted || !verified) return;
     }
     if (!mounted) return;
-    await context.push('/payments/${payment.publicId}/result');
-    if (mounted) {
-      await ref
-          .read(subscriptionControllerProvider.notifier)
-          .loadSubscription(created.subscription.publicId);
-    }
+    context.go('/payments/${payment.publicId}/result');
   }
 }
 
@@ -386,17 +385,16 @@ class _SubscriptionListScreenState
               },
             ),
           );
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Subscriptions'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh subscriptions',
-            onPressed: state.isLoading ? null : _refresh,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
+    return CustomerShell(
+      currentPath: '/subscriptions',
+      title: 'Subscriptions',
+      actions: [
+        IconButton(
+          tooltip: 'Refresh subscriptions',
+          onPressed: state.isLoading ? null : _refresh,
+          icon: const Icon(Icons.refresh),
+        ),
+      ],
       floatingActionButton: state.subscriptions.isEmpty
           ? null
           : FloatingActionButton(
@@ -404,7 +402,7 @@ class _SubscriptionListScreenState
               onPressed: () => context.push('/subscriptions/new'),
               child: const Icon(Icons.add),
             ),
-      body: body,
+      child: body,
     );
   }
 
@@ -493,6 +491,7 @@ class _SubscriptionDetailScreenState
       padding: const EdgeInsets.all(16),
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
               child: Text(
@@ -500,32 +499,42 @@ class _SubscriptionDetailScreenState
                 style: Theme.of(context).textTheme.headlineSmall,
               ),
             ),
-            Chip(label: Text(subscription.status.label)),
+            _SubscriptionStatusPill(status: subscription.status),
           ],
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
         Card(
+          color: DoodhColors.mint,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${subscription.usedEntitlement} of ${subscription.totalEntitlement} deliveries used',
+                  '${subscription.remainingEntitlement} deliveries remaining',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 4),
+                Text(
+                  '${subscription.usedEntitlement} of ${subscription.totalEntitlement} deliveries used',
+                ),
+                const SizedBox(height: 12),
                 LinearProgressIndicator(
                   value: subscription.entitlementProgress,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '${subscription.remainingEntitlement} deliveries remaining',
                 ),
               ],
             ),
           ),
         ),
+        const SizedBox(height: 16),
+        DoodhSectionHeader(
+          title: 'Your plan',
+          action: Text(
+            subscription.formattedPayableAmount,
+            style: const TextStyle(fontWeight: FontWeight.w800),
+          ),
+        ),
+        const SizedBox(height: 8),
         Card(
           child: Column(
             children: [
@@ -551,20 +560,14 @@ class _SubscriptionDetailScreenState
             ],
           ),
         ),
+        const SizedBox(height: 16),
+        DoodhSectionHeader(title: 'Delivery address'),
+        const SizedBox(height: 8),
         Card(
-          child: Column(
-            children: [
-              const ListTile(
-                leading: Icon(Icons.location_on_outlined),
-                title: Text('Delivery address snapshot'),
-              ),
-              ListTile(
-                title: Text(subscription.address),
-                subtitle: Text(
-                  'Branch: ${subscription.branchName} (${subscription.branchCode})',
-                ),
-              ),
-            ],
+          child: ListTile(
+            leading: const Icon(Icons.location_on_outlined),
+            title: Text(subscription.address),
+            subtitle: const Text('Used for upcoming deliveries'),
           ),
         ),
         if (state.errorMessage != null)
@@ -705,8 +708,7 @@ class _SubscriptionDetailScreenState
       if (!mounted || !verified) return;
     }
     if (!mounted) return;
-    await context.push('/payments/${payment.publicId}/result');
-    if (mounted) await _reload();
+    context.go('/payments/${payment.publicId}/result');
   }
 
   Future<void> _action(
@@ -915,20 +917,22 @@ class _SubscriptionCalendarScreenState
                     leading: Icon(_deliveryIcon(delivery.status)),
                     title: Text(_formatDate(delivery.scheduledDate)),
                     subtitle: Text(
-                      '${formatQuantity(delivery.quantity)} | ${delivery.status.label}\n'
-                      '${delivery.branchName} (${delivery.branchCode})\n'
-                      '${delivery.address}',
+                      '${formatQuantity(delivery.quantity)} · ${delivery.address}',
                     ),
-                    isThreeLine: true,
-                    trailing: delivery.status.canSkip
-                        ? IconButton(
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _SubscriptionDeliveryStatus(status: delivery.status),
+                        if (delivery.status.canSkip)
+                          IconButton(
                             tooltip: 'Skip delivery',
                             onPressed: state.isSaving
                                 ? null
                                 : () => _skip(delivery),
                             icon: const Icon(Icons.event_busy_outlined),
-                          )
-                        : null,
+                          ),
+                      ],
+                    ),
                   ),
                 );
               },
@@ -984,6 +988,43 @@ class _SubscriptionCalendarScreenState
     SubscriptionDeliveryStatus.cancelled => Icons.cancel_outlined,
     SubscriptionDeliveryStatus.unknown => Icons.help_outline,
   };
+}
+
+class _SubscriptionStatusPill extends StatelessWidget {
+  const _SubscriptionStatusPill({required this.status});
+
+  final SubscriptionStatus status;
+
+  @override
+  Widget build(BuildContext context) => DoodhStatusPill(
+    label: status.label,
+    tone: switch (status) {
+      SubscriptionStatus.active => DoodhStatusTone.success,
+      SubscriptionStatus.paymentPending ||
+      SubscriptionStatus.paymentFailed => DoodhStatusTone.warning,
+      SubscriptionStatus.cancelled => DoodhStatusTone.error,
+      _ => DoodhStatusTone.neutral,
+    },
+  );
+}
+
+class _SubscriptionDeliveryStatus extends StatelessWidget {
+  const _SubscriptionDeliveryStatus({required this.status});
+
+  final SubscriptionDeliveryStatus status;
+
+  @override
+  Widget build(BuildContext context) => DoodhStatusPill(
+    label: status.label,
+    tone: switch (status) {
+      SubscriptionDeliveryStatus.failed ||
+      SubscriptionDeliveryStatus.cancelled => DoodhStatusTone.error,
+      SubscriptionDeliveryStatus.delivered => DoodhStatusTone.success,
+      SubscriptionDeliveryStatus.scheduled ||
+      SubscriptionDeliveryStatus.skipped => DoodhStatusTone.neutral,
+      SubscriptionDeliveryStatus.unknown => DoodhStatusTone.warning,
+    },
+  );
 }
 
 DateTime _dateOnly(DateTime value) =>

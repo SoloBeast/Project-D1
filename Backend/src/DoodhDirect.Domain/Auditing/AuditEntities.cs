@@ -16,8 +16,15 @@ public sealed class AuditLog : Entity
         string? ipAddress,
         string? userAgent,
         string? reason,
-        DateTime createdAtUtc)
+        DateTime createdAt)
     {
+        if (createdAt.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "Audit timestamps must be India-local DateTime values with an unspecified kind.",
+                nameof(createdAt));
+        }
+
         UserId = userId;
         Action = action;
         EntityType = entityType;
@@ -27,7 +34,7 @@ public sealed class AuditLog : Entity
         IPAddress = ipAddress;
         UserAgent = userAgent;
         Reason = reason;
-        CreatedAtUtc = createdAtUtc;
+        CreatedAt = createdAt;
     }
 
     public long? UserId { get; private set; }
@@ -39,5 +46,5 @@ public sealed class AuditLog : Entity
     public string? IPAddress { get; private set; }
     public string? UserAgent { get; private set; }
     public string? Reason { get; private set; }
-    public DateTime CreatedAtUtc { get; private set; }
+    public DateTime CreatedAt { get; private set; }
 }

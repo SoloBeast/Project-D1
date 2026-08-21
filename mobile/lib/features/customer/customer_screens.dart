@@ -1,3 +1,6 @@
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
@@ -28,9 +31,10 @@ class _CustomerOverviewScreenState
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(customerControllerProvider);
-    return Scaffold(
-      appBar: AppBar(title: const Text('My account')),
-      body: state.profile == null
+    return CustomerShell(
+      currentPath: '/customer/account',
+      title: 'My account',
+      child: state.profile == null
           ? state.errorMessage == null
                 ? const LoadingStatePanel(message: 'Loading your account...')
                 : ErrorStatePanel(
@@ -41,25 +45,29 @@ class _CustomerOverviewScreenState
           : RefreshIndicator(
               onRefresh: () =>
                   ref.read(customerControllerProvider.notifier).load(),
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  _ProfileSection(profile: state.profile!),
-                  const SizedBox(height: 24),
-                  _AddressSection(
-                    addresses: state.addresses,
-                    isSaving: state.isSaving,
-                  ),
-                  if (state.errorMessage != null) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      state.errorMessage!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
+              child: DoodhPage(
+                padding: false,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
+                  children: [
+                    _ProfileSection(profile: state.profile!),
+                    const SizedBox(height: 24),
+                    _AddressSection(
+                      addresses: state.addresses,
+                      isSaving: state.isSaving,
                     ),
+                    if (state.errorMessage != null) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        state.errorMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
     );
@@ -73,6 +81,7 @@ class _ProfileSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Card(
+    color: DoodhColors.mint,
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -111,21 +120,15 @@ class _AddressSection extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            'Delivery addresses',
-            style: Theme.of(context).textTheme.titleLarge,
-          ),
-          IconButton(
-            tooltip: 'Add address',
-            onPressed: isSaving
-                ? null
-                : () => context.push('/customer/addresses/new'),
-            icon: const Icon(Icons.add_location_alt_outlined),
-          ),
-        ],
+      DoodhSectionHeader(
+        title: 'Delivery addresses',
+        action: IconButton(
+          tooltip: 'Add address',
+          onPressed: isSaving
+              ? null
+              : () => context.push('/customer/addresses/new'),
+          icon: const Icon(Icons.add_location_alt_outlined),
+        ),
       ),
       if (addresses.isEmpty)
         EmptyStatePanel(
@@ -143,6 +146,11 @@ class _AddressSection extends StatelessWidget {
         ...addresses.map(
           (address) => Card(
             child: ListTile(
+              onTap: isSaving
+                  ? null
+                  : () => context.push(
+                      '/customer/addresses/${address.publicId}/edit',
+                    ),
               leading: Icon(
                 address.isDefault ? Icons.star : Icons.location_on_outlined,
                 color: address.isDefault
@@ -295,55 +303,64 @@ class _CustomerProfileEditScreenState
     final saving = ref.watch(customerControllerProvider).isSaving;
     return Scaffold(
       appBar: AppBar(title: const Text('Edit profile')),
-      body: Form(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            TextFormField(
-              controller: _firstName,
-              decoration: const InputDecoration(labelText: 'First name'),
-            ),
-            TextFormField(
-              controller: _lastName,
-              decoration: const InputDecoration(labelText: 'Last name'),
-            ),
-            TextFormField(
-              controller: _mobile,
-              decoration: const InputDecoration(labelText: 'Alternate mobile'),
-              keyboardType: TextInputType.phone,
-            ),
-            TextFormField(
-              controller: _gender,
-              decoration: const InputDecoration(labelText: 'Gender'),
-            ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                _dateOfBirth == null ? 'Date of birth' : _date(_dateOfBirth!),
+      body: DoodhPage(
+        child: Form(
+          child: ListView(
+            children: [
+              DoodhSectionHeader(
+                title: 'Personal details',
+                action: const Icon(Icons.person_outline),
               ),
-              trailing: const Icon(Icons.calendar_month_outlined),
-              onTap: () async {
-                final selected = await showDatePicker(
-                  context: context,
-                  firstDate: DateTime(1900),
-                  lastDate: DateTime.now(),
-                  initialDate: _dateOfBirth ?? DateTime(1990),
-                );
-                if (selected != null) setState(() => _dateOfBirth = selected);
-              },
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: saving ? null : _save,
-              icon: saving
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save_outlined),
-              label: const Text('Save profile'),
-            ),
-          ],
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _firstName,
+                decoration: const InputDecoration(labelText: 'First name'),
+              ),
+              TextFormField(
+                controller: _lastName,
+                decoration: const InputDecoration(labelText: 'Last name'),
+              ),
+              TextFormField(
+                controller: _mobile,
+                decoration: const InputDecoration(
+                  labelText: 'Alternate mobile',
+                ),
+                keyboardType: TextInputType.phone,
+              ),
+              TextFormField(
+                controller: _gender,
+                decoration: const InputDecoration(labelText: 'Gender'),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  _dateOfBirth == null ? 'Date of birth' : _date(_dateOfBirth!),
+                ),
+                trailing: const Icon(Icons.calendar_month_outlined),
+                onTap: () async {
+                  final today = indiaNow();
+                  final selected = await showDatePicker(
+                    context: context,
+                    firstDate: DateTime(1900),
+                    lastDate: DateTime(today.year, today.month, today.day),
+                    initialDate: _dateOfBirth ?? DateTime(1990),
+                  );
+                  if (selected != null) setState(() => _dateOfBirth = selected);
+                },
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: saving ? null : _save,
+                icon: saving
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined),
+                label: const Text('Save profile'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -403,6 +420,8 @@ class _CustomerAddressEditScreenState
       'deliveryInstructions',
       'contactName',
       'contactMobile',
+      // Coordinates remain internal because the API and domain require them;
+      // customers select them from the map instead of typing them.
       'latitude',
       'longitude',
     ]) {
@@ -428,99 +447,83 @@ class _CustomerAddressEditScreenState
       appBar: AppBar(
         title: Text(widget.addressId == null ? 'Add address' : 'Edit address'),
       ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            _text('label', 'Label', required: true),
-            _text('addressLine1', 'Address line 1', required: true),
-            _text('addressLine2', 'Address line 2'),
-            _text('locality', 'Locality', required: true),
-            _text('city', 'City', required: true),
-            _text('state', 'State', required: true),
-            _text(
-              'pinCode',
-              'PIN code',
-              required: true,
-              keyboardType: TextInputType.number,
-            ),
-            _text('landmark', 'Landmark'),
-            _text('deliveryInstructions', 'Delivery instructions'),
-            _text('contactName', 'Contact name', required: true),
-            _text(
-              'contactMobile',
-              'Contact mobile',
-              required: true,
-              keyboardType: TextInputType.phone,
-            ),
-            const SizedBox(height: 8),
-            Text('Location', style: Theme.of(context).textTheme.titleMedium),
-            const Text(
-              'Tap the map to place the delivery pin, or enter coordinates manually.',
-            ),
-            const SizedBox(height: 12),
-            GoogleMapCoordinatePicker(
-              initialLocation: _initialMapLocation(),
-              onLocationSelected: _setMapLocation,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _text(
-                    'latitude',
-                    'Latitude',
-                    required: true,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _text(
-                    'longitude',
-                    'Longitude',
-                    required: true,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                  ),
+      body: DoodhPage(
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              DoodhSectionHeader(
+                title: 'Address details',
+                action: const Icon(Icons.home_work_outlined),
+              ),
+              const SizedBox(height: 12),
+              _text('label', 'Label', required: true),
+              _text('addressLine1', 'Address line 1', required: true),
+              _text('addressLine2', 'Address line 2'),
+              _text('locality', 'Locality', required: true),
+              _text('city', 'City', required: true),
+              _text('state', 'State', required: true),
+              _text(
+                'pinCode',
+                'PIN code',
+                required: true,
+                keyboardType: TextInputType.number,
+              ),
+              _text('landmark', 'Landmark'),
+              _text('deliveryInstructions', 'Delivery instructions'),
+              _text('contactName', 'Contact name', required: true),
+              _text(
+                'contactMobile',
+                'Contact mobile',
+                required: true,
+                keyboardType: TextInputType.phone,
+              ),
+              const SizedBox(height: 8),
+              Text('Location', style: Theme.of(context).textTheme.titleMedium),
+              const Text(
+                'Tap the map to adjust your delivery location.',
+              ),
+              const SizedBox(height: 12),
+              GoogleMapCoordinatePicker(
+                initialLocation: _initialMapLocation(),
+                onLocationSelected: _setMapLocation,
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: state.isSaving || !_hasValidCoordinates
+                    ? null
+                    : _lookup,
+                icon: const Icon(Icons.pin_drop_outlined),
+                label: const Text('Retry address lookup'),
+              ),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _isDefault,
+                onChanged: (value) =>
+                    setState(() => _isDefault = value ?? false),
+                title: const Text('Use as default address'),
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: state.isSaving ? null : _save,
+                icon: state.isSaving
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined),
+                label: const Text('Save address'),
+              ),
+              if (state.errorMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  state.errorMessage!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ],
-            ),
-            OutlinedButton.icon(
-              onPressed: state.isSaving ? null : _lookup,
-              icon: const Icon(Icons.pin_drop_outlined),
-              label: const Text('Look up address from pin'),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _isDefault,
-              onChanged: (value) => setState(() => _isDefault = value ?? false),
-              title: const Text('Use as default address'),
-              controlAffinity: ListTileControlAffinity.leading,
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: state.isSaving ? null : _save,
-              icon: state.isSaving
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save_outlined),
-              label: const Text('Save address'),
-            ),
-            if (state.errorMessage != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                state.errorMessage!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -531,16 +534,35 @@ class _CustomerAddressEditScreenState
     final longitude = double.tryParse(_fields['longitude']!.text);
     if (latitude == null || longitude == null) return null;
     if (!latitude.isFinite || !longitude.isFinite) return null;
-    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+    if (latitude < -90 ||
+        latitude > 90 ||
+        longitude < -180 ||
+        longitude > 180) {
       return null;
     }
     return LatLng(latitude, longitude);
+  }
+
+  bool get _hasValidCoordinates {
+    final latitude = double.tryParse(_fields['latitude']!.text);
+    final longitude = double.tryParse(_fields['longitude']!.text);
+    return latitude != null &&
+        longitude != null &&
+        latitude.isFinite &&
+        longitude.isFinite &&
+        latitude >= -90 &&
+        latitude <= 90 &&
+        longitude >= -180 &&
+        longitude <= 180;
   }
 
   void _setMapLocation(LatLng location) {
     _fields['latitude']!.text = location.latitude.toStringAsFixed(6);
     _fields['longitude']!.text = location.longitude.toStringAsFixed(6);
     setState(() {});
+    // The selected coordinates are retained even when the optional lookup is
+    // unavailable or offline. This keeps saving safe and preserves the pin.
+    _lookup();
   }
 
   Widget _text(
@@ -562,21 +584,7 @@ class _CustomerAddressEditScreenState
   Future<void> _lookup() async {
     final latitude = double.tryParse(_fields['latitude']!.text);
     final longitude = double.tryParse(_fields['longitude']!.text);
-    if (latitude == null ||
-        longitude == null ||
-        !latitude.isFinite ||
-        !longitude.isFinite ||
-        latitude < -90 ||
-        latitude > 90 ||
-        longitude < -180 ||
-        longitude > 180) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Enter valid latitude and longitude first.'),
-        ),
-      );
-      return;
-    }
+    if (latitude == null || longitude == null || !_hasValidCoordinates) return;
     final lookup = await ref
         .read(customerControllerProvider.notifier)
         .reverseLookup(latitude, longitude);
@@ -607,16 +615,9 @@ class _CustomerAddressEditScreenState
 
     final latitude = double.tryParse(_fields['latitude']!.text);
     final longitude = double.tryParse(_fields['longitude']!.text);
-    if (latitude == null ||
-        longitude == null ||
-        !latitude.isFinite ||
-        !longitude.isFinite ||
-        latitude < -90 ||
-        latitude > 90 ||
-        longitude < -180 ||
-        longitude > 180) {
+    if (latitude == null || longitude == null || !_hasValidCoordinates) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter valid latitude and longitude.')),
+        const SnackBar(content: Text('Select a valid location on the map.')),
       );
       return;
     }

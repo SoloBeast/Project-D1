@@ -1,4 +1,10 @@
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:doodh_direct_mobile/features/catalogue/catalogue_controller.dart';
+import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
+import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
+import 'package:doodh_direct_mobile/features/wallet/wallet_controller.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/auth/session_state.dart';
 import 'package:doodh_direct_mobile/features/notifications/notification_controller.dart';
@@ -12,54 +18,58 @@ class RoleHomeScreen extends ConsumerWidget {
   final UserRole role;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => Scaffold(
-    appBar: AppBar(
-      title: Text('${role.label} workspace'),
-      actions: [
-        const _NotificationButton(),
-        IconButton(
-          tooltip: 'Sign out',
-          onPressed: () async {
-            await ref.read(sessionControllerProvider.notifier).signOut();
-          },
-          icon: const Icon(Icons.logout),
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (role == UserRole.customer) return const _CustomerHomeActions();
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('${role.label} workspace'),
+        actions: [const _NotificationButton(), const _SignOutButton()],
+      ),
+      body: switch (role) {
+        UserRole.customer => const _CustomerHomeActions(),
+        UserRole.delivery => _DeliveryHomeActions(
+          roles:
+              ref.watch(sessionControllerProvider).session?.user.roles ??
+              const [],
+          permissions:
+              ref.watch(sessionControllerProvider).session?.user.permissions ??
+              const [],
+          branchIds:
+              ref.watch(sessionControllerProvider).session?.user.branchIds ??
+              const [],
         ),
-      ],
-    ),
-    body: switch (role) {
-      UserRole.customer => const _CustomerHomeActions(),
-      UserRole.delivery => _DeliveryHomeActions(
-        roles:
-            ref.watch(sessionControllerProvider).session?.user.roles ??
-            const [],
-        permissions:
-            ref.watch(sessionControllerProvider).session?.user.permissions ??
-            const [],
-        branchIds:
-            ref.watch(sessionControllerProvider).session?.user.branchIds ??
-            const [],
-      ),
-      UserRole.dairy => const _DairyHomeActions(),
-      UserRole.owner || UserRole.admin => _AdminHomeActions(
-        permissions:
-            ref.watch(sessionControllerProvider).session?.user.permissions ??
-            const [],
-        branchIds:
-            ref.watch(sessionControllerProvider).session?.user.branchIds ??
-            const [],
-      ),
-      UserRole.support => const StatePanel(
-        icon: Icons.support_agent_outlined,
-        title: 'Customer support workspace ready',
-        message: 'Customer support workflows remain outside the Identity and RBAC phase.',
-      ),
-      UserRole.accountant => const StatePanel(
-        icon: Icons.account_balance_outlined,
-        title: 'Accounting workspace ready',
-        message:
-            'Accounting workflows remain outside the Identity and RBAC phase.',
-      ),
-    },
+        UserRole.dairy => const _DairyHomeActions(),
+        UserRole.owner || UserRole.admin => _AdminHomeActions(
+          permissions:
+              ref.watch(sessionControllerProvider).session?.user.permissions ??
+              const [],
+          branchIds:
+              ref.watch(sessionControllerProvider).session?.user.branchIds ??
+              const [],
+        ),
+        UserRole.support => const StatePanel(
+          icon: Icons.support_agent_outlined,
+          title: 'Customer support workspace ready',
+          message: 'Customer support workflows remain outside the Identity and RBAC phase.',
+        ),
+        UserRole.accountant => const StatePanel(
+          icon: Icons.account_balance_outlined,
+          title: 'Accounting workspace ready',
+          message: 'Accounting workflows remain outside the Identity and RBAC phase.',
+        ),
+      },
+    );
+  }
+}
+
+class _SignOutButton extends ConsumerWidget {
+  const _SignOutButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => IconButton(
+    tooltip: 'Sign out',
+    onPressed: () => ref.read(sessionControllerProvider.notifier).signOut(),
+    icon: const Icon(Icons.logout),
   );
 }
 
@@ -121,89 +131,217 @@ class _NotificationButton extends ConsumerWidget {
   }
 }
 
-class _CustomerHomeActions extends StatelessWidget {
+class _CustomerHomeActions extends ConsumerStatefulWidget {
   const _CustomerHomeActions();
 
   @override
-  Widget build(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(16),
-    children: [
-      Text('Account', style: Theme.of(context).textTheme.headlineSmall),
-      const SizedBox(height: 8),
-      const Text('Manage your profile and delivery locations.'),
-      const SizedBox(height: 16),
-      Card(
-        child: ListTile(
-          leading: const Icon(Icons.person_outline),
-          title: const Text('Profile and addresses'),
-          subtitle: const Text(
-            'Update customer details and delivery locations',
+  ConsumerState<_CustomerHomeActions> createState() =>
+      _CustomerHomeActionsState();
+}
+
+class _CustomerHomeActionsState extends ConsumerState<_CustomerHomeActions> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      ref.read(customerControllerProvider.notifier).load();
+      ref.read(catalogueControllerProvider.notifier).load();
+      ref.read(orderControllerProvider.notifier).loadOrders();
+      ref.read(walletControllerProvider.notifier).load();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => CustomerShell(
+    currentPath: '/home',
+    actions: const [_SignOutButton()],
+    child: DoodhPage(
+      child: RefreshIndicator(
+        onRefresh: () async {
+          await Future.wait([
+            ref.read(customerControllerProvider.notifier).load(),
+            ref.read(catalogueControllerProvider.notifier).load(),
+            ref.read(orderControllerProvider.notifier).loadOrders(),
+            ref.read(walletControllerProvider.notifier).load(),
+          ]);
+        },
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            _GreetingHeader(),
+            const SizedBox(height: 20),
+            DoodhHeroCard(onBuy: () => context.push('/catalogue')),
+            const SizedBox(height: 24),
+            const DoodhSectionHeader(title: 'Your shortcuts'),
+            const SizedBox(height: 12),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = constraints.maxWidth >= 720 ? 4 : 2;
+                return GridView.count(
+                  crossAxisCount: columns,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: constraints.maxWidth >= 720 ? 1.7 : 1.35,
+                  children: [
+                    _QuickAction(
+                      icon: Icons.shopping_bag_outlined,
+                      label: 'Buy milk',
+                      onTap: () => context.push('/catalogue'),
+                    ),
+                    _QuickAction(
+                      icon: Icons.receipt_long_outlined,
+                      label: 'My orders',
+                      onTap: () => context.go('/orders'),
+                    ),
+                    _QuickAction(
+                      icon: Icons.event_repeat_outlined,
+                      label: 'Subscribe',
+                      onTap: () => context.go('/subscriptions'),
+                    ),
+                    _QuickAction(
+                      icon: Icons.account_balance_wallet_outlined,
+                      label: 'Wallet',
+                      onTap: () => context.go('/wallet'),
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+            _HomeContextCards(),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _GreetingHeader extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final name = ref
+        .watch(sessionControllerProvider)
+        .session
+        ?.user
+        .displayName
+        ?.trim();
+    final firstName = name == null || name.isEmpty
+        ? 'there'
+        : name.split(' ').first;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Good day, $firstName',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 4),
+        const Text('Fresh dairy, delivered with care.'),
+      ],
+    );
+  }
+}
+
+class _QuickAction extends StatelessWidget {
+  const _QuickAction({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: InkWell(
+      borderRadius: DoodhRadii.md,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: DoodhColors.teal, size: 28),
+            const SizedBox(height: 10),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _HomeContextCards extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final orders = ref.watch(orderControllerProvider).orders;
+    final wallet = ref.watch(walletControllerProvider).wallet;
+    final customer = ref.watch(customerControllerProvider);
+    final latestOrder = orders.isEmpty ? null : orders.first;
+    return Column(
+      children: [
+        if (latestOrder != null) ...[
+          DoodhSectionHeader(
+            title: 'Latest order',
+            action: TextButton(
+              onPressed: () => context.go('/orders'),
+              child: const Text('View all'),
+            ),
           ),
-          trailing: const Icon(Icons.chevron_right),
+          const SizedBox(height: 12),
+          DoodhActionTile(
+            icon: Icons.local_shipping_outlined,
+            title: latestOrder.orderNumber,
+            subtitle:
+                '${latestOrder.itemSummary}\n${latestOrder.formattedTotal}',
+            onTap: () => context.push('/orders/${latestOrder.publicId}'),
+            color: const Color(0xFFE6F1FA),
+          ),
+          const SizedBox(height: 24),
+        ],
+        DoodhSectionHeader(
+          title: 'Stay on track',
+          action: TextButton(
+            onPressed: () => context.push('/deliveries'),
+            child: const Text('Deliveries'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        DoodhActionTile(
+          icon: Icons.location_on_outlined,
+          title: customer.addresses.isEmpty
+              ? 'Add a delivery address'
+              : 'Your delivery address',
+          subtitle: customer.addresses.isEmpty
+              ? 'Set your preferred doorstep before ordering'
+              : customer.addresses.first.label,
           onTap: () => context.push('/customer/account'),
         ),
-      ),
-      Card(
-        child: ListTile(
-          leading: const Icon(Icons.account_balance_wallet_outlined),
-          title: const Text('Wallet'),
-          subtitle: const Text('View your balance and wallet transactions'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push('/wallet'),
+        const SizedBox(height: 12),
+        DoodhActionTile(
+          icon: Icons.account_balance_wallet_outlined,
+          title: wallet == null
+              ? 'Wallet'
+              : 'Wallet · ₹${wallet.balance.toStringAsFixed(2)}',
+          subtitle: 'Review balance and recent transactions',
+          onTap: () => context.go('/wallet'),
+          color: const Color(0xFFFFF2D2),
         ),
-      ),
-      const SizedBox(height: 20),
-      Card(
-        child: ListTile(
-          leading: const Icon(Icons.local_drink_outlined),
-          title: const Text('Browse products'),
-          subtitle: const Text('View active dairy products and prices'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push('/catalogue'),
-        ),
-      ),
-      Card(
-        child: ListTile(
-          leading: const Icon(Icons.receipt_long_outlined),
-          title: const Text('My orders'),
-          subtitle: const Text(
-            'View order history and manage confirmed orders',
-          ),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push('/orders'),
-        ),
-      ),
-      Card(
-        child: ListTile(
-          leading: const Icon(Icons.local_shipping_outlined),
-          title: const Text('My deliveries'),
-          subtitle: const Text('Track active and completed deliveries'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push('/deliveries'),
-        ),
-      ),
-      Card(
-        child: ListTile(
-          leading: const Icon(Icons.event_repeat_outlined),
-          title: const Text('My subscriptions'),
-          subtitle: const Text(
-            'Manage prepaid plans and scheduled delivery days',
-          ),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push('/subscriptions'),
-        ),
-      ),
-      Card(
-        child: ListTile(
-          leading: const Icon(Icons.videocam_outlined),
-          title: const Text('Live Dairy'),
-          subtitle: const Text('View selected public dairy cameras'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.push('/cameras'),
-        ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 class _DeliveryHomeActions extends StatelessWidget {

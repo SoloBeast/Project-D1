@@ -30,7 +30,7 @@ public sealed record MilkTestImageResult(
     string FileName,
     string ContentType,
     long FileSize,
-    DateTime UploadedAtUtc,
+    DateTime UploadedAt,
     string ContentPath);
 
 public sealed record StaffMilkTestResult(
@@ -38,11 +38,11 @@ public sealed record StaffMilkTestResult(
     Guid DeliveryId,
     MilkTestStatus Status,
     MilkTestCustomerDecision CustomerDecision,
-    DateTime RequestedAtUtc,
-    DateTime? CompletedAtUtc,
+    DateTime RequestedAt,
+    DateTime? CompletedAt,
     string? StaffRemarks,
-    DateTime? ConfirmedAtUtc,
-    DateTime? RejectedAtUtc,
+    DateTime? ConfirmedAt,
+    DateTime? RejectedAt,
     string? CustomerRemarks,
     IReadOnlyCollection<MilkTestParameterResult> Parameters,
     IReadOnlyCollection<MilkTestImageResult> Images);
@@ -52,10 +52,10 @@ public sealed record CustomerMilkTestResult(
     Guid DeliveryId,
     MilkTestStatus Status,
     MilkTestCustomerDecision CustomerDecision,
-    DateTime RequestedAtUtc,
-    DateTime? CompletedAtUtc,
-    DateTime? ConfirmedAtUtc,
-    DateTime? RejectedAtUtc,
+    DateTime RequestedAt,
+    DateTime? CompletedAt,
+    DateTime? ConfirmedAt,
+    DateTime? RejectedAt,
     string? CustomerRemarks,
     IReadOnlyCollection<MilkTestImageResult> Images);
 

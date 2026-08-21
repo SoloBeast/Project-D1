@@ -17,7 +17,7 @@ public sealed class OrderDomainTests
         Assert.Equal("MAIN", order.BranchCodeSnapshot);
         Assert.Equal("Home", order.AddressLabelSnapshot);
         Assert.Equal("Customer Name", order.ContactNameSnapshot);
-        Assert.Null(order.CancelledAtUtc);
+        Assert.Null(order.CancelledAt);
     }
 
     [Fact]
@@ -48,16 +48,16 @@ public sealed class OrderDomainTests
     }
 
     [Fact]
-    public void Cancel_TransitionsConfirmedOrderAndRecordsUtcTimestamp()
+    public void Cancel_TransitionsConfirmedOrderAndRecordsIndiaLocalTimestamp()
     {
         var order = CreateOrder();
         order.ConfirmPayment();
-        var cancelledAt = new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Utc);
+        var cancelledAt = new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Unspecified);
 
         order.Cancel(cancelledAt);
 
         Assert.Equal(OrderStatus.Cancelled, order.Status);
-        Assert.Equal(cancelledAt, order.CancelledAtUtc);
+        Assert.Equal(cancelledAt, order.CancelledAt);
     }
 
     [Fact]
@@ -65,20 +65,20 @@ public sealed class OrderDomainTests
     {
         var order = CreateOrder();
         order.ConfirmPayment();
-        order.Cancel(new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Utc));
+        order.Cancel(new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Unspecified));
 
         Assert.Throws<InvalidOperationException>(() =>
-            order.Cancel(new DateTime(2026, 8, 16, 1, 1, 0, DateTimeKind.Utc)));
+            order.Cancel(new DateTime(2026, 8, 16, 1, 1, 0, DateTimeKind.Unspecified)));
     }
 
     [Fact]
-    public void Cancel_RejectsNonUtcTimestamp()
+    public void Cancel_RejectsNonIndiaLocalTimestamp()
     {
         var order = CreateOrder();
         order.ConfirmPayment();
 
         Assert.Throws<ArgumentException>(() =>
-            order.Cancel(new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Local)));
+            order.Cancel(new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Utc)));
     }
 
     private static Order CreateOrder(decimal subtotal = 160m, decimal discountAmount = 0m) =>

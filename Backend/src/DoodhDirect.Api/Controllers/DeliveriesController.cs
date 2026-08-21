@@ -1,4 +1,5 @@
 using System.Globalization;
+using DoodhDirect.Application.Abstractions;
 using System.Security.Claims;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Deliveries;
@@ -71,7 +72,9 @@ public sealed class CustomerDeliveriesController(IDeliveryService deliveryServic
 [Route("api/v1/delivery")]
 [Tags("Delivery staff")]
 [Produces("application/json")]
-public sealed class DeliveryStaffController(IDeliveryService deliveryService) : DeliveryControllerBase
+public sealed class DeliveryStaffController(
+    IDeliveryService deliveryService,
+    IIndiaTimeProvider timeProvider) : DeliveryControllerBase
 {
     [HttpGet("my-today")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.DeliveriesOperateAssigned)]
@@ -82,7 +85,7 @@ public sealed class DeliveryStaffController(IDeliveryService deliveryService) : 
         Ok(ApiResponse<IReadOnlyList<DeliveryResult>>.Ok(
             await deliveryService.GetTodayForStaffAsync(
                 RequireActor(),
-                date ?? DateOnly.FromDateTime(DateTime.UtcNow),
+                date ?? timeProvider.Today,
                 cancellationToken)));
 
     [HttpGet("{deliveryId:guid}")]

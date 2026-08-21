@@ -1,4 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -92,10 +93,7 @@ class DeliveryController extends Notifier<DeliveryState> {
   });
 
   Future<void> loadToday({DateTime? date}) async => _load(() async {
-    final deliveries = await _repository.getToday(
-      _token!,
-      date ?? DateTime.now(),
-    );
+    final deliveries = await _repository.getToday(_token!, date ?? indiaNow());
     state = state.copyWith(staffDeliveries: deliveries);
   });
 

@@ -6,8 +6,8 @@ class AppNotification {
     required this.body,
     required this.deepLink,
     required this.isRead,
-    required this.createdAtUtc,
-    required this.readAtUtc,
+    required this.createdAt,
+    required this.readAt,
   });
 
   factory AppNotification.fromJson(Map<String, dynamic> json) =>
@@ -18,8 +18,8 @@ class AppNotification {
         body: json['body'] as String,
         deepLink: _optionalString(json['deepLink']),
         isRead: json['isRead'] as bool,
-        createdAtUtc: DateTime.parse(json['createdAtUtc'] as String).toUtc(),
-        readAtUtc: _optionalDateTime(json['readAtUtc']),
+        createdAt: DateTime.parse(json['createdAt'] as String),
+        readAt: _optionalDateTime(json['readAt']),
       );
 
   final String notificationId;
@@ -28,18 +28,18 @@ class AppNotification {
   final String body;
   final String? deepLink;
   final bool isRead;
-  final DateTime createdAtUtc;
-  final DateTime? readAtUtc;
+  final DateTime createdAt;
+  final DateTime? readAt;
 
-  AppNotification markRead(DateTime readAtUtc) => AppNotification(
+  AppNotification markRead(DateTime readAt) => AppNotification(
     notificationId: notificationId,
     eventType: eventType,
     title: title,
     body: body,
     deepLink: deepLink,
     isRead: true,
-    createdAtUtc: createdAtUtc,
-    readAtUtc: readAtUtc.toUtc(),
+    createdAt: createdAt,
+    readAt: readAt,
   );
 }
 
@@ -76,7 +76,8 @@ class RegisteredNotificationDevice {
     required this.platform,
     required this.deviceName,
     required this.isActive,
-    required this.lastSeenAtUtc,
+    required this.registeredAt,
+    required this.lastSeenAt,
   });
 
   factory RegisteredNotificationDevice.fromJson(Map<String, dynamic> json) =>
@@ -85,14 +86,16 @@ class RegisteredNotificationDevice {
         platform: json['platform'] as String,
         deviceName: _optionalString(json['deviceName']),
         isActive: json['isActive'] as bool,
-        lastSeenAtUtc: DateTime.parse(json['lastSeenAtUtc'] as String).toUtc(),
+        registeredAt: DateTime.parse(json['registeredAt'] as String),
+        lastSeenAt: DateTime.parse(json['lastSeenAt'] as String),
       );
 
   final String deviceId;
   final String platform;
   final String? deviceName;
   final bool isActive;
-  final DateTime lastSeenAtUtc;
+  final DateTime registeredAt;
+  final DateTime lastSeenAt;
 }
 
 String? _optionalString(Object? value) {
@@ -102,5 +105,5 @@ String? _optionalString(Object? value) {
 
 DateTime? _optionalDateTime(Object? value) {
   final text = _optionalString(value);
-  return text == null ? null : DateTime.parse(text).toUtc();
+  return text == null ? null : DateTime.parse(text);
 }

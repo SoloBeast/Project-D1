@@ -46,7 +46,7 @@ public sealed class MilkTestServiceTests
         Assert.Equal(NotificationEventTypes.MilkTestRequested, notificationEvent.EventType);
         Assert.Equal($"milk-test:{result.MilkTestId:N}:requested", notificationEvent.EventKey);
         Assert.True(notificationEvent.IsCritical);
-        Assert.Equal(result.RequestedAtUtc, notificationEvent.OccurredAtUtc);
+        Assert.Equal(result.RequestedAt, notificationEvent.OccurredAt);
         Assert.Equal($"/deliveries/{harness.Delivery.PublicId}/milk-test", Payload(notificationEvent).GetProperty("DeepLink").GetString());
         var variables = Variables(notificationEvent);
         Assert.Equal(result.MilkTestId.ToString(), variables.GetProperty("milkTestId").GetString());
@@ -277,14 +277,14 @@ public sealed class MilkTestServiceTests
         Assert.Equal(4.2m, staffResult.Parameters.Single().Value);
         Assert.NotNull(customerResult);
         Assert.Single(customerResult.Images);
-        Assert.NotNull(customerResult.CompletedAtUtc);
+        Assert.NotNull(customerResult.CompletedAt);
 
         var notificationEvent = await harness.Db.NotificationEvents.SingleAsync(
             x => x.EventType == NotificationEventTypes.MilkTestCompleted);
         Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
         Assert.Equal($"milk-test:{requested.MilkTestId:N}:completed", notificationEvent.EventKey);
         Assert.True(notificationEvent.IsCritical);
-        Assert.Equal(staffResult.CompletedAtUtc, notificationEvent.OccurredAtUtc);
+        Assert.Equal(staffResult.CompletedAt, notificationEvent.OccurredAt);
         Assert.Equal($"/deliveries/{harness.Delivery.PublicId}/milk-test", Payload(notificationEvent).GetProperty("DeepLink").GetString());
         var variables = Variables(notificationEvent);
         Assert.Equal(requested.MilkTestId.ToString(), variables.GetProperty("milkTestId").GetString());
@@ -336,7 +336,7 @@ public sealed class MilkTestServiceTests
             harness.Customer.Id,
             harness.Branch.Id,
             harness.Customer.Id,
-            harness.Clock.UtcNow));
+            harness.Clock.Now));
 
         await Assert.ThrowsAsync<DbUpdateException>(() => harness.Db.SaveChangesAsync());
     }
@@ -406,11 +406,11 @@ public sealed class MilkTestServiceTests
 
         public async Task AdvanceToArrivedAsync()
         {
-            Delivery.PickUp(Staff.Id, Clock.UtcNow, null);
+            Delivery.PickUp(Staff.Id, Clock.Now, null);
             Clock.Advance(TimeSpan.FromMinutes(1));
-            Delivery.Start(Staff.Id, Clock.UtcNow);
+            Delivery.Start(Staff.Id, Clock.Now);
             Clock.Advance(TimeSpan.FromMinutes(1));
-            Delivery.Arrive(Staff.Id, Clock.UtcNow);
+            Delivery.Arrive(Staff.Id, Clock.Now);
             await Db.SaveChangesAsync();
         }
 
@@ -420,15 +420,15 @@ public sealed class MilkTestServiceTests
             {
                 await AdvanceToArrivedAsync();
                 Clock.Advance(TimeSpan.FromMinutes(1));
-                Delivery.RecordOtpVerified(Staff.Id, Clock.UtcNow);
+                Delivery.RecordOtpVerified(Staff.Id, Clock.Now);
                 Clock.Advance(TimeSpan.FromMinutes(1));
-                Delivery.Complete(Staff.Id, Clock.UtcNow, null);
+                Delivery.Complete(Staff.Id, Clock.Now, null);
             }
             else
             {
                 Delivery.Fail(
                     Staff.Id,
-                    Clock.UtcNow,
+                    Clock.Now,
                     DeliveryFailureReasons.CustomerNotAvailable,
                     null,
                     null,
@@ -508,7 +508,7 @@ public sealed class MilkTestServiceTests
             db.Orders.Add(order);
             await db.SaveChangesAsync();
 
-            var now = new DateTime(2026, 8, 17, 4, 0, 0, DateTimeKind.Utc);
+            var now = new DateTime(2026, 8, 17, 9, 30, 0, DateTimeKind.Unspecified);
             var delivery = Delivery.ForOrder(
                 order.Id,
                 customer.Id,

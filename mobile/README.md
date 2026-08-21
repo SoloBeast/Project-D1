@@ -21,18 +21,46 @@ The `mobile` project is the DoodhDirect client for Android, iOS, and web. It imp
 
 The centralized Development web API base URL defaults to `http://localhost:5209`. The `DOOHDIRECT_API_URL` Dart define can override it for Production and other deployment-specific endpoints. `DOOHDIRECT_ENABLE_DEV_TOOLS=true` exposes the quick customer login, wallet top-up, and mock payment controls; do not set it for distributable builds.
 
-Flutter Web Maps uses the existing local Dart-define configuration pattern. Supply the Google Maps JavaScript API key through `DOOHDIRECT_GOOGLE_MAPS_API_KEY`; it is injected only into the local Web build at runtime. Do not hard-code it in Dart or `web/index.html`, commit it to the repository, print it in logs, or copy it from `Project D Credentials.txt`. The Google Cloud key must allow the exact origin `http://localhost:51482/` and be restricted to the Maps JavaScript API. Places API and Geocoding API are not required by this feature.
+### Google Maps — local Development
 
-Run the Web app on port `51482` so the configured website restriction matches the browser origin. In PowerShell, store the key only in the current local shell session before starting Flutter:
+Add the browser key to the untracked repository-root `.env` alongside the existing local Razorpay settings:
+
+```dotenv
+DOOHDIRECT_GOOGLE_MAPS_API_KEY=your_local_browser_key
+```
+
+The repository `.gitignore` excludes `.env` and `.env.*` while allowing only `.env.example`; never commit the real key. The Development launcher reads only `DOOHDIRECT_GOOGLE_MAPS_API_KEY` from that file. It does not load or expose Razorpay values or any other backend secret. It passes the key to the unchanged Flutter Maps configuration as `--dart-define=DOOHDIRECT_GOOGLE_MAPS_API_KEY=<value>` without printing it.
+
+From the repository root, install packages once and launch Web Development on the stable restricted origin:
 
 ```powershell
-$env:DOOHDIRECT_GOOGLE_MAPS_API_KEY = '<local key value>'
+cd mobile
 flutter pub get
-flutter run -d chrome --web-port 51482 `
-  --dart-define=DOOHDIRECT_API_URL=http://localhost:5209 `
-  --dart-define=DOOHDIRECT_ENABLE_DEV_TOOLS=true `
-  --dart-define=DOOHDIRECT_GOOGLE_MAPS_API_KEY=$env:DOOHDIRECT_GOOGLE_MAPS_API_KEY
+cd ..
+.\scripts\run-flutter-web-development.ps1
 ```
+
+Verify configuration without launching Flutter or revealing the value:
+
+```powershell
+.\scripts\run-flutter-web-development.ps1 -CheckConfiguration
+```
+
+A successful check states only that the variable is configured. If `.env` or the variable is absent, the normal launcher omits the Maps Dart define and Flutter preserves the clear `Google Maps API key is not configured for this Web build.` state. The default Development origin is `http://localhost:51482/`.
+
+The Development Google Cloud key must use **Websites / HTTP referrers** application restrictions, allow the exact local origin used by the launcher, and use an API restriction for **Maps JavaScript API**. Add other Google Maps APIs only if this Web client actually starts using them; the current reverse lookup remains a backend endpoint and does not require exposing a Geocoding API credential to Flutter.
+
+### Google Maps — Production
+
+Production builds and deployments must not read the repository `.env` or use the Development launcher. Supply a separately managed Production browser key directly through the build/deployment environment:
+
+```powershell
+flutter build web --release `
+  --dart-define=DOOHDIRECT_API_URL=https://api.example.com `
+  --dart-define=DOOHDIRECT_GOOGLE_MAPS_API_KEY=$env:PRODUCTION_GOOGLE_MAPS_API_KEY
+```
+
+Use a distinct Production key restricted to **Websites / HTTP referrers** for only the deployed HTTPS origins. Restrict it to **Maps JavaScript API**, adding only Google Maps APIs actually used by this Web client. A browser key is visible to users by design; referrer and API restrictions are therefore mandatory. Keep backend secrets, including Razorpay key secrets and webhook secrets, out of all Flutter Dart defines.
 
 For an Android emulator connecting to the Development HTTP profile, use an API hostname reachable from the emulator, commonly `http://10.0.2.2:5209`. A physical device must use the development machine's reachable LAN hostname or address.
 
@@ -81,7 +109,7 @@ Development startup creates a dairy manager scoped only to the `MAIN` branch: `d
 3. In the manager workspace, materialize eligible deliveries through the order's scheduled date, open the `MAIN` branch queue, and assign the order's delivery to Development Delivery Staff.
 4. Sign out and sign in as `delivery@doodhdirect.local`. The staff workspace shows assigned deliveries for the selected date. Open the assigned delivery and perform Pickup, Start delivery, and Arrive in that order.
 5. With a configured server-side OTP delivery provider, issue the OTP and verify the customer-provided code, then complete the delivery. Alternatively, exercise the failed-delivery action with a supported failure reason and optional coordinates.
-6. Sign back in as the customer and open Orders. The delivery status is available from the delivery details while tracking is active. Location updates can also be posted to the staff location endpoint using device coordinates and a UTC timestamp.
+6. Sign back in as the customer and open Orders. The delivery status is available from the delivery details while tracking is active. Location updates can also be posted to the staff location endpoint using device coordinates and an explicitly UTC timestamp, because this endpoint retains provider/device instant semantics.
 
 The Flutter client does not currently acquire device location from a platform location plugin. The delivery location API and client repository are available for an approved platform integration or API-driven local verification. The default backend OTP provider is unconfigured, so real OTP completion requires a configured server-side delivery integration.
 
@@ -95,6 +123,6 @@ flutter test
 flutter build web --release
 ```
 
-For Maps UAT, start the Web server with `--web-port 51482`, open `http://localhost:51482/`, sign in as the Development customer, and open Customer account > Addresses > Add address. Confirm that the map loads near Faridabad, a marker is visible, tapping the map updates latitude and longitude, manual coordinate entry still works, reverse lookup still uses the backend, and saving continues through the existing address API.
+For Maps UAT, use the Development launcher, open `http://localhost:51482/`, sign in as the Development customer, and open Customer account > Addresses > Add address. Confirm that the map loads near Faridabad, a marker is visible, tapping the map updates the internal coordinates, no manual coordinate fields are shown, reverse lookup still uses the backend, and saving continues through the existing address API.
 
 The client expects the API routes documented in [`Document/05_API_Specification.md`](../Document/05_API_Specification.md), including authentication, customer, catalogue, order, payment, wallet, and delivery routes.

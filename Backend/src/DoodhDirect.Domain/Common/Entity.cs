@@ -2,9 +2,9 @@ namespace DoodhDirect.Domain.Common;
 
 public interface IAuditableEntity
 {
-    DateTime CreatedAtUtc { get; }
+    DateTime CreatedAt { get; }
 
-    DateTime UpdatedAtUtc { get; }
+    DateTime UpdatedAt { get; }
 }
 
 public abstract class Entity
@@ -19,28 +19,30 @@ public abstract class PublicEntity : Entity
 
 public abstract class AuditableEntity : PublicEntity, IAuditableEntity
 {
-    public DateTime CreatedAtUtc { get; protected set; }
+    public DateTime CreatedAt { get; protected set; }
 
-    public DateTime UpdatedAtUtc { get; protected set; }
+    public DateTime UpdatedAt { get; protected set; }
 
-    public void SetCreated(DateTime utcNow)
+    public void SetCreated(DateTime indiaLocalNow)
     {
-        if (utcNow.Kind != DateTimeKind.Utc)
-        {
-            throw new ArgumentException("Timestamp must be UTC.", nameof(utcNow));
-        }
-
-        CreatedAtUtc = utcNow;
-        UpdatedAtUtc = utcNow;
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        CreatedAt = indiaLocalNow;
+        UpdatedAt = indiaLocalNow;
     }
 
-    public void SetUpdated(DateTime utcNow)
+    public void SetUpdated(DateTime indiaLocalNow)
     {
-        if (utcNow.Kind != DateTimeKind.Utc)
-        {
-            throw new ArgumentException("Timestamp must be UTC.", nameof(utcNow));
-        }
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        UpdatedAt = indiaLocalNow;
+    }
 
-        UpdatedAtUtc = utcNow;
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
+    {
+        if (value.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "Timestamp must be an India-local wall-clock value.",
+                parameterName);
+        }
     }
 }

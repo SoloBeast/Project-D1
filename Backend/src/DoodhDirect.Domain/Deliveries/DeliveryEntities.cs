@@ -155,13 +155,13 @@ public sealed class Delivery : AuditableEntity
     public string? DeliveryInstructionsSnapshot { get; private set; }
     public decimal DestinationLatitude { get; private set; }
     public decimal DestinationLongitude { get; private set; }
-    public DateTime? AssignedAtUtc { get; private set; }
-    public DateTime? PickedUpAtUtc { get; private set; }
-    public DateTime? OutForDeliveryAtUtc { get; private set; }
-    public DateTime? ArrivedAtUtc { get; private set; }
-    public DateTime? OtpVerifiedAtUtc { get; private set; }
-    public DateTime? CompletedAtUtc { get; private set; }
-    public DateTime? FailedAtUtc { get; private set; }
+    public DateTime? AssignedAt { get; private set; }
+    public DateTime? PickedUpAt { get; private set; }
+    public DateTime? OutForDeliveryAt { get; private set; }
+    public DateTime? ArrivedAt { get; private set; }
+    public DateTime? OtpVerifiedAt { get; private set; }
+    public DateTime? CompletedAt { get; private set; }
+    public DateTime? FailedAt { get; private set; }
     public string? FailureReason { get; private set; }
     public string? Remarks { get; private set; }
     public string? OperationalNotes { get; private set; }
@@ -178,11 +178,11 @@ public sealed class Delivery : AuditableEntity
     public ICollection<DeliveryOtp> Otps { get; private set; } = [];
     public ICollection<DeliveryLocation> Locations { get; private set; } = [];
 
-    public DeliveryAssignment Assign(long employeeId, long assignedByUserId, DateTime utcNow, string? reason)
+    public DeliveryAssignment Assign(long employeeId, long assignedByUserId, DateTime assignedAt, string? reason)
     {
         if (employeeId <= 0) throw new ArgumentOutOfRangeException(nameof(employeeId));
         if (assignedByUserId <= 0) throw new ArgumentOutOfRangeException(nameof(assignedByUserId));
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(assignedAt, nameof(assignedAt));
         if (Status is not (DeliveryStatus.ReadyForAssignment or DeliveryStatus.Assigned))
         {
             throw InvalidTransition("assigned or reassigned");
@@ -192,75 +192,75 @@ public sealed class Delivery : AuditableEntity
             throw new InvalidOperationException("The delivery is already assigned to this employee.");
         }
 
-        var assignment = new DeliveryAssignment(AssignedEmployeeId, employeeId, assignedByUserId, utcNow, reason);
+        var assignment = new DeliveryAssignment(AssignedEmployeeId, employeeId, assignedByUserId, assignedAt, reason);
         AssignedEmployeeId = employeeId;
-        AssignedAtUtc = utcNow;
+        AssignedAt = assignedAt;
         Status = DeliveryStatus.Assigned;
         Assignments.Add(assignment);
         return assignment;
     }
 
-    public void PickUp(long employeeId, DateTime utcNow, string? operationalNotes)
+    public void PickUp(long employeeId, DateTime pickedUpAt, string? operationalNotes)
     {
         EnsureAssignedEmployee(employeeId);
         EnsureStatus(DeliveryStatus.Assigned, "picked up");
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(pickedUpAt, nameof(pickedUpAt));
         Status = DeliveryStatus.PickedUp;
-        PickedUpAtUtc = utcNow;
+        PickedUpAt = pickedUpAt;
         OperationalNotes = Optional(operationalNotes);
     }
 
-    public void Start(long employeeId, DateTime utcNow)
+    public void Start(long employeeId, DateTime startedAt)
     {
         EnsureAssignedEmployee(employeeId);
         EnsureStatus(DeliveryStatus.PickedUp, "started");
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(startedAt, nameof(startedAt));
         Status = DeliveryStatus.OutForDelivery;
-        OutForDeliveryAtUtc = utcNow;
+        OutForDeliveryAt = startedAt;
     }
 
-    public void Arrive(long employeeId, DateTime utcNow)
+    public void Arrive(long employeeId, DateTime arrivedAt)
     {
         EnsureAssignedEmployee(employeeId);
         EnsureStatus(DeliveryStatus.OutForDelivery, "marked as arrived");
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(arrivedAt, nameof(arrivedAt));
         Status = DeliveryStatus.Arrived;
-        ArrivedAtUtc = utcNow;
+        ArrivedAt = arrivedAt;
     }
 
-    public void RecordOtpVerified(long employeeId, DateTime utcNow)
+    public void RecordOtpVerified(long employeeId, DateTime verifiedAt)
     {
         EnsureAssignedEmployee(employeeId);
         EnsureStatus(DeliveryStatus.Arrived, "OTP verified");
-        EnsureUtc(utcNow, nameof(utcNow));
-        OtpVerifiedAtUtc = utcNow;
+        EnsureIndiaLocal(verifiedAt, nameof(verifiedAt));
+        OtpVerifiedAt = verifiedAt;
     }
 
-    public void Complete(long employeeId, DateTime utcNow, string? remarks)
+    public void Complete(long employeeId, DateTime completedAt, string? remarks)
     {
         EnsureAssignedEmployee(employeeId);
         EnsureStatus(DeliveryStatus.Arrived, "completed");
-        EnsureUtc(utcNow, nameof(utcNow));
-        if (!OtpVerifiedAtUtc.HasValue)
+        EnsureIndiaLocal(completedAt, nameof(completedAt));
+        if (!OtpVerifiedAt.HasValue)
         {
             throw new InvalidOperationException("Delivery OTP verification is required before completion.");
         }
 
         Status = DeliveryStatus.Delivered;
-        CompletedAtUtc = utcNow;
+        CompletedAt = completedAt;
         Remarks = Optional(remarks);
     }
 
     public void Fail(
         long employeeId,
-        DateTime utcNow,
+        DateTime failedAt,
         string reason,
         string? remarks,
         decimal? latitude,
         decimal? longitude)
     {
         EnsureAssignedEmployee(employeeId);
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(failedAt, nameof(failedAt));
         if (Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.ReadyForAssignment)
         {
             throw InvalidTransition("failed");
@@ -280,7 +280,7 @@ public sealed class Delivery : AuditableEntity
         }
 
         Status = DeliveryStatus.Failed;
-        FailedAtUtc = utcNow;
+        FailedAt = failedAt;
         FailureReason = DeliveryFailureReasons.Allowed.Single(x => x.Equals(normalizedReason, StringComparison.OrdinalIgnoreCase));
         Remarks = Optional(remarks);
         FailureLatitude = latitude;
@@ -329,11 +329,13 @@ public sealed class Delivery : AuditableEntity
     private static string? Optional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static void EnsureUtc(DateTime value, string parameterName)
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
     {
-        if (value.Kind != DateTimeKind.Utc)
+        if (value.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("Timestamp must be UTC.", parameterName);
+            throw new ArgumentException(
+                "The timestamp must be India-local with an unspecified DateTime kind.",
+                parameterName);
         }
     }
 }
@@ -346,13 +348,20 @@ public sealed class DeliveryAssignment : Entity
         long? previousEmployeeId,
         long employeeId,
         long assignedByUserId,
-        DateTime assignedAtUtc,
+        DateTime assignedAt,
         string? reason)
     {
+        if (assignedAt.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "The timestamp must be India-local with an unspecified DateTime kind.",
+                nameof(assignedAt));
+        }
+
         PreviousEmployeeId = previousEmployeeId;
         EmployeeId = employeeId;
         AssignedByUserId = assignedByUserId;
-        AssignedAtUtc = assignedAtUtc;
+        AssignedAt = assignedAt;
         Reason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
     }
 
@@ -360,7 +369,7 @@ public sealed class DeliveryAssignment : Entity
     public long? PreviousEmployeeId { get; private set; }
     public long EmployeeId { get; private set; }
     public long AssignedByUserId { get; private set; }
-    public DateTime AssignedAtUtc { get; private set; }
+    public DateTime AssignedAt { get; private set; }
     public string? Reason { get; private set; }
 
     public Delivery Delivery { get; private set; } = null!;
@@ -373,52 +382,57 @@ public sealed class DeliveryOtp : PublicEntity
 {
     private DeliveryOtp() { }
 
-    public DeliveryOtp(long deliveryId, string codeHash, DateTime expiresAtUtc, int maximumAttempts, DateTime createdAtUtc)
+    public DeliveryOtp(long deliveryId, string codeHash, DateTime expiresAt, int maximumAttempts, DateTime createdAt)
     {
         if (deliveryId <= 0) throw new ArgumentOutOfRangeException(nameof(deliveryId));
         if (maximumAttempts <= 0) throw new ArgumentOutOfRangeException(nameof(maximumAttempts));
-        if (expiresAtUtc.Kind != DateTimeKind.Utc || createdAtUtc.Kind != DateTimeKind.Utc)
+        if (expiresAt.Kind != DateTimeKind.Unspecified || createdAt.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("OTP timestamps must be UTC.");
+            throw new ArgumentException("OTP timestamps must be India-local with an unspecified DateTime kind.");
         }
-        if (expiresAtUtc <= createdAtUtc) throw new ArgumentOutOfRangeException(nameof(expiresAtUtc));
+        if (expiresAt <= createdAt) throw new ArgumentOutOfRangeException(nameof(expiresAt));
 
         DeliveryId = deliveryId;
         CodeHash = string.IsNullOrWhiteSpace(codeHash)
             ? throw new ArgumentException("A code hash is required.", nameof(codeHash))
             : codeHash;
-        ExpiresAtUtc = expiresAtUtc;
+        ExpiresAt = expiresAt;
         MaximumAttempts = maximumAttempts;
-        CreatedAtUtc = createdAtUtc;
+        CreatedAt = createdAt;
     }
 
     public long DeliveryId { get; private set; }
     public string CodeHash { get; private set; } = string.Empty;
-    public DateTime ExpiresAtUtc { get; private set; }
+    public DateTime ExpiresAt { get; private set; }
     public int AttemptCount { get; private set; }
     public int MaximumAttempts { get; private set; }
-    public DateTime CreatedAtUtc { get; private set; }
-    public DateTime? ConsumedAtUtc { get; private set; }
+    public DateTime CreatedAt { get; private set; }
+    public DateTime? ConsumedAt { get; private set; }
     public Delivery Delivery { get; private set; } = null!;
 
-    public void EnsureVerifiable(DateTime utcNow)
+    public void EnsureVerifiable(DateTime indiaLocalNow)
     {
-        if (utcNow.Kind != DateTimeKind.Utc) throw new ArgumentException("Timestamp must be UTC.", nameof(utcNow));
-        if (ConsumedAtUtc.HasValue) throw new InvalidOperationException("The delivery OTP has already been consumed.");
-        if (utcNow >= ExpiresAtUtc) throw new InvalidOperationException("The delivery OTP has expired.");
+        if (indiaLocalNow.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "The timestamp must be India-local with an unspecified DateTime kind.",
+                nameof(indiaLocalNow));
+        }
+        if (ConsumedAt.HasValue) throw new InvalidOperationException("The delivery OTP has already been consumed.");
+        if (indiaLocalNow >= ExpiresAt) throw new InvalidOperationException("The delivery OTP has expired.");
         if (AttemptCount >= MaximumAttempts) throw new InvalidOperationException("The delivery OTP attempt limit has been reached.");
     }
 
-    public void RecordFailedAttempt(DateTime utcNow)
+    public void RecordFailedAttempt(DateTime indiaLocalNow)
     {
-        EnsureVerifiable(utcNow);
+        EnsureVerifiable(indiaLocalNow);
         AttemptCount++;
     }
 
-    public void Consume(DateTime utcNow)
+    public void Consume(DateTime indiaLocalNow)
     {
-        EnsureVerifiable(utcNow);
-        ConsumedAtUtc = utcNow;
+        EnsureVerifiable(indiaLocalNow);
+        ConsumedAt = indiaLocalNow;
     }
 }
 
@@ -432,21 +446,26 @@ public sealed class DeliveryLocation : Entity
         decimal latitude,
         decimal longitude,
         decimal? accuracyMetres,
-        DateTime recordedAtUtc)
+        DateTime recordedAt)
     {
         if (deliveryId <= 0) throw new ArgumentOutOfRangeException(nameof(deliveryId));
         if (employeeId <= 0) throw new ArgumentOutOfRangeException(nameof(employeeId));
         if (latitude is < -90 or > 90) throw new ArgumentOutOfRangeException(nameof(latitude));
         if (longitude is < -180 or > 180) throw new ArgumentOutOfRangeException(nameof(longitude));
         if (accuracyMetres is < 0) throw new ArgumentOutOfRangeException(nameof(accuracyMetres));
-        if (recordedAtUtc.Kind != DateTimeKind.Utc) throw new ArgumentException("Timestamp must be UTC.", nameof(recordedAtUtc));
+        if (recordedAt.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "The timestamp must be India-local with an unspecified DateTime kind.",
+                nameof(recordedAt));
+        }
 
         DeliveryId = deliveryId;
         EmployeeId = employeeId;
         Latitude = latitude;
         Longitude = longitude;
         AccuracyMetres = accuracyMetres;
-        RecordedAtUtc = recordedAtUtc;
+        RecordedAt = recordedAt;
     }
 
     public long DeliveryId { get; private set; }
@@ -454,7 +473,7 @@ public sealed class DeliveryLocation : Entity
     public decimal Latitude { get; private set; }
     public decimal Longitude { get; private set; }
     public decimal? AccuracyMetres { get; private set; }
-    public DateTime RecordedAtUtc { get; private set; }
+    public DateTime RecordedAt { get; private set; }
     public Delivery Delivery { get; private set; } = null!;
     public User Employee { get; private set; } = null!;
 }

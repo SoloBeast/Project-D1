@@ -16,7 +16,7 @@ internal sealed partial class NotificationProcessor(
     IEnumerable<INotificationChannelGateway> gateways,
     NotificationTokenProtector tokenProtector,
     IOptions<NotificationOptions> options,
-    IClock clock) : INotificationProcessor
+    IIndiaTimeProvider timeProvider) : INotificationProcessor
 {
     private readonly IReadOnlyDictionary<NotificationChannel, INotificationChannelGateway> _gateways =
         gateways.ToDictionary(x => x.Channel);
@@ -27,7 +27,7 @@ internal sealed partial class NotificationProcessor(
         var eventIds = await dbContext.NotificationEvents
             .AsNoTracking()
             .Where(x => x.Status == NotificationEventStatus.Pending)
-            .OrderBy(x => x.OccurredAtUtc)
+            .OrderBy(x => x.OccurredAt)
             .ThenBy(x => x.Id)
             .Select(x => x.Id)
             .Take(_options.BatchSize)
@@ -57,15 +57,15 @@ internal sealed partial class NotificationProcessor(
                 try
                 {
                     await MaterializeEventAsync(notificationEvent, cancellationToken);
-                    notificationEvent.Complete(clock.UtcNow);
+                    notificationEvent.Complete(timeProvider.Now);
                 }
                 catch (JsonException exception)
                 {
-                    notificationEvent.Fail("INVALID_PAYLOAD", Limit(exception.Message, 1000), clock.UtcNow);
+                    notificationEvent.Fail("INVALID_PAYLOAD", Limit(exception.Message, 1000), timeProvider.Now);
                 }
                 catch (NotificationMaterializationException exception)
                 {
-                    notificationEvent.Fail(exception.Code, exception.Message, clock.UtcNow);
+                    notificationEvent.Fail(exception.Code, exception.Message, timeProvider.Now);
                 }
 
                 await dbContext.SaveChangesAsync(cancellationToken);
@@ -84,14 +84,14 @@ internal sealed partial class NotificationProcessor(
 
     public async Task<int> ProcessDueDeliveriesAsync(CancellationToken cancellationToken)
     {
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         var deliveryIds = await dbContext.NotificationDeliveries
             .AsNoTracking()
             .Where(x => (x.Status == NotificationDeliveryStatus.Pending
                     || x.Status == NotificationDeliveryStatus.RetryScheduled)
-                && x.NextAttemptAtUtc != null
-                && x.NextAttemptAtUtc <= now)
-            .OrderBy(x => x.NextAttemptAtUtc)
+                && x.NextAttemptAt != null
+                && x.NextAttemptAt <= now)
+            .OrderBy(x => x.NextAttemptAt)
             .ThenBy(x => x.Id)
             .Select(x => x.Id)
             .Take(_options.BatchSize)
@@ -145,7 +145,7 @@ internal sealed partial class NotificationProcessor(
             Render(inboxTemplate.TitleTemplate ?? Humanize(notificationEvent.EventType), variables),
             Render(inboxTemplate.BodyTemplate, variables),
             payload.DeepLink,
-            clock.UtcNow);
+            timeProvider.Now);
         dbContext.Notifications.Add(notification);
         await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -183,7 +183,7 @@ internal sealed partial class NotificationProcessor(
                         GatewayFor(template.Channel).ProviderCode,
                         device.TokenHash,
                         device.Id,
-                        clock.UtcNow));
+                        timeProvider.Now));
                 }
 
                 continue;
@@ -201,7 +201,7 @@ internal sealed partial class NotificationProcessor(
                 GatewayFor(template.Channel).ProviderCode,
                 destination ?? "DESTINATION_UNAVAILABLE",
                 null,
-                clock.UtcNow);
+                timeProvider.Now);
             if (string.IsNullOrWhiteSpace(destination))
             {
                 delivery.MarkFailed("DESTINATION_UNAVAILABLE", $"No {template.Channel} destination is registered.");
@@ -223,11 +223,11 @@ internal sealed partial class NotificationProcessor(
                 .Include(x => x.Notification)
                 .Include(x => x.UserDevice)
                 .SingleOrDefaultAsync(x => x.Id == deliveryId, cancellationToken);
-            var now = clock.UtcNow;
+            var now = timeProvider.Now;
             if (delivery is null
                 || delivery.IsTerminal
-                || delivery.NextAttemptAtUtc is null
-                || delivery.NextAttemptAtUtc > now)
+                || delivery.NextAttemptAt is null
+                || delivery.NextAttemptAt > now)
             {
                 await transaction.CommitAsync(cancellationToken);
                 return;
@@ -327,7 +327,7 @@ internal sealed partial class NotificationProcessor(
             GatewayFor(channel).ProviderCode,
             "PREFERENCE_SUPPRESSED",
             null,
-            clock.UtcNow);
+            timeProvider.Now);
         delivery.MarkSuppressed("The customer disabled this optional notification channel.");
         dbContext.NotificationDeliveries.Add(delivery);
     }

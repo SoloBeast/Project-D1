@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
@@ -496,39 +497,33 @@ class _ReportFilters extends StatelessWidget {
   );
 
   String _dateLabel() {
-    if (filter.fromUtc == null && filter.toUtc == null) return 'Date range';
-    final from = filter.fromUtc == null ? 'Any' : _shortDate(filter.fromUtc!);
-    final to = filter.toUtc == null ? 'Any' : _shortDate(filter.toUtc!);
+    if (filter.from == null && filter.to == null) return 'Date range';
+    final from = filter.from == null ? 'Any' : _shortDate(filter.from!);
+    final inclusiveTo = filter.to?.subtract(const Duration(days: 1));
+    final to = inclusiveTo == null ? 'Any' : _shortDate(inclusiveTo);
     return '$from - $to';
   }
 
   Future<void> _pickDateRange(BuildContext context) async {
-    final now = DateTime.now();
+    final now = indiaNow();
+    final inclusiveTo = filter.to?.subtract(const Duration(days: 1));
     final result = await showDateRangePicker(
       context: context,
       firstDate: DateTime(2020),
       lastDate: DateTime(now.year + 1, 12, 31),
-      initialDateRange: filter.fromUtc != null && filter.toUtc != null
-          ? DateTimeRange(start: filter.fromUtc!, end: filter.toUtc!)
+      initialDateRange: filter.from != null && inclusiveTo != null
+          ? DateTimeRange(start: filter.from!, end: inclusiveTo)
           : null,
     );
     if (result == null) return;
     onFilterChanged(
       filter.copyWith(
-        fromUtc: DateTime(
-          result.start.year,
-          result.start.month,
-          result.start.day,
-        ).toUtc(),
-        toUtc: DateTime(
+        from: DateTime(result.start.year, result.start.month, result.start.day),
+        to: DateTime(
           result.end.year,
           result.end.month,
           result.end.day,
-          23,
-          59,
-          59,
-          999,
-        ).toUtc(),
+        ).add(const Duration(days: 1)),
       ),
     );
   }

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/features/admin_reports/admin_report_models.dart';
 import 'package:doodh_direct_mobile/features/admin_reports/admin_report_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,13 +10,36 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  group('India time', () {
+    test(
+      'converts UTC instants across India midnight to wall-clock values',
+      () {
+        final india = toIndiaTime(DateTime.utc(2026, 8, 17, 20));
+
+        expect(india, DateTime(2026, 8, 18, 1, 30));
+        expect(india.isUtc, isFalse);
+      },
+    );
+
+    test(
+      'converts India wall-clock values to UTC and preserves picker dates',
+      () {
+        final pickerValue = DateTime(2026, 8, 18, 1, 30);
+
+        expect(indiaWallClock(pickerValue), pickerValue);
+        expect(indiaToUtc(pickerValue), DateTime.utc(2026, 8, 17, 20));
+        expect(toIndiaTime(indiaToUtc(pickerValue)), pickerValue);
+      },
+    );
+  });
+
   group('admin report models', () {
     test('serializes filters for query strings and export JSON', () {
       final filter = ReportFilter(
         search: '  main dairy  ',
         statuses: const ['Pending', 'Failed'],
-        fromUtc: DateTime.parse('2026-08-01T05:30:00+05:30'),
-        toUtc: DateTime.parse('2026-08-17T23:59:00+05:30'),
+        from: DateTime(2026, 8, 1, 5, 30),
+        to: DateTime(2026, 8, 17, 23, 59),
         page: 3,
         pageSize: 50,
         sortBy: 'createdAtUtc',
@@ -25,8 +49,8 @@ void main() {
       expect(filter.toQuery(), {
         'search': 'main dairy',
         'statuses': ['Pending', 'Failed'],
-        'dateRange.fromUtc': '2026-08-01T00:00:00.000Z',
-        'dateRange.toUtc': '2026-08-17T18:29:00.000Z',
+        'dateRange.from': '2026-08-01T05:30:00.000',
+        'dateRange.to': '2026-08-17T23:59:00.000',
         'page': '3',
         'pageSize': '50',
         'sortBy': 'createdAtUtc',
@@ -36,8 +60,8 @@ void main() {
         'search': 'main dairy',
         'statuses': ['Pending', 'Failed'],
         'dateRange': {
-          'fromUtc': '2026-08-01T00:00:00.000Z',
-          'toUtc': '2026-08-17T18:29:00.000Z',
+          'from': '2026-08-01T05:30:00.000',
+          'to': '2026-08-17T23:59:00.000',
         },
         'page': 3,
         'pageSize': 50,
@@ -223,14 +247,18 @@ void main() {
       expect(reportModuleBySlug('unknown'), isNull);
     });
 
-    test('formats null, list, boolean, date, and scalar values', () {
+    test('formats null, list, boolean, India date-time, and scalar values', () {
       expect(displayReportValue(null), '-');
       expect(displayReportValue(['Owner', 'Admin']), 'Owner, Admin');
       expect(displayReportValue(true), 'Yes');
       expect(displayReportValue(false), 'No');
       expect(displayReportValue('plain text'), 'plain text');
       expect(displayReportValue(42), '42');
-      expect(displayReportValue('2026-08-17T10:30:00Z'), isNotEmpty);
+      expect(displayReportValue('2026-08-17T20:00:00Z'), '2026-08-18T01:30:00');
+      expect(
+        displayReportValue('2026-08-17T20:00:00+00:00'),
+        '2026-08-18T01:30:00',
+      );
     });
   });
 
@@ -262,8 +290,8 @@ void main() {
         expect(request.url.queryParametersAll, {
           'search': ['ORD'],
           'statuses': ['Pending', 'Failed'],
-          'dateRange.fromUtc': ['2026-08-01T00:00:00.000Z'],
-          'dateRange.toUtc': ['2026-08-17T00:00:00.000Z'],
+          'dateRange.from': ['2026-08-01T00:00:00.000'],
+          'dateRange.to': ['2026-08-17T00:00:00.000'],
           'page': ['2'],
           'pageSize': ['50'],
           'sortBy': ['createdAtUtc'],
@@ -286,8 +314,8 @@ void main() {
         ReportFilter(
           search: ' ORD ',
           statuses: const ['Pending', 'Failed'],
-          fromUtc: DateTime.utc(2026, 8),
-          toUtc: DateTime.utc(2026, 8, 17),
+          from: DateTime(2026, 8),
+          to: DateTime(2026, 8, 17),
           page: 2,
           pageSize: 50,
           sortBy: 'createdAtUtc',
@@ -312,7 +340,7 @@ void main() {
           expect(jsonDecode(request.body), {
             'filter': {
               'statuses': ['Succeeded'],
-              'dateRange': {'fromUtc': '2026-08-01T00:00:00.000Z'},
+              'dateRange': {'from': '2026-08-01T00:00:00.000'},
               'page': 1,
               'pageSize': 25,
               'sortBy': 'amount',
@@ -335,7 +363,7 @@ void main() {
           reportModuleBySlug('payments')!,
           ReportFilter(
             statuses: const ['Succeeded'],
-            fromUtc: DateTime.utc(2026, 8),
+            from: DateTime(2026, 8),
             sortBy: 'amount',
           ),
           'Xlsx',

@@ -232,7 +232,7 @@ public sealed class CamerasControllerTests
             new CameraStreamDescriptor(
                 CameraStreamProtocol.Hls,
                 new Uri("https://streams.example/live.m3u8"),
-                Timestamp.AddMinutes(5),
+                new DateTimeOffset(Timestamp.AddMinutes(5), TimeSpan.Zero),
                 false));
 
         public ManagedCameraResult ManagedCamera { get; } = new(

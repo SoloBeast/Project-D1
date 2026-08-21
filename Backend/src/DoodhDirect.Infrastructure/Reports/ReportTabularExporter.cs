@@ -68,7 +68,10 @@ internal static class ReportTabularExporter
     private static string FormatText(object? value) => value switch
     {
         null => string.Empty,
-        DateTime dateTime => dateTime.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture),
+        DateTime { Kind: DateTimeKind.Unspecified } indiaLocal =>
+            indiaLocal.ToString("yyyy-MM-dd'T'HH:mm:ss.fff", CultureInfo.InvariantCulture),
+        DateTime dateTime => throw new InvalidOperationException(
+            $"Report timestamps must be India-local wall-clock values; received {dateTime.Kind}."),
         DateOnly date => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
         bool boolean => boolean ? "true" : "false",
         string text => text,

@@ -48,8 +48,14 @@ public sealed class PaymentWalletServiceTests
 
         var wallet = await harness.Db.Wallets.SingleAsync();
         var entries = await harness.Db.WalletTransactions.OrderBy(x => x.Id).ToListAsync();
+        var expectedOccurredAt = new DateTime(2026, 8, 16, 7, 30, 0, DateTimeKind.Unspecified);
         Assert.Equal(expectedBalance, wallet.Balance);
         Assert.Equal(2, entries.Count);
+        Assert.All(entries, entry =>
+        {
+            Assert.Equal(expectedOccurredAt, entry.OccurredAt);
+            Assert.Equal(DateTimeKind.Unspecified, entry.OccurredAt.Kind);
+        });
         Assert.Equal(WalletTransactionType.OrderDebit, entries[1].Type);
         Assert.Equal(startingBalance, entries[1].BalanceBefore);
         Assert.Equal(-payableAmount, entries[1].Amount);
@@ -463,7 +469,7 @@ public sealed class PaymentWalletServiceTests
             db.Orders.Add(order);
             await db.SaveChangesAsync();
 
-            var clock = new TestClock(new DateTime(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc));
+            var clock = new TestClock(new DateTime(2026, 8, 16, 7, 30, 0, DateTimeKind.Unspecified));
             paymentOptions ??= Options.Create(new PaymentOptions
             {
                 Provider = "Mock",
@@ -472,16 +478,17 @@ public sealed class PaymentWalletServiceTests
                 MockSigningSecret = "test-signing-secret"
             });
             var notificationEventWriter = new TestNotificationEventWriter(db, clock);
+            var indiaTime = new TestIndiaTimeProvider(clock);
             var walletService = new WalletService(
                 db,
-                clock,
+                indiaTime,
                 paymentOptions,
                 notificationEventWriter);
             var paymentService = new PaymentService(
                 db,
                 gateway ?? new MockPaymentGateway(paymentOptions),
                 walletService,
-                clock,
+                indiaTime,
                 paymentOptions,
                 notificationEventWriter);
             return new PaymentHarness(

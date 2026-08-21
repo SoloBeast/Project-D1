@@ -53,7 +53,7 @@ void main() {
           'stream': {
             'protocol': 'Hls',
             'playbackUri': 'https://stream.example.test/session/index.m3u8',
-            'expiresAtUtc': '2099-08-17T10:05:00Z',
+            'expiresAtUtc': '2099-08-17T10:05:00.000Z',
             'isDevelopmentStream': false,
           },
         });
@@ -185,6 +185,6 @@ final _managedJson = <String, dynamic>{
   'protocol': 'Hls',
   'providerCode': 'gateway',
   'providerStreamReference': 'opaque-stream-1',
-  'createdAtUtc': '2026-08-17T09:00:00Z',
-  'updatedAtUtc': '2026-08-17T10:00:00Z',
+  'createdAt': '2026-08-17T09:00:00.000',
+  'updatedAt': '2026-08-17T10:00:00.000',
 };

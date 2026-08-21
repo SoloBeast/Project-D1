@@ -17,7 +17,7 @@ namespace DoodhDirect.Infrastructure.Wallets;
 
 public sealed class WalletService(
     DoodhDirectDbContext dbContext,
-    IClock clock,
+    IIndiaTimeProvider timeProvider,
     IOptions<PaymentOptions> paymentOptions,
     INotificationEventWriter notificationEventWriter) : IWalletService
 {
@@ -52,7 +52,7 @@ public sealed class WalletService(
             .Include(x => x.Order)
             .Include(x => x.Subscription)
             .Where(x => x.WalletId == walletId.Value)
-            .OrderByDescending(x => x.OccurredAtUtc)
+            .OrderByDescending(x => x.OccurredAt)
             .ThenByDescending(x => x.Id)
             .Select(x => x.ToResult())
             .ToListAsync(cancellationToken);
@@ -74,7 +74,7 @@ public sealed class WalletService(
                 request.Amount,
                 request.IdempotencyKey,
                 "Wallet top-up",
-                clock.UtcNow),
+                timeProvider.Now),
             null,
             cancellationToken);
     }
@@ -103,7 +103,7 @@ public sealed class WalletService(
                 administratorUserId,
                 request.IdempotencyKey,
                 request.Reason,
-                clock.UtcNow),
+                timeProvider.Now),
             (wallet, transaction) =>
             {
                 dbContext.AuditLogs.Add(new AuditLog(
@@ -116,7 +116,7 @@ public sealed class WalletService(
                     request.IpAddress,
                     request.UserAgent,
                     request.Reason.Trim(),
-                    clock.UtcNow));
+                    timeProvider.Now));
             },
             cancellationToken);
     }
@@ -144,7 +144,7 @@ public sealed class WalletService(
                     paymentId,
                     idempotencyKey,
                     "One-time order payment",
-                    clock.UtcNow),
+                    timeProvider.Now),
                 null,
                 cancellationToken);
         }
@@ -185,7 +185,7 @@ public sealed class WalletService(
                     paymentId,
                     idempotencyKey,
                     "Prepaid subscription payment",
-                    clock.UtcNow),
+                    timeProvider.Now),
                 null,
                 cancellationToken);
         }
@@ -219,7 +219,7 @@ public sealed class WalletService(
                 amount,
                 idempotencyKey,
                 "Payment refund credit",
-                clock.UtcNow,
+                timeProvider.Now,
                 paymentId,
                 orderId),
             null,
@@ -250,7 +250,7 @@ public sealed class WalletService(
                 amount,
                 idempotencyKey,
                 "Subscription payment refund credit",
-                clock.UtcNow,
+                timeProvider.Now,
                 paymentId,
                 subscriptionId: subscriptionId),
             null,

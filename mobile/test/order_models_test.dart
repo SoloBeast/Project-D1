@@ -59,7 +59,7 @@ void main() {
       'orderNumber': 'DD-000001',
       'type': 'OneTime',
       'status': status,
-      'createdAtUtc': '2026-08-16T00:00:00Z',
+      'createdAt': '2026-08-16T00:00:00.000',
       'addressLabel': 'Home',
       'city': 'Bengaluru',
       'branchName': 'Main Branch',
@@ -67,11 +67,33 @@ void main() {
       'subtotal': 90,
       'discountAmount': 0,
       'payableAmount': 90,
-      'cancelledAtUtc': null,
+      'cancelledAt': null,
     };
 
     expect(OrderSummary.fromJson(json('Confirmed')).canCancel, isTrue);
     expect(OrderSummary.fromJson(json('Cancelled')).canCancel, isFalse);
     expect(OrderSummary.fromJson(json('Confirmed')).formattedTotal, '₹90.00');
+  });
+
+  test('order timestamps remain UTC instants and display in device local time', () {
+    final order = OrderSummary.fromJson({
+      'publicId': 'order-1',
+      'orderNumber': 'DD-000001',
+      'type': 'OneTime',
+      'status': 'PendingPayment',
+      'createdAt': '2026-08-20T02:41:00.000',
+      'addressLabel': 'Home',
+      'city': 'Bengaluru',
+      'branchName': 'Main Branch',
+      'items': <Map<String, dynamic>>[],
+      'subtotal': 90,
+      'discountAmount': 0,
+      'payableAmount': 90,
+      'cancelledAt': null,
+    });
+
+    expect(order.createdAt.isUtc, isFalse);
+    expect(order.createdAt.toIso8601String(), '2026-08-20T02:41:00.000');
+    expect(formatOrderDate(order.createdAt), '20-Aug-2026 02:41 AM');
   });
 }

@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -28,9 +29,10 @@ class _ProductCatalogueScreenState
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(catalogueControllerProvider);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Catalogue')),
-      body: state.isLoading && state.products.isEmpty
+    return CustomerShell(
+      currentPath: '/catalogue',
+      title: 'Catalogue',
+      child: state.isLoading && state.products.isEmpty
           ? const LoadingStatePanel(message: 'Loading products')
           : state.errorMessage != null && state.products.isEmpty
           ? ErrorStatePanel(

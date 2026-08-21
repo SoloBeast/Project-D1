@@ -12,7 +12,11 @@ public sealed record AuthUserResult(
     IReadOnlyCollection<string> Permissions,
     IReadOnlyCollection<long> BranchIds);
 
-public sealed record TokenPair(string AccessToken, string RefreshToken, DateTime AccessTokenExpiresAtUtc, DateTime RefreshTokenExpiresAtUtc);
+public sealed record TokenPair(
+    string AccessToken,
+    string RefreshToken,
+    DateTime AccessTokenExpiresAt,
+    DateTime RefreshTokenExpiresAt);
 
 public sealed record AuthSessionResult(AuthUserResult User, TokenPair Tokens);
 
@@ -37,7 +41,7 @@ public interface ITokenService
         IReadOnlyCollection<string> roles,
         IReadOnlyCollection<string> permissions,
         IReadOnlyCollection<long> branchIds,
-        DateTime utcNow);
+        DateTime now);
 
     string HashRefreshToken(string token);
 }

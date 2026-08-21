@@ -123,7 +123,7 @@ class DeliveryRepository {
     required double latitude,
     required double longitude,
     double? accuracyMetres,
-    required DateTime recordedAtUtc,
+    required DateTime recordedAt,
   }) async => DeliveryLocation.fromJson(
     (await api.post(
           '/api/v1/delivery/$id/location',
@@ -131,7 +131,7 @@ class DeliveryRepository {
             'latitude': latitude,
             'longitude': longitude,
             'accuracyMetres': accuracyMetres,
-            'recordedAtUtc': recordedAtUtc.toUtc().toIso8601String(),
+            'recordedAt': recordedAt.toIso8601String(),
           },
           accessToken: token,
         ))['data']

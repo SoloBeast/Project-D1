@@ -9,7 +9,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DoodhDirect.Infrastructure.Customer;
 
-public sealed class CustomerService(DoodhDirectDbContext dbContext, IClock clock) : ICustomerService
+public sealed class CustomerService(
+    DoodhDirectDbContext dbContext,
+    IIndiaTimeProvider timeProvider) : ICustomerService
 {
     private static readonly Regex PinCodePattern = new("^[1-9][0-9]{5}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex MobilePattern = new("^[0-9+()\\- ]{7,20}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -189,7 +191,7 @@ public sealed class CustomerService(DoodhDirectDbContext dbContext, IClock clock
 
     private void ValidateProfile(UpdateCustomerProfileRequest request)
     {
-        if (request.DateOfBirth > DateOnly.FromDateTime(clock.UtcNow))
+        if (request.DateOfBirth > timeProvider.Today)
         {
             throw new ValidationAppException("Date of birth cannot be in the future.", nameof(request.DateOfBirth));
         }

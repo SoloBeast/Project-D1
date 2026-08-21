@@ -22,7 +22,9 @@
 - Financial operations are transactional and idempotent.
 - All protected endpoints use authorization.
 - All critical overrides are audited.
-- Store UTC internally.
+- Represent application-owned business timestamps as India-local wall-clock values from the centralized `IIndiaTimeProvider`, using `DateTimeKind.Unspecified` and suffix-free API serialization.
+- Retain true UTC instants for provider/external boundaries and deferred infrastructure timestamps such as payment gateway, camera descriptor expiry, notification, and shared audit values until their dedicated migration slices are completed.
+- Do not bulk-convert historical rows; preserve existing physical SQL timestamp columns where practical.
 - Use BIGINT internal IDs and GUID public IDs.
 - DECIMAL(18,2) for money and DECIMAL(18,3) for quantities.
 - Build vertically by roadmap phase; do not attempt the complete product in a single code-generation step.

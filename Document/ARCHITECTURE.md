@@ -28,7 +28,7 @@ The API provides JWT bearer validation, a secure authenticated fallback authoriz
 
 ## Persistence Foundation
 
-EF Core targets SQL Server Express in the verified development environment. The schema uses internal `bigint` identity keys, public GUID identifiers, UTC `datetime2` timestamps, explicit foreign keys, bounded string columns, filtered SQL Server indexes for global and branch-scoped role assignments, and restrictive deletes for retained identity/RBAC data.
+EF Core targets SQL Server Express in the verified development environment. The schema uses internal `bigint` identity keys, public GUID identifiers, `datetime2` timestamps, explicit foreign keys, bounded string columns, filtered SQL Server indexes for global and branch-scoped role assignments, and restrictive deletes for retained identity/RBAC data. New application-owned business timestamps use India-local wall-clock values from `IIndiaTimeProvider`, represented as `DateTimeKind.Unspecified`; provider/external and deferred infrastructure boundaries retain true UTC instants. Existing physical timestamp columns and historical rows are preserved during the semantic migration.
 
 Development configuration is environment-specific in `Backend/src/DoodhDirect.Api/appsettings.Development.json`; production values must be injected through environment variables or a managed secret store.
 
@@ -77,3 +77,7 @@ The notification worker owns asynchronous materialization. It claims pending eve
 SQL Server persists events, inbox items, templates, preferences, devices, deliveries, and attempts. A push token hash supports identity and uniqueness; only a data-protected token can be unprotected for provider delivery. Plaintext push tokens are excluded from persistence, API responses, logs, audit records, and diagnostics. Template mutation requires the manage permission and records the authenticated actor and reason; template reads use a separate read permission.
 
 Flutter keeps notification state scoped to the authenticated session through Riverpod generation checks. Startup may inspect push permission but cannot prompt. Explicit user action may request permission, and registration/token refresh runs only for authorized or provisional states. Foreground messages refresh inbox and unread count; opened and cold-start messages pass through one internal-route allowlist before GoRouter navigation. Sign-out/user changes clear inbox, token-sync, and pending-navigation state so stale asynchronous responses cannot cross sessions.
+
+## Application Time Semantics
+
+The configured application time zone is `Asia/Kolkata`. Application-owned business timestamps are obtained through `IIndiaTimeProvider`, serialized without a UTC suffix or offset, and represented as India-local wall-clock values with `DateTimeKind.Unspecified`. Date-only business rules use the provider's India-local date. Provider/external timestamps, payment gateway boundaries, camera descriptor expiry, and deferred audit/notification infrastructure remain true UTC instants until their dedicated migration slices are completed. SQL Server does not generate current-time defaults for these fields; timestamp values are assigned by application code. Historical rows are not bulk-converted.

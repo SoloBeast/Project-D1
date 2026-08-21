@@ -33,7 +33,7 @@ public sealed record SubscriptionDeliveryResult(
     string BranchCode,
     string BranchName,
     string Address,
-    DateTime? StatusChangedAtUtc);
+    DateTime? StatusChangedAt);
 
 public sealed record SubscriptionResult(
     Guid PublicId,
@@ -56,11 +56,11 @@ public sealed record SubscriptionResult(
     string BranchCode,
     string BranchName,
     IReadOnlyCollection<SubscriptionScheduleResult> Schedules,
-    DateTime? ActivatedAtUtc,
-    DateTime? PausedAtUtc,
-    DateTime? CancelledAtUtc,
-    DateTime? CompletedAtUtc,
-    DateTime CreatedAtUtc);
+    DateTime? ActivatedAt,
+    DateTime? PausedAt,
+    DateTime? CancelledAt,
+    DateTime? CompletedAt,
+    DateTime CreatedAt);
 
 public sealed record CreatedSubscriptionResult(
     SubscriptionResult Subscription,
@@ -153,11 +153,11 @@ public static class SubscriptionMappings
             .OrderBy(schedule => schedule.DayOfWeek)
             .Select(schedule => new SubscriptionScheduleResult(schedule.DayOfWeek))
             .ToArray(),
-        subscription.ActivatedAtUtc,
-        subscription.PausedAtUtc,
-        subscription.CancelledAtUtc,
-        subscription.CompletedAtUtc,
-        subscription.CreatedAtUtc);
+        subscription.ActivatedAt,
+        subscription.PausedAt,
+        subscription.CancelledAt,
+        subscription.CompletedAt,
+        subscription.CreatedAt);
 
     public static SubscriptionDeliveryResult ToResult(this SubscriptionDelivery delivery) => new(
         delivery.PublicId,
@@ -168,5 +168,5 @@ public static class SubscriptionMappings
         delivery.BranchCodeSnapshot,
         delivery.BranchNameSnapshot,
         delivery.AddressSnapshot,
-        delivery.StatusChangedAtUtc);
+        delivery.StatusChangedAt);
 }

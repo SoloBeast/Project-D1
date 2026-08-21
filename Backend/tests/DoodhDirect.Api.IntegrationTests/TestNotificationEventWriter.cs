@@ -8,7 +8,7 @@ namespace DoodhDirect.Api.IntegrationTests;
 
 internal sealed class TestNotificationEventWriter(
     DoodhDirectDbContext dbContext,
-    IClock clock) : INotificationEventWriter
+    IIndiaTimeProvider timeProvider) : INotificationEventWriter
 {
     public void Add(NotificationEventRequest request)
     {
@@ -32,6 +32,6 @@ internal sealed class TestNotificationEventWriter(
             request.EventKey,
             payloadJson,
             NotificationEventTypes.IsCritical(eventType),
-            request.OccurredAtUtc ?? clock.UtcNow));
+            request.OccurredAt ?? timeProvider.Now));
     }
 }

@@ -3,23 +3,23 @@ class WalletDetails {
     required this.publicId,
     required this.balance,
     required this.currency,
-    required this.createdAtUtc,
-    required this.updatedAtUtc,
+    required this.createdAt,
+    required this.updatedAt,
   });
 
   factory WalletDetails.fromJson(Map<String, dynamic> json) => WalletDetails(
     publicId: json['publicId'] as String,
     balance: (json['balance'] as num).toDouble(),
     currency: json['currency'] as String,
-    createdAtUtc: DateTime.parse(json['createdAtUtc'] as String),
-    updatedAtUtc: DateTime.parse(json['updatedAtUtc'] as String),
+    createdAt: DateTime.parse(json['createdAt'] as String),
+    updatedAt: DateTime.parse(json['updatedAt'] as String),
   );
 
   final String publicId;
   final double balance;
   final String currency;
-  final DateTime createdAtUtc;
-  final DateTime updatedAtUtc;
+  final DateTime createdAt;
+  final DateTime updatedAt;
 
   String get formattedBalance => '₹${balance.toStringAsFixed(2)}';
 }
@@ -33,7 +33,7 @@ class WalletTransaction {
     required this.balanceAfter,
     required this.currency,
     required this.description,
-    required this.occurredAtUtc,
+    required this.occurredAt,
     required this.paymentId,
     required this.orderId,
   });
@@ -47,7 +47,7 @@ class WalletTransaction {
         balanceAfter: (json['balanceAfter'] as num).toDouble(),
         currency: json['currency'] as String,
         description: json['description'] as String,
-        occurredAtUtc: DateTime.parse(json['occurredAtUtc'] as String),
+        occurredAt: DateTime.parse(json['occurredAt'] as String),
         paymentId: json['paymentId'] as String?,
         orderId: json['orderId'] as String?,
       );
@@ -59,7 +59,7 @@ class WalletTransaction {
   final double balanceAfter;
   final String currency;
   final String description;
-  final DateTime occurredAtUtc;
+  final DateTime occurredAt;
   final String? paymentId;
   final String? orderId;
 
@@ -70,10 +70,8 @@ class WalletTransaction {
       '${isCredit ? '+' : '-'}₹${amount.abs().toStringAsFixed(2)}';
 }
 
-String formatWalletDate(DateTime value) {
-  final local = value.toLocal();
-  return '${local.day.toString().padLeft(2, '0')}/'
-      '${local.month.toString().padLeft(2, '0')}/${local.year} '
-      '${local.hour.toString().padLeft(2, '0')}:'
-      '${local.minute.toString().padLeft(2, '0')}';
-}
+String formatWalletDate(DateTime value) =>
+    '${value.day.toString().padLeft(2, '0')}/'
+    '${value.month.toString().padLeft(2, '0')}/${value.year} '
+    '${value.hour.toString().padLeft(2, '0')}:'
+    '${value.minute.toString().padLeft(2, '0')}';

@@ -38,7 +38,7 @@ public enum ReportExportFormat
     Xlsx
 }
 
-public sealed record ReportDateRange(DateTime? FromUtc, DateTime? ToUtc);
+public sealed record ReportDateRange(DateTime? From, DateTime? To);
 
 public sealed record ReportFilter(
     ReportDateRange? DateRange = null,
@@ -96,7 +96,7 @@ public sealed record CustomerReportRow(
     string? Mobile,
     string? Email,
     bool IsActive,
-    DateTime CreatedAtUtc,
+    DateTime CreatedAt,
     int OrderCount,
     decimal LifetimeOrderValue,
     decimal WalletBalance);
@@ -117,7 +117,7 @@ public sealed record OrderReportRow(
     string OrderNumber,
     OrderType Type,
     OrderStatus Status,
-    DateTime CreatedAtUtc,
+    DateTime CreatedAt,
     Guid CustomerId,
     string? CustomerName,
     Guid BranchId,
@@ -149,16 +149,16 @@ public sealed record PaymentReportRow(
     decimal Amount,
     decimal RefundedAmount,
     string Currency,
-    DateTime CreatedAtUtc,
-    DateTime? VerifiedAtUtc,
-    DateTime? FailedAtUtc);
+    DateTime CreatedAt,
+    DateTime? VerifiedAt,
+    DateTime? FailedAt);
 
 public sealed record WalletReportRow(
     Guid CustomerId,
     string? CustomerName,
     decimal Balance,
     string Currency,
-    DateTime? LastActivityAtUtc,
+    DateTime? LastActivityAt,
     int TransactionCount);
 
 public sealed record DeliveryReportRow(
@@ -171,14 +171,14 @@ public sealed record DeliveryReportRow(
     string? AssignedEmployeeName,
     DateOnly ScheduledDate,
     DeliveryStatus Status,
-    DateTime? CompletedAtUtc,
+    DateTime? CompletedAt,
     string? FailureCode);
 
 public sealed record DairyReportRow(
     ReportModule Source,
     Guid BranchId,
     string BranchName,
-    DateTime OccurredAtUtc,
+    DateTime OccurredAt,
     decimal Quantity,
     string Unit,
     string? Status,
@@ -189,12 +189,12 @@ public sealed record MilkTestReportRow(
     Guid BranchId,
     string BranchName,
     Guid CustomerId,
-    DateTime RequestedAtUtc,
+    DateTime RequestedAt,
     MilkTestStatus Status,
     MilkTestCustomerDecision CustomerDecision,
     int ParameterCount,
     int ImageCount,
-    DateTime? CompletedAtUtc);
+    DateTime? CompletedAt);
 
 public sealed record CameraReportRow(
     Guid Id,
@@ -210,7 +210,7 @@ public sealed record NotificationReportRow(
     Guid Id,
     string EventType,
     NotificationEventStatus EventStatus,
-    DateTime OccurredAtUtc,
+    DateTime OccurredAt,
     bool IsCritical,
     int DeliveryCount,
     int FailedDeliveryCount,
@@ -223,7 +223,7 @@ public sealed record AuditReportRow(
     string EntityType,
     string EntityId,
     string? Reason,
-    DateTime CreatedAtUtc);
+    DateTime CreatedAt);
 
 public sealed record ExportRequest(
     ReportModule Module,

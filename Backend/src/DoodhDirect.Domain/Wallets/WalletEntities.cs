@@ -52,7 +52,7 @@ public sealed class Wallet : AuditableEntity
         decimal amount,
         string idempotencyKey,
         string description,
-        DateTime occurredAtUtc,
+        DateTime occurredAt,
         long? paymentId = null,
         long? orderId = null,
         long? performedByUserId = null,
@@ -69,7 +69,7 @@ public sealed class Wallet : AuditableEntity
             roundedAmount,
             idempotencyKey,
             description,
-            occurredAtUtc,
+            occurredAt,
             paymentId,
             orderId,
             performedByUserId,
@@ -81,7 +81,7 @@ public sealed class Wallet : AuditableEntity
         long performedByUserId,
         string idempotencyKey,
         string reason,
-        DateTime occurredAtUtc)
+        DateTime occurredAt)
     {
         if (performedByUserId <= 0) throw new ArgumentOutOfRangeException(nameof(performedByUserId));
 
@@ -96,7 +96,7 @@ public sealed class Wallet : AuditableEntity
             roundedAmount,
             idempotencyKey,
             reason,
-            occurredAtUtc,
+            occurredAt,
             null,
             null,
             performedByUserId,
@@ -109,7 +109,7 @@ public sealed class Wallet : AuditableEntity
         long paymentId,
         string idempotencyKey,
         string description,
-        DateTime occurredAtUtc)
+        DateTime occurredAt)
     {
         if (orderId <= 0) throw new ArgumentOutOfRangeException(nameof(orderId));
         if (paymentId <= 0) throw new ArgumentOutOfRangeException(nameof(paymentId));
@@ -119,7 +119,7 @@ public sealed class Wallet : AuditableEntity
             -NormalizePositiveAmount(amount),
             idempotencyKey,
             description,
-            occurredAtUtc,
+            occurredAt,
             paymentId,
             orderId,
             null,
@@ -132,7 +132,7 @@ public sealed class Wallet : AuditableEntity
         long paymentId,
         string idempotencyKey,
         string description,
-        DateTime occurredAtUtc)
+        DateTime occurredAt)
     {
         if (subscriptionId <= 0) throw new ArgumentOutOfRangeException(nameof(subscriptionId));
         if (paymentId <= 0) throw new ArgumentOutOfRangeException(nameof(paymentId));
@@ -142,7 +142,7 @@ public sealed class Wallet : AuditableEntity
             -NormalizePositiveAmount(amount),
             idempotencyKey,
             description,
-            occurredAtUtc,
+            occurredAt,
             paymentId,
             null,
             null,
@@ -154,16 +154,13 @@ public sealed class Wallet : AuditableEntity
         decimal signedAmount,
         string idempotencyKey,
         string description,
-        DateTime occurredAtUtc,
+        DateTime occurredAt,
         long? paymentId,
         long? orderId,
         long? performedByUserId,
         long? subscriptionId)
     {
-        if (occurredAtUtc.Kind != DateTimeKind.Utc)
-        {
-            throw new ArgumentException("Timestamp must be UTC.", nameof(occurredAtUtc));
-        }
+        EnsureIndiaLocal(occurredAt, nameof(occurredAt));
 
         if (type == WalletTransactionType.AdminAdjustment && performedByUserId is null)
         {
@@ -189,7 +186,7 @@ public sealed class Wallet : AuditableEntity
             Currency,
             idempotencyKey,
             description,
-            occurredAtUtc,
+            occurredAt,
             paymentId,
             orderId,
             performedByUserId,
@@ -211,6 +208,14 @@ public sealed class Wallet : AuditableEntity
         return roundedAmount;
     }
 
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
+    {
+        if (value.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException("Timestamp must be an India-local wall-clock value.", parameterName);
+        }
+    }
+
     private static string Required(string value, string parameterName) =>
         string.IsNullOrWhiteSpace(value)
             ? throw new ArgumentException("A value is required.", parameterName)
@@ -230,7 +235,7 @@ public sealed class WalletTransaction : PublicEntity
         string currency,
         string idempotencyKey,
         string description,
-        DateTime occurredAtUtc,
+        DateTime occurredAt,
         long? paymentId,
         long? orderId,
         long? performedByUserId,
@@ -246,9 +251,11 @@ public sealed class WalletTransaction : PublicEntity
         {
             throw new ArgumentException("Wallet transaction balances do not reconcile.", nameof(balanceAfter));
         }
-        if (occurredAtUtc.Kind != DateTimeKind.Utc)
+        if (occurredAt.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("Timestamp must be UTC.", nameof(occurredAtUtc));
+            throw new ArgumentException(
+                "Timestamp must be an India-local wall-clock value.",
+                nameof(occurredAt));
         }
 
         WalletId = walletId;
@@ -259,7 +266,7 @@ public sealed class WalletTransaction : PublicEntity
         Currency = Required(currency, nameof(currency)).ToUpperInvariant();
         IdempotencyKey = Required(idempotencyKey, nameof(idempotencyKey));
         Description = Required(description, nameof(description));
-        OccurredAtUtc = occurredAtUtc;
+        OccurredAt = occurredAt;
         PaymentId = paymentId;
         OrderId = orderId;
         SubscriptionId = subscriptionId;
@@ -274,7 +281,7 @@ public sealed class WalletTransaction : PublicEntity
     public string Currency { get; private set; } = string.Empty;
     public string IdempotencyKey { get; private set; } = string.Empty;
     public string Description { get; private set; } = string.Empty;
-    public DateTime OccurredAtUtc { get; private set; }
+    public DateTime OccurredAt { get; private set; }
     public long? PaymentId { get; private set; }
     public long? OrderId { get; private set; }
     public long? SubscriptionId { get; private set; }

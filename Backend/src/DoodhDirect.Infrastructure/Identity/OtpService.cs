@@ -16,7 +16,7 @@ public sealed class OtpService(
     DoodhDirectDbContext dbContext,
     IPasswordHasher passwordHasher,
     IOtpDeliveryService delivery,
-    IClock clock,
+    IIndiaTimeProvider timeProvider,
     ITokenService tokenService,
     IOptions<IdentityOptions> options,
     INotificationEventWriter notificationEventWriter) : IOtpService
@@ -26,10 +26,10 @@ public sealed class OtpService(
     public async Task SendAsync(SendOtpRequest request, CancellationToken cancellationToken)
     {
         var destination = Require(request.Mobile, "Mobile number is required.", nameof(request.Mobile));
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         var windowStart = now.AddMinutes(-_options.OtpRateLimitWindowMinutes);
         var requestCount = await dbContext.OtpChallenges
-            .CountAsync(x => x.Destination == destination && x.Purpose == request.Purpose && x.CreatedAtUtc >= windowStart, cancellationToken);
+            .CountAsync(x => x.Destination == destination && x.Purpose == request.Purpose && x.CreatedAt >= windowStart, cancellationToken);
         if (requestCount >= _options.OtpRequestsPerWindow)
         {
             await WriteAuditAsync(null, "AUTH_OTP_RATE_LIMITED", destination, request.IpAddress, null, request.Purpose.ToString(), cancellationToken);
@@ -53,14 +53,14 @@ public sealed class OtpService(
 
     public async Task<AuthSessionResult> VerifyAsync(VerifyOtpRequest request, CancellationToken cancellationToken)
     {
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         var destination = Require(request.Mobile, "Mobile number is required.", nameof(request.Mobile));
         var code = Require(request.Code, "OTP code is required.", nameof(request.Code));
         if (string.IsNullOrWhiteSpace(request.Device.DeviceIdentifier))
             throw new ValidationAppException("Device identifier is required.", nameof(request.Device.DeviceIdentifier));
         var challenge = await dbContext.OtpChallenges
             .Where(x => x.Destination == destination && x.Purpose == request.Purpose)
-            .OrderByDescending(x => x.CreatedAtUtc)
+            .OrderByDescending(x => x.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
         if (challenge is null || !challenge.CanAttempt(now))
         {
@@ -118,7 +118,7 @@ public sealed class OtpService(
             authUser.Permissions,
             authUser.BranchIds,
             now);
-        dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAtUtc, session.Id, now));
+        dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAt, session.Id, now));
         dbContext.AuditLogs.Add(new AuditLog(user.Id, "AUTH_OTP_LOGIN", "UserSession", session.PublicId.ToString(), null, null, request.Device.IpAddress, request.Device.UserAgent, request.Purpose.ToString(), now));
         if (registeredUser)
         {
@@ -148,7 +148,7 @@ public sealed class OtpService(
 
     private async Task WriteAuditAsync(long? userId, string action, string entityId, string? ipAddress, string? userAgent, string? reason, CancellationToken cancellationToken)
     {
-        dbContext.AuditLogs.Add(new AuditLog(userId, action, "OtpChallenge", entityId, null, null, ipAddress, userAgent, reason, clock.UtcNow));
+        dbContext.AuditLogs.Add(new AuditLog(userId, action, "OtpChallenge", entityId, null, null, ipAddress, userAgent, reason, timeProvider.Now));
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 

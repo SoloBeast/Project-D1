@@ -16,21 +16,21 @@ public sealed class IdentityFoundationTests
     }
 
     [Fact]
-    public void AuditTimestamp_RejectsNonUtcValues()
+    public void AuditTimestamp_RejectsNonIndiaLocalValues()
     {
         var user = new User(UserType.Employee);
-        var localTimestamp = new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Local);
+        var utcTimestamp = new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Utc);
 
-        var exception = Assert.Throws<ArgumentException>(() => user.SetCreated(localTimestamp));
+        var exception = Assert.Throws<ArgumentException>(() => user.SetCreated(utcTimestamp));
 
-        Assert.Equal("utcNow", exception.ParamName);
+        Assert.Equal("indiaLocalNow", exception.ParamName);
     }
 
     [Fact]
     public void RefreshToken_IsInactiveAtExpiryBoundary()
     {
-        var now = new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Utc);
-        var token = new RefreshToken(42, "token-hash", now.AddMinutes(5));
+        var now = new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified);
+        var token = new RefreshToken(42, "token-hash", now.AddMinutes(5), null, now);
 
         Assert.True(token.IsActive(now));
         Assert.False(token.IsActive(now.AddMinutes(5)));
@@ -39,13 +39,13 @@ public sealed class IdentityFoundationTests
     [Fact]
     public void RefreshToken_RevocationStoresRotationHash()
     {
-        var now = new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Utc);
-        var token = new RefreshToken(42, "old-token-hash", now.AddDays(7));
+        var now = new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified);
+        var token = new RefreshToken(42, "old-token-hash", now.AddDays(7), null, now);
 
         token.Revoke(now, "replacement-token-hash");
 
         Assert.False(token.IsActive(now));
-        Assert.Equal(now, token.RevokedAtUtc);
+        Assert.Equal(now, token.RevokedAt);
         Assert.Equal("replacement-token-hash", token.ReplacedByTokenHash);
     }
 }

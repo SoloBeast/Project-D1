@@ -174,8 +174,12 @@ internal sealed class CustomerHarness : IAsyncDisposable
         var customer = new User(UserType.Customer);
         db.Users.Add(customer);
         await db.SaveChangesAsync();
-        var clock = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Utc));
-        return new CustomerHarness(db, customer, new CustomerService(db, clock));
+        var clock = new TestClock(
+            new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
+        return new CustomerHarness(
+            db,
+            customer,
+            new CustomerService(db, new TestIndiaTimeProvider(clock)));
     }
 
     public ValueTask DisposeAsync() => Db.DisposeAsync();

@@ -6,7 +6,7 @@ public sealed class DeliveryDomainTests
 {
     private const long EmployeeId = 20;
     private const long OtherEmployeeId = 21;
-    private static readonly DateTime UtcNow = new(2026, 8, 16, 4, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime IndiaLocalNow = new(2026, 8, 16, 9, 30, 0, DateTimeKind.Unspecified);
 
     [Fact]
     public void Factories_CreateReadyDeliveriesWithExactlyOneSourceAndNormalizedSnapshots()
@@ -43,13 +43,13 @@ public sealed class DeliveryDomainTests
     {
         var delivery = CreateOrderDelivery();
 
-        var initial = delivery.Assign(EmployeeId, assignedByUserId: 30, UtcNow, " Morning route ");
-        var reassignedAt = UtcNow.AddMinutes(2);
+        var initial = delivery.Assign(EmployeeId, assignedByUserId: 30, IndiaLocalNow, " Morning route ");
+        var reassignedAt = IndiaLocalNow.AddMinutes(2);
         var reassignment = delivery.Assign(OtherEmployeeId, assignedByUserId: 31, reassignedAt, "Coverage");
 
         Assert.Equal(DeliveryStatus.Assigned, delivery.Status);
         Assert.Equal(OtherEmployeeId, delivery.AssignedEmployeeId);
-        Assert.Equal(reassignedAt, delivery.AssignedAtUtc);
+        Assert.Equal(reassignedAt, delivery.AssignedAt);
         Assert.Null(initial.PreviousEmployeeId);
         Assert.Equal("Morning route", initial.Reason);
         Assert.Equal(EmployeeId, reassignment.PreviousEmployeeId);
@@ -62,10 +62,10 @@ public sealed class DeliveryDomainTests
     public void Assign_RejectsReassignmentAfterPickup()
     {
         var delivery = CreateAssignedDelivery();
-        delivery.PickUp(EmployeeId, UtcNow.AddMinutes(1), null);
+        delivery.PickUp(EmployeeId, IndiaLocalNow.AddMinutes(1), null);
 
         Assert.Throws<InvalidOperationException>(() =>
-            delivery.Assign(OtherEmployeeId, assignedByUserId: 30, UtcNow.AddMinutes(2), null));
+            delivery.Assign(OtherEmployeeId, assignedByUserId: 30, IndiaLocalNow.AddMinutes(2), null));
     }
 
     [Fact]
@@ -73,21 +73,21 @@ public sealed class DeliveryDomainTests
     {
         var delivery = CreateAssignedDelivery();
 
-        delivery.PickUp(EmployeeId, UtcNow.AddMinutes(1), " Handle carefully ");
-        delivery.Start(EmployeeId, UtcNow.AddMinutes(2));
-        delivery.Arrive(EmployeeId, UtcNow.AddMinutes(3));
+        delivery.PickUp(EmployeeId, IndiaLocalNow.AddMinutes(1), " Handle carefully ");
+        delivery.Start(EmployeeId, IndiaLocalNow.AddMinutes(2));
+        delivery.Arrive(EmployeeId, IndiaLocalNow.AddMinutes(3));
 
         Assert.True(delivery.IsTrackingActive);
         Assert.Throws<InvalidOperationException>(() =>
-            delivery.Complete(EmployeeId, UtcNow.AddMinutes(4), null));
+            delivery.Complete(EmployeeId, IndiaLocalNow.AddMinutes(4), null));
 
-        delivery.RecordOtpVerified(EmployeeId, UtcNow.AddMinutes(4));
-        delivery.Complete(EmployeeId, UtcNow.AddMinutes(5), " Handed to customer ");
+        delivery.RecordOtpVerified(EmployeeId, IndiaLocalNow.AddMinutes(4));
+        delivery.Complete(EmployeeId, IndiaLocalNow.AddMinutes(5), " Handed to customer ");
 
         Assert.Equal(DeliveryStatus.Delivered, delivery.Status);
         Assert.Equal("Handle carefully", delivery.OperationalNotes);
         Assert.Equal("Handed to customer", delivery.Remarks);
-        Assert.Equal(UtcNow.AddMinutes(5), delivery.CompletedAtUtc);
+        Assert.Equal(IndiaLocalNow.AddMinutes(5), delivery.CompletedAt);
         Assert.False(delivery.IsTrackingActive);
     }
 
@@ -97,25 +97,25 @@ public sealed class DeliveryDomainTests
         var delivery = CreateAssignedDelivery();
 
         Assert.Throws<InvalidOperationException>(() =>
-            delivery.PickUp(OtherEmployeeId, UtcNow.AddMinutes(1), null));
+            delivery.PickUp(OtherEmployeeId, IndiaLocalNow.AddMinutes(1), null));
 
-        delivery.PickUp(EmployeeId, UtcNow.AddMinutes(1), null);
-        delivery.Start(EmployeeId, UtcNow.AddMinutes(2));
+        delivery.PickUp(EmployeeId, IndiaLocalNow.AddMinutes(1), null);
+        delivery.Start(EmployeeId, IndiaLocalNow.AddMinutes(2));
 
         Assert.Throws<InvalidOperationException>(() =>
-            delivery.Arrive(OtherEmployeeId, UtcNow.AddMinutes(3)));
+            delivery.Arrive(OtherEmployeeId, IndiaLocalNow.AddMinutes(3)));
         Assert.Throws<InvalidOperationException>(() =>
             delivery.EnsureCanRecordLocation(OtherEmployeeId));
         Assert.Throws<InvalidOperationException>(() =>
-            delivery.Fail(OtherEmployeeId, UtcNow.AddMinutes(3), DeliveryFailureReasons.Other, null, null, null));
+            delivery.Fail(OtherEmployeeId, IndiaLocalNow.AddMinutes(3), DeliveryFailureReasons.Other, null, null, null));
     }
 
     [Fact]
-    public void Lifecycle_RejectsOutOfOrderAndNonUtcTransitions()
+    public void Lifecycle_RejectsOutOfOrderAndNonIndiaLocalTransitions()
     {
         var delivery = CreateAssignedDelivery();
 
-        Assert.Throws<InvalidOperationException>(() => delivery.Start(EmployeeId, UtcNow));
+        Assert.Throws<InvalidOperationException>(() => delivery.Start(EmployeeId, IndiaLocalNow));
         Assert.Throws<ArgumentException>(() => delivery.PickUp(EmployeeId, DateTime.Now, null));
     }
 
@@ -125,15 +125,15 @@ public sealed class DeliveryDomainTests
         var delivery = CreateAssignedDelivery();
 
         Assert.Throws<InvalidOperationException>(() => delivery.EnsureCanRecordLocation(EmployeeId));
-        delivery.PickUp(EmployeeId, UtcNow.AddMinutes(1), null);
+        delivery.PickUp(EmployeeId, IndiaLocalNow.AddMinutes(1), null);
         Assert.Throws<InvalidOperationException>(() => delivery.EnsureCanRecordLocation(EmployeeId));
 
-        delivery.Start(EmployeeId, UtcNow.AddMinutes(2));
+        delivery.Start(EmployeeId, IndiaLocalNow.AddMinutes(2));
         delivery.EnsureCanRecordLocation(EmployeeId);
-        delivery.Arrive(EmployeeId, UtcNow.AddMinutes(3));
+        delivery.Arrive(EmployeeId, IndiaLocalNow.AddMinutes(3));
         delivery.EnsureCanRecordLocation(EmployeeId);
 
-        delivery.Fail(EmployeeId, UtcNow.AddMinutes(4), DeliveryFailureReasons.Other, null, null, null);
+        delivery.Fail(EmployeeId, IndiaLocalNow.AddMinutes(4), DeliveryFailureReasons.Other, null, null, null);
         Assert.False(delivery.IsTrackingActive);
         Assert.Throws<InvalidOperationException>(() => delivery.EnsureCanRecordLocation(EmployeeId));
     }
@@ -145,7 +145,7 @@ public sealed class DeliveryDomainTests
 
         delivery.Fail(
             EmployeeId,
-            UtcNow.AddMinutes(1),
+            IndiaLocalNow.AddMinutes(1),
             " customer NOT available ",
             " Customer requested retry ",
             12.9716m,
@@ -165,13 +165,13 @@ public sealed class DeliveryDomainTests
         var delivery = CreateAssignedDelivery();
 
         Assert.Throws<ArgumentException>(() =>
-            delivery.Fail(EmployeeId, UtcNow.AddMinutes(1), "Weather", null, null, null));
+            delivery.Fail(EmployeeId, IndiaLocalNow.AddMinutes(1), "Weather", null, null, null));
         Assert.Throws<ArgumentException>(() =>
-            delivery.Fail(EmployeeId, UtcNow.AddMinutes(1), DeliveryFailureReasons.Other, null, 12m, null));
+            delivery.Fail(EmployeeId, IndiaLocalNow.AddMinutes(1), DeliveryFailureReasons.Other, null, 12m, null));
 
-        delivery.Fail(EmployeeId, UtcNow.AddMinutes(1), DeliveryFailureReasons.VehicleIssue, null, null, null);
+        delivery.Fail(EmployeeId, IndiaLocalNow.AddMinutes(1), DeliveryFailureReasons.VehicleIssue, null, null, null);
         Assert.Throws<InvalidOperationException>(() =>
-            delivery.Fail(EmployeeId, UtcNow.AddMinutes(2), DeliveryFailureReasons.Other, null, null, null));
+            delivery.Fail(EmployeeId, IndiaLocalNow.AddMinutes(2), DeliveryFailureReasons.Other, null, null, null));
     }
 
     [Fact]
@@ -179,34 +179,34 @@ public sealed class DeliveryDomainTests
     {
         var otp = CreateOtp(maximumAttempts: 2);
 
-        otp.RecordFailedAttempt(UtcNow.AddMinutes(1));
-        otp.RecordFailedAttempt(UtcNow.AddMinutes(2));
+        otp.RecordFailedAttempt(IndiaLocalNow.AddMinutes(1));
+        otp.RecordFailedAttempt(IndiaLocalNow.AddMinutes(2));
 
         Assert.Equal(2, otp.AttemptCount);
-        Assert.Throws<InvalidOperationException>(() => otp.EnsureVerifiable(UtcNow.AddMinutes(3)));
-        Assert.Throws<InvalidOperationException>(() => otp.Consume(UtcNow.AddMinutes(3)));
+        Assert.Throws<InvalidOperationException>(() => otp.EnsureVerifiable(IndiaLocalNow.AddMinutes(3)));
+        Assert.Throws<InvalidOperationException>(() => otp.Consume(IndiaLocalNow.AddMinutes(3)));
     }
 
     [Fact]
     public void DeliveryOtp_ExpiresAtBoundaryAndCanOnlyBeConsumedOnce()
     {
-        var expired = CreateOtp(expiresAtUtc: UtcNow.AddMinutes(5));
-        Assert.Throws<InvalidOperationException>(() => expired.EnsureVerifiable(UtcNow.AddMinutes(5)));
+        var expired = CreateOtp(expiresAt: IndiaLocalNow.AddMinutes(5));
+        Assert.Throws<InvalidOperationException>(() => expired.EnsureVerifiable(IndiaLocalNow.AddMinutes(5)));
 
         var consumed = CreateOtp();
-        consumed.Consume(UtcNow.AddMinutes(1));
+        consumed.Consume(IndiaLocalNow.AddMinutes(1));
 
-        Assert.Equal(UtcNow.AddMinutes(1), consumed.ConsumedAtUtc);
-        Assert.Throws<InvalidOperationException>(() => consumed.Consume(UtcNow.AddMinutes(2)));
-        Assert.Throws<InvalidOperationException>(() => consumed.RecordFailedAttempt(UtcNow.AddMinutes(2)));
+        Assert.Equal(IndiaLocalNow.AddMinutes(1), consumed.ConsumedAt);
+        Assert.Throws<InvalidOperationException>(() => consumed.Consume(IndiaLocalNow.AddMinutes(2)));
+        Assert.Throws<InvalidOperationException>(() => consumed.RecordFailedAttempt(IndiaLocalNow.AddMinutes(2)));
     }
 
     [Fact]
-    public void DeliveryOtp_RejectsInvalidConstructionAndNonUtcOperations()
+    public void DeliveryOtp_RejectsInvalidConstructionAndNonIndiaLocalOperations()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryOtp(0, "hash", UtcNow.AddMinutes(5), 3, UtcNow));
-        Assert.Throws<ArgumentException>(() => new DeliveryOtp(1, " ", UtcNow.AddMinutes(5), 3, UtcNow));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryOtp(1, "hash", UtcNow, 3, UtcNow));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryOtp(0, "hash", IndiaLocalNow.AddMinutes(5), 3, IndiaLocalNow));
+        Assert.Throws<ArgumentException>(() => new DeliveryOtp(1, " ", IndiaLocalNow.AddMinutes(5), 3, IndiaLocalNow));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryOtp(1, "hash", IndiaLocalNow, 3, IndiaLocalNow));
         Assert.Throws<ArgumentException>(() =>
             new DeliveryOtp(1, "hash", DateTime.Now.AddMinutes(5), 3, DateTime.Now));
 
@@ -219,36 +219,36 @@ public sealed class DeliveryDomainTests
     [Fact]
     public void DeliveryLocation_CapturesValidReading()
     {
-        var location = new DeliveryLocation(1, EmployeeId, 12.9716m, 77.5946m, 8.5m, UtcNow);
+        var location = new DeliveryLocation(1, EmployeeId, 12.9716m, 77.5946m, 8.5m, IndiaLocalNow);
 
         Assert.Equal(1, location.DeliveryId);
         Assert.Equal(EmployeeId, location.EmployeeId);
         Assert.Equal(12.9716m, location.Latitude);
         Assert.Equal(77.5946m, location.Longitude);
         Assert.Equal(8.5m, location.AccuracyMetres);
-        Assert.Equal(UtcNow, location.RecordedAtUtc);
+        Assert.Equal(IndiaLocalNow, location.RecordedAt);
     }
 
     [Fact]
     public void DeliveryLocation_RejectsInvalidIdentityCoordinatesAccuracyAndTimestamp()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryLocation(0, EmployeeId, 0m, 0m, null, UtcNow));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryLocation(1, 0, 0m, 0m, null, UtcNow));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryLocation(1, EmployeeId, 90.1m, 0m, null, UtcNow));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryLocation(1, EmployeeId, 0m, -180.1m, null, UtcNow));
-        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryLocation(1, EmployeeId, 0m, 0m, -0.1m, UtcNow));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryLocation(0, EmployeeId, 0m, 0m, null, IndiaLocalNow));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryLocation(1, 0, 0m, 0m, null, IndiaLocalNow));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryLocation(1, EmployeeId, 90.1m, 0m, null, IndiaLocalNow));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryLocation(1, EmployeeId, 0m, -180.1m, null, IndiaLocalNow));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new DeliveryLocation(1, EmployeeId, 0m, 0m, -0.1m, IndiaLocalNow));
         Assert.Throws<ArgumentException>(() => new DeliveryLocation(1, EmployeeId, 0m, 0m, null, DateTime.Now));
     }
 
     private static Delivery CreateAssignedDelivery()
     {
         var delivery = CreateOrderDelivery();
-        delivery.Assign(EmployeeId, assignedByUserId: 30, UtcNow, null);
+        delivery.Assign(EmployeeId, assignedByUserId: 30, IndiaLocalNow, null);
         return delivery;
     }
 
-    private static DeliveryOtp CreateOtp(DateTime? expiresAtUtc = null, int maximumAttempts = 3) =>
-        new(1, "hashed-delivery-code", expiresAtUtc ?? UtcNow.AddMinutes(10), maximumAttempts, UtcNow);
+    private static DeliveryOtp CreateOtp(DateTime? expiresAt = null, int maximumAttempts = 3) =>
+        new(1, "hashed-delivery-code", expiresAt ?? IndiaLocalNow.AddMinutes(10), maximumAttempts, IndiaLocalNow);
 
     private static Delivery CreateOrderDelivery(
         long orderId = 10,

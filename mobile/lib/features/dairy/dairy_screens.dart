@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
@@ -184,7 +185,7 @@ class _DairyProductionEntryScreenState
   final _buffaloController = TextEditingController();
   final _remarksController = TextEditingController();
   String? _shift;
-  DateTime _productionAt = DateTime.now();
+  DateTime _productionAt = indiaNow();
 
   @override
   void dispose() {
@@ -201,7 +202,7 @@ class _DairyProductionEntryScreenState
         .recordProduction(
           widget.branchId,
           RecordMilkProductionRequest(
-            productionAtUtc: _productionAt.toUtc(),
+            productionAt: _productionAt,
             shift: _shift,
             buffaloCount: int.parse(_buffaloController.text.trim()),
             quantityProduced: double.parse(_quantityController.text.trim()),
@@ -268,10 +269,11 @@ class _DairyProductionEntryScreenState
               subtitle: Text(formatDairyDateTime(_productionAt)),
               trailing: const Icon(Icons.calendar_today_outlined),
               onTap: () async {
+                final now = indiaNow();
                 final date = await showDatePicker(
                   context: context,
-                  firstDate: DateTime.now().subtract(const Duration(days: 30)),
-                  lastDate: DateTime.now(),
+                  firstDate: now.subtract(const Duration(days: 30)),
+                  lastDate: now,
                   initialDate: _productionAt,
                 );
                 if (date != null) {
@@ -372,7 +374,7 @@ class _DairyBatchListScreenState extends ConsumerState<DairyBatchListScreen> {
                   title: Text(batch.batchNumber),
                   subtitle: Text(
                     '${formatMilkQuantity(batch.availableQuantity, batch.unit)} available\n'
-                    '${formatDairyDateTime(batch.productionAtUtc)}',
+                    '${formatDairyDateTime(batch.productionAt)}',
                   ),
                   isThreeLine: true,
                   trailing: Text(batch.status.label),
@@ -446,7 +448,7 @@ class _DairyBatchDetailScreenState
                 ),
                 _DetailRow(
                   label: 'Production time',
-                  value: formatDairyDateTime(batch.productionAtUtc),
+                  value: formatDairyDateTime(batch.productionAt),
                 ),
                 _DetailRow(label: 'Branch', value: '${batch.branchId}'),
                 const SizedBox(height: 24),
@@ -602,7 +604,7 @@ class _DairyProductionHistoryScreenState
                     ),
                   ),
                   subtitle: Text(
-                    '${formatDairyDateTime(production.productionAtUtc)}\n${production.batch.batchNumber}',
+                    '${formatDairyDateTime(production.productionAt)}\n${production.batch.batchNumber}',
                   ),
                   isThreeLine: true,
                   trailing: Text('${production.buffaloCount} buffaloes'),
@@ -671,7 +673,7 @@ class _DairyUsageScreenState extends ConsumerState<DairyUsageScreen> {
                     formatMilkQuantity(usage.quantityUsed, usage.unit),
                   ),
                   subtitle: Text(
-                    '${usage.batchNumber}\n${usage.purpose} • ${formatDairyDateTime(usage.usedAtUtc)}',
+                    '${usage.batchNumber}\n${usage.purpose} • ${formatDairyDateTime(usage.usedAt)}',
                   ),
                   isThreeLine: true,
                 ),
@@ -698,7 +700,7 @@ class _DairyUsageEntryScreenState extends ConsumerState<DairyUsageEntryScreen> {
   final _quantityController = TextEditingController();
   final _purposeController = TextEditingController();
   final _remarksController = TextEditingController();
-  DateTime _usedAt = DateTime.now();
+  DateTime _usedAt = indiaNow();
 
   @override
   void dispose() {
@@ -709,7 +711,7 @@ class _DairyUsageEntryScreenState extends ConsumerState<DairyUsageEntryScreen> {
   }
 
   Future<void> _pickUsedAt() async {
-    final now = DateTime.now();
+    final now = indiaNow();
     final date = await showDatePicker(
       context: context,
       firstDate: now.subtract(const Duration(days: 30)),
@@ -731,7 +733,7 @@ class _DairyUsageEntryScreenState extends ConsumerState<DairyUsageEntryScreen> {
       time.hour,
       time.minute,
     );
-    if (selected.isAfter(DateTime.now())) {
+    if (selected.isAfter(indiaNow())) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Usage time cannot be in the future.')),
       );
@@ -747,7 +749,7 @@ class _DairyUsageEntryScreenState extends ConsumerState<DairyUsageEntryScreen> {
         .recordUsage(
           widget.batchId,
           RecordMilkUsageRequest(
-            usedAtUtc: _usedAt.toUtc(),
+            usedAt: _usedAt,
             quantityUsed: double.parse(_quantityController.text.trim()),
             purpose: _purposeController.text.trim(),
             remarks: _remarksController.text.trim().isEmpty

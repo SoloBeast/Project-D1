@@ -12,7 +12,7 @@ namespace DoodhDirect.Infrastructure.Notifications;
 
 internal sealed class NotificationEventWriter(
     DoodhDirectDbContext dbContext,
-    IClock clock) : INotificationEventWriter
+    IIndiaTimeProvider timeProvider) : INotificationEventWriter
 {
     public void Add(NotificationEventRequest request)
     {
@@ -27,7 +27,7 @@ internal sealed class NotificationEventWriter(
             request.EventKey,
             payload,
             NotificationEventTypes.IsCritical(eventType),
-            request.OccurredAtUtc ?? clock.UtcNow));
+            request.OccurredAt ?? timeProvider.Now));
     }
 
     internal static string NormalizeEventType(string eventType)
@@ -51,7 +51,7 @@ internal sealed class NotificationService(
     DoodhDirectDbContext dbContext,
     SecureTokenGenerator tokenGenerator,
     NotificationTokenProtector tokenProtector,
-    IClock clock) : INotificationService
+    IIndiaTimeProvider timeProvider) : INotificationService
 {
     public async Task<NotificationPageResult> GetAsync(
         NotificationActor actor,
@@ -72,13 +72,13 @@ internal sealed class NotificationService(
         if (request.IsRead.HasValue)
         {
             query = request.IsRead.Value
-                ? query.Where(x => x.ReadAtUtc != null)
-                : query.Where(x => x.ReadAtUtc == null);
+                ? query.Where(x => x.ReadAt != null)
+                : query.Where(x => x.ReadAt == null);
         }
 
         var totalCount = await query.CountAsync(cancellationToken);
         var items = await query
-            .OrderByDescending(x => x.CreatedAtUtc)
+            .OrderByDescending(x => x.CreatedAt)
             .ThenByDescending(x => x.Id)
             .Skip((request.Page - 1) * request.PageSize)
             .Take(request.PageSize)
@@ -88,9 +88,9 @@ internal sealed class NotificationService(
                 x.Title,
                 x.Body,
                 x.DeepLink,
-                x.ReadAtUtc != null,
-                x.CreatedAtUtc,
-                x.ReadAtUtc))
+                x.ReadAt != null,
+                x.CreatedAt,
+                x.ReadAt))
             .ToListAsync(cancellationToken);
 
         return new NotificationPageResult(items, request.Page, request.PageSize, totalCount);
@@ -102,7 +102,7 @@ internal sealed class NotificationService(
     {
         ValidateActor(actor);
         var count = await dbContext.Notifications.CountAsync(
-            x => x.UserId == actor.UserId && x.ReadAtUtc == null,
+            x => x.UserId == actor.UserId && x.ReadAt == null,
             cancellationToken);
         return new NotificationUnreadCountResult(count);
     }
@@ -117,7 +117,7 @@ internal sealed class NotificationService(
             x => x.PublicId == notificationId && x.UserId == actor.UserId,
             cancellationToken)
             ?? throw new NotFoundException("Notification was not found.");
-        notification.MarkRead(clock.UtcNow);
+        notification.MarkRead(timeProvider.Now);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -136,7 +136,7 @@ internal sealed class NotificationService(
             throw new ValidationAppException("Device name cannot exceed 160 characters.", "deviceName");
         }
 
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         var deviceHash = tokenGenerator.Hash(request.DeviceIdentifier.Trim());
         var tokenHash = tokenGenerator.Hash(request.PushToken.Trim());
         var protectedToken = tokenProtector.Protect(request.PushToken);
@@ -238,8 +238,8 @@ internal sealed class NotificationService(
         device.Platform,
         device.DeviceName,
         device.IsActive,
-        device.RegisteredAtUtc,
-        device.LastSeenAtUtc);
+        device.RegisteredAt,
+        device.LastSeenAt);
 
     private static void ValidateActor(NotificationActor actor)
     {
@@ -260,7 +260,7 @@ internal sealed class NotificationService(
 
 internal sealed class NotificationTemplateService(
     DoodhDirectDbContext dbContext,
-    IClock clock) : INotificationTemplateService
+    IIndiaTimeProvider timeProvider) : INotificationTemplateService
 {
     public async Task<IReadOnlyCollection<NotificationTemplateResult>> GetAsync(
         CancellationToken cancellationToken) =>
@@ -277,8 +277,8 @@ internal sealed class NotificationTemplateService(
                 x.TitleTemplate,
                 x.BodyTemplate,
                 x.IsActive,
-                x.CreatedAtUtc,
-                x.UpdatedAtUtc))
+                x.CreatedAt,
+                x.UpdatedAt))
             .ToListAsync(cancellationToken);
 
     public async Task<NotificationTemplateResult> UpdateAsync(
@@ -332,7 +332,7 @@ internal sealed class NotificationTemplateService(
             null,
             null,
             request.Reason.Trim(),
-            clock.UtcNow));
+            timeProvider.Now));
         await dbContext.SaveChangesAsync(cancellationToken);
 
         return new NotificationTemplateResult(
@@ -343,7 +343,7 @@ internal sealed class NotificationTemplateService(
             template.TitleTemplate,
             template.BodyTemplate,
             template.IsActive,
-            template.CreatedAtUtc,
-            template.UpdatedAtUtc);
+            template.CreatedAt,
+            template.UpdatedAt);
     }
 }

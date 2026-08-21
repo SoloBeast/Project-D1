@@ -109,7 +109,7 @@ public sealed class Order : AuditableEntity
     public string ContactMobileSnapshot { get; private set; } = string.Empty;
     public decimal LatitudeSnapshot { get; private set; }
     public decimal LongitudeSnapshot { get; private set; }
-    public DateTime? CancelledAtUtc { get; private set; }
+    public DateTime? CancelledAt { get; private set; }
 
     public User Customer { get; private set; } = null!;
     public CustomerAddress CustomerAddress { get; private set; } = null!;
@@ -154,16 +154,16 @@ public sealed class Order : AuditableEntity
         Status = OrderStatus.PaymentFailed;
     }
 
-    public void Cancel(DateTime utcNow)
+    public void Cancel(DateTime now)
     {
         if (Status != OrderStatus.Confirmed)
         {
             throw new InvalidOperationException($"An order in status '{Status}' cannot be cancelled.");
         }
 
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(now, nameof(now));
         Status = OrderStatus.Cancelled;
-        CancelledAtUtc = utcNow;
+        CancelledAt = now;
     }
 
     public void AssignForDelivery()
@@ -210,11 +210,11 @@ public sealed class Order : AuditableEntity
         }
     }
 
-    private static void EnsureUtc(DateTime value, string parameterName)
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
     {
-        if (value.Kind != DateTimeKind.Utc)
+        if (value.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("Timestamp must be UTC.", parameterName);
+            throw new ArgumentException("Timestamp must be India-local.", parameterName);
         }
     }
 

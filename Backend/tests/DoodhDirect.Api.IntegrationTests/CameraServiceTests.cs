@@ -171,7 +171,8 @@ public sealed class CameraServiceTests
     [Fact]
     public async Task DevelopmentGateway_IssuesShortLivedHttpsHlsDescriptorOnlyWhenExplicitlyConfigured()
     {
-        var now = new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Utc);
+        var now = new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Unspecified);
+        var timeProvider = new TestIndiaTimeProvider(new TestClock(now));
         var gateway = new DevelopmentCameraStreamGateway(
             Options.Create(new CameraStreamOptions
             {
@@ -179,7 +180,7 @@ public sealed class CameraServiceTests
                 DevelopmentHlsPlaybackUrl = "https://development.example/live.m3u8",
                 DescriptorLifetimeMinutes = 4
             }),
-            new TestClock(now));
+            timeProvider);
         var request = new CameraStreamRequest(
             Guid.NewGuid(),
             CameraStreamProtocol.Hls,
@@ -190,7 +191,9 @@ public sealed class CameraServiceTests
 
         Assert.Equal(CameraStreamProtocol.Hls, descriptor.Protocol);
         Assert.Equal(new Uri("https://development.example/live.m3u8"), descriptor.PlaybackUri);
-        Assert.Equal(now.AddMinutes(4), descriptor.ExpiresAtUtc);
+        Assert.Equal(
+            new DateTimeOffset(timeProvider.ToUtc(now.AddMinutes(4)), TimeSpan.Zero),
+            descriptor.ExpiresAtUtc);
         Assert.True(descriptor.IsDevelopmentStream);
     }
 
@@ -278,7 +281,12 @@ public sealed class CameraServiceTests
             Gateway = gateway;
             MainBranchId = mainBranchId;
             NorthBranchId = northBranchId;
-            Service = new CameraService(db, gateway);
+            var clock = new TestClock(
+                new DateTime(2026, 8, 20, 3, 0, 0, DateTimeKind.Unspecified));
+            Service = new CameraService(
+                db,
+                gateway,
+                new TestIndiaTimeProvider(clock));
         }
 
         public SqliteConnection Connection { get; }
@@ -357,7 +365,7 @@ public sealed class CameraServiceTests
             return Task.FromResult(new CameraStreamDescriptor(
                 request.Protocol,
                 new Uri("https://streams.example/live.m3u8"),
-                DateTime.UtcNow.AddMinutes(5),
+                DateTimeOffset.UtcNow.AddMinutes(5),
                 false));
         }
     }

@@ -111,11 +111,13 @@ class PaymentDetails {
     gatewayKeyId: json['gatewayKeyId'] as String?,
     failureCode: json['failureCode'] as String?,
     failureMessage: json['failureMessage'] as String?,
-    expiresAtUtc: DateTime.parse(json['expiresAtUtc'] as String),
-    verifiedAtUtc: json['verifiedAtUtc'] == null
-        ? null
-        : DateTime.parse(json['verifiedAtUtc'] as String),
-    createdAtUtc: DateTime.parse(json['createdAtUtc'] as String),
+    expiresAtUtc: _parseAbsoluteTimestamp(json, 'expiresAtUtc', 'expiresAt'),
+    verifiedAtUtc: _parseOptionalAbsoluteTimestamp(
+      json,
+      'verifiedAtUtc',
+      'verifiedAt',
+    ),
+    createdAtUtc: _parseAbsoluteTimestamp(json, 'createdAtUtc', 'createdAt'),
   );
 
   final String publicId;
@@ -151,6 +153,37 @@ class PaymentDetails {
       : orderNumber == null
       ? 'order'
       : 'order $orderNumber';
+}
+
+DateTime _parseAbsoluteTimestamp(
+  Map<String, dynamic> json,
+  String preferredKey,
+  String compatibilityKey,
+) {
+  final value = json[preferredKey] ?? json[compatibilityKey];
+  if (value is! String) {
+    throw FormatException(
+      'Missing or invalid absolute timestamp: $preferredKey',
+    );
+  }
+  return DateTime.parse(value).toUtc();
+}
+
+DateTime? _parseOptionalAbsoluteTimestamp(
+  Map<String, dynamic> json,
+  String preferredKey,
+  String compatibilityKey,
+) {
+  final value = json.containsKey(preferredKey)
+      ? json[preferredKey]
+      : json[compatibilityKey];
+  if (value == null) return null;
+  if (value is! String) {
+    throw FormatException(
+      'Invalid absolute timestamp: $preferredKey',
+    );
+  }
+  return DateTime.parse(value).toUtc();
 }
 
 PaymentMethod _paymentMethod(String value) => switch (value.toLowerCase()) {

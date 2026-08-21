@@ -1,3 +1,5 @@
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
@@ -65,13 +67,51 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
               onRefresh: () =>
                   ref.read(customerControllerProvider.notifier).load(),
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
                 children: [
-                  Text(
-                    'Delivery address',
-                    style: Theme.of(context).textTheme.titleLarge,
+                  const _CheckoutProgress(),
+                  const SizedBox(height: 20),
+                  _CheckoutSectionLabel(
+                    step: '1',
+                    title: 'Your order',
+                    subtitle: 'Fresh products selected for this delivery',
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
+                  ...orderState.cart.map(
+                    (item) => Card(
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 6,
+                        ),
+                        leading: const CircleAvatar(
+                          backgroundColor: DoodhColors.mint,
+                          child: Icon(
+                            Icons.local_drink_outlined,
+                            color: DoodhColors.tealDark,
+                          ),
+                        ),
+                        title: Text(item.product.name),
+                        subtitle: Text(
+                          '${formatQuantity(item.quantity)} ${item.product.unitLabel} · ₹${item.product.price.toStringAsFixed(2)} each',
+                        ),
+                        trailing: IconButton(
+                          tooltip: 'Remove item',
+                          onPressed: () => ref
+                              .read(orderControllerProvider.notifier)
+                              .removeCartItem(item.product.publicId),
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  _CheckoutSectionLabel(
+                    step: '2',
+                    title: 'Delivery address',
+                    subtitle: 'Where should we deliver your order?',
+                  ),
+                  const SizedBox(height: 10),
                   if (customerState.isLoading && addresses.isEmpty)
                     const LinearProgressIndicator()
                   else if (addresses.isEmpty)
@@ -107,27 +147,6 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                             .clearPreview();
                       },
                     ),
-                  const SizedBox(height: 24),
-                  Text('Items', style: Theme.of(context).textTheme.titleLarge),
-                  const SizedBox(height: 8),
-                  ...orderState.cart.map(
-                    (item) => Card(
-                      child: ListTile(
-                        title: Text(item.product.name),
-                        subtitle: Text(
-                          '${formatQuantity(item.quantity)} ${item.product.unitLabel}',
-                        ),
-                        trailing: IconButton(
-                          tooltip: 'Remove item',
-                          onPressed: () => ref
-                              .read(orderControllerProvider.notifier)
-                              .removeCartItem(item.product.publicId),
-                          icon: const Icon(Icons.delete_outline),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
                   if (orderState.errorMessage != null)
                     Text(
                       orderState.errorMessage!,
@@ -135,7 +154,15 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                         color: Theme.of(context).colorScheme.error,
                       ),
                     ),
-                  if (preview != null) _PreviewCard(preview: preview),
+                  if (preview != null) ...[
+                    _CheckoutSectionLabel(
+                      step: '3',
+                      title: 'Order summary',
+                      subtitle: 'Your final total is calculated securely',
+                    ),
+                    const SizedBox(height: 10),
+                    _PreviewCard(preview: preview),
+                  ],
                   const SizedBox(height: 16),
                   FilledButton.icon(
                     onPressed: selectedId == null || orderState.isSaving
@@ -197,10 +224,10 @@ class _PreviewCard extends StatelessWidget {
         children: [
           Text('Server quote', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          Text('Fulfilled by ${preview.branchName} (${preview.branchCode})'),
-          Text(
-            '${preview.distanceKm.toStringAsFixed(1)} km from delivery address',
-          ),
+          Text('Delivered to ${preview.addressLabel}'),
+          const SizedBox(height: 4),
+          Text('${preview.addressLine1}, ${preview.locality}, ${preview.city}'),
+          Text('Contact: ${preview.contactName} · ${preview.contactMobile}'),
           const Divider(),
           ...preview.items.map(
             (item) => Padding(
@@ -265,6 +292,100 @@ class _AmountRow extends StatelessWidget {
   );
 }
 
+class _CheckoutProgress extends StatelessWidget {
+  const _CheckoutProgress();
+
+  @override
+  Widget build(BuildContext context) => Card(
+    color: DoodhColors.mint,
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: const [
+          _ProgressDot(label: 'Product', active: true),
+          _ProgressLine(),
+          _ProgressDot(label: 'Address', active: true),
+          _ProgressLine(),
+          _ProgressDot(label: 'Pay', active: false),
+        ],
+      ),
+    ),
+  );
+}
+
+class _ProgressDot extends StatelessWidget {
+  const _ProgressDot({required this.label, required this.active});
+  final String label;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Column(
+      children: [
+        CircleAvatar(
+          radius: 14,
+          backgroundColor: active ? DoodhColors.teal : Colors.white,
+          child: Icon(
+            active ? Icons.check : Icons.payments_outlined,
+            size: 16,
+            color: active ? Colors.white : DoodhColors.muted,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+        ),
+      ],
+    ),
+  );
+}
+
+class _ProgressLine extends StatelessWidget {
+  const _ProgressLine();
+  @override
+  Widget build(BuildContext context) =>
+      Expanded(child: Container(height: 2, color: DoodhColors.teal));
+}
+
+class _CheckoutSectionLabel extends StatelessWidget {
+  const _CheckoutSectionLabel({
+    required this.step,
+    required this.title,
+    required this.subtitle,
+  });
+  final String step;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      CircleAvatar(
+        radius: 15,
+        backgroundColor: DoodhColors.tealDark,
+        child: Text(
+          step,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+      const SizedBox(width: 10),
+      Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
 class OrderHistoryScreen extends ConsumerStatefulWidget {
   const OrderHistoryScreen({super.key});
 
@@ -284,9 +405,10 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(orderControllerProvider);
-    return Scaffold(
-      appBar: AppBar(title: const Text('My orders')),
-      body: state.isLoading && state.orders.isEmpty
+    return CustomerShell(
+      currentPath: '/orders',
+      title: 'My orders',
+      child: state.isLoading && state.orders.isEmpty
           ? const LoadingStatePanel(message: 'Loading your orders...')
           : state.errorMessage != null && state.orders.isEmpty
           ? ErrorStatePanel(
@@ -315,7 +437,7 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen> {
                     child: ListTile(
                       title: Text(order.orderNumber),
                       subtitle: Text(
-                        '${formatOrderDate(order.createdAtUtc)} · ${order.status}\n${order.itemSummary}',
+                        '${formatOrderDate(order.createdAt)} · ${order.status}\n${order.itemSummary}',
                       ),
                       isThreeLine: true,
                       trailing: Text(order.formattedTotal),
@@ -386,83 +508,164 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                   .read(orderControllerProvider.notifier)
                   .loadOrder(widget.orderId),
             )
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Text(
-                  order.orderNumber,
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                Text(
-                  '${formatOrderDate(order.createdAtUtc)} · ${order.status}',
-                ),
-                const SizedBox(height: 16),
-                Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.store_outlined),
-                    title: Text(order.branchName),
-                    subtitle: Text('${order.addressLabel}, ${order.city}'),
+          : RefreshIndicator(
+              onRefresh: () => ref
+                  .read(orderControllerProvider.notifier)
+                  .loadOrder(widget.orderId),
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              order.orderNumber,
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(formatOrderDate(order.createdAt)),
+                          ],
+                        ),
+                      ),
+                      _OrderStatusPill(status: order.status),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 8),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        ...order.items.map(
-                          (item) => _AmountRow(
-                            label:
-                                '${item.productName} × ${formatQuantity(item.quantity)}',
-                            amount: item.lineTotal,
-                          ),
-                        ),
-                        const Divider(),
-                        _AmountRow(label: 'Subtotal', amount: order.subtotal),
-                        _AmountRow(
-                          label: 'Discount',
-                          amount: -order.discountAmount,
-                        ),
-                        _AmountRow(
-                          label: 'Payable',
-                          amount: order.payableAmount,
-                          emphasized: true,
-                        ),
-                      ],
+                  const SizedBox(height: 16),
+                  Card(
+                    color: DoodhColors.mint,
+                    child: ListTile(
+                      leading: const Icon(
+                        Icons.local_shipping_outlined,
+                        color: DoodhColors.tealDark,
+                      ),
+                      title: const Text('Delivery destination'),
+                      subtitle: Text('${order.addressLabel}, ${order.city}'),
                     ),
                   ),
-                ),
-                if (state.errorMessage != null) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 16),
+                  DoodhSectionHeader(title: 'Your items'),
                   Text(
-                    state.errorMessage!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
+                    '${order.items.length} products in this order',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          ...order.items.map(
+                            (item) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(Icons.local_drink_outlined),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      '${item.productName}\n${formatQuantity(item.quantity)}',
+                                    ),
+                                  ),
+                                  Text('₹${item.lineTotal.toStringAsFixed(2)}'),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const Divider(height: 24),
+                          _AmountRow(label: 'Subtotal', amount: order.subtotal),
+                          _AmountRow(
+                            label: 'Discount',
+                            amount: -order.discountAmount,
+                          ),
+                          _AmountRow(
+                            label: 'Total to pay',
+                            amount: order.payableAmount,
+                            emphasized: true,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ],
-                if (order.status == 'PendingPayment') ...[
-                  const SizedBox(height: 20),
-                  FilledButton.icon(
-                    onPressed: () => context.push(
-                      '/orders/${order.publicId}/payment',
-                      extra: order,
+                  const SizedBox(height: 16),
+                  DoodhSectionHeader(title: 'Payment'),
+                  Text(
+                    order.status == 'PendingPayment'
+                        ? 'Payment is required to confirm this order'
+                        : 'Payment status for this order',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Card(
+                    child: ListTile(
+                      leading: Icon(
+                        order.status == 'PendingPayment'
+                            ? Icons.pending_outlined
+                            : Icons.verified_outlined,
+                      ),
+                      title: Text(
+                        order.status == 'PendingPayment'
+                            ? 'Payment pending'
+                            : 'Payment linked to order',
+                      ),
+                      subtitle: Text(order.formattedTotal),
                     ),
-                    icon: const Icon(Icons.payments_outlined),
-                    label: Text('Pay ${order.formattedTotal}'),
                   ),
+                  if (state.errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      state.errorMessage!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                  if (order.status == 'PendingPayment') ...[
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: () => context.push(
+                        '/orders/${order.publicId}/payment',
+                        extra: order,
+                      ),
+                      icon: const Icon(Icons.payments_outlined),
+                      label: Text('Pay ${order.formattedTotal}'),
+                    ),
+                  ],
+                  if (order.canCancel) ...[
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: state.isSaving ? null : () => _cancel(order),
+                      icon: const Icon(Icons.cancel_outlined),
+                      label: const Text('Cancel order'),
+                    ),
+                  ],
                 ],
-                if (order.canCancel) ...[
-                  const SizedBox(height: 20),
-                  OutlinedButton.icon(
-                    onPressed: state.isSaving ? null : () => _cancel(order),
-                    icon: const Icon(Icons.cancel_outlined),
-                    label: const Text('Cancel order'),
-                  ),
-                ],
-              ],
+              ),
             ),
     );
+  }
+}
+
+class _OrderStatusPill extends StatelessWidget {
+  const _OrderStatusPill({required this.status});
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = status.toLowerCase();
+    final tone = normalized.contains('cancel') || normalized.contains('fail')
+        ? DoodhStatusTone.error
+        : normalized.contains('pending')
+        ? DoodhStatusTone.warning
+        : normalized.contains('deliver') || normalized.contains('confirm')
+        ? DoodhStatusTone.success
+        : DoodhStatusTone.neutral;
+    return DoodhStatusPill(label: status, tone: tone);
   }
 }
 

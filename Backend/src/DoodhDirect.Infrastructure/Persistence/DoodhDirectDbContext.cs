@@ -1,3 +1,4 @@
+using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Cameras;
 using DoodhDirect.Domain.Catalogue;
@@ -17,8 +18,13 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace DoodhDirect.Infrastructure.Persistence;
 
-public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> options) : DbContext(options)
+public sealed class DoodhDirectDbContext(
+    DbContextOptions<DoodhDirectDbContext> options,
+    IIndiaTimeProvider? timeProvider = null) : DbContext(options)
 {
+    private readonly IIndiaTimeProvider _timeProvider = timeProvider ?? new IndiaTimeProvider(
+        TimeZoneInfo.FindSystemTimeZoneById("Asia/Calcutta"));
+
     public DbSet<User> Users => Set<User>();
     public DbSet<Role> Roles => Set<Role>();
     public DbSet<Permission> Permissions => Set<Permission>();
@@ -132,7 +138,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
 
     private void ApplyAuditTimestamps()
     {
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.Now;
         foreach (EntityEntry entry in ChangeTracker.Entries())
         {
             if (entry.Entity is not DoodhDirect.Domain.Common.AuditableEntity entity)
@@ -160,7 +166,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigurePublicEntity(entity);
         entity.HasIndex(x => x.Mobile).IsUnique().HasFilter("[Mobile] IS NOT NULL");
         entity.HasIndex(x => x.Email).IsUnique().HasFilter("[Email] IS NOT NULL");
-        entity.HasIndex(x => new { x.UserType, x.CreatedAtUtc, x.Id });
+        entity.HasIndex(x => new { x.UserType, x.CreatedAt, x.Id });
+        entity.Property(x => x.LastLoginAt).HasColumnName("LastLoginAtUtc");
         entity.Property(x => x.UserType).HasConversion<string>().HasMaxLength(30).IsRequired();
         entity.Property(x => x.DisplayName).HasMaxLength(160);
         entity.Property(x => x.Mobile).HasMaxLength(20);
@@ -231,8 +238,11 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.Purpose).HasConversion<string>().HasMaxLength(30).IsRequired();
         entity.Property(x => x.CodeHash).HasMaxLength(128).IsRequired();
         entity.Property(x => x.RequestedFromIp).HasMaxLength(64);
-        entity.HasIndex(x => new { x.Destination, x.Purpose, x.CreatedAtUtc });
-        entity.HasIndex(x => new { x.ExpiresAtUtc, x.ConsumedAtUtc });
+        entity.Property(x => x.CreatedAt).HasColumnName("CreatedAtUtc");
+        entity.Property(x => x.ExpiresAt).HasColumnName("ExpiresAtUtc");
+        entity.Property(x => x.ConsumedAt).HasColumnName("ConsumedAtUtc");
+        entity.HasIndex(x => new { x.Destination, x.Purpose, x.CreatedAt });
+        entity.HasIndex(x => new { x.ExpiresAt, x.ConsumedAt });
     }
 
     private static void ConfigureUserSession(ModelBuilder modelBuilder)
@@ -248,8 +258,11 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.IPAddress).HasMaxLength(64);
         entity.Property(x => x.UserAgent).HasMaxLength(1000);
         entity.Property(x => x.RevocationReason).HasMaxLength(200);
-        entity.HasIndex(x => new { x.UserId, x.RevokedAtUtc, x.LastSeenAtUtc });
-        entity.HasIndex(x => new { x.UserId, x.DeviceIdentifierHash, x.RevokedAtUtc });
+        entity.Property(x => x.CreatedAt).HasColumnName("CreatedAtUtc");
+        entity.Property(x => x.LastSeenAt).HasColumnName("LastSeenAtUtc");
+        entity.Property(x => x.RevokedAt).HasColumnName("RevokedAtUtc");
+        entity.HasIndex(x => new { x.UserId, x.RevokedAt, x.LastSeenAt });
+        entity.HasIndex(x => new { x.UserId, x.DeviceIdentifierHash, x.RevokedAt });
         entity.HasOne(x => x.User).WithMany(x => x.Sessions).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
     }
 
@@ -261,9 +274,12 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.Id).UseIdentityColumn();
         entity.Property(x => x.TokenHash).HasMaxLength(128).IsRequired();
         entity.Property(x => x.ReplacedByTokenHash).HasMaxLength(128);
+        entity.Property(x => x.CreatedAt).HasColumnName("CreatedAtUtc");
+        entity.Property(x => x.ExpiresAt).HasColumnName("ExpiresAtUtc");
+        entity.Property(x => x.RevokedAt).HasColumnName("RevokedAtUtc");
         entity.HasIndex(x => x.TokenHash).IsUnique();
-        entity.HasIndex(x => new { x.UserId, x.ExpiresAtUtc });
-        entity.HasIndex(x => new { x.SessionId, x.ExpiresAtUtc });
+        entity.HasIndex(x => new { x.UserId, x.ExpiresAt });
+        entity.HasIndex(x => new { x.SessionId, x.ExpiresAt });
         entity.HasOne(x => x.User).WithMany(x => x.RefreshTokens).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Session).WithMany(x => x.RefreshTokens).HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -282,9 +298,10 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.IPAddress).HasMaxLength(64);
         entity.Property(x => x.UserAgent).HasMaxLength(1000);
         entity.Property(x => x.Reason).HasMaxLength(1000);
-        entity.HasIndex(x => new { x.EntityType, x.EntityId, x.CreatedAtUtc });
-        entity.HasIndex(x => new { x.CreatedAtUtc, x.Id });
-        entity.HasIndex(x => new { x.UserId, x.CreatedAtUtc, x.Id });
+        entity.Property(x => x.CreatedAt).HasColumnName("CreatedAtUtc");
+        entity.HasIndex(x => new { x.EntityType, x.EntityId, x.CreatedAt });
+        entity.HasIndex(x => new { x.CreatedAt, x.Id });
+        entity.HasIndex(x => new { x.UserId, x.CreatedAt, x.Id });
     }
 
     private static void ConfigureCustomerProfile(ModelBuilder modelBuilder)
@@ -425,6 +442,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).UseIdentityColumn();
         ConfigurePublicEntity(entity);
+        entity.Property(x => x.CancelledAt)
+            .HasColumnName("CancelledAtUtc");
         entity.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
         entity.Property(x => x.OrderNumber).HasMaxLength(40).IsRequired();
         entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(30).IsRequired();
@@ -448,8 +467,8 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.LatitudeSnapshot).HasPrecision(9, 6).IsRequired();
         entity.Property(x => x.LongitudeSnapshot).HasPrecision(9, 6).IsRequired();
         entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
-        entity.HasIndex(x => new { x.CustomerId, x.CreatedAtUtc });
-        entity.HasIndex(x => new { x.BranchId, x.Status, x.CreatedAtUtc });
+        entity.HasIndex(x => new { x.CustomerId, x.CreatedAt });
+        entity.HasIndex(x => new { x.BranchId, x.Status, x.CreatedAt });
         entity.HasIndex(x => x.OrderNumber).IsUnique();
         entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.CustomerAddress).WithMany().HasForeignKey(x => x.CustomerAddressId).OnDelete(DeleteBehavior.Restrict);
@@ -504,9 +523,12 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.GatewayStatus).HasMaxLength(50);
         entity.Property(x => x.FailureCode).HasMaxLength(100);
         entity.Property(x => x.FailureMessage).HasMaxLength(500);
+        entity.Property(x => x.ExpiresAt).HasColumnName("ExpiresAtUtc");
+        entity.Property(x => x.VerifiedAt).HasColumnName("VerifiedAtUtc");
+        entity.Property(x => x.FailedAt).HasColumnName("FailedAtUtc");
         entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
-        entity.HasIndex(x => new { x.CustomerId, x.CreatedAtUtc, x.Id });
-        entity.HasIndex(x => new { x.Status, x.CreatedAtUtc, x.Id });
+        entity.HasIndex(x => new { x.CustomerId, x.CreatedAt, x.Id });
+        entity.HasIndex(x => new { x.Status, x.CreatedAt, x.Id });
         entity.HasIndex(x => x.OrderId).HasFilter("[OrderId] IS NOT NULL");
         entity.HasIndex(x => x.SubscriptionId).HasFilter("[SubscriptionId] IS NOT NULL");
         entity.HasIndex(x => x.GatewayOrderId).IsUnique().HasFilter("[GatewayOrderId] IS NOT NULL");
@@ -528,10 +550,15 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.EventType).HasMaxLength(100).IsRequired();
         entity.Property(x => x.PayloadHash).HasMaxLength(64).IsRequired();
         entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.ReceivedAt)
+            .HasColumnName("ReceivedAtUtc")
+            .IsRequired();
+        entity.Property(x => x.ProcessedAt)
+            .HasColumnName("ProcessedAtUtc");
         entity.Property(x => x.ErrorCode).HasMaxLength(100);
         entity.Property(x => x.ErrorMessage).HasMaxLength(1000);
         entity.HasIndex(x => new { x.Provider, x.EventId }).IsUnique();
-        entity.HasIndex(x => new { x.Status, x.ReceivedAtUtc });
+        entity.HasIndex(x => new { x.Status, x.ReceivedAt });
     }
 
     private static void ConfigureRefund(ModelBuilder modelBuilder)
@@ -549,6 +576,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
         entity.Property(x => x.GatewayRefundId).HasMaxLength(100);
         entity.Property(x => x.FailureCode).HasMaxLength(100);
+        entity.Property(x => x.CompletedAt).HasColumnName("CompletedAtUtc");
         entity.Property(x => x.FailureMessage).HasMaxLength(500);
         entity.HasIndex(x => new { x.PaymentId, x.IdempotencyKey }).IsUnique();
         entity.HasIndex(x => x.GatewayRefundId).IsUnique().HasFilter("[GatewayRefundId] IS NOT NULL");
@@ -599,8 +627,9 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
         entity.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
         entity.Property(x => x.Description).HasMaxLength(500).IsRequired();
+        entity.Property(x => x.OccurredAt).HasColumnName("OccurredAtUtc").IsRequired();
         entity.HasIndex(x => new { x.WalletId, x.IdempotencyKey }).IsUnique();
-        entity.HasIndex(x => new { x.WalletId, x.OccurredAtUtc });
+        entity.HasIndex(x => new { x.WalletId, x.OccurredAt });
         entity.HasIndex(x => x.SubscriptionId).HasFilter("[SubscriptionId] IS NOT NULL");
         entity.HasOne(x => x.Wallet).WithMany(x => x.Transactions).HasForeignKey(x => x.WalletId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Payment).WithMany().HasForeignKey(x => x.PaymentId).OnDelete(DeleteBehavior.Restrict);
@@ -612,6 +641,10 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     private static void ConfigureSubscription(ModelBuilder modelBuilder)
     {
         var entity = modelBuilder.Entity<Subscription>();
+        entity.Property(x => x.ActivatedAt).HasColumnName("ActivatedAtUtc");
+        entity.Property(x => x.PausedAt).HasColumnName("PausedAtUtc");
+        entity.Property(x => x.CancelledAt).HasColumnName("CancelledAtUtc");
+        entity.Property(x => x.CompletedAt).HasColumnName("CompletedAtUtc");
         entity.ToTable("Subscription", table =>
         {
             table.HasCheckConstraint("CK_Subscription_Dates", "[EndDate] >= [StartDate]");
@@ -637,9 +670,9 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.BranchNameSnapshot).HasMaxLength(200).IsRequired();
         entity.Property(x => x.AddressSnapshot).HasMaxLength(2000).IsRequired();
         entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
-        entity.HasIndex(x => new { x.CustomerId, x.Status, x.CreatedAtUtc });
+        entity.HasIndex(x => new { x.CustomerId, x.Status, x.CreatedAt });
         entity.HasIndex(x => new { x.BranchId, x.Status, x.StartDate });
-        entity.HasIndex(x => new { x.BranchId, x.CreatedAtUtc, x.Id });
+        entity.HasIndex(x => new { x.BranchId, x.CreatedAt, x.Id });
         entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.CustomerAddress).WithMany().HasForeignKey(x => x.CustomerAddressId).OnDelete(DeleteBehavior.Restrict);
@@ -660,6 +693,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     private static void ConfigureSubscriptionDelivery(ModelBuilder modelBuilder)
     {
         var entity = modelBuilder.Entity<SubscriptionDelivery>();
+        entity.Property(x => x.StatusChangedAt).HasColumnName("StatusChangedAtUtc");
         entity.ToTable("SubscriptionDelivery", table =>
             table.HasCheckConstraint("CK_SubscriptionDelivery_Quantity", "[Quantity] > 0"));
         entity.HasKey(x => x.Id);
@@ -711,6 +745,13 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.FailureReason).HasMaxLength(120);
         entity.Property(x => x.Remarks).HasMaxLength(1000);
         entity.Property(x => x.OperationalNotes).HasMaxLength(1000);
+        entity.Property(x => x.AssignedAt).HasColumnName("AssignedAtUtc");
+        entity.Property(x => x.PickedUpAt).HasColumnName("PickedUpAtUtc");
+        entity.Property(x => x.OutForDeliveryAt).HasColumnName("OutForDeliveryAtUtc");
+        entity.Property(x => x.ArrivedAt).HasColumnName("ArrivedAtUtc");
+        entity.Property(x => x.OtpVerifiedAt).HasColumnName("OtpVerifiedAtUtc");
+        entity.Property(x => x.CompletedAt).HasColumnName("CompletedAtUtc");
+        entity.Property(x => x.FailedAt).HasColumnName("FailedAtUtc");
         entity.Ignore(x => x.IsTrackingActive);
         entity.HasIndex(x => x.OrderId).IsUnique().HasFilter("[OrderId] IS NOT NULL");
         entity.HasIndex(x => x.SubscriptionDeliveryId).IsUnique().HasFilter("[SubscriptionDeliveryId] IS NOT NULL");
@@ -731,8 +772,9 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).UseIdentityColumn();
         entity.Property(x => x.Reason).HasMaxLength(500);
-        entity.HasIndex(x => new { x.DeliveryId, x.AssignedAtUtc });
-        entity.HasIndex(x => new { x.EmployeeId, x.AssignedAtUtc });
+        entity.Property(x => x.AssignedAt).HasColumnName("AssignedAtUtc").IsRequired();
+        entity.HasIndex(x => new { x.DeliveryId, x.AssignedAt });
+        entity.HasIndex(x => new { x.EmployeeId, x.AssignedAt });
         entity.HasOne(x => x.Delivery).WithMany(x => x.Assignments).HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.PreviousEmployee).WithMany().HasForeignKey(x => x.PreviousEmployeeId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
@@ -748,8 +790,11 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.Id).UseIdentityColumn();
         ConfigurePublicEntity(entity);
         entity.Property(x => x.CodeHash).HasMaxLength(128).IsRequired();
-        entity.HasIndex(x => new { x.DeliveryId, x.CreatedAtUtc });
-        entity.HasIndex(x => new { x.ExpiresAtUtc, x.ConsumedAtUtc });
+        entity.Property(x => x.CreatedAt).HasColumnName("CreatedAtUtc").IsRequired();
+        entity.Property(x => x.ExpiresAt).HasColumnName("ExpiresAtUtc").IsRequired();
+        entity.Property(x => x.ConsumedAt).HasColumnName("ConsumedAtUtc");
+        entity.HasIndex(x => new { x.DeliveryId, x.CreatedAt });
+        entity.HasIndex(x => new { x.ExpiresAt, x.ConsumedAt });
         entity.HasOne(x => x.Delivery).WithMany(x => x.Otps).HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Restrict);
     }
 
@@ -770,8 +815,9 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.Latitude).HasPrecision(9, 6).IsRequired();
         entity.Property(x => x.Longitude).HasPrecision(9, 6).IsRequired();
         entity.Property(x => x.AccuracyMetres).HasPrecision(8, 2);
-        entity.HasIndex(x => new { x.DeliveryId, x.RecordedAtUtc });
-        entity.HasIndex(x => x.RecordedAtUtc);
+        entity.Property(x => x.RecordedAt).HasColumnName("RecordedAtUtc").IsRequired();
+        entity.HasIndex(x => new { x.DeliveryId, x.RecordedAt });
+        entity.HasIndex(x => x.RecordedAt);
         entity.HasOne(x => x.Delivery).WithMany(x => x.Locations).HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Cascade);
         entity.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -790,13 +836,13 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).UseIdentityColumn();
         ConfigurePublicEntity(entity);
-        entity.Property(x => x.ProductionAtUtc).IsRequired();
+        entity.Property(x => x.ProductionAt).HasColumnName("ProductionAtUtc").IsRequired();
         entity.Property(x => x.BuffaloCount).IsRequired();
         entity.Property(x => x.QuantityProduced).HasPrecision(18, 3).IsRequired();
         entity.Property(x => x.Unit).HasMaxLength(20).IsRequired();
         entity.Property(x => x.Shift).HasMaxLength(40);
         entity.Property(x => x.Remarks).HasMaxLength(1000);
-        entity.HasIndex(x => new { x.BranchId, x.ProductionAtUtc });
+        entity.HasIndex(x => new { x.BranchId, x.ProductionAt });
         entity.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne<User>().WithMany().HasForeignKey(x => x.RecordedByUserId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -815,13 +861,13 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.Id).UseIdentityColumn();
         ConfigurePublicEntity(entity);
         entity.Property(x => x.BatchNumber).HasMaxLength(80).IsRequired();
-        entity.Property(x => x.ProductionAtUtc).IsRequired();
+        entity.Property(x => x.ProductionAt).HasColumnName("ProductionAtUtc").IsRequired();
         entity.Property(x => x.QuantityProduced).HasPrecision(18, 3).IsRequired();
         entity.Property(x => x.Unit).HasMaxLength(20).IsRequired();
         entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
         entity.HasIndex(x => new { x.BranchId, x.BatchNumber }).IsUnique();
         entity.HasIndex(x => x.ProductionId).IsUnique();
-        entity.HasIndex(x => new { x.BranchId, x.ProductionAtUtc, x.Status });
+        entity.HasIndex(x => new { x.BranchId, x.ProductionAt, x.Status });
         entity.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Production).WithMany(x => x.Batches).HasForeignKey(x => x.ProductionId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -839,12 +885,12 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).UseIdentityColumn();
         ConfigurePublicEntity(entity);
-        entity.Property(x => x.UsedAtUtc).IsRequired();
+        entity.Property(x => x.UsedAt).HasColumnName("UsedAtUtc").IsRequired();
         entity.Property(x => x.QuantityUsed).HasPrecision(18, 3).IsRequired();
         entity.Property(x => x.Purpose).HasMaxLength(120).IsRequired();
         entity.Property(x => x.Remarks).HasMaxLength(1000);
-        entity.HasIndex(x => new { x.BranchId, x.UsedAtUtc });
-        entity.HasIndex(x => new { x.BatchId, x.UsedAtUtc });
+        entity.HasIndex(x => new { x.BranchId, x.UsedAt });
+        entity.HasIndex(x => new { x.BatchId, x.UsedAt });
         entity.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Batch).WithMany(x => x.Usages).HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne<User>().WithMany().HasForeignKey(x => x.RecordedByUserId).OnDelete(DeleteBehavior.Restrict);
@@ -874,12 +920,17 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         ConfigurePublicEntity(entity);
         entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
         entity.Property(x => x.CustomerDecision).HasConversion<string>().HasMaxLength(30).IsRequired();
-        entity.Property(x => x.RequestedAtUtc).IsRequired();
+        entity.Property(x => x.RequestedAt)
+            .HasColumnName("RequestedAtUtc")
+            .IsRequired();
+        entity.Property(x => x.CompletedAt).HasColumnName("CompletedAtUtc");
+        entity.Property(x => x.ConfirmedAt).HasColumnName("ConfirmedAtUtc");
+        entity.Property(x => x.RejectedAt).HasColumnName("RejectedAtUtc");
         entity.Property(x => x.StaffRemarks).HasMaxLength(1000);
         entity.Property(x => x.CustomerRemarks).HasMaxLength(1000);
         entity.HasIndex(x => x.DeliveryId).IsUnique();
-        entity.HasIndex(x => new { x.CustomerId, x.RequestedAtUtc });
-        entity.HasIndex(x => new { x.BranchId, x.Status, x.RequestedAtUtc });
+        entity.HasIndex(x => new { x.CustomerId, x.RequestedAt });
+        entity.HasIndex(x => new { x.BranchId, x.Status, x.RequestedAt });
         entity.HasOne(x => x.Delivery).WithMany().HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
@@ -918,9 +969,11 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.FileName).HasMaxLength(255).IsRequired();
         entity.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
         entity.Property(x => x.FileSize).IsRequired();
-        entity.Property(x => x.UploadedAtUtc).IsRequired();
+        entity.Property(x => x.UploadedAt)
+            .HasColumnName("UploadedAtUtc")
+            .IsRequired();
         entity.HasIndex(x => x.StorageKey).IsUnique();
-        entity.HasIndex(x => new { x.MilkTestId, x.UploadedAtUtc });
+        entity.HasIndex(x => new { x.MilkTestId, x.UploadedAt });
         entity.HasOne(x => x.MilkTest).WithMany(x => x.Images).HasForeignKey(x => x.MilkTestId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.UploadedByUser).WithMany().HasForeignKey(x => x.UploadedByUserId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -985,12 +1038,13 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.EventKey).HasMaxLength(200).IsRequired();
         entity.Property(x => x.PayloadJson).HasMaxLength(8000).IsRequired();
         entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
-        entity.Property(x => x.OccurredAtUtc).IsRequired();
+        entity.Property(x => x.OccurredAt).HasColumnName("OccurredAtUtc").IsRequired();
+        entity.Property(x => x.ProcessedAt).HasColumnName("ProcessedAtUtc");
         entity.Property(x => x.FailureCode).HasMaxLength(100);
         entity.Property(x => x.FailureMessage).HasMaxLength(1000);
         entity.HasIndex(x => x.EventKey).IsUnique();
-        entity.HasIndex(x => new { x.Status, x.OccurredAtUtc });
-        entity.HasIndex(x => new { x.UserId, x.OccurredAtUtc });
+        entity.HasIndex(x => new { x.Status, x.OccurredAt });
+        entity.HasIndex(x => new { x.UserId, x.OccurredAt });
         entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
     }
 
@@ -1005,8 +1059,9 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.Title).HasMaxLength(240).IsRequired();
         entity.Property(x => x.Body).HasMaxLength(2000).IsRequired();
         entity.Property(x => x.DeepLink).HasMaxLength(500);
+        entity.Property(x => x.ReadAt).HasColumnName("ReadAtUtc");
         entity.HasIndex(x => x.NotificationEventId).IsUnique();
-        entity.HasIndex(x => new { x.UserId, x.ReadAtUtc, x.CreatedAtUtc });
+        entity.HasIndex(x => new { x.UserId, x.ReadAt, x.CreatedAt });
         entity.HasOne(x => x.Event).WithMany(x => x.Notifications).HasForeignKey(x => x.NotificationEventId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -1052,7 +1107,9 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.ProtectedToken).HasMaxLength(2000).IsRequired();
         entity.Property(x => x.Platform).HasMaxLength(30).IsRequired();
         entity.Property(x => x.DeviceName).HasMaxLength(160);
-        entity.Property(x => x.RegisteredAtUtc).IsRequired();
+        entity.Property(x => x.RegisteredAt).HasColumnName("RegisteredAtUtc").IsRequired();
+        entity.Property(x => x.LastSeenAt).HasColumnName("LastSeenAtUtc");
+        entity.Property(x => x.InvalidatedAt).HasColumnName("InvalidatedAtUtc");
         entity.HasIndex(x => new { x.UserId, x.DeviceIdentifierHash }).IsUnique();
         entity.HasIndex(x => x.TokenHash)
             .IsUnique()
@@ -1089,7 +1146,9 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
             .IsUnique()
             .HasDatabaseName("UX_NotificationDelivery_NonDeviceChannel")
             .HasFilter("[UserDeviceId] IS NULL");
-        entity.HasIndex(x => new { x.Status, x.NextAttemptAtUtc });
+        entity.Property(x => x.NextAttemptAt).HasColumnName("NextAttemptAtUtc");
+        entity.Property(x => x.DeliveredAt).HasColumnName("DeliveredAtUtc");
+        entity.HasIndex(x => new { x.Status, x.NextAttemptAt });
         entity.HasOne(x => x.Notification).WithMany(x => x.Deliveries).HasForeignKey(x => x.NotificationId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.UserDevice).WithMany(x => x.Deliveries).HasForeignKey(x => x.UserDeviceId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -1105,7 +1164,7 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
         entity.Property(x => x.ProviderMessageId).HasMaxLength(240);
         entity.Property(x => x.FailureCode).HasMaxLength(100);
         entity.Property(x => x.FailureMessage).HasMaxLength(1000);
-        entity.Property(x => x.AttemptedAtUtc).IsRequired();
+        entity.Property(x => x.AttemptedAt).HasColumnName("AttemptedAtUtc").IsRequired();
         entity.HasIndex(x => new { x.NotificationDeliveryId, x.AttemptNumber }).IsUnique();
         entity.HasOne(x => x.Delivery).WithMany(x => x.Attempts).HasForeignKey(x => x.NotificationDeliveryId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -1115,5 +1174,15 @@ public sealed class DoodhDirectDbContext(DbContextOptions<DoodhDirectDbContext> 
     {
         entity.Property(x => x.PublicId).HasDefaultValueSql("NEWSEQUENTIALID()");
         entity.HasIndex(x => x.PublicId).IsUnique();
+
+        if (typeof(DoodhDirect.Domain.Common.IAuditableEntity).IsAssignableFrom(typeof(TEntity)))
+        {
+            entity.Property<DateTime>("CreatedAt")
+                .HasColumnName("CreatedAtUtc")
+                .IsRequired();
+            entity.Property<DateTime>("UpdatedAt")
+                .HasColumnName("UpdatedAtUtc")
+                .IsRequired();
+        }
     }
 }

@@ -5,7 +5,8 @@ namespace DoodhDirect.Domain.Tests;
 
 public sealed class PaymentWalletDomainTests
 {
-    private static readonly DateTime Now = new(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime UtcNow = new(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc);
+    private static readonly DateTime IndiaNow = new(2026, 8, 16, 7, 30, 0, DateTimeKind.Unspecified);
 
     [Fact]
     public void RazorpayPayment_RequiresGatewayReferenceAndSupportsIdempotentSuccess()
@@ -13,15 +14,15 @@ public sealed class PaymentWalletDomainTests
         var payment = CreatePayment(PaymentMethod.Razorpay);
         payment.AttachGatewayOrder("order_123", "created");
 
-        payment.Succeed("pay_123", "captured", Now);
-        payment.Succeed("pay_123", "captured", Now.AddMinutes(1));
+        payment.Succeed("pay_123", "captured", IndiaNow);
+        payment.Succeed("pay_123", "captured", IndiaNow.AddMinutes(1));
 
         Assert.Equal(PaymentStatus.Success, payment.Status);
         Assert.Equal("order_123", payment.GatewayOrderId);
         Assert.Equal("pay_123", payment.GatewayPaymentId);
-        Assert.Equal(Now, payment.VerifiedAtUtc);
+        Assert.Equal(IndiaNow, payment.VerifiedAt);
         Assert.Throws<InvalidOperationException>(() =>
-            payment.Succeed("pay_other", "captured", Now.AddMinutes(2)));
+            payment.Succeed("pay_other", "captured", IndiaNow.AddMinutes(2)));
     }
 
     [Fact]
@@ -29,12 +30,12 @@ public sealed class PaymentWalletDomainTests
     {
         var payment = CreatePayment(PaymentMethod.Razorpay);
         payment.AttachGatewayOrder("order_123", "created");
-        payment.Fail("DECLINED", "Issuer declined", "failed", Now);
+        payment.Fail("DECLINED", "Issuer declined", "failed", IndiaNow);
 
         Assert.Equal(PaymentStatus.Failed, payment.Status);
         Assert.Equal("DECLINED", payment.FailureCode);
         Assert.Throws<InvalidOperationException>(() =>
-            payment.Succeed("pay_123", "captured", Now.AddMinutes(1)));
+            payment.Succeed("pay_123", "captured", IndiaNow.AddMinutes(1)));
     }
 
     [Fact]
@@ -43,14 +44,14 @@ public sealed class PaymentWalletDomainTests
         var payment = CreatePayment(PaymentMethod.Wallet);
         payment.MarkWalletPending();
 
-        payment.Expire(Now);
-        payment.Expire(Now.AddMinutes(1));
+        payment.Expire(IndiaNow);
+        payment.Expire(IndiaNow.AddMinutes(1));
 
         Assert.Equal(PaymentStatus.Expired, payment.Status);
         Assert.Equal("PAYMENT_EXPIRED", payment.FailureCode);
-        Assert.Equal(Now, payment.FailedAtUtc);
+        Assert.Equal(IndiaNow, payment.FailedAt);
         Assert.Throws<InvalidOperationException>(() =>
-            payment.Fail("LATE_FAILURE", null, null, Now.AddMinutes(2)));
+            payment.Fail("LATE_FAILURE", null, null, IndiaNow.AddMinutes(2)));
     }
 
     [Fact]
@@ -59,14 +60,14 @@ public sealed class PaymentWalletDomainTests
         var payment = CreateSuccessfulWalletPayment(amount: 100m);
 
         var first = payment.StartRefund(25m, "Partial", "refund-1", requestedByUserId: 7);
-        first.Succeed(Now.AddMinutes(1));
+        first.Succeed(IndiaNow.AddMinutes(1));
         payment.CompleteRefund(first.Amount);
 
         Assert.Equal(PaymentStatus.PartiallyRefunded, payment.Status);
         Assert.Equal(25m, payment.RefundedAmount);
 
         var second = payment.StartRefund(75m, "Remainder", "refund-2", requestedByUserId: 7);
-        second.Succeed(Now.AddMinutes(2));
+        second.Succeed(IndiaNow.AddMinutes(2));
         payment.CompleteRefund(second.Amount);
 
         Assert.Equal(PaymentStatus.Refunded, payment.Status);
@@ -80,11 +81,11 @@ public sealed class PaymentWalletDomainTests
     {
         var payment = CreateSuccessfulWalletPayment(amount: 100m);
         var completed = payment.StartRefund(20m, "First", "refund-1", requestedByUserId: 7);
-        completed.Succeed(Now.AddMinutes(1));
+        completed.Succeed(IndiaNow.AddMinutes(1));
         payment.CompleteRefund(completed.Amount);
 
         var failed = payment.StartRefund(10m, "Second", "refund-2", requestedByUserId: 7);
-        failed.Fail("PROVIDER_FAILED", "Rejected", Now.AddMinutes(2));
+        failed.Fail("PROVIDER_FAILED", "Rejected", IndiaNow.AddMinutes(2));
         payment.FailRefund();
 
         Assert.Equal(RefundStatus.Failed, failed.Status);
@@ -98,12 +99,12 @@ public sealed class PaymentWalletDomainTests
         var wallet = new Wallet(customerId: 5, currency: "inr");
 
         var topUp = wallet.Credit(
-            WalletTransactionType.TopUp, 150.125m, "topup-1", "Top-up", Now);
+            WalletTransactionType.TopUp, 150.125m, "topup-1", "Top-up", IndiaNow);
         var debit = wallet.DebitOrder(
-            60.12m, orderId: 11, paymentId: 12, "debit-1", "Order", Now.AddMinutes(1));
+            60.12m, orderId: 11, paymentId: 12, "debit-1", "Order", IndiaNow.AddMinutes(1));
         var refund = wallet.Credit(
             WalletTransactionType.RefundCredit, 10.005m, "refund-1", "Refund",
-            Now.AddMinutes(2), paymentId: 12, orderId: 11);
+            IndiaNow.AddMinutes(2), paymentId: 12, orderId: 11);
 
         Assert.Equal(100.02m, wallet.Balance);
         Assert.Equal((0m, 150.13m, 150.13m),
@@ -115,16 +116,32 @@ public sealed class PaymentWalletDomainTests
         Assert.All(wallet.Transactions, transaction =>
             Assert.Equal(transaction.BalanceAfter,
                 transaction.BalanceBefore + transaction.Amount));
+        Assert.All(wallet.Transactions, transaction =>
+            Assert.Equal(DateTimeKind.Unspecified, transaction.OccurredAt.Kind));
+    }
+
+    [Fact]
+    public void Wallet_RejectsUtcOccurrenceTimestamp()
+    {
+        var wallet = new Wallet(customerId: 5, currency: "INR");
+
+        Assert.Throws<ArgumentException>(() =>
+            wallet.Credit(
+                WalletTransactionType.TopUp,
+                25m,
+                "topup-utc",
+                "Top-up",
+                new DateTime(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc)));
     }
 
     [Fact]
     public void Wallet_RejectsDebitThatWouldMakeBalanceNegativeWithoutAppendingLedgerEntry()
     {
         var wallet = new Wallet(customerId: 5, currency: "INR");
-        wallet.Credit(WalletTransactionType.TopUp, 25m, "topup-1", "Top-up", Now);
+        wallet.Credit(WalletTransactionType.TopUp, 25m, "topup-1", "Top-up", IndiaNow);
 
         var exception = Assert.Throws<WalletBalanceInsufficientException>(() =>
-            wallet.DebitOrder(25.01m, 11, 12, "debit-1", "Order", Now.AddMinutes(1)));
+            wallet.DebitOrder(25.01m, 11, 12, "debit-1", "Order", IndiaNow.AddMinutes(1)));
 
         Assert.Equal(25m, exception.AvailableBalance);
         Assert.Equal(25.01m, exception.RequiredAmount);
@@ -138,26 +155,40 @@ public sealed class PaymentWalletDomainTests
     public void Wallet_AdjustmentRecordsAdministratorAndRejectsOverdraw()
     {
         var wallet = new Wallet(customerId: 5, currency: "INR");
-        var credit = wallet.Adjust(40m, performedByUserId: 9, "adjust-1", "Correction", Now);
+        var credit = wallet.Adjust(40m, performedByUserId: 9, "adjust-1", "Correction", IndiaNow);
 
         Assert.Equal(WalletTransactionType.AdminAdjustment, credit.Type);
         Assert.Equal(9, credit.PerformedByUserId);
         Assert.Equal(40m, wallet.Balance);
         Assert.Throws<WalletBalanceInsufficientException>(() =>
-            wallet.Adjust(-40.01m, 9, "adjust-2", "Correction", Now.AddMinutes(1)));
+            wallet.Adjust(-40.01m, 9, "adjust-2", "Correction", IndiaNow.AddMinutes(1)));
     }
 
     [Fact]
     public void PaymentWebhook_AllowsOneProcessingCompletionOnly()
     {
-        var webhook = new PaymentWebhook("Razorpay", "evt_1", "payment.captured", "abc", Now);
+        var webhook = new PaymentWebhook("Razorpay", "evt_1", "payment.captured", "abc", IndiaNow);
 
         webhook.StartProcessing();
-        webhook.Complete(Now.AddMinutes(1));
+        webhook.Complete(IndiaNow.AddMinutes(1));
 
         Assert.Equal(PaymentWebhookStatus.Processed, webhook.Status);
-        Assert.Equal(Now.AddMinutes(1), webhook.ProcessedAtUtc);
+        Assert.Equal(IndiaNow.AddMinutes(1), webhook.ProcessedAt);
         Assert.Throws<InvalidOperationException>(webhook.StartProcessing);
+    }
+
+    [Fact]
+    public void PaymentWebhook_RejectsUtcTimestamps()
+    {
+        var utc = new DateTime(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc);
+
+        Assert.Throws<ArgumentException>(() =>
+            new PaymentWebhook("Razorpay", "evt_utc", "payment.captured", "abc", utc));
+
+        var webhook = new PaymentWebhook("Razorpay", "evt_2", "payment.captured", "abc", IndiaNow);
+        webhook.StartProcessing();
+
+        Assert.Throws<ArgumentException>(() => webhook.Complete(utc));
     }
 
     private static Payment CreatePayment(PaymentMethod method, decimal amount = 100m) =>
@@ -168,13 +199,13 @@ public sealed class PaymentWalletDomainTests
             amount,
             currency: "inr",
             idempotencyKey: "payment-1",
-            expiresAtUtc: Now.AddMinutes(15));
+            expiresAt: IndiaNow.AddMinutes(15));
 
     private static Payment CreateSuccessfulWalletPayment(decimal amount)
     {
         var payment = CreatePayment(PaymentMethod.Wallet, amount);
         payment.MarkWalletPending();
-        payment.Succeed(null, "wallet_debited", Now);
+        payment.Succeed(null, "wallet_debited", IndiaNow);
         return payment;
     }
 }

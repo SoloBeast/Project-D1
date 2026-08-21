@@ -66,7 +66,10 @@ class CameraStreamDescriptor {
   final DateTime expiresAtUtc;
   final bool isDevelopmentStream;
 
-  bool get isExpired => !expiresAtUtc.isAfter(DateTime.now().toUtc());
+  bool get isExpired => isExpiredAt(DateTime.now().toUtc());
+
+  bool isExpiredAt(DateTime nowUtc) =>
+      !expiresAtUtc.isAfter(nowUtc.toUtc());
 }
 
 class PublicCameraStream {
@@ -103,8 +106,8 @@ class ManagedCamera {
     required this.protocol,
     required this.providerCode,
     required this.providerStreamReference,
-    required this.createdAtUtc,
-    required this.updatedAtUtc,
+    required this.createdAt,
+    required this.updatedAt,
   });
 
   factory ManagedCamera.fromJson(Map<String, dynamic> json) => ManagedCamera(
@@ -119,8 +122,8 @@ class ManagedCamera {
     protocol: CameraStreamProtocol.fromApi(json['protocol']),
     providerCode: json['providerCode'] as String,
     providerStreamReference: json['providerStreamReference'] as String,
-    createdAtUtc: DateTime.parse(json['createdAtUtc'] as String).toUtc(),
-    updatedAtUtc: DateTime.parse(json['updatedAtUtc'] as String).toUtc(),
+    createdAt: DateTime.parse(json['createdAt'] as String),
+    updatedAt: DateTime.parse(json['updatedAt'] as String),
   );
 
   final String cameraId;
@@ -134,8 +137,8 @@ class ManagedCamera {
   final CameraStreamProtocol protocol;
   final String providerCode;
   final String providerStreamReference;
-  final DateTime createdAtUtc;
-  final DateTime updatedAtUtc;
+  final DateTime createdAt;
+  final DateTime updatedAt;
 }
 
 class SaveCameraRequest {

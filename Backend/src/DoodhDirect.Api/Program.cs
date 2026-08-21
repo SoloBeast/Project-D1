@@ -5,6 +5,8 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using DoodhDirect.Api.Authorization;
 using DoodhDirect.Api.Middleware;
+using DoodhDirect.Api.Serialization;
+using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Infrastructure;
@@ -153,7 +155,14 @@ builder.Services.AddControllers(options =>
         options.Filters.Add(new ProducesAttribute("application/json"));
     })
     .AddJsonOptions(options =>
-        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+    {
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        options.JsonSerializerOptions.Converters.Add(
+            new IndiaLocalDateTimeJsonConverter(
+                TimeZoneInfo.FindSystemTimeZoneById(
+                    builder.Configuration["TimeZone"]
+                    ?? throw new InvalidOperationException("TimeZone configuration is required."))));
+    });
 
 builder.Services.Configure<ApiBehaviorOptions>(options =>
 {

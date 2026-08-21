@@ -1,3 +1,6 @@
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -71,7 +74,9 @@ class _NotificationInboxScreenState
       body: Column(
         children: [
           _PermissionPanel(state: state),
-          Expanded(child: _buildContent(state)),
+          Expanded(
+            child: DoodhPage(padding: false, child: _buildContent(state)),
+          ),
         ],
       ),
     );
@@ -108,9 +113,9 @@ class _NotificationInboxScreenState
       child: ListView.separated(
         controller: _scrollController,
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
         itemCount: state.items.length + (state.hasMore ? 1 : 0),
-        separatorBuilder: (context, index) => const Divider(height: 1),
+        separatorBuilder: (context, index) => const SizedBox(height: 10),
         itemBuilder: (context, index) {
           if (index == state.items.length) {
             return const SizedBox(
@@ -151,37 +156,35 @@ class _PermissionPanel extends ConsumerWidget {
     }
 
     final canRequest = status == PushPermissionStatus.notDetermined;
-    return Material(
-      color: Theme.of(context).colorScheme.surfaceContainerLow,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-        child: Row(
-          children: [
-            const Icon(Icons.notifications_off_outlined),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                canRequest
-                    ? 'Enable push notifications for timely updates.'
-                    : 'Push notifications are disabled in system settings.',
-              ),
+    return Container(
+      color: DoodhColors.mint,
+      padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+      child: Row(
+        children: [
+          const Icon(Icons.notifications_off_outlined),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              canRequest
+                  ? 'Enable push notifications for timely updates.'
+                  : 'Push notifications are disabled in system settings.',
             ),
-            if (canRequest)
-              TextButton(
-                onPressed: state.isRequestingPermission
-                    ? null
-                    : () => ref
-                          .read(notificationControllerProvider.notifier)
-                          .requestPushPermission(),
-                child: state.isRequestingPermission
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Enable'),
-              ),
-          ],
-        ),
+          ),
+          if (canRequest)
+            TextButton(
+              onPressed: state.isRequestingPermission
+                  ? null
+                  : () => ref
+                        .read(notificationControllerProvider.notifier)
+                        .requestPushPermission(),
+              child: state.isRequestingPermission
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Enable'),
+            ),
+        ],
       ),
     );
   }
@@ -196,55 +199,85 @@ class _NotificationTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return Material(
-      color: notification.isRead
-          ? Colors.transparent
-          : colors.primaryContainer.withValues(alpha: 0.28),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        leading: SizedBox.square(
-          dimension: 40,
-          child: Icon(
-            notification.isRead
-                ? Icons.notifications_none
-                : Icons.notifications_active_outlined,
-            color: notification.isRead
-                ? colors.onSurfaceVariant
-                : colors.primary,
-          ),
-        ),
-        title: Text(
-          notification.title,
-          style: TextStyle(
-            fontWeight: notification.isRead ? FontWeight.w500 : FontWeight.w700,
-          ),
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Column(
+    return Card(
+      color: notification.isRead ? Colors.white : DoodhColors.mint,
+      child: InkWell(
+        borderRadius: DoodhRadii.md,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(notification.body),
-              const SizedBox(height: 6),
-              Text(
-                _formatTimestamp(notification.createdAtUtc),
-                style: Theme.of(context).textTheme.bodySmall,
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: notification.isRead ? DoodhColors.cream : Colors.white,
+                  borderRadius: DoodhRadii.sm,
+                ),
+                child: Icon(
+                  notification.isRead
+                      ? Icons.notifications_none
+                      : Icons.notifications_active_outlined,
+                  color: notification.isRead
+                      ? colors.onSurfaceVariant
+                      : DoodhColors.tealDark,
+                ),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            notification.title,
+                            style: TextStyle(
+                              fontWeight: notification.isRead
+                                  ? FontWeight.w600
+                                  : FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        if (!notification.isRead)
+                          const Padding(
+                            padding: EdgeInsets.only(left: 8, top: 5),
+                            child: CircleAvatar(
+                              radius: 4,
+                              backgroundColor: DoodhColors.coral,
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    Text(notification.body),
+                    const SizedBox(height: 8),
+                    Text(
+                      _formatTimestamp(notification.createdAt),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              if (notification.deepLink != null)
+                const Padding(
+                  padding: EdgeInsets.only(left: 8, top: 10),
+                  child: Icon(Icons.chevron_right),
+                ),
             ],
           ),
         ),
-        trailing: notification.deepLink == null
-            ? null
-            : const Icon(Icons.chevron_right),
-        onTap: onTap,
       ),
     );
   }
 }
 
-String _formatTimestamp(DateTime utcValue) {
-  final value = utcValue.toLocal();
-  final now = DateTime.now();
+String _formatTimestamp(DateTime value) {
+  final now = indiaNow();
   final today = DateTime(now.year, now.month, now.day);
   final date = DateTime(value.year, value.month, value.day);
   final hour = value.hour == 0

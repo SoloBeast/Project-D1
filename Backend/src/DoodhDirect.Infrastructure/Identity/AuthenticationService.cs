@@ -15,7 +15,7 @@ public sealed class AuthenticationService(
     DoodhDirectDbContext dbContext,
     IPasswordHasher passwordHasher,
     ITokenService tokenService,
-    IClock clock,
+    IIndiaTimeProvider timeProvider,
     INotificationEventWriter notificationEventWriter) : IAuthenticationService
 {
     public async Task<AuthSessionResult> RegisterAsync(
@@ -30,7 +30,7 @@ public sealed class AuthenticationService(
             throw new ValidationAppException("Email or mobile is required.", nameof(request.Email));
 
         await EnsureContactIsAvailableAsync(email, mobile, cancellationToken);
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         var user = new User(UserType.Customer);
         user.SetProfile(displayName);
         user.SetContact(mobile, email);
@@ -67,7 +67,7 @@ public sealed class AuthenticationService(
             throw new UnauthorizedAppException();
         }
 
-        return await CreateSessionAsync(user, request.Device, clock.UtcNow, "PASSWORD_LOGIN", cancellationToken);
+        return await CreateSessionAsync(user, request.Device, timeProvider.Now, "PASSWORD_LOGIN", cancellationToken);
     }
 
     public async Task<AuthSessionResult> RefreshAsync(
@@ -79,14 +79,14 @@ public sealed class AuthenticationService(
             throw new UnauthorizedAppException();
         ValidateDevice(device);
 
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         var tokenHash = tokenService.HashRefreshToken(refreshToken);
         var storedToken = await dbContext.RefreshTokens
             .Include(x => x.User).ThenInclude(x => x.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x.RolePermissions).ThenInclude(x => x.Permission)
             .Include(x => x.Session)
             .SingleOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
 
-        if (storedToken?.Session is not null && storedToken.RevokedAtUtc is not null && storedToken.ReplacedByTokenHash is not null)
+        if (storedToken?.Session is not null && storedToken.RevokedAt is not null && storedToken.ReplacedByTokenHash is not null)
         {
             await RevokeSessionAsync(storedToken.Session, now, "REFRESH_TOKEN_REUSE", cancellationToken);
             await WriteAuditAsync(storedToken.UserId, "AUTH_REFRESH_REUSE", "UserSession", storedToken.Session.PublicId.ToString(), device.IpAddress, device.UserAgent, "Previously rotated refresh token presented", cancellationToken);
@@ -119,7 +119,7 @@ public sealed class AuthenticationService(
             now);
         storedToken.Revoke(now, tokenService.HashRefreshToken(tokens.RefreshToken));
         session.Touch(now, device.IpAddress);
-        dbContext.RefreshTokens.Add(new RefreshToken(storedToken.UserId, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAtUtc, session.Id, now));
+        dbContext.RefreshTokens.Add(new RefreshToken(storedToken.UserId, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAt, session.Id, now));
         await WriteAuditAsync(storedToken.UserId, "AUTH_REFRESH_ROTATED", "UserSession", session.PublicId.ToString(), device.IpAddress, device.UserAgent, null, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         return new AuthSessionResult(authUser, tokens);
@@ -131,7 +131,7 @@ public sealed class AuthenticationService(
         if (session is null)
             throw new UnauthorizedAppException();
 
-        var now = clock.UtcNow;
+        var now = timeProvider.Now;
         await RevokeSessionAsync(session, now, "USER_LOGOUT", cancellationToken);
         await WriteAuditAsync(userId, "AUTH_LOGOUT", "UserSession", session.PublicId.ToString(), null, null, "User logout", cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
@@ -163,7 +163,7 @@ public sealed class AuthenticationService(
             authUser.Permissions,
             authUser.BranchIds,
             now);
-        dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAtUtc, session.Id, now));
+        dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAt, session.Id, now));
         dbContext.AuditLogs.Add(new AuditLog(
             user.Id,
             action,
@@ -205,7 +205,7 @@ public sealed class AuthenticationService(
     {
         session.Revoke(now, reason);
         var tokens = await dbContext.RefreshTokens
-            .Where(x => x.SessionId == session.Id && x.RevokedAtUtc == null)
+            .Where(x => x.SessionId == session.Id && x.RevokedAt == null)
             .ToListAsync(cancellationToken);
         foreach (var token in tokens)
             token.Revoke(now);
@@ -229,7 +229,7 @@ public sealed class AuthenticationService(
 
     private async Task WriteAuditAsync(long? userId, string action, string entityType, string entityId, string? ipAddress, string? userAgent, string? reason, CancellationToken cancellationToken)
     {
-        dbContext.AuditLogs.Add(new AuditLog(userId, action, entityType, entityId, null, null, ipAddress, userAgent, reason, clock.UtcNow));
+        dbContext.AuditLogs.Add(new AuditLog(userId, action, entityType, entityId, null, null, ipAddress, userAgent, reason, timeProvider.Now));
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 

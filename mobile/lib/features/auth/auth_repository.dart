@@ -97,12 +97,16 @@ class AuthSession {
       user: AuthUser.fromJson(json['user'] as Map<String, dynamic>),
       accessToken: tokens['accessToken'] as String,
       refreshToken: tokens['refreshToken'] as String,
-      accessTokenExpiresAtUtc: DateTime.parse(
-        tokens['accessTokenExpiresAtUtc'] as String,
-      ).toUtc(),
-      refreshTokenExpiresAtUtc: DateTime.parse(
-        tokens['refreshTokenExpiresAtUtc'] as String,
-      ).toUtc(),
+      accessTokenExpiresAtUtc: _parseProtocolTimestamp(
+        tokens,
+        'accessTokenExpiresAtUtc',
+        'accessTokenExpiresAt',
+      ),
+      refreshTokenExpiresAtUtc: _parseProtocolTimestamp(
+        tokens,
+        'refreshTokenExpiresAtUtc',
+        'refreshTokenExpiresAt',
+      ),
     );
   }
 
@@ -131,6 +135,18 @@ class AuthSession {
     'accessTokenExpiresAtUtc': accessTokenExpiresAtUtc.toIso8601String(),
     'refreshTokenExpiresAtUtc': refreshTokenExpiresAtUtc.toIso8601String(),
   };
+
+  static DateTime _parseProtocolTimestamp(
+    Map<String, dynamic> tokens,
+    String preferredKey,
+    String fallbackKey,
+  ) {
+    final value = tokens[preferredKey] ?? tokens[fallbackKey];
+    if (value is! String || value.isEmpty) {
+      throw FormatException('Missing authentication expiry timestamp.');
+    }
+    return DateTime.parse(value).toUtc();
+  }
 }
 
 class AuthRepository {

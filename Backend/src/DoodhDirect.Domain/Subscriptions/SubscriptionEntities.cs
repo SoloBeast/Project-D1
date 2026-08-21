@@ -98,10 +98,10 @@ public sealed class Subscription : AuditableEntity
     public string BranchCodeSnapshot { get; private set; } = string.Empty;
     public string BranchNameSnapshot { get; private set; } = string.Empty;
     public string AddressSnapshot { get; private set; } = string.Empty;
-    public DateTime? ActivatedAtUtc { get; private set; }
-    public DateTime? PausedAtUtc { get; private set; }
-    public DateTime? CancelledAtUtc { get; private set; }
-    public DateTime? CompletedAtUtc { get; private set; }
+    public DateTime? ActivatedAt { get; private set; }
+    public DateTime? PausedAt { get; private set; }
+    public DateTime? CancelledAt { get; private set; }
+    public DateTime? CompletedAt { get; private set; }
 
     public User Customer { get; private set; } = null!;
     public Product Product { get; private set; } = null!;
@@ -140,9 +140,9 @@ public sealed class Subscription : AuditableEntity
             AddressSnapshot));
     }
 
-    public void Activate(DateTime utcNow)
+    public void Activate(DateTime indiaLocalNow)
     {
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (Status == SubscriptionStatus.Active) return;
         if (Status != SubscriptionStatus.PaymentPending)
         {
@@ -150,7 +150,7 @@ public sealed class Subscription : AuditableEntity
         }
 
         Status = SubscriptionStatus.Active;
-        ActivatedAtUtc = utcNow;
+        ActivatedAt = indiaLocalNow;
     }
 
     public void FailPayment()
@@ -174,9 +174,9 @@ public sealed class Subscription : AuditableEntity
         Status = SubscriptionStatus.PaymentPending;
     }
 
-    public void Pause(DateTime utcNow)
+    public void Pause(DateTime indiaLocalNow)
     {
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (Status == SubscriptionStatus.Paused) return;
         if (Status != SubscriptionStatus.Active)
         {
@@ -184,7 +184,7 @@ public sealed class Subscription : AuditableEntity
         }
 
         Status = SubscriptionStatus.Paused;
-        PausedAtUtc = utcNow;
+        PausedAt = indiaLocalNow;
     }
 
     public void Resume()
@@ -196,12 +196,12 @@ public sealed class Subscription : AuditableEntity
         }
 
         Status = SubscriptionStatus.Active;
-        PausedAtUtc = null;
+        PausedAt = null;
     }
 
-    public void Cancel(DateTime utcNow)
+    public void Cancel(DateTime indiaLocalNow)
     {
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (Status == SubscriptionStatus.Cancelled) return;
         if (Status is SubscriptionStatus.Completed or SubscriptionStatus.PaymentFailed)
         {
@@ -209,34 +209,37 @@ public sealed class Subscription : AuditableEntity
         }
 
         Status = SubscriptionStatus.Cancelled;
-        CancelledAtUtc = utcNow;
+        CancelledAt = indiaLocalNow;
         foreach (var delivery in Deliveries.Where(x => x.Status == SubscriptionDeliveryStatus.Scheduled))
         {
-            delivery.Cancel(utcNow);
+            delivery.Cancel(indiaLocalNow);
         }
     }
 
-    public void Skip(SubscriptionDelivery delivery, DateTime utcNow, TimeSpan cutoff)
+    public void Skip(SubscriptionDelivery delivery, DateTime indiaLocalNow, TimeSpan cutoff)
     {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         EnsureOwned(delivery);
         if (Status is not (SubscriptionStatus.Active or SubscriptionStatus.Paused))
         {
             throw new InvalidOperationException($"A delivery cannot be skipped while the subscription is '{Status}'.");
         }
 
-        delivery.Skip(utcNow, cutoff);
+        delivery.Skip(indiaLocalNow, cutoff);
     }
 
-    public void MarkFailed(SubscriptionDelivery delivery, DateTime utcNow)
+    public void MarkFailed(SubscriptionDelivery delivery, DateTime indiaLocalNow)
     {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         EnsureOwned(delivery);
-        delivery.Fail(utcNow);
+        delivery.Fail(indiaLocalNow);
     }
 
-    public void MarkDelivered(SubscriptionDelivery delivery, DateTime utcNow)
+    public void MarkDelivered(SubscriptionDelivery delivery, DateTime indiaLocalNow)
     {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         EnsureOwned(delivery);
-        if (!delivery.Deliver(utcNow)) return;
+        if (!delivery.Deliver(indiaLocalNow)) return;
         if (UsedEntitlement >= TotalEntitlement)
         {
             throw new InvalidOperationException("The prepaid entitlement is exhausted.");
@@ -246,7 +249,7 @@ public sealed class Subscription : AuditableEntity
         if (UsedEntitlement == TotalEntitlement)
         {
             Status = SubscriptionStatus.Completed;
-            CompletedAtUtc = utcNow;
+            CompletedAt = indiaLocalNow;
         }
     }
 
@@ -264,11 +267,11 @@ public sealed class Subscription : AuditableEntity
             ? throw new ArgumentException("A value is required.", parameterName)
             : value.Trim();
 
-    private static void EnsureUtc(DateTime value, string parameterName)
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
     {
-        if (value.Kind != DateTimeKind.Utc)
+        if (value.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("Timestamp must be UTC.", parameterName);
+            throw new ArgumentException("Timestamp must be an India-local wall-clock value.", parameterName);
         }
     }
 }
@@ -319,53 +322,55 @@ public sealed class SubscriptionDelivery : PublicEntity
     public string BranchCodeSnapshot { get; private set; } = string.Empty;
     public string BranchNameSnapshot { get; private set; } = string.Empty;
     public string AddressSnapshot { get; private set; } = string.Empty;
-    public DateTime? StatusChangedAtUtc { get; private set; }
+    public DateTime? StatusChangedAt { get; private set; }
 
     public Subscription Subscription { get; private set; } = null!;
     public Branch Branch { get; private set; } = null!;
 
-    internal void Skip(DateTime utcNow, TimeSpan cutoff)
+    internal void Skip(DateTime indiaLocalNow, TimeSpan cutoff)
     {
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (Status == SubscriptionDeliveryStatus.Skipped) return;
         EnsureScheduled();
 
-        var deliveryStartsUtc = DateTime.SpecifyKind(ScheduledDate.ToDateTime(TimeOnly.MinValue), DateTimeKind.Utc);
-        if (utcNow > deliveryStartsUtc - cutoff)
+        var deliveryStarts = DateTime.SpecifyKind(
+            ScheduledDate.ToDateTime(TimeOnly.MinValue),
+            DateTimeKind.Unspecified);
+        if (indiaLocalNow > deliveryStarts - cutoff)
         {
             throw new InvalidOperationException("The skip cutoff has passed for this delivery.");
         }
 
         Status = SubscriptionDeliveryStatus.Skipped;
-        StatusChangedAtUtc = utcNow;
+        StatusChangedAt = indiaLocalNow;
     }
 
-    internal void Fail(DateTime utcNow)
+    internal void Fail(DateTime indiaLocalNow)
     {
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (Status == SubscriptionDeliveryStatus.Failed) return;
         EnsureScheduled();
         Status = SubscriptionDeliveryStatus.Failed;
-        StatusChangedAtUtc = utcNow;
+        StatusChangedAt = indiaLocalNow;
     }
 
-    internal bool Deliver(DateTime utcNow)
+    internal bool Deliver(DateTime indiaLocalNow)
     {
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (Status == SubscriptionDeliveryStatus.Delivered) return false;
         EnsureScheduled();
         Status = SubscriptionDeliveryStatus.Delivered;
-        StatusChangedAtUtc = utcNow;
+        StatusChangedAt = indiaLocalNow;
         return true;
     }
 
-    internal void Cancel(DateTime utcNow)
+    internal void Cancel(DateTime indiaLocalNow)
     {
-        EnsureUtc(utcNow, nameof(utcNow));
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (Status == SubscriptionDeliveryStatus.Cancelled) return;
         EnsureScheduled();
         Status = SubscriptionDeliveryStatus.Cancelled;
-        StatusChangedAtUtc = utcNow;
+        StatusChangedAt = indiaLocalNow;
     }
 
     private void EnsureScheduled()
@@ -381,11 +386,11 @@ public sealed class SubscriptionDelivery : PublicEntity
             ? throw new ArgumentException("A value is required.", parameterName)
             : value.Trim();
 
-    private static void EnsureUtc(DateTime value, string parameterName)
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
     {
-        if (value.Kind != DateTimeKind.Utc)
+        if (value.Kind != DateTimeKind.Unspecified)
         {
-            throw new ArgumentException("Timestamp must be UTC.", parameterName);
+            throw new ArgumentException("Timestamp must be an India-local wall-clock value.", parameterName);
         }
     }
 }
