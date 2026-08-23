@@ -138,6 +138,22 @@ public sealed class Order : AuditableEntity
         Status = OrderStatus.Confirmed;
     }
 
+    public void RecoverCapturedPayment()
+    {
+        if (Status == OrderStatus.Confirmed)
+        {
+            return;
+        }
+
+        if (Status != OrderStatus.PaymentFailed)
+        {
+            throw new InvalidOperationException(
+                $"An order in status '{Status}' cannot recover a captured payment.");
+        }
+
+        Status = OrderStatus.Confirmed;
+    }
+
     public void FailPayment()
     {
         if (Status == OrderStatus.PaymentFailed)

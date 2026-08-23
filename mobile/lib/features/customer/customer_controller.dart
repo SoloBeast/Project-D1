@@ -1,5 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,7 +7,7 @@ import 'customer_models.dart';
 import 'customer_repository.dart';
 
 final customerRepositoryProvider = Provider<CustomerRepository>(
-  (ref) => CustomerRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => CustomerRepository(api: authenticatedApiClient(ref)),
 );
 
 final customerControllerProvider =
@@ -20,6 +20,7 @@ class CustomerState {
     this.isLoading = false,
     this.isSaving = false,
     this.errorMessage,
+    this.fieldErrors = const <String, String>{},
   });
 
   final CustomerProfile? profile;
@@ -27,6 +28,7 @@ class CustomerState {
   final bool isLoading;
   final bool isSaving;
   final String? errorMessage;
+  final Map<String, String> fieldErrors;
 
   CustomerState copyWith({
     CustomerProfile? profile,
@@ -34,6 +36,7 @@ class CustomerState {
     bool? isLoading,
     bool? isSaving,
     String? errorMessage,
+    Map<String, String>? fieldErrors,
     bool clearError = false,
   }) => CustomerState(
     profile: profile ?? this.profile,
@@ -41,6 +44,9 @@ class CustomerState {
     isLoading: isLoading ?? this.isLoading,
     isSaving: isSaving ?? this.isSaving,
     errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
+    fieldErrors: clearError
+        ? const <String, String>{}
+        : fieldErrors ?? this.fieldErrors,
   );
 }
 
@@ -89,7 +95,11 @@ class CustomerController extends Notifier<CustomerState> {
       state = state.copyWith(profile: profile, isSaving: false);
       return true;
     } on ApiException catch (error) {
-      state = state.copyWith(isSaving: false, errorMessage: error.message);
+      state = state.copyWith(
+        isSaving: false,
+        errorMessage: error.message,
+        fieldErrors: _fieldErrors(error),
+      );
     } on Object {
       state = state.copyWith(
         isSaving: false,
@@ -115,7 +125,11 @@ class CustomerController extends Notifier<CustomerState> {
       state = state.copyWith(isSaving: false);
       return true;
     } on ApiException catch (error) {
-      state = state.copyWith(isSaving: false, errorMessage: error.message);
+      state = state.copyWith(
+        isSaving: false,
+        errorMessage: error.message,
+        fieldErrors: _fieldErrors(error),
+      );
     } on Object {
       state = state.copyWith(
         isSaving: false,
@@ -137,7 +151,11 @@ class CustomerController extends Notifier<CustomerState> {
       state = state.copyWith(isSaving: false);
       return true;
     } on ApiException catch (error) {
-      state = state.copyWith(isSaving: false, errorMessage: error.message);
+      state = state.copyWith(
+        isSaving: false,
+        errorMessage: error.message,
+        fieldErrors: _fieldErrors(error),
+      );
     } on Object {
       state = state.copyWith(
         isSaving: false,
@@ -159,6 +177,15 @@ class CustomerController extends Notifier<CustomerState> {
     } on Object {
       return null;
     }
+  }
+
+  Map<String, String> _fieldErrors(ApiException error) {
+    final field = error.field;
+    if (field == null || field.trim().isEmpty) {
+      return const <String, String>{};
+    }
+    final normalized = field[0].toLowerCase() + field.substring(1);
+    return <String, String>{normalized: error.message};
   }
 
   Future<void> _reloadAddresses(String token) async {

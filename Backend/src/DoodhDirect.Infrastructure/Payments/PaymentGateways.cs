@@ -62,6 +62,24 @@ public sealed class MockPaymentGateway(IOptions<PaymentOptions> options) : IPaym
             !successful));
     }
 
+    public Task<GatewayOrderPaymentsResult> GetPaymentsForOrderAsync(
+        string gatewayOrderId,
+        CancellationToken cancellationToken)
+    {
+        _orders.TryGetValue(gatewayOrderId, out var order);
+        IReadOnlyList<GatewayPaymentStatusResult> payments = order is null
+            ? []
+            : [new GatewayPaymentStatusResult(
+                $"pay_mock_{gatewayOrderId[11..]}",
+                gatewayOrderId,
+                "captured",
+                order.AmountMinor,
+                order.Currency,
+                true,
+                false)];
+        return Task.FromResult(new GatewayOrderPaymentsResult(gatewayOrderId, payments));
+    }
+
     public bool VerifyWebhookSignature(ReadOnlySpan<byte> payload, string signature) =>
         VerifyHmac(payload, signature, _options.MockSigningSecret);
 
@@ -212,16 +230,33 @@ public sealed class RazorpayPaymentGateway(
             CreateRequest(HttpMethod.Get, $"payments/{Uri.EscapeDataString(gatewayPaymentId)}"),
             cancellationToken);
         using var document = await ReadSuccessAsync(response, cancellationToken);
+        return ParsePayment(document.RootElement);
+    }
+
+    public async Task<GatewayOrderPaymentsResult> GetPaymentsForOrderAsync(
+        string gatewayOrderId,
+        CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.SendAsync(
+            CreateRequest(
+                HttpMethod.Get,
+                $"orders/{Uri.EscapeDataString(gatewayOrderId)}/payments"),
+            cancellationToken);
+        using var document = await ReadSuccessAsync(response, cancellationToken);
         var root = document.RootElement;
-        var status = RequiredString(root, "status");
-        return new GatewayPaymentStatusResult(
-            RequiredString(root, "id"),
-            RequiredString(root, "order_id"),
-            status,
-            root.GetProperty("amount").GetInt64(),
-            RequiredString(root, "currency"),
-            string.Equals(status, "captured", StringComparison.OrdinalIgnoreCase),
-            status is "failed" or "refunded");
+        if (!root.TryGetProperty("items", out var items) ||
+            items.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("Razorpay order payments response has no payment list.");
+        }
+
+        var payments = items.EnumerateArray().Select(ParsePayment).ToArray();
+        if (payments.Any(x => !string.Equals(x.GatewayOrderId, gatewayOrderId, StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException("Razorpay returned a payment for a different order.");
+        }
+
+        return new GatewayOrderPaymentsResult(gatewayOrderId, payments);
     }
 
     public bool VerifyWebhookSignature(ReadOnlySpan<byte> payload, string signature) =>
@@ -331,6 +366,19 @@ public sealed class RazorpayPaymentGateway(
             ' ',
             value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
         return normalized.Length <= 240 ? normalized : normalized[..240];
+    }
+
+    private static GatewayPaymentStatusResult ParsePayment(JsonElement root)
+    {
+        var status = RequiredString(root, "status");
+        return new GatewayPaymentStatusResult(
+            RequiredString(root, "id"),
+            RequiredString(root, "order_id"),
+            status,
+            root.GetProperty("amount").GetInt64(),
+            RequiredString(root, "currency"),
+            string.Equals(status, "captured", StringComparison.OrdinalIgnoreCase),
+            string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string RequiredString(JsonElement element, string propertyName) =>

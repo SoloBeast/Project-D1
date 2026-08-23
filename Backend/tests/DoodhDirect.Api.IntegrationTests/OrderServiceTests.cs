@@ -255,7 +255,9 @@ public sealed class OrderServiceTests
             await db.SaveChangesAsync();
 
             var category = new ProductCategory("MILK", "Milk");
+            category.Activate();
             var product = new Product(0, "MILK-001", "Fresh Milk", null, "litre", 80m);
+            product.Activate();
             category.Products.Add(product);
             var address = new CustomerAddress(
                 customer.Id, "Home", "1 Main Road", "Central", "Bengaluru", "Karnataka",

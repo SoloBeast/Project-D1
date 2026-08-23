@@ -66,6 +66,14 @@ Public and privileged DTOs are intentionally separate. Public results omit branc
 
 Infrastructure selects the stream adapter by environment and configuration. Development may explicitly use an HTTPS, HLS-only mock adapter whose descriptors are visibly marked. Production rejects that adapter and otherwise uses a fail-closed unconfigured implementation until an operational production gateway is supplied. Flutter holds descriptors only in Riverpod memory, refreshes expired access from the API, and delegates protocol playback behind injectable player builders.
 
+## Razorpay Payment Safety Boundary
+
+Razorpay is an external authority for payment capture evidence, not for DoodhDirect business state. `PaymentService` owns the orchestration boundary: it validates gateway payment/order identity, amount, currency, status, capture and terminal-failure/refund flags, rejects duplicate or conflicting evidence, and classifies unresolved results as pending or ambiguous. It uses direct payment lookup when a gateway payment ID is known and order-payment discovery when the local ID is absent.
+
+Verify, webhook, reconciliation, expiry/cancellation, replacement, and subscription retry all converge on the same backend transition path. Replacement and retry are blocked unless every relevant previous attempt is definitively terminal and non-captured. Gateway evidence is revalidated inside a serializable mutation boundary to protect against concurrent attempts and target-state changes. Validated captures can recover expired payments, failed orders, and failed subscriptions while exact-once boundaries protect confirmation, activation, delivery, OTP, notification, and refund effects.
+
+Razorpay webhooks terminate at the public HTTPS API endpoint, validate HMAC over the raw request body with the configured webhook secret, persist provider event identity/hash, and process duplicates idempotently. Delivery is asynchronous and can be delayed, duplicated, reordered, or unavailable; verification and reconciliation remain the fallback. Uncertainty fails closed.
+
 ## Phase 11 Notification Boundary
 
 Business modules own business state and append durable, provider-neutral `NotificationEvent` records in their persistence boundary. They depend only on `INotificationEventWriter`; they do not know about FCM, SMS, WhatsApp, email, templates, provider credentials, or retry behavior. Complaint and replacement event contracts/templates are present, but producer integration remains deferred until those modules exist.

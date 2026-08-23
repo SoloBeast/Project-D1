@@ -325,7 +325,7 @@ class DoodhHeroCard extends StatelessWidget {
               FilledButton.icon(
                 onPressed: onBuy,
                 icon: const Icon(Icons.shopping_bag_outlined),
-                label: const Text('Buy milk'),
+                label: const Text('Shop'),
                 style: FilledButton.styleFrom(
                   backgroundColor: Colors.white,
                   foregroundColor: DoodhColors.tealDark,

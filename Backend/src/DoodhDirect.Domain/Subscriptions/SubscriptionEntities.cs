@@ -24,6 +24,12 @@ public enum SubscriptionDeliveryStatus
     Cancelled
 }
 
+public enum SubscriptionDeliverySlot
+{
+    Morning,
+    Evening
+}
+
 public sealed class Subscription : AuditableEntity
 {
     private Subscription() { }
@@ -110,17 +116,21 @@ public sealed class Subscription : AuditableEntity
     public ICollection<SubscriptionSchedule> Schedules { get; private set; } = [];
     public ICollection<SubscriptionDelivery> Deliveries { get; private set; } = [];
 
-    public void AddSchedule(DayOfWeek dayOfWeek)
+    public void AddSchedule(
+        DayOfWeek dayOfWeek,
+        SubscriptionDeliverySlot slot = SubscriptionDeliverySlot.Morning)
     {
         if (Schedules.Any(x => x.DayOfWeek == dayOfWeek))
         {
             throw new InvalidOperationException($"The schedule already includes {dayOfWeek}.");
         }
 
-        Schedules.Add(new SubscriptionSchedule(dayOfWeek));
+        Schedules.Add(new SubscriptionSchedule(dayOfWeek, slot));
     }
 
-    public void AddDelivery(DateOnly scheduledDate)
+    public void AddDelivery(
+        DateOnly scheduledDate,
+        SubscriptionDeliverySlot slot = SubscriptionDeliverySlot.Morning)
     {
         if (scheduledDate < StartDate || scheduledDate > EndDate)
         {
@@ -133,6 +143,7 @@ public sealed class Subscription : AuditableEntity
 
         Deliveries.Add(new SubscriptionDelivery(
             scheduledDate,
+            slot,
             BranchId,
             Quantity,
             BranchCodeSnapshot,
@@ -147,6 +158,20 @@ public sealed class Subscription : AuditableEntity
         if (Status != SubscriptionStatus.PaymentPending)
         {
             throw new InvalidOperationException($"A subscription in status '{Status}' cannot be activated by payment.");
+        }
+
+        Status = SubscriptionStatus.Active;
+        ActivatedAt = indiaLocalNow;
+    }
+
+    public void RecoverCapturedPayment(DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        if (Status == SubscriptionStatus.Active) return;
+        if (Status != SubscriptionStatus.PaymentFailed)
+        {
+            throw new InvalidOperationException(
+                $"A subscription in status '{Status}' cannot recover a captured payment.");
         }
 
         Status = SubscriptionStatus.Active;
@@ -280,13 +305,17 @@ public sealed class SubscriptionSchedule : Entity
 {
     private SubscriptionSchedule() { }
 
-    internal SubscriptionSchedule(DayOfWeek dayOfWeek)
+    internal SubscriptionSchedule(
+        DayOfWeek dayOfWeek,
+        SubscriptionDeliverySlot slot)
     {
         DayOfWeek = dayOfWeek;
+        Slot = slot;
     }
 
     public long SubscriptionId { get; private set; }
     public DayOfWeek DayOfWeek { get; private set; }
+    public SubscriptionDeliverySlot Slot { get; private set; }
     public Subscription Subscription { get; private set; } = null!;
 }
 
@@ -296,6 +325,7 @@ public sealed class SubscriptionDelivery : PublicEntity
 
     internal SubscriptionDelivery(
         DateOnly scheduledDate,
+        SubscriptionDeliverySlot slot,
         long branchId,
         decimal quantity,
         string branchCode,
@@ -306,6 +336,7 @@ public sealed class SubscriptionDelivery : PublicEntity
         if (quantity <= 0) throw new ArgumentOutOfRangeException(nameof(quantity));
 
         ScheduledDate = scheduledDate;
+        Slot = slot;
         BranchId = branchId;
         Quantity = quantity;
         Status = SubscriptionDeliveryStatus.Scheduled;
@@ -315,6 +346,7 @@ public sealed class SubscriptionDelivery : PublicEntity
     }
 
     public long SubscriptionId { get; private set; }
+    public SubscriptionDeliverySlot Slot { get; private set; }
     public long BranchId { get; private set; }
     public DateOnly ScheduledDate { get; private set; }
     public decimal Quantity { get; private set; }

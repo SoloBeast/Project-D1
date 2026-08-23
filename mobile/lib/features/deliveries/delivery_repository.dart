@@ -15,13 +15,23 @@ class DeliveryRepository {
         (await api.get('/api/v1/deliveries/$id', accessToken: token))['data']
             as Map<String, dynamic>,
       );
-  Future<List<DeliveryDetails>> getToday(String token, DateTime date) async =>
-      _list(
-        await api.get(
-          '/api/v1/delivery/my-today?date=${formatApiDeliveryDate(date)}',
-          accessToken: token,
-        ),
-      ).map(DeliveryDetails.fromJson).toList(growable: false);
+  Future<List<DeliveryDetails>> getToday(
+    String token,
+    DateTime date, {
+    DeliveryStatus? status,
+  }) async {
+    final query = <String>['date=${formatApiDeliveryDate(date)}'];
+    if (status != null && status != DeliveryStatus.unknown) {
+      query.add('status=${status.name}');
+    }
+    return _list(
+      await api.get(
+        '/api/v1/delivery/my-today?${query.join('&')}',
+        accessToken: token,
+      ),
+    ).map(DeliveryDetails.fromJson).toList(growable: false);
+  }
+
   Future<DeliveryDetails> getStaff(String token, String id) =>
       _staffGet(token, id);
   Future<List<DeliveryDetails>> getBranch(
@@ -29,10 +39,18 @@ class DeliveryRepository {
     int branchId, {
     DateTime? date,
     DeliveryStatus? status,
+    DeliverySourceType? sourceType,
+    SubscriptionDeliverySlot? slot,
   }) async {
     final query = <String>[];
     if (date != null) query.add('date=${formatApiDeliveryDate(date)}');
     if (status != null) query.add('status=${status.name}');
+    if (sourceType != null && sourceType != DeliverySourceType.unknown) {
+      query.add('sourceType=${sourceType.name}');
+    }
+    if (slot != null && slot != SubscriptionDeliverySlot.unknown) {
+      query.add('slot=${slot.apiValue}');
+    }
     final suffix = query.isEmpty ? '' : '?${query.join('&')}';
     return _list(
       await api.get(
@@ -83,6 +101,24 @@ class DeliveryRepository {
         as Map<String, dynamic>,
   );
 
+  Future<BulkAssignmentResult> bulkAssign({
+    required String token,
+    required List<String> deliveryIds,
+    required String employeeId,
+    String? reason,
+  }) async => BulkAssignmentResult.fromJson(
+    (await api.post(
+          '/api/v1/delivery-management/bulk-assign',
+          body: {
+            'deliveryIds': deliveryIds,
+            'employeeId': employeeId,
+            'reason': reason,
+          },
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+
   Future<DeliveryDetails> pickup(String token, String id, {String? remarks}) =>
       _action(
         token,
@@ -94,9 +130,6 @@ class DeliveryRepository {
       _action(token, id, 'start');
   Future<DeliveryDetails> arrive(String token, String id) =>
       _action(token, id, 'arrive');
-  Future<void> issueOtp(String token, String id) async {
-    await api.post('/api/v1/delivery/$id/issue-otp', accessToken: token);
-  }
 
   Future<DeliveryDetails> verifyOtp(String token, String id, String code) =>
       _action(token, id, 'verify-otp', body: {'code': code});

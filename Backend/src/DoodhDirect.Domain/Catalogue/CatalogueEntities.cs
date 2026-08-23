@@ -9,6 +9,7 @@ public sealed class ProductCategory : AuditableEntity
     public ProductCategory(string code, string name, string? description = null)
     {
         Update(code, name, description);
+        IsActive = false;
     }
 
     public string Code { get; private set; } = string.Empty;
@@ -40,6 +41,7 @@ public sealed class Product : AuditableEntity
     {
         CategoryId = categoryId;
         Update(categoryId, sku, name, description, unitOfMeasure, price);
+        IsActive = false;
     }
 
     public long CategoryId { get; private set; }

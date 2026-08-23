@@ -1,4 +1,5 @@
 using System.Data;
+using Microsoft.Extensions.Logging;
 using System.Security.Cryptography;
 using System.Text.Json;
 using DoodhDirect.Application.Abstractions;
@@ -11,6 +12,7 @@ using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Subscriptions;
+using DoodhDirect.Infrastructure.Notifications;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -24,9 +26,36 @@ public sealed class DeliveryService(
     IOtpDeliveryService otpDeliveryService,
     IDeliveryRealtimePublisher realtimePublisher,
     IOptions<DeliveryOptions> deliveryOptions,
-    INotificationEventWriter notificationEventWriter) : IDeliveryService
+    INotificationEventWriter notificationEventWriter,
+    DeliveryOtpHandoffProtector deliveryOtpHandoffProtector,
+    DeliveryOtpSendGate? deliveryOtpSendGate = null,
+    ILogger<DeliveryService>? logger = null) : IDeliveryService
 {
+    private static readonly DeliveryOtpSendGate DefaultDeliveryOtpSendGate = new();
+    private readonly DeliveryOtpSendGate _deliveryOtpSendGate = deliveryOtpSendGate ?? DefaultDeliveryOtpSendGate;
     private readonly DeliveryOptions _options = deliveryOptions.Value;
+
+    public void AddIfMissing(Order order, DateOnly scheduledDate)
+    {
+        if (dbContext.Deliveries.Local.Any(x => x.OrderId == order.Id)
+            || dbContext.Deliveries.Any(x => x.OrderId == order.Id))
+        {
+            return;
+        }
+
+        dbContext.Deliveries.Add(Delivery.ForOrder(
+            order.Id,
+            order.CustomerId,
+            order.BranchId,
+            scheduledDate,
+            order.OrderNumber,
+            order.ContactNameSnapshot,
+            order.ContactMobileSnapshot,
+            FormatOrderAddress(order),
+            order.DeliveryInstructionsSnapshot,
+            order.LatitudeSnapshot,
+            order.LongitudeSnapshot));
+    }
 
     public async Task<DeliveryMaterializationResult> MaterializeEligibleAsync(
         DeliveryActor actor,
@@ -35,10 +64,7 @@ public sealed class DeliveryService(
     {
         EnsureActorHasBranches(actor);
         var today = timeProvider.Today;
-        if (throughDate < today)
-        {
-            throw new ValidationAppException("The materialization date cannot be in the past.", "throughDate");
-        }
+        EnsureSubscriptionGenerationWindow(today, throughDate);
 
         var orderQuery = dbContext.Orders
             .AsNoTracking()
@@ -65,18 +91,7 @@ public sealed class DeliveryService(
 
         foreach (var order in orders)
         {
-            dbContext.Deliveries.Add(Delivery.ForOrder(
-                order.Id,
-                order.CustomerId,
-                order.BranchId,
-                today,
-                order.OrderNumber,
-                order.ContactNameSnapshot,
-                order.ContactMobileSnapshot,
-                FormatOrderAddress(order),
-                order.DeliveryInstructionsSnapshot,
-                order.LatitudeSnapshot,
-                order.LongitudeSnapshot));
+            AddIfMissing(order, today);
         }
 
         foreach (var occurrence in occurrences)
@@ -102,35 +117,125 @@ public sealed class DeliveryService(
             AddAudit(actor.UserId, "DELIVERY.MATERIALIZE", "Delivery", throughDate.ToString("yyyy-MM-dd"), null,
                 new { OrdersCreated = orders.Count, SubscriptionOccurrencesCreated = occurrences.Count }, null, now);
             await dbContext.SaveChangesAsync(cancellationToken);
+            await IssuePendingOtpsAsync(cancellationToken);
         }
 
         return new DeliveryMaterializationResult(orders.Count, occurrences.Count);
     }
 
+    public Task<DeliveryMaterializationResult> FetchSubscriptionDeliveriesAsync(
+        DeliveryActor actor,
+        DateOnly throughDate,
+        CancellationToken cancellationToken) =>
+        FetchSubscriptionDeliveriesAsync(actor, throughDate, null, cancellationToken);
+
+    public async Task<DeliveryMaterializationResult> FetchSubscriptionDeliveriesAsync(
+        DeliveryActor actor,
+        DateOnly throughDate,
+        SubscriptionDeliverySlot? slot,
+        CancellationToken cancellationToken)
+    {
+        EnsureActorHasBranches(actor);
+        var today = timeProvider.Today;
+        EnsureSubscriptionGenerationWindow(today, throughDate);
+
+        var occurrenceQuery = dbContext.SubscriptionDeliveries
+            .AsNoTracking()
+            .Include(x => x.Subscription).ThenInclude(x => x.Customer)
+            .Include(x => x.Subscription).ThenInclude(x => x.CustomerAddress)
+            .Where(x => x.Status == SubscriptionDeliveryStatus.Scheduled
+                && x.Subscription.Status == SubscriptionStatus.Active
+                && x.ScheduledDate <= throughDate
+                && !dbContext.Deliveries.Any(d => d.SubscriptionDeliveryId == x.Id));
+
+        if (slot.HasValue)
+        {
+            occurrenceQuery = occurrenceQuery.Where(x => x.Slot == slot.Value);
+        }
+
+        if (!actor.HasGlobalAccess)
+        {
+            occurrenceQuery = occurrenceQuery.Where(x => actor.BranchIds.Contains(x.BranchId));
+        }
+
+        var occurrences = await occurrenceQuery.ToListAsync(cancellationToken);
+        foreach (var occurrence in occurrences)
+        {
+            var subscription = occurrence.Subscription;
+            var address = subscription.CustomerAddress;
+            dbContext.Deliveries.Add(Delivery.ForSubscriptionOccurrence(
+                occurrence.Id,
+                subscription.CustomerId,
+                occurrence.BranchId,
+                occurrence.ScheduledDate,
+                $"SUB-{subscription.PublicId:N}-{occurrence.ScheduledDate:yyyyMMdd}",
+                address.ContactName,
+                address.ContactMobile,
+                occurrence.AddressSnapshot,
+                address.DeliveryInstructions,
+                address.Latitude,
+                address.Longitude));
+        }
+
+        if (occurrences.Count > 0)
+        {
+            AddAudit(actor.UserId, "DELIVERY.FETCH_SUBSCRIPTIONS", "SubscriptionDelivery", throughDate.ToString("yyyy-MM-dd"), null,
+                new { SubscriptionOccurrencesCreated = occurrences.Count }, null, timeProvider.Now);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await IssuePendingOtpsAsync(cancellationToken);
+        }
+
+        return new DeliveryMaterializationResult(0, occurrences.Count);
+    }
+
     public async Task<IReadOnlyList<DeliveryResult>> GetTodayForStaffAsync(
         DeliveryActor actor,
         DateOnly date,
+        DeliveryStatus? status,
         CancellationToken cancellationToken)
     {
-        var deliveries = await OperationsQuery()
-            .Where(x => x.AssignedEmployeeId == actor.UserId && x.ScheduledDate == date)
+        var query = OperationsQuery()
+            .Where(x => x.AssignedEmployeeId == actor.UserId && x.ScheduledDate == date);
+        if (status.HasValue)
+        {
+            query = query.Where(x => x.Status == status.Value);
+        }
+
+        var deliveries = await query
             .OrderBy(x => x.Status)
             .ThenBy(x => x.AssignedAt)
             .ToListAsync(cancellationToken);
         return deliveries.Select(ToResult).ToArray();
     }
 
+    public Task<IReadOnlyList<DeliveryResult>> GetForBranchAsync(
+        DeliveryActor actor,
+        long branchId,
+        DateOnly? date,
+        DeliveryStatus? status,
+        CancellationToken cancellationToken) =>
+        GetForBranchAsync(actor, branchId, date, status, null, null, cancellationToken);
+
     public async Task<IReadOnlyList<DeliveryResult>> GetForBranchAsync(
         DeliveryActor actor,
         long branchId,
         DateOnly? date,
         DeliveryStatus? status,
+        DeliverySourceType? sourceType,
+        SubscriptionDeliverySlot? slot,
         CancellationToken cancellationToken)
     {
         EnsureBranchAccess(actor, branchId);
         var query = OperationsQuery().Where(x => x.BranchId == branchId);
         if (date.HasValue) query = query.Where(x => x.ScheduledDate == date.Value);
         if (status.HasValue) query = query.Where(x => x.Status == status.Value);
+        if (sourceType.HasValue) query = query.Where(x => x.SourceType == sourceType.Value);
+        if (slot.HasValue)
+        {
+            query = query.Where(x => x.SourceType == DeliverySourceType.SubscriptionOccurrence
+                && x.SubscriptionDelivery != null
+                && x.SubscriptionDelivery.Slot == slot.Value);
+        }
         var deliveries = await query.OrderByDescending(x => x.ScheduledDate).ThenBy(x => x.Status).ToListAsync(cancellationToken);
         return deliveries.Select(ToResult).ToArray();
     }
@@ -213,6 +318,99 @@ public sealed class DeliveryService(
         return await PublishChangedAsync(delivery.PublicId, cancellationToken);
     }
 
+    public async Task<BulkAssignDeliveriesResult> BulkAssignAsync(
+        DeliveryActor actor,
+        BulkAssignDeliveriesRequest request,
+        CancellationToken cancellationToken)
+    {
+        var deliveryIds = request.DeliveryIds?.Distinct().ToArray()
+            ?? throw new ValidationAppException("At least one delivery must be selected.", "deliveryIds");
+        if (deliveryIds.Length == 0)
+        {
+            throw new ValidationAppException("At least one delivery must be selected.", "deliveryIds");
+        }
+
+        var deliveries = new List<Delivery>();
+        var now = timeProvider.Now;
+        await ExecuteSerializableAsync(async () =>
+        {
+            deliveries = await OperationsQuery()
+                .Where(x => deliveryIds.Contains(x.PublicId))
+                .ToListAsync(cancellationToken);
+
+            if (deliveries.Count != deliveryIds.Length)
+            {
+                throw new NotFoundException("One or more selected deliveries were not found.");
+            }
+
+            foreach (var delivery in deliveries)
+            {
+                EnsureBranchAccess(actor, delivery.BranchId);
+                if (delivery.Status != DeliveryStatus.ReadyForAssignment)
+                {
+                    throw new BusinessRuleException(
+                        $"Delivery '{delivery.ReferenceNumber}' is not ready for assignment.");
+                }
+                if (delivery.Order is not null
+                    && delivery.Order.Status != OrderStatus.Confirmed)
+                {
+                    throw new BusinessRuleException(
+                        $"Order '{delivery.Order.OrderNumber}' is not ready for assignment.");
+                }
+            }
+
+            var employeesByBranch = new Dictionary<long, User>();
+            foreach (var branchId in deliveries.Select(x => x.BranchId).Distinct())
+            {
+                employeesByBranch[branchId] = await FindEligibleEmployeeAsync(
+                    request.EmployeeId,
+                    branchId,
+                    cancellationToken);
+            }
+
+            foreach (var delivery in deliveries)
+            {
+                var employee = employeesByBranch[delivery.BranchId];
+                Mutate(() => delivery.Assign(employee.Id, actor.UserId, now, request.Reason));
+                if (delivery.Order is not null)
+                {
+                    Mutate(delivery.Order.AssignForDelivery);
+                }
+
+                AddAudit(
+                    actor.UserId,
+                    "DELIVERY.ASSIGN",
+                    "Delivery",
+                    delivery.PublicId.ToString(),
+                    null,
+                    new { EmployeeId = employee.PublicId },
+                    request.Reason,
+                    now);
+                AddDeliveryEvent(
+                    delivery,
+                    NotificationEventTypes.DeliveryAssigned,
+                    $"delivery:{delivery.PublicId:N}:assigned:{now.Ticks}",
+                    $"Your delivery has been assigned to {employee.DisplayName ?? "a delivery employee"}.",
+                    now,
+                    new Dictionary<string, string>
+                    {
+                        ["employeeId"] = employee.PublicId.ToString(),
+                        ["employeeName"] = employee.DisplayName ?? "Delivery employee"
+                    });
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
+
+        var results = new List<DeliveryResult>(deliveries.Count);
+        foreach (var delivery in deliveries)
+        {
+            results.Add(await PublishChangedAsync(delivery.PublicId, cancellationToken));
+        }
+
+        return new BulkAssignDeliveriesResult(results);
+    }
+
     public Task<DeliveryResult> PickUpAsync(
         DeliveryActor actor,
         Guid deliveryId,
@@ -256,35 +454,149 @@ public sealed class DeliveryService(
         return await PublishChangedAsync(delivery.PublicId, cancellationToken);
     }
 
-    public async Task IssueOtpAsync(DeliveryActor actor, Guid deliveryId, CancellationToken cancellationToken)
+    public async Task IssuePendingOtpsAsync(CancellationToken cancellationToken)
     {
-        var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
-        if (delivery.Status != DeliveryStatus.Arrived)
+        var pending = new List<(Delivery Delivery, DeliveryOtp Otp, string Code)>();
+        await ExecuteSerializableAsync(async () =>
         {
-            throw new BusinessRuleException("Delivery OTP can only be issued after arrival.");
-        }
-        if (delivery.OtpVerifiedAt.HasValue)
-        {
-            throw new ConflictException("The delivery OTP has already been verified.");
-        }
+            var deliveries = await OperationsQuery()
+                .Where(x => !x.Otps.Any() || x.Otps.Any(otp => !otp.SentAt.HasValue))
+                .ToListAsync(cancellationToken);
 
-        var now = timeProvider.Now;
-        var activeOtps = delivery.Otps.Where(x => !x.ConsumedAt.HasValue).ToArray();
-        foreach (var activeOtp in activeOtps)
-        {
-            if (activeOtp.ExpiresAt > now && activeOtp.AttemptCount < activeOtp.MaximumAttempts)
+            foreach (var delivery in deliveries)
             {
-                throw new ConflictException("An active delivery OTP already exists.");
-            }
-        }
+                var otp = delivery.Otps
+                    .Where(x => !x.ConsumedAt.HasValue)
+                    .OrderByDescending(x => x.CreatedAt)
+                    .FirstOrDefault();
+                var eventKey = $"delivery:{delivery.PublicId:N}:otp-issued";
+                var existingEvent = await dbContext.NotificationEvents
+                    .SingleOrDefaultAsync(x => x.EventKey == eventKey, cancellationToken);
+                string code;
 
-        var code = CreateNumericCode(_options.OtpCodeLength);
-        var otp = new DeliveryOtp(delivery.Id, passwordHasher.Hash(code), now.AddMinutes(_options.OtpExpiryMinutes), _options.OtpMaximumAttempts, now);
-        dbContext.DeliveryOtps.Add(otp);
-        AddAudit(actor.UserId, "DELIVERY.OTP_ISSUE", "Delivery", delivery.PublicId.ToString(), null,
-            new { otp.ExpiresAt, otp.MaximumAttempts }, null, now);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await otpDeliveryService.SendAsync(delivery.CustomerMobileSnapshot, code, cancellationToken);
+                if (otp is null)
+                {
+                    // An existing event must retain its original protected OTP payload. Do not
+                    // create a replacement OTP when the durable event and OTP are inconsistent.
+                    if (existingEvent is not null)
+                    {
+                        continue;
+                    }
+
+                    var createdAt = timeProvider.Now;
+                    code = CreateNumericCode(_options.OtpCodeLength);
+                    var protectedCode = deliveryOtpHandoffProtector.Protect(code);
+                    otp = new DeliveryOtp(
+                        delivery.Id,
+                        passwordHasher.Hash(code),
+                        createdAt.AddMinutes(_options.OtpExpiryMinutes),
+                        _options.OtpMaximumAttempts,
+                        createdAt,
+                        protectedCode);
+                    dbContext.DeliveryOtps.Add(otp);
+                    AddDeliveryEvent(
+                        delivery,
+                        NotificationEventTypes.DeliveryOtpIssued,
+                        eventKey,
+                        "Your delivery OTP is ready.",
+                        createdAt,
+                        protectedVariables: new Dictionary<string, string> { ["otp"] = protectedCode });
+                }
+                else if (otp.SentAt.HasValue || otp.ProtectedCode is null)
+                {
+                    continue;
+                }
+                else
+                {
+                    if (existingEvent is null)
+                    {
+                        AddDeliveryEvent(
+                            delivery,
+                            NotificationEventTypes.DeliveryOtpIssued,
+                            eventKey,
+                            "Your delivery OTP is ready.",
+                            otp.CreatedAt,
+                            protectedVariables: new Dictionary<string, string>
+                            {
+                                ["otp"] = otp.ProtectedCode
+                            });
+                    }
+
+                    try
+                    {
+                        code = deliveryOtpHandoffProtector.Unprotect(otp.ProtectedCode);
+                    }
+                    catch (Exception exception) when (
+                        exception is ArgumentException
+                        or InvalidOperationException
+                        or CryptographicException)
+                    {
+                        continue;
+                    }
+                }
+
+                pending.Add((delivery, otp, code));
+            }
+
+            if (pending.Count > 0)
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+        }, cancellationToken);
+
+        foreach (var item in pending)
+        {
+            await using var sendLease = await _deliveryOtpSendGate.AcquireAsync(
+                item.Delivery.Id,
+                cancellationToken);
+
+            // Reload after acquiring the process-wide gate because another scoped service
+            // instance may have completed transport while this instance was waiting.
+            await dbContext.Entry(item.Otp).ReloadAsync(cancellationToken);
+            if (item.Otp.SentAt.HasValue || item.Otp.ConsumedAt.HasValue || item.Otp.ProtectedCode is null)
+            {
+                continue;
+            }
+
+            string code;
+            try
+            {
+                code = deliveryOtpHandoffProtector.Unprotect(item.Otp.ProtectedCode);
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException
+                or InvalidOperationException
+                or CryptographicException)
+            {
+                continue;
+            }
+
+            try
+            {
+                await otpDeliveryService.SendAsync(
+                    item.Delivery.CustomerMobileSnapshot,
+                    code,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                logger?.LogWarning(
+                    "Delivery OTP transport was unavailable for delivery {DeliveryId}; the protected OTP remains pending for retry.",
+                    item.Delivery.PublicId);
+                continue;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger?.LogWarning(
+                    exception,
+                    "Delivery OTP transport failed for delivery {DeliveryId}; the protected OTP remains pending for retry.",
+                    item.Delivery.PublicId);
+                continue;
+            }
+
+            item.Otp.MarkSent(timeProvider.Now);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
     }
 
     public async Task<DeliveryResult> VerifyOtpAsync(
@@ -298,40 +610,56 @@ public sealed class DeliveryService(
             throw new ValidationAppException("The delivery OTP is required.", "code");
         }
 
-        var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
-        if (delivery.Status != DeliveryStatus.Arrived)
+        ValidationAppException? invalidOtpException = null;
+        await ExecuteSerializableAsync(async () =>
         {
-            throw new BusinessRuleException("Delivery OTP can only be verified after arrival.");
-        }
-        var now = timeProvider.Now;
-        var otp = delivery.Otps
-            .Where(x => !x.ConsumedAt.HasValue)
-            .OrderByDescending(x => x.CreatedAt)
-            .FirstOrDefault() ?? throw new NotFoundException("No delivery OTP is available for verification.");
+            var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
+            if (delivery.Status != DeliveryStatus.Arrived)
+            {
+                throw new BusinessRuleException("Delivery OTP can only be verified after arrival.");
+            }
 
-        try
+            var now = timeProvider.Now;
+            var otp = delivery.Otps
+                .Where(x => !x.ConsumedAt.HasValue)
+                .OrderByDescending(x => x.CreatedAt)
+                .FirstOrDefault()
+                ?? throw new NotFoundException("No delivery OTP is available for verification.");
+
+            try
+            {
+                otp.EnsureVerifiable(now);
+            }
+            catch (InvalidOperationException exception)
+            {
+                throw new BusinessRuleException(exception.Message);
+            }
+
+            if (!passwordHasher.Verify(otp.CodeHash, request.Code.Trim()))
+            {
+                Mutate(() => otp.RecordFailedAttempt(now));
+                AddAudit(actor.UserId, "DELIVERY.OTP_FAILURE", "Delivery", delivery.PublicId.ToString(),
+                    null, new { otp.AttemptCount, otp.MaximumAttempts }, null, now);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                invalidOtpException = new ValidationAppException(
+                    "The delivery OTP is invalid.",
+                    "code");
+                return;
+            }
+
+            Mutate(() => otp.Consume(now));
+            Mutate(() => delivery.RecordOtpVerified(actor.UserId, now));
+            AddAudit(actor.UserId, "DELIVERY.OTP_SUCCESS", "Delivery", delivery.PublicId.ToString(), null, null, null, now);
+
+            await CompleteDeliveryMutationAsync(actor, delivery, now, null, cancellationToken);
+        }, cancellationToken);
+
+        if (invalidOtpException is not null)
         {
-            otp.EnsureVerifiable(now);
-        }
-        catch (InvalidOperationException exception)
-        {
-            throw new BusinessRuleException(exception.Message);
+            throw invalidOtpException;
         }
 
-        if (!passwordHasher.Verify(otp.CodeHash, request.Code.Trim()))
-        {
-            Mutate(() => otp.RecordFailedAttempt(now));
-            AddAudit(actor.UserId, "DELIVERY.OTP_FAILURE", "Delivery", delivery.PublicId.ToString(),
-                null, new { otp.AttemptCount, otp.MaximumAttempts }, null, now);
-            await dbContext.SaveChangesAsync(cancellationToken);
-            throw new ValidationAppException("The delivery OTP is invalid.", "code");
-        }
-
-        Mutate(() => otp.Consume(now));
-        Mutate(() => delivery.RecordOtpVerified(actor.UserId, now));
-        AddAudit(actor.UserId, "DELIVERY.OTP_SUCCESS", "Delivery", delivery.PublicId.ToString(), null, null, null, now);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return await PublishChangedAsync(delivery.PublicId, cancellationToken);
+        return await PublishChangedAsync(deliveryId, cancellationToken);
     }
 
     public async Task<DeliveryResult> CompleteAsync(
@@ -343,27 +671,41 @@ public sealed class DeliveryService(
         await ExecuteSerializableAsync(async () =>
         {
             var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
-            var now = timeProvider.Now;
-            Mutate(() => delivery.Complete(actor.UserId, now, request.Remarks));
-            if (delivery.Order is not null)
-            {
-                Mutate(delivery.Order.MarkDelivered);
-            }
-            else
-            {
-                var occurrence = delivery.SubscriptionDelivery!;
-                Mutate(() => occurrence.Subscription.MarkDelivered(occurrence, now));
-            }
-            AddTransitionAudit(actor.UserId, "DELIVERY.COMPLETE", delivery, now);
-            AddDeliveryEvent(
-                delivery,
-                NotificationEventTypes.DeliveryCompleted,
-                $"delivery:{delivery.PublicId:N}:completed:{now.Ticks}",
-                "Your delivery has been completed.",
-                now);
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await CompleteDeliveryMutationAsync(actor, delivery, timeProvider.Now, request.Remarks, cancellationToken);
         }, cancellationToken);
         return await PublishChangedAsync(deliveryId, cancellationToken);
+    }
+
+    private async Task CompleteDeliveryMutationAsync(
+        DeliveryActor actor,
+        Delivery delivery,
+        DateTime completedAt,
+        string? remarks,
+        CancellationToken cancellationToken)
+    {
+        Mutate(() => delivery.Complete(actor.UserId, completedAt, remarks));
+        foreach (var otp in delivery.Otps)
+        {
+            Mutate(() => otp.Invalidate(completedAt));
+        }
+        if (delivery.Order is not null)
+        {
+            Mutate(delivery.Order.MarkDelivered);
+        }
+        else
+        {
+            var occurrence = delivery.SubscriptionDelivery!;
+            Mutate(() => occurrence.Subscription.MarkDelivered(occurrence, completedAt));
+        }
+
+        AddTransitionAudit(actor.UserId, "DELIVERY.COMPLETE", delivery, completedAt);
+        AddDeliveryEvent(
+            delivery,
+            NotificationEventTypes.DeliveryCompleted,
+            $"delivery:{delivery.PublicId:N}:completed:{completedAt.Ticks}",
+            "Your delivery has been completed.",
+            completedAt);
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<DeliveryResult> FailAsync(
@@ -377,6 +719,10 @@ public sealed class DeliveryService(
             var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
             var now = timeProvider.Now;
             Mutate(() => delivery.Fail(actor.UserId, now, request.Reason, request.Remarks, request.Latitude, request.Longitude));
+            foreach (var otp in delivery.Otps)
+            {
+                Mutate(() => otp.Invalidate(now));
+            }
             if (delivery.Order is not null)
             {
                 Mutate(delivery.Order.MarkDeliveryFailed);
@@ -468,6 +814,7 @@ public sealed class DeliveryService(
 
     private IQueryable<Delivery> OperationsQuery() => dbContext.Deliveries
         .Include(x => x.Order)
+            .ThenInclude(x => x!.Items)
         .Include(x => x.SubscriptionDelivery).ThenInclude(x => x!.Subscription)
         .Include(x => x.Customer)
         .Include(x => x.AssignedEmployee)
@@ -482,6 +829,22 @@ public sealed class DeliveryService(
             .SingleOrDefaultAsync(x => x.PublicId == employeeId && x.IsActive &&
                 x.UserRoles.Any(r => r.BranchId == branchId && r.Role.Code == AuthorizationCodes.DeliveryStaff), cancellationToken)
         ?? throw new ValidationAppException("The selected employee is not active delivery staff for this branch.", "employeeId");
+
+    private void EnsureSubscriptionGenerationWindow(DateOnly today, DateOnly throughDate)
+    {
+        if (throughDate < today)
+        {
+            throw new ValidationAppException("The materialization date cannot be in the past.", "throughDate");
+        }
+
+        var lastAllowedDate = today.AddDays(_options.SubscriptionGenerationWindowDays - 1);
+        if (throughDate > lastAllowedDate)
+        {
+            throw new ValidationAppException(
+                $"Subscription delivery generation is limited to the next {_options.SubscriptionGenerationWindowDays} days.",
+                "throughDate");
+        }
+    }
 
     private void EnsureOperationalAccess(DeliveryActor actor, Delivery delivery, bool requireAssignment)
     {
@@ -564,7 +927,8 @@ public sealed class DeliveryService(
         string eventKey,
         string message,
         DateTime occurredAt,
-        IReadOnlyDictionary<string, string>? additionalVariables = null)
+        IReadOnlyDictionary<string, string>? additionalVariables = null,
+        IReadOnlyDictionary<string, string>? protectedVariables = null)
     {
         var variables = new Dictionary<string, string>
         {
@@ -586,7 +950,8 @@ public sealed class DeliveryService(
             eventKey,
             variables,
             $"/deliveries/{delivery.PublicId}",
-            occurredAt));
+            occurredAt,
+            protectedVariables));
     }
 
     private void AddAudit(
@@ -598,7 +963,7 @@ public sealed class DeliveryService(
         object? newValue,
         string? reason,
         DateTime createdAt) =>
-        dbContext.AuditLogs.Add(new AuditLog(
+        dbContext.AddAuditLog(new AuditLog(
             userId,
             action,
             entityType,
@@ -662,10 +1027,21 @@ public sealed class DeliveryService(
                 x.Employee.DisplayName,
                 x.AssignedByUser.PublicId,
                 x.AssignedAt,
-                x.Reason)).ToArray());
+                x.Reason)).ToArray(),
+            delivery.SubscriptionDelivery?.Slot,
+            delivery.SubscriptionDelivery?.Quantity,
+            delivery.Order is null
+                ? null
+                : new DeliveryOrderSummary(
+                    delivery.Order.OrderNumber,
+                    delivery.Order.Items.Sum(x => x.Quantity),
+                    delivery.Order.PayableAmount,
+                    delivery.Order.Items
+                        .Select(x => $"{x.ProductNameSnapshot} x {x.Quantity:0.###} {x.UnitOfMeasureSnapshot}")
+                        .ToArray()));
     }
 
-    private static CustomerDeliveryResult ToCustomerResult(Delivery delivery)
+    private CustomerDeliveryResult ToCustomerResult(Delivery delivery)
     {
         var latest = delivery.IsTrackingActive
             ? delivery.Locations.OrderByDescending(x => x.RecordedAt).FirstOrDefault()
@@ -683,7 +1059,34 @@ public sealed class DeliveryService(
             latest is null ? null : ToLocationResult(latest),
             delivery.CompletedAt,
             delivery.FailedAt,
-            delivery.FailureReason);
+            delivery.FailureReason,
+            GetActiveOtp(delivery));
+    }
+
+    private string? GetActiveOtp(Delivery delivery)
+    {
+        if (delivery.Status is not (DeliveryStatus.OutForDelivery or DeliveryStatus.Arrived))
+        {
+            return null;
+        }
+
+        var otp = delivery.Otps
+            .Where(x => !x.ConsumedAt.HasValue && x.AttemptCount < x.MaximumAttempts)
+            .OrderByDescending(x => x.CreatedAt)
+            .FirstOrDefault();
+        if (otp?.ProtectedCode is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return deliveryOtpHandoffProtector.Unprotect(otp.ProtectedCode);
+        }
+        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or System.Security.Cryptography.CryptographicException)
+        {
+            return null;
+        }
     }
 
     private static DeliveryLocationResult ToLocationResult(DeliveryLocation location) =>

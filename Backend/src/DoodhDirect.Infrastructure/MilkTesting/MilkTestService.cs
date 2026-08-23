@@ -402,7 +402,7 @@ public sealed class MilkTestService(
         object? newValue,
         string? reason,
         DateTime createdAt) =>
-        dbContext.AuditLogs.Add(new AuditLog(
+        dbContext.AddAuditLog(new AuditLog(
             userId,
             action,
             "MilkTest",

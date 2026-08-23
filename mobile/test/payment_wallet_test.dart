@@ -4,6 +4,7 @@ import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_controller.dart';
+import 'package:doodh_direct_mobile/features/payments/payment_gateway_contract.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_models.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_repository.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_screens.dart';
@@ -172,30 +173,33 @@ void main() {
   });
 
   group('payment models', () {
-    test('parses the exact successful Wallet response without gateway fields', () {
-      final payment = PaymentDetails.fromJson(
-        exactSuccessfulWalletPaymentJson(),
-      );
+    test(
+      'parses the exact successful Wallet response without gateway fields',
+      () {
+        final payment = PaymentDetails.fromJson(
+          exactSuccessfulWalletPaymentJson(),
+        );
 
-      expect(payment.method, PaymentMethod.wallet);
-      expect(payment.provider, 'Wallet');
-      expect(payment.status, PaymentStatus.success);
-      expect(payment.status.isSuccessful, isTrue);
-      expect(payment.amount, 240.00);
-      expect(payment.orderId, 'order-1');
-      expect(payment.orderNumber, 'DD-20260820175544-C9DBB63');
-      expect(payment.subscriptionId, isNull);
-      expect(payment.gatewayOrderId, isNull);
-      expect(payment.gatewayPaymentId, isNull);
-      expect(payment.gatewayKeyId, isNull);
-      expect(payment.failureCode, isNull);
-      expect(payment.failureMessage, isNull);
-      expect(payment.expiresAtUtc.isUtc, isTrue);
-      expect(payment.verifiedAtUtc?.isUtc, isTrue);
-      expect(payment.createdAtUtc.isUtc, isTrue);
-      expect(payment.usesRazorpay, isFalse);
-      expect(payment.isOrderPayment, isTrue);
-    });
+        expect(payment.method, PaymentMethod.wallet);
+        expect(payment.provider, 'Wallet');
+        expect(payment.status, PaymentStatus.success);
+        expect(payment.status.isSuccessful, isTrue);
+        expect(payment.amount, 240.00);
+        expect(payment.orderId, 'order-1');
+        expect(payment.orderNumber, 'DD-20260820175544-C9DBB63');
+        expect(payment.subscriptionId, isNull);
+        expect(payment.gatewayOrderId, isNull);
+        expect(payment.gatewayPaymentId, isNull);
+        expect(payment.gatewayKeyId, isNull);
+        expect(payment.failureCode, isNull);
+        expect(payment.failureMessage, isNull);
+        expect(payment.expiresAtUtc.isUtc, isTrue);
+        expect(payment.verifiedAtUtc?.isUtc, isTrue);
+        expect(payment.createdAtUtc.isUtc, isTrue);
+        expect(payment.usesRazorpay, isFalse);
+        expect(payment.isOrderPayment, isTrue);
+      },
+    );
 
     test('parse backend state and expose status semantics', () {
       final pending = PaymentDetails.fromJson(paymentJson());
@@ -468,6 +472,135 @@ void main() {
       );
       await Future<void>.delayed(const Duration(milliseconds: 1));
     });
+
+    test(
+      'uses backend verification result after Razorpay SDK success',
+      () async {
+        final pending = PaymentDetails.fromJson(paymentJson());
+        final verified = PaymentDetails.fromJson(
+          paymentJson(status: 'Success'),
+        );
+        final repository = _GatewayFlowPaymentRepository(
+          verifyResult: verified,
+        );
+        final launcher = _RecordingPaymentGatewayLauncher.success(
+          const PaymentGatewayCallback(
+            gatewayPaymentId: 'pay_gateway_callback',
+            gatewayOrderId: 'order_gateway_callback',
+            signature: 'gateway-signature',
+          ),
+        );
+        final container = ProviderContainer(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _AuthenticatedAuthRepository(),
+            ),
+            paymentRepositoryProvider.overrideWithValue(repository),
+            paymentGatewayLauncherProvider.overrideWithValue(launcher),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        container.read(sessionControllerProvider);
+        await Future<void>.delayed(Duration.zero);
+        final controller = container.read(paymentControllerProvider.notifier);
+        controller.adopt(pending);
+
+        final succeeded = await controller.openRazorpayAndVerify();
+        final state = container.read(paymentControllerProvider);
+
+        expect(succeeded, isTrue);
+        expect(launcher.openedPayment, same(pending));
+        expect(repository.verifiedPaymentId, pending.publicId);
+        expect(repository.verifiedGatewayOrderId, 'order_gateway_callback');
+        expect(repository.verifiedGatewayPaymentId, 'pay_gateway_callback');
+        expect(repository.verifiedSignature, 'gateway-signature');
+        expect(state.payment, same(verified));
+        expect(state.payment?.status, PaymentStatus.success);
+        expect(state.isLoading, isFalse);
+        expect(state.errorMessage, isNull);
+      },
+    );
+
+    test(
+      'adopts backend cancellation result after Razorpay SDK error',
+      () async {
+        final pending = PaymentDetails.fromJson(paymentJson());
+        final cancelled = PaymentDetails.fromJson(
+          paymentJson(status: 'Cancelled'),
+        );
+        final repository = _GatewayFlowPaymentRepository(
+          cancelResult: cancelled,
+        );
+        final launcher = _RecordingPaymentGatewayLauncher.failure(
+          const PaymentGatewayException('Payment window was closed.'),
+        );
+        final container = ProviderContainer(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _AuthenticatedAuthRepository(),
+            ),
+            paymentRepositoryProvider.overrideWithValue(repository),
+            paymentGatewayLauncherProvider.overrideWithValue(launcher),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        container.read(sessionControllerProvider);
+        await Future<void>.delayed(Duration.zero);
+        final controller = container.read(paymentControllerProvider.notifier);
+        controller.adopt(pending);
+
+        final succeeded = await controller.openRazorpayAndVerify();
+        final state = container.read(paymentControllerProvider);
+
+        expect(succeeded, isFalse);
+        expect(repository.cancelledPaymentId, pending.publicId);
+        expect(state.payment, same(cancelled));
+        expect(state.payment?.status, PaymentStatus.cancelled);
+        expect(state.isLoading, isFalse);
+        expect(state.errorMessage, 'Payment window was closed.');
+      },
+    );
+
+    test('preserves pending state when backend cancellation rejects', () async {
+      final pending = PaymentDetails.fromJson(paymentJson());
+      final repository = _GatewayFlowPaymentRepository(
+        cancelError: ApiException(
+          409,
+          'CONFLICT',
+          'The payment is still pending gateway confirmation.',
+        ),
+      );
+      final launcher = _RecordingPaymentGatewayLauncher.failure(
+        const PaymentGatewayException('Payment window was closed.'),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            _AuthenticatedAuthRepository(),
+          ),
+          paymentRepositoryProvider.overrideWithValue(repository),
+          paymentGatewayLauncherProvider.overrideWithValue(launcher),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(sessionControllerProvider);
+      await Future<void>.delayed(Duration.zero);
+      final controller = container.read(paymentControllerProvider.notifier);
+      controller.adopt(pending);
+
+      final succeeded = await controller.openRazorpayAndVerify();
+      final state = container.read(paymentControllerProvider);
+
+      expect(succeeded, isFalse);
+      expect(repository.cancelledPaymentId, pending.publicId);
+      expect(state.payment, same(pending));
+      expect(state.payment?.status, PaymentStatus.pending);
+      expect(state.isLoading, isFalse);
+      expect(state.errorMessage, 'Payment window was closed.');
+    });
   });
 
   group('wallet models and repository', () {
@@ -667,11 +800,96 @@ class _InsufficientWalletPaymentRepository extends PaymentRepository {
   }
 }
 
+class _RecordingPaymentGatewayLauncher implements PaymentGatewayLauncher {
+  _RecordingPaymentGatewayLauncher.success(PaymentGatewayCallback callback)
+    : _callback = callback,
+      _error = null;
+
+  _RecordingPaymentGatewayLauncher.failure(PaymentGatewayException error)
+    : _callback = null,
+      _error = error;
+
+  final PaymentGatewayCallback? _callback;
+  final PaymentGatewayException? _error;
+  PaymentDetails? openedPayment;
+
+  @override
+  Future<PaymentGatewayCallback> open(PaymentDetails payment) async {
+    openedPayment = payment;
+    final error = _error;
+    if (error != null) throw error;
+    return _callback!;
+  }
+}
+
+class _GatewayFlowPaymentRepository extends PaymentRepository {
+  _GatewayFlowPaymentRepository({
+    this.verifyResult,
+    this.cancelResult,
+    this.cancelError,
+  }) : super(
+         api: ApiClient(
+           client: MockClient((_) async => http.Response('', 500)),
+           baseUrl: 'https://api.example.test',
+         ),
+       );
+
+  final PaymentDetails? verifyResult;
+  final PaymentDetails? cancelResult;
+  final Object? cancelError;
+  String? verifiedPaymentId;
+  String? verifiedGatewayOrderId;
+  String? verifiedGatewayPaymentId;
+  String? verifiedSignature;
+  String? cancelledPaymentId;
+
+  @override
+  Future<List<PaymentCapability>> getCapabilities(String token) async => const [
+    PaymentCapability(
+      method: PaymentMethod.razorpay,
+      provider: 'Razorpay',
+      label: 'Razorpay',
+      isAvailable: true,
+      unavailableReason: null,
+    ),
+  ];
+
+  @override
+  Future<PaymentDetails> verify({
+    required String token,
+    required String paymentId,
+    required String gatewayOrderId,
+    required String gatewayPaymentId,
+    required String signature,
+  }) async {
+    expect(token, 'customer-token');
+    verifiedPaymentId = paymentId;
+    verifiedGatewayOrderId = gatewayOrderId;
+    verifiedGatewayPaymentId = gatewayPaymentId;
+    verifiedSignature = signature;
+    return verifyResult!;
+  }
+
+  @override
+  Future<PaymentDetails> cancel({
+    required String token,
+    required String paymentId,
+  }) async {
+    expect(token, 'customer-token');
+    cancelledPaymentId = paymentId;
+    final error = cancelError;
+    if (error != null) throw error;
+    return cancelResult!;
+  }
+}
+
 class _NetworkFailurePaymentRepository extends PaymentRepository {
   _NetworkFailurePaymentRepository()
     : super(
         api: ApiClient(
-          client: MockClient((_) async => throw http.ClientException('offline')),
+          client: MockClient(
+            (_) async => throw http.ClientException('offline'),
+          ),
           baseUrl: 'https://api.example.test',
         ),
       );

@@ -188,10 +188,30 @@ public sealed class DeliveryDomainTests
     }
 
     [Fact]
-    public void DeliveryOtp_ExpiresAtBoundaryAndCanOnlyBeConsumedOnce()
+    public void DeliveryOtp_RemainsValidPastLegacyExpiryAndInvalidatesOnce()
     {
-        var expired = CreateOtp(expiresAt: IndiaLocalNow.AddMinutes(5));
-        Assert.Throws<InvalidOperationException>(() => expired.EnsureVerifiable(IndiaLocalNow.AddMinutes(5)));
+        var active = new DeliveryOtp(
+            1,
+            "hashed-delivery-code",
+            IndiaLocalNow.AddMinutes(5),
+            3,
+            IndiaLocalNow,
+            "protected-delivery-code");
+
+        active.EnsureVerifiable(IndiaLocalNow.AddMinutes(6));
+        active.Invalidate(IndiaLocalNow.AddMinutes(7));
+
+        Assert.Equal(IndiaLocalNow.AddMinutes(7), active.ConsumedAt);
+        Assert.Null(active.ProtectedCode);
+        Assert.Throws<InvalidOperationException>(() => active.EnsureVerifiable(IndiaLocalNow.AddMinutes(8)));
+        active.Invalidate(IndiaLocalNow.AddMinutes(9));
+        Assert.Equal(IndiaLocalNow.AddMinutes(7), active.ConsumedAt);
+
+        var exhausted = CreateOtp(maximumAttempts: 1);
+        exhausted.RecordFailedAttempt(IndiaLocalNow.AddMinutes(1));
+        exhausted.Invalidate(IndiaLocalNow.AddMinutes(2));
+        Assert.Equal(IndiaLocalNow.AddMinutes(2), exhausted.ConsumedAt);
+        Assert.Null(exhausted.ProtectedCode);
 
         var consumed = CreateOtp();
         consumed.Consume(IndiaLocalNow.AddMinutes(1));

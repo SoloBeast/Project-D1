@@ -67,6 +67,15 @@ public sealed class PaymentsController(IPaymentService paymentService) : Control
         Ok(ApiResponse<PaymentResult>.Ok(await paymentService.CompleteDevelopmentAsync(
             RequireUserId(), paymentId, cancellationToken)));
 
+    [HttpPost("{paymentId:guid}/cancel")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsCreateOwn)]
+    [ProducesResponseType(typeof(ApiResponse<PaymentResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<PaymentResult>>> Cancel(
+        Guid paymentId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<PaymentResult>.Ok(await paymentService.CancelAsync(
+            RequireUserId(), paymentId, cancellationToken)));
+
     [HttpGet("{paymentId:guid}")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsReadOwn)]
     [ProducesResponseType(typeof(ApiResponse<PaymentResult>), StatusCodes.Status200OK)]
@@ -75,6 +84,18 @@ public sealed class PaymentsController(IPaymentService paymentService) : Control
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<PaymentResult>.Ok(await paymentService.GetAsync(
             RequireUserId(), paymentId, bypassOwnership: false, cancellationToken)));
+
+    [HttpPost("{paymentId:guid}/reconcile")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsRefund)]
+    [ProducesResponseType(typeof(ApiResponse<PaymentReconciliationResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<PaymentReconciliationResult>>> Reconcile(
+        Guid paymentId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<PaymentReconciliationResult>.Ok(await paymentService.ReconcileAsync(
+            RequireUserId(),
+            paymentId,
+            bypassOwnership: true,
+            cancellationToken)));
 
     [HttpPost("{paymentId:guid}/refund")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsRefund)]

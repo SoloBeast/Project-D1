@@ -26,6 +26,32 @@ public sealed class PaymentWalletDomainTests
     }
 
     [Fact]
+    public void Payment_CancelIsIdempotentAndBlocksLaterSuccess()
+    {
+        var payment = CreatePayment(PaymentMethod.Razorpay);
+        payment.AttachGatewayOrder("order_123", "created");
+
+        payment.Cancel(IndiaNow);
+        payment.Cancel(IndiaNow.AddMinutes(1));
+
+        Assert.Equal(PaymentStatus.Cancelled, payment.Status);
+        Assert.Equal("PAYMENT_CANCELLED", payment.FailureCode);
+        Assert.Equal(IndiaNow, payment.FailedAt);
+        Assert.Throws<InvalidOperationException>(() =>
+            payment.Succeed("pay_123", "captured", IndiaNow.AddMinutes(2)));
+    }
+
+    [Fact]
+    public void CompletedPaymentCannotBeCancelled()
+    {
+        var payment = CreatePayment(PaymentMethod.Razorpay);
+        payment.AttachGatewayOrder("order_123", "created");
+        payment.Succeed("pay_123", "captured", IndiaNow);
+
+        Assert.Throws<InvalidOperationException>(() => payment.Cancel(IndiaNow.AddMinutes(1)));
+    }
+
+    [Fact]
     public void Payment_TerminalFailureCannotLaterSucceed()
     {
         var payment = CreatePayment(PaymentMethod.Razorpay);

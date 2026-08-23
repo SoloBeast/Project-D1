@@ -23,4 +23,8 @@
     <ProjectReference Include="..\DoodhDirect.Infrastructure\DoodhDirect.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="DoodhDirect.Api.IntegrationTests" />
+  </ItemGroup>
+
 </Project>

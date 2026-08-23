@@ -24,7 +24,7 @@ using Scalar.AspNetCore;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
-LoadLocalDotEnv(
+LocalDotEnvLoader.Load(
     builder.Configuration,
     builder.Environment.ContentRootPath,
     builder.Environment.IsDevelopment());
@@ -303,63 +303,78 @@ static void SetStringEnumSchema(
     };
 }
 
-static void LoadLocalDotEnv(
-    ConfigurationManager configuration,
-    string contentRootPath,
-    bool isDevelopment)
+internal static class LocalDotEnvLoader
 {
-    if (!isDevelopment)
+    public static void Load(
+        ConfigurationManager configuration,
+        string contentRootPath,
+        bool isDevelopment)
     {
-        return;
-    }
-
-    var directory = new DirectoryInfo(contentRootPath);
-    while (directory is not null)
-    {
-        var path = Path.Combine(directory.FullName, ".env");
-        if (File.Exists(path))
+        if (!isDevelopment)
         {
-            var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-            foreach (var line in File.ReadLines(path))
-            {
-                var trimmed = line.Trim();
-                if (trimmed.Length == 0 || trimmed.StartsWith('#'))
-                {
-                    continue;
-                }
-
-                var separator = trimmed.IndexOf('=');
-                if (separator <= 0)
-                {
-                    continue;
-                }
-
-                var name = trimmed[..separator].Trim();
-                var value = trimmed[(separator + 1)..].Trim().Trim('"', '\'');
-                values[name] = value;
-            }
-
-            var mapped = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-            values.TryGetValue("RAZORPAY_KEY_ID", out var keyId);
-            values.TryGetValue("RAZORPAY_KEY_SECRET", out var keySecret);
-            if (!string.IsNullOrWhiteSpace(keyId) &&
-                !string.IsNullOrWhiteSpace(keySecret))
-            {
-                mapped["Payments:Provider"] = "Razorpay";
-                mapped["Payments:RazorpayKeyId"] = keyId;
-                mapped["Payments:RazorpayKeySecret"] = keySecret;
-            }
-            if (values.TryGetValue("RAZORPAY_WEBHOOK_SECRET", out var webhookSecret) &&
-                !string.IsNullOrWhiteSpace(webhookSecret))
-            {
-                mapped["Payments:RazorpayWebhookSecret"] = webhookSecret;
-            }
-
-            configuration.AddInMemoryCollection(mapped);
             return;
         }
 
-        directory = directory.Parent;
+        var directory = new DirectoryInfo(contentRootPath);
+        while (directory is not null)
+        {
+            var path = Path.Combine(directory.FullName, ".env");
+            if (File.Exists(path))
+            {
+                var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var line in File.ReadLines(path))
+                {
+                    var trimmed = line.Trim();
+                    if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+                    {
+                        continue;
+                    }
+
+                    var separator = trimmed.IndexOf('=');
+                    if (separator <= 0)
+                    {
+                        continue;
+                    }
+
+                    var name = trimmed[..separator].Trim();
+                    var value = trimmed[(separator + 1)..].Trim().Trim('"', '\'');
+                    values[name] = value;
+                }
+
+                var mapped = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                values.TryGetValue("RAZORPAY_KEY_ID", out var keyId);
+                values.TryGetValue("RAZORPAY_KEY_SECRET", out var keySecret);
+                if (!string.IsNullOrWhiteSpace(keyId) &&
+                    !string.IsNullOrWhiteSpace(keySecret))
+                {
+                    mapped["Payments:Provider"] = "Razorpay";
+                    mapped["Payments:RazorpayKeyId"] = keyId;
+                    mapped["Payments:RazorpayKeySecret"] = keySecret;
+                }
+                if (values.TryGetValue("RAZORPAY_WEBHOOK_SECRET", out var webhookSecret) &&
+                    !string.IsNullOrWhiteSpace(webhookSecret))
+                {
+                    mapped["Payments:RazorpayWebhookSecret"] = webhookSecret;
+                }
+
+                values.TryGetValue("ADDRESS_GEOCODING__PROVIDER", out var geocodingProvider);
+                if (!string.IsNullOrWhiteSpace(geocodingProvider))
+                {
+                    mapped["AddressGeocoding:Provider"] = geocodingProvider;
+                }
+
+                values.TryGetValue("ADDRESS_GEOCODING__APIKEY", out var geocodingApiKey);
+                if (!string.IsNullOrWhiteSpace(geocodingApiKey))
+                {
+                    mapped["AddressGeocoding:ApiKey"] = geocodingApiKey;
+                }
+
+                configuration.AddInMemoryCollection(mapped);
+                return;
+            }
+
+            directory = directory.Parent;
+        }
     }
 }
 

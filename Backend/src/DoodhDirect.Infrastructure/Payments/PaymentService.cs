@@ -2,6 +2,7 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Text.Json;
 using DoodhDirect.Application.Abstractions;
+using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Payments;
@@ -25,7 +26,8 @@ public sealed class PaymentService(
     IOptions<PaymentOptions> paymentOptions,
     INotificationEventWriter notificationEventWriter,
     MockPaymentGateway? mockGateway = null,
-    IHostEnvironment? hostEnvironment = null) : IPaymentService
+    IHostEnvironment? hostEnvironment = null,
+    IOneTimeDeliveryCreator? oneTimeDeliveryCreator = null) : IPaymentService
 {
     private readonly PaymentOptions options = paymentOptions.Value;
     private readonly bool isDevelopment = hostEnvironment?.IsDevelopment() ?? true;
@@ -63,15 +65,12 @@ public sealed class PaymentService(
             throw new BusinessRuleException("The order does not have a positive payable amount.");
         }
 
-        var activePaymentExists = await dbContext.Payments.AnyAsync(
-            x => x.OrderId == order.Id &&
-                x.Status != PaymentStatus.Failed &&
-                x.Status != PaymentStatus.Expired,
-            cancellationToken);
-        if (activePaymentExists)
-        {
-            throw new ConflictException("The order already has an active payment.");
-        }
+        var orderPayments = await dbContext.Payments
+            .Where(x => x.OrderId == order.Id)
+            .ToListAsync(cancellationToken);
+        await EnsurePreviousAttemptsSafeAsync(orderPayments, cancellationToken);
+        EnsureNoActivePayment(orderPayments, "order");
+        var attemptEvidence = CaptureAttemptEvidence(orderPayments);
 
         var payment = new Payment(
             order.Id,
@@ -87,6 +86,13 @@ public sealed class PaymentService(
         {
             await ExecuteSerializableAsync(async () =>
             {
+                await dbContext.Entry(order).ReloadAsync(cancellationToken);
+                EnsureOrderCanStartPayment(order);
+                var currentPayments = await RevalidateAttemptEvidenceAsync(
+                    dbContext.Payments.Where(x => x.OrderId == order.Id),
+                    attemptEvidence,
+                    cancellationToken);
+                EnsureNoActivePayment(currentPayments, "order");
                 await dbContext.SaveChangesAsync(cancellationToken);
                 payment.MarkWalletPending();
                 await walletService.DebitOrderAsync(
@@ -97,14 +103,24 @@ public sealed class PaymentService(
                     $"payment:{payment.PublicId:N}",
                     cancellationToken);
                 payment.Succeed(null, "wallet_debited", timeProvider.Now);
-                ConfirmTarget(payment, timeProvider.Now);
+                await ConfirmTargetAsync(payment, timeProvider.Now, cancellationToken);
                 AddPaymentOutcomeEvents(payment);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
         }
         else
         {
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await ExecuteSerializableAsync(async () =>
+            {
+                await dbContext.Entry(order).ReloadAsync(cancellationToken);
+                EnsureOrderCanStartPayment(order);
+                var currentPayments = await RevalidateAttemptEvidenceAsync(
+                    dbContext.Payments.Where(x => x.OrderId == order.Id),
+                    attemptEvidence,
+                    cancellationToken);
+                EnsureNoActivePayment(currentPayments, "order");
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
             var selectedGateway = GatewayFor(payment.Method);
             GatewayOrderResult gatewayOrder;
             try
@@ -172,15 +188,12 @@ public sealed class PaymentService(
             throw new BusinessRuleException("The subscription does not have a positive payable amount.");
         }
 
-        var activePaymentExists = await dbContext.Payments.AnyAsync(
-            x => x.SubscriptionId == subscription.Id &&
-                x.Status != PaymentStatus.Failed &&
-                x.Status != PaymentStatus.Expired,
-            cancellationToken);
-        if (activePaymentExists)
-        {
-            throw new ConflictException("The subscription already has an active payment.");
-        }
+        var subscriptionPayments = await dbContext.Payments
+            .Where(x => x.SubscriptionId == subscription.Id)
+            .ToListAsync(cancellationToken);
+        await EnsurePreviousAttemptsSafeAsync(subscriptionPayments, cancellationToken);
+        EnsureNoActivePayment(subscriptionPayments, "subscription");
+        var attemptEvidence = CaptureAttemptEvidence(subscriptionPayments);
 
         var payment = Payment.CreateForSubscription(
             subscription.Id,
@@ -196,6 +209,13 @@ public sealed class PaymentService(
         {
             await ExecuteSerializableAsync(async () =>
             {
+                await dbContext.Entry(subscription).ReloadAsync(cancellationToken);
+                EnsureSubscriptionCanStartPayment(subscription, allowFailed: false);
+                var currentPayments = await RevalidateAttemptEvidenceAsync(
+                    dbContext.Payments.Where(x => x.SubscriptionId == subscription.Id),
+                    attemptEvidence,
+                    cancellationToken);
+                EnsureNoActivePayment(currentPayments, "subscription");
                 await dbContext.SaveChangesAsync(cancellationToken);
                 payment.MarkWalletPending();
                 await walletService.DebitSubscriptionAsync(
@@ -206,14 +226,24 @@ public sealed class PaymentService(
                     $"payment:{payment.PublicId:N}",
                     cancellationToken);
                 payment.Succeed(null, "wallet_debited", timeProvider.Now);
-                ConfirmTarget(payment, timeProvider.Now);
+                await ConfirmTargetAsync(payment, timeProvider.Now, cancellationToken);
                 AddPaymentOutcomeEvents(payment, subscription);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
         }
         else
         {
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await ExecuteSerializableAsync(async () =>
+            {
+                await dbContext.Entry(subscription).ReloadAsync(cancellationToken);
+                EnsureSubscriptionCanStartPayment(subscription, allowFailed: false);
+                var currentPayments = await RevalidateAttemptEvidenceAsync(
+                    dbContext.Payments.Where(x => x.SubscriptionId == subscription.Id),
+                    attemptEvidence,
+                    cancellationToken);
+                EnsureNoActivePayment(currentPayments, "subscription");
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
             var selectedGateway = GatewayFor(payment.Method);
             GatewayOrderResult gatewayOrder;
             try
@@ -283,15 +313,12 @@ public sealed class PaymentService(
             throw new BusinessRuleException("The subscription does not have a positive payable amount.");
         }
 
-        var activePayments = await dbContext.Payments
-            .Where(x => x.SubscriptionId == subscription.Id &&
-                x.Status != PaymentStatus.Failed &&
-                x.Status != PaymentStatus.Expired)
+        var subscriptionPayments = await dbContext.Payments
+            .Where(x => x.SubscriptionId == subscription.Id)
             .ToListAsync(cancellationToken);
-        if (activePayments.Any(x => x.Status is not (PaymentStatus.Initiated or PaymentStatus.Pending)))
-        {
-            throw new ConflictException("The subscription already has a completed payment.");
-        }
+        await EnsurePreviousAttemptsSafeAsync(subscriptionPayments, cancellationToken);
+        EnsureNoCompletedPayment(subscriptionPayments, "subscription");
+        var attemptEvidence = CaptureAttemptEvidence(subscriptionPayments);
 
         var payment = Payment.CreateForSubscription(
             subscription.Id,
@@ -303,9 +330,17 @@ public sealed class PaymentService(
             timeProvider.Now.AddMinutes(options.PaymentExpiryMinutes));
         dbContext.Payments.Add(payment);
 
-        void PrepareReplacement()
+        async Task PrepareReplacementAsync()
         {
-            foreach (var activePayment in activePayments)
+            await dbContext.Entry(subscription).ReloadAsync(cancellationToken);
+            EnsureSubscriptionCanStartPayment(subscription, allowFailed: true);
+            var currentPayments = await RevalidateAttemptEvidenceAsync(
+                dbContext.Payments.Where(x => x.SubscriptionId == subscription.Id),
+                attemptEvidence,
+                cancellationToken);
+            EnsureNoCompletedPayment(currentPayments, "subscription");
+            foreach (var activePayment in currentPayments.Where(x =>
+                x.Status == PaymentStatus.Initiated || x.Status == PaymentStatus.Pending))
             {
                 activePayment.Expire(timeProvider.Now);
                 AddPaymentOutcomeEvents(activePayment, subscription);
@@ -320,7 +355,7 @@ public sealed class PaymentService(
         {
             await ExecuteSerializableAsync(async () =>
             {
-                PrepareReplacement();
+                await PrepareReplacementAsync();
                 await dbContext.SaveChangesAsync(cancellationToken);
                 payment.MarkWalletPending();
                 await walletService.DebitSubscriptionAsync(
@@ -331,7 +366,7 @@ public sealed class PaymentService(
                     $"payment:{payment.PublicId:N}",
                     cancellationToken);
                 payment.Succeed(null, "wallet_debited", timeProvider.Now);
-                ConfirmTarget(payment, timeProvider.Now);
+                await ConfirmTargetAsync(payment, timeProvider.Now, cancellationToken);
                 AddPaymentOutcomeEvents(payment, subscription);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
@@ -340,7 +375,7 @@ public sealed class PaymentService(
         {
             await ExecuteSerializableAsync(async () =>
             {
-                PrepareReplacement();
+                await PrepareReplacementAsync();
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
             var selectedGateway = GatewayFor(payment.Method);
@@ -401,18 +436,9 @@ public sealed class PaymentService(
 
             return payment.ToResult(razorpayGateway.PublicKeyId, razorpayGateway.ProviderName);
         }
-        if (payment.Status != PaymentStatus.Pending)
+        if (payment.Status is not (PaymentStatus.Pending or PaymentStatus.Expired))
         {
             throw new BusinessRuleException($"A payment in status '{payment.Status}' cannot be verified.");
-        }
-        var now = timeProvider.Now;
-        if (now > payment.ExpiresAt)
-        {
-            payment.Expire(now);
-            FailTarget(payment);
-            AddPaymentOutcomeEvents(payment);
-            await dbContext.SaveChangesAsync(cancellationToken);
-            throw new BusinessRuleException("The payment has expired.");
         }
         if (!string.Equals(payment.GatewayOrderId, request.GatewayOrderId, StringComparison.Ordinal) ||
             !razorpayGateway.VerifyPaymentSignature(
@@ -423,27 +449,66 @@ public sealed class PaymentService(
             throw new ValidationAppException("The payment signature is invalid.", nameof(request.Signature));
         }
 
-        var gatewayStatus = await razorpayGateway.GetPaymentStatusAsync(
+        var resolution = await ResolveGatewayPaymentAsync(
+            payment,
             request.GatewayPaymentId,
             cancellationToken);
-        EnsureGatewayIdentity(payment, request.GatewayPaymentId, gatewayStatus);
-        EnsureGatewayFinancials(payment, gatewayStatus.AmountMinor, gatewayStatus.Currency);
+        if (resolution.Outcome == PaymentReconciliationOutcome.Ambiguous)
+        {
+            throw new ConflictException("The gateway response is ambiguous; replacement charging is blocked.");
+        }
+        if (resolution.Outcome == PaymentReconciliationOutcome.Pending)
+        {
+            throw new ConflictException("The payment is still pending gateway confirmation.");
+        }
 
         await ExecuteSerializableAsync(async () =>
         {
-            if (gatewayStatus.IsSuccessful)
+            await ReloadPaymentAndTargetAsync(payment, cancellationToken);
+            EnsureGatewayIdentity(payment, request.GatewayPaymentId, resolution.Status);
+            EnsureGatewayFinancials(payment, resolution.Status.AmountMinor, resolution.Status.Currency);
+
+            if (payment.Status == PaymentStatus.Success)
             {
-                payment.Succeed(gatewayStatus.GatewayPaymentId, gatewayStatus.Status, timeProvider.Now);
-                ConfirmTarget(payment, timeProvider.Now);
+                if (!string.Equals(
+                        payment.GatewayPaymentId,
+                        request.GatewayPaymentId,
+                        StringComparison.Ordinal))
+                {
+                    throw new ConflictException("A different gateway payment is already verified.");
+                }
+
+                return;
             }
-            else if (gatewayStatus.IsTerminalFailure)
+            if (payment.Status is not (PaymentStatus.Pending or PaymentStatus.Expired))
             {
-                payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", gatewayStatus.Status, timeProvider.Now);
+                throw new BusinessRuleException(
+                    $"A payment in status '{payment.Status}' cannot be verified.");
+            }
+
+            var now = timeProvider.Now;
+            if (resolution.Outcome == PaymentReconciliationOutcome.Captured)
+            {
+                var recover = payment.Status == PaymentStatus.Expired;
+                if (recover)
+                {
+                    payment.RecoverCaptured(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
+                }
+                else
+                {
+                    payment.Succeed(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
+                }
+
+                await ConfirmTargetAsync(payment, now, cancellationToken, recover);
+            }
+            else if (payment.Status == PaymentStatus.Pending)
+            {
+                payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", resolution.Status.Status, now);
                 FailTarget(payment);
             }
             else
             {
-                throw new ConflictException("The payment is still pending gateway confirmation.");
+                throw new BusinessRuleException("The payment was not captured and is already expired.");
             }
 
             AddPaymentOutcomeEvents(payment);
@@ -505,12 +570,130 @@ public sealed class PaymentService(
         await ExecuteSerializableAsync(async () =>
         {
             payment.Succeed(gatewayStatus.GatewayPaymentId, gatewayStatus.Status, timeProvider.Now);
-            ConfirmTarget(payment, timeProvider.Now);
+            await ConfirmTargetAsync(payment, timeProvider.Now, cancellationToken);
             AddPaymentOutcomeEvents(payment);
             await dbContext.SaveChangesAsync(cancellationToken);
         }, cancellationToken);
 
         return payment.ToResult(null, developmentGateway.ProviderName);
+    }
+
+    public async Task<PaymentResult> CancelAsync(
+        long customerId,
+        Guid paymentId,
+        CancellationToken cancellationToken)
+    {
+        var payment = await PaymentQuery().SingleOrDefaultAsync(
+            x => x.PublicId == paymentId && x.CustomerId == customerId,
+            cancellationToken)
+            ?? throw new NotFoundException("The payment was not found.");
+
+        if (payment.Method != PaymentMethod.Razorpay)
+        {
+            throw new BusinessRuleException("Only Razorpay payments can be cancelled.");
+        }
+        if (payment.Status == PaymentStatus.Cancelled)
+        {
+            return payment.ToResult(PublicKeyFor(payment.Method), ProviderFor(payment.Method));
+        }
+        if (payment.Status == PaymentStatus.Success)
+        {
+            return payment.ToResult(PublicKeyFor(payment.Method), ProviderFor(payment.Method));
+        }
+        if (payment.Status is not (PaymentStatus.Pending or PaymentStatus.Expired))
+        {
+            throw new BusinessRuleException(
+                $"A payment in status '{payment.Status}' cannot be cancelled.");
+        }
+
+        var evidence = PaymentAttemptEvidence.From(payment);
+        var resolution = await ResolveGatewayPaymentAsync(
+            payment,
+            payment.GatewayPaymentId,
+            cancellationToken);
+        if (resolution.Outcome == PaymentReconciliationOutcome.Pending)
+        {
+            throw new ConflictException("The payment is still pending gateway confirmation and cannot be cancelled.");
+        }
+        if (resolution.Outcome == PaymentReconciliationOutcome.Ambiguous)
+        {
+            throw new ConflictException("The gateway response is ambiguous; cancellation is blocked.");
+        }
+
+        await ExecuteSerializableAsync(async () =>
+        {
+            await ReloadPaymentAndTargetAsync(payment, cancellationToken);
+            if (payment.Status == PaymentStatus.Success)
+            {
+                if (resolution.Outcome != PaymentReconciliationOutcome.Captured ||
+                    !string.Equals(
+                        payment.GatewayPaymentId,
+                        resolution.Status.GatewayPaymentId,
+                        StringComparison.Ordinal))
+                {
+                    throw new ConflictException(
+                        "The payment changed while Razorpay evidence was being collected.");
+                }
+
+                return;
+            }
+            if (payment.Status == PaymentStatus.Cancelled &&
+                resolution.Outcome == PaymentReconciliationOutcome.DefinitivelyNotCaptured)
+            {
+                return;
+            }
+            if (PaymentAttemptEvidence.From(payment) != evidence)
+            {
+                throw new ConflictException(
+                    "The payment changed while Razorpay evidence was being collected.");
+            }
+
+            EnsureGatewayIdentity(
+                payment,
+                resolution.Status.GatewayPaymentId,
+                resolution.Status);
+            EnsureGatewayFinancials(
+                payment,
+                resolution.Status.AmountMinor,
+                resolution.Status.Currency);
+
+            var now = timeProvider.Now;
+            if (resolution.Outcome == PaymentReconciliationOutcome.Captured)
+            {
+                var recovered = payment.Status == PaymentStatus.Expired;
+                if (recovered)
+                {
+                    payment.RecoverCaptured(
+                        resolution.Status.GatewayPaymentId,
+                        resolution.Status.Status,
+                        now);
+                }
+                else
+                {
+                    payment.Succeed(
+                        resolution.Status.GatewayPaymentId,
+                        resolution.Status.Status,
+                        now);
+                }
+
+                await ConfirmTargetAsync(payment, now, cancellationToken, recovered);
+                AddPaymentOutcomeEvents(payment);
+            }
+            else if (payment.Status == PaymentStatus.Expired)
+            {
+                throw new BusinessRuleException(
+                    "The payment was not captured and is already expired.");
+            }
+            else
+            {
+                payment.Cancel(now);
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
+
+        await LoadPaymentNavigationsAsync(payment, cancellationToken);
+        return payment.ToResult(PublicKeyFor(payment.Method), ProviderFor(payment.Method));
     }
 
     public Task<IReadOnlyList<PaymentCapability>> GetCapabilitiesAsync(
@@ -666,6 +849,67 @@ public sealed class PaymentService(
         return refund.ToResult();
     }
 
+    public async Task<PaymentReconciliationResult> ReconcileAsync(
+        long requestedByUserId,
+        Guid paymentId,
+        bool bypassOwnership,
+        CancellationToken cancellationToken)
+    {
+        var payment = await PaymentQuery().SingleOrDefaultAsync(
+            x => x.PublicId == paymentId && (bypassOwnership || x.CustomerId == requestedByUserId),
+            cancellationToken)
+            ?? throw new NotFoundException("The payment was not found.");
+        if (payment.Method != PaymentMethod.Razorpay)
+        {
+            throw new BusinessRuleException("Only Razorpay payments can be reconciled.");
+        }
+
+        var resolution = await ResolveGatewayPaymentAsync(payment, payment.GatewayPaymentId, cancellationToken);
+        var recovered = false;
+        if (resolution.Outcome == PaymentReconciliationOutcome.Captured)
+        {
+            await ExecuteSerializableAsync(async () =>
+            {
+                await ReloadPaymentAndTargetAsync(payment, cancellationToken);
+                EnsureGatewayIdentity(
+                    payment,
+                    resolution.Status.GatewayPaymentId,
+                    resolution.Status);
+                EnsureGatewayFinancials(
+                    payment,
+                    resolution.Status.AmountMinor,
+                    resolution.Status.Currency);
+
+                if (payment.Status is not (PaymentStatus.Pending or PaymentStatus.Expired))
+                {
+                    return;
+                }
+
+                var now = timeProvider.Now;
+                recovered = payment.Status == PaymentStatus.Expired;
+                if (recovered)
+                {
+                    payment.RecoverCaptured(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
+                }
+                else
+                {
+                    payment.Succeed(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
+                }
+
+                await ConfirmTargetAsync(payment, now, cancellationToken, recovered);
+                AddPaymentOutcomeEvents(payment);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
+        }
+
+        await LoadPaymentNavigationsAsync(payment, cancellationToken);
+        return new PaymentReconciliationResult(
+            payment.ToResult(PublicKeyFor(payment.Method), ProviderFor(payment.Method)),
+            resolution.Outcome,
+            resolution.Status.Status,
+            recovered);
+    }
+
     public async Task ProcessWebhookAsync(
         byte[] payload,
         string signature,
@@ -777,32 +1021,45 @@ public sealed class PaymentService(
         {
             return;
         }
-        if (payment.Status != PaymentStatus.Pending)
+        if (payment.Status is not (PaymentStatus.Pending or PaymentStatus.Expired))
         {
             throw new ConflictException($"A payment in status '{payment.Status}' cannot process this webhook.");
         }
-
         if (payment.Method != PaymentMethod.Razorpay)
         {
             throw new ConflictException("Razorpay webhooks cannot update a non-Razorpay payment.");
         }
-        var razorpayGateway = GatewayFor(PaymentMethod.Razorpay);
-        var status = await razorpayGateway.GetPaymentStatusAsync(
+
+        var resolution = await ResolveGatewayPaymentAsync(
+            payment,
             gatewayEvent.GatewayPaymentId,
             cancellationToken);
-        EnsureGatewayIdentity(payment, gatewayEvent.GatewayPaymentId, status);
-        EnsureGatewayFinancials(payment, status.AmountMinor, status.Currency);
-        if (status.IsSuccessful)
+        if (resolution.Outcome == PaymentReconciliationOutcome.Captured)
         {
-            payment.Succeed(status.GatewayPaymentId, status.Status, timeProvider.Now);
-            ConfirmTarget(payment, timeProvider.Now);
+            var now = timeProvider.Now;
+            var recover = payment.Status == PaymentStatus.Expired;
+            if (recover)
+            {
+                payment.RecoverCaptured(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
+            }
+            else
+            {
+                payment.Succeed(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
+            }
+
+            await ConfirmTargetAsync(payment, now, cancellationToken, recover);
             AddPaymentOutcomeEvents(payment);
         }
-        else if (status.IsTerminalFailure)
+        else if (resolution.Outcome == PaymentReconciliationOutcome.DefinitivelyNotCaptured &&
+                 payment.Status == PaymentStatus.Pending)
         {
-            payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", status.Status, timeProvider.Now);
+            payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", resolution.Status.Status, timeProvider.Now);
             FailTarget(payment);
             AddPaymentOutcomeEvents(payment);
+        }
+        else if (resolution.Outcome is PaymentReconciliationOutcome.Pending or PaymentReconciliationOutcome.Ambiguous)
+        {
+            throw new ConflictException("The gateway response is not safe to resolve.");
         }
     }
 
@@ -859,6 +1116,22 @@ public sealed class PaymentService(
             !dbContext.Entry(payment).Reference(x => x.Subscription).IsLoaded)
         {
             await dbContext.Entry(payment).Reference(x => x.Subscription).LoadAsync(cancellationToken);
+        }
+    }
+
+    private async Task ReloadPaymentAndTargetAsync(
+        Payment payment,
+        CancellationToken cancellationToken)
+    {
+        await dbContext.Entry(payment).ReloadAsync(cancellationToken);
+        await LoadPaymentNavigationsAsync(payment, cancellationToken);
+        if (payment.Order is not null)
+        {
+            await dbContext.Entry(payment.Order).ReloadAsync(cancellationToken);
+        }
+        if (payment.Subscription is not null)
+        {
+            await dbContext.Entry(payment.Subscription).ReloadAsync(cancellationToken);
         }
     }
 
@@ -925,16 +1198,40 @@ public sealed class PaymentService(
             payment.FailedAt));
     }
 
-    private static void ConfirmTarget(Payment payment, DateTime indiaLocalNow)
+    private async Task ConfirmTargetAsync(
+        Payment payment,
+        DateTime indiaLocalNow,
+        CancellationToken cancellationToken,
+        bool recoverCaptured = false)
     {
         if (payment.Order is not null)
         {
-            payment.Order.ConfirmPayment();
+            if (recoverCaptured)
+            {
+                payment.Order.RecoverCapturedPayment();
+            }
+            else
+            {
+                payment.Order.ConfirmPayment();
+            }
+            if (oneTimeDeliveryCreator is not null)
+            {
+                oneTimeDeliveryCreator.AddIfMissing(payment.Order, timeProvider.Today);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await oneTimeDeliveryCreator.IssuePendingOtpsAsync(cancellationToken);
+            }
             return;
         }
         if (payment.Subscription is not null)
         {
-            payment.Subscription.Activate(indiaLocalNow);
+            if (recoverCaptured)
+            {
+                payment.Subscription.RecoverCapturedPayment(indiaLocalNow);
+            }
+            else
+            {
+                payment.Subscription.Activate(indiaLocalNow);
+            }
             return;
         }
 
@@ -963,7 +1260,7 @@ public sealed class PaymentService(
         long requestedByUserId,
         RefundPaymentRequest request)
     {
-        dbContext.AuditLogs.Add(new AuditLog(
+        dbContext.AddAuditLog(new AuditLog(
             requestedByUserId,
             "PaymentRefundRequested",
             nameof(Payment),
@@ -993,6 +1290,128 @@ public sealed class PaymentService(
         }
 
         return timeProvider.ToUtc(indiaLocal);
+    }
+
+    private async Task EnsurePreviousAttemptsSafeAsync(
+        IReadOnlyList<Payment> payments,
+        CancellationToken cancellationToken)
+    {
+        foreach (var payment in payments)
+        {
+            if (payment.Method != PaymentMethod.Razorpay ||
+                payment.Status is
+                    PaymentStatus.Success or
+                    PaymentStatus.RefundPending or
+                    PaymentStatus.PartiallyRefunded or
+                    PaymentStatus.Refunded)
+            {
+                continue;
+            }
+
+            var resolution = await ResolveGatewayPaymentAsync(
+                payment,
+                payment.GatewayPaymentId,
+                cancellationToken);
+            if (resolution.Outcome != PaymentReconciliationOutcome.DefinitivelyNotCaptured)
+            {
+                throw new ConflictException(
+                    "A previous Razorpay payment is captured or cannot be proven not captured.");
+            }
+        }
+    }
+
+    private static IReadOnlyList<PaymentAttemptEvidence> CaptureAttemptEvidence(
+        IReadOnlyList<Payment> payments) => payments
+        .Select(PaymentAttemptEvidence.From)
+        .OrderBy(x => x.PublicId)
+        .ToList();
+
+    private async Task<IReadOnlyList<Payment>> RevalidateAttemptEvidenceAsync(
+        IQueryable<Payment> query,
+        IReadOnlyList<PaymentAttemptEvidence> evidence,
+        CancellationToken cancellationToken)
+    {
+        var currentPayments = await query.ToListAsync(cancellationToken);
+        foreach (var currentPayment in currentPayments)
+        {
+            await dbContext.Entry(currentPayment).ReloadAsync(cancellationToken);
+        }
+
+        var currentEvidence = CaptureAttemptEvidence(currentPayments);
+        if (!currentEvidence.SequenceEqual(evidence))
+        {
+            throw new ConflictException(
+                "Payment attempts changed while Razorpay evidence was being collected. Retry after reconciliation.");
+        }
+
+        return currentPayments;
+    }
+
+    private static void EnsureNoActivePayment(
+        IReadOnlyList<Payment> payments,
+        string targetName)
+    {
+        if (payments.Any(x => x.Status is PaymentStatus.Initiated or PaymentStatus.Pending))
+        {
+            throw new ConflictException($"The {targetName} already has an active payment.");
+        }
+
+        EnsureNoCompletedPayment(payments, targetName);
+    }
+
+    private static void EnsureNoCompletedPayment(
+        IReadOnlyList<Payment> payments,
+        string targetName)
+    {
+        if (payments.Any(x => x.Status is
+            PaymentStatus.Success or
+            PaymentStatus.RefundPending or
+            PaymentStatus.PartiallyRefunded or
+            PaymentStatus.Refunded))
+        {
+            throw new ConflictException($"The {targetName} already has a completed payment.");
+        }
+    }
+
+    private static void EnsureOrderCanStartPayment(Order order)
+    {
+        if (order.Status != OrderStatus.PendingPayment)
+        {
+            throw new ConflictException(
+                $"The order changed to status '{order.Status}' while payment safety checks were running.");
+        }
+    }
+
+    private static void EnsureSubscriptionCanStartPayment(
+        Subscription subscription,
+        bool allowFailed)
+    {
+        var allowed = subscription.Status == SubscriptionStatus.PaymentPending ||
+            allowFailed && subscription.Status == SubscriptionStatus.PaymentFailed;
+        if (!allowed)
+        {
+            throw new ConflictException(
+                $"The subscription changed to status '{subscription.Status}' while payment safety checks were running.");
+        }
+    }
+
+    private sealed record PaymentAttemptEvidence(
+        Guid PublicId,
+        PaymentMethod Method,
+        PaymentStatus Status,
+        decimal Amount,
+        string Currency,
+        string? GatewayOrderId,
+        string? GatewayPaymentId)
+    {
+        public static PaymentAttemptEvidence From(Payment payment) => new(
+            payment.PublicId,
+            payment.Method,
+            payment.Status,
+            payment.Amount,
+            payment.Currency,
+            payment.GatewayOrderId,
+            payment.GatewayPaymentId);
     }
 
     private async Task ExecuteSerializableAsync(Func<Task> operation, CancellationToken cancellationToken)
@@ -1035,6 +1454,146 @@ public sealed class PaymentService(
         PaymentMethod.Development => "Mock",
         _ => throw new BusinessRuleException("The selected payment method is unavailable.")
     };
+
+    private async Task<GatewayResolution> ResolveGatewayPaymentAsync(
+        Payment payment,
+        string? gatewayPaymentId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(payment.GatewayOrderId))
+        {
+            throw new ConflictException("The gateway order reference is unavailable.");
+        }
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(gatewayPaymentId))
+            {
+                var status = await GatewayFor(payment.Method).GetPaymentStatusAsync(
+                    gatewayPaymentId,
+                    cancellationToken);
+                EnsureGatewayIdentity(payment, gatewayPaymentId, status);
+                EnsureGatewayFinancials(payment, status.AmountMinor, status.Currency);
+                return new GatewayResolution(ClassifyGatewayStatus(status), status);
+            }
+
+            var discovered = await GatewayFor(payment.Method).GetPaymentsForOrderAsync(
+                payment.GatewayOrderId,
+                cancellationToken);
+            if (!string.Equals(
+                    discovered.GatewayOrderId,
+                    payment.GatewayOrderId,
+                    StringComparison.Ordinal) ||
+                discovered.Payments.Any(x =>
+                    string.IsNullOrWhiteSpace(x.GatewayPaymentId) ||
+                    !string.Equals(
+                        x.GatewayOrderId,
+                        payment.GatewayOrderId,
+                        StringComparison.Ordinal)) ||
+                discovered.Payments
+                    .GroupBy(x => x.GatewayPaymentId, StringComparer.Ordinal)
+                    .Any(x => x.Count() > 1))
+            {
+                return AmbiguousResolution(payment);
+            }
+
+            if (discovered.Payments.Count == 0)
+            {
+                return AmbiguousResolution(payment, "no_payments");
+            }
+
+            if (discovered.Payments.Any(x =>
+                    x.AmountMinor != ToMinorUnits(payment.Amount) ||
+                    !string.Equals(
+                        x.Currency,
+                        payment.Currency,
+                        StringComparison.OrdinalIgnoreCase)))
+            {
+                return AmbiguousResolution(payment);
+            }
+
+            var classified = discovered.Payments
+                .Select(x => new GatewayResolution(ClassifyGatewayStatus(x), x))
+                .ToArray();
+            if (classified.Any(x =>
+                    x.Outcome == PaymentReconciliationOutcome.Ambiguous))
+            {
+                return AmbiguousResolution(payment);
+            }
+
+            var captured = classified
+                .Where(x => x.Outcome == PaymentReconciliationOutcome.Captured)
+                .ToArray();
+            if (captured.Length > 1)
+            {
+                return AmbiguousResolution(payment);
+            }
+            if (captured.Length == 1)
+            {
+                return captured[0];
+            }
+
+            var pending = classified.FirstOrDefault(x =>
+                x.Outcome == PaymentReconciliationOutcome.Pending);
+            return pending ?? new GatewayResolution(
+                PaymentReconciliationOutcome.DefinitivelyNotCaptured,
+                classified[0].Status);
+        }
+        catch (ConflictException)
+        {
+            return AmbiguousResolution(payment);
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException or
+            TaskCanceledException or
+            JsonException or
+            InvalidOperationException or
+            FormatException)
+        {
+            return AmbiguousResolution(payment, exception.Message);
+        }
+    }
+
+    private static PaymentReconciliationOutcome ClassifyGatewayStatus(
+        GatewayPaymentStatusResult status)
+    {
+        if (string.Equals(status.Status, "captured", StringComparison.OrdinalIgnoreCase))
+        {
+            return status.IsSuccessful && !status.IsTerminalFailure
+                ? PaymentReconciliationOutcome.Captured
+                : PaymentReconciliationOutcome.Ambiguous;
+        }
+        if (string.Equals(status.Status, "failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return !status.IsSuccessful && status.IsTerminalFailure
+                ? PaymentReconciliationOutcome.DefinitivelyNotCaptured
+                : PaymentReconciliationOutcome.Ambiguous;
+        }
+        if (string.Equals(status.Status, "created", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(status.Status, "authorized", StringComparison.OrdinalIgnoreCase))
+        {
+            return !status.IsSuccessful && !status.IsTerminalFailure
+                ? PaymentReconciliationOutcome.Pending
+                : PaymentReconciliationOutcome.Ambiguous;
+        }
+
+        // Refunded proves prior capture; unknown statuses are unsafe until explicitly supported.
+        return PaymentReconciliationOutcome.Ambiguous;
+    }
+
+    private static GatewayResolution AmbiguousResolution(
+        Payment payment,
+        string? status = null) =>
+        new(PaymentReconciliationOutcome.Ambiguous, EmptyGatewayStatus(payment, status));
+
+    private static GatewayPaymentStatusResult EmptyGatewayStatus(
+        Payment payment,
+        string? status = null) =>
+        new("", payment.GatewayOrderId ?? "", status ?? "ambiguous", 0, payment.Currency, false, false);
+
+    private sealed record GatewayResolution(
+        PaymentReconciliationOutcome Outcome,
+        GatewayPaymentStatusResult Status);
 
     private static void EnsureGatewayIdentity(
         Payment payment,

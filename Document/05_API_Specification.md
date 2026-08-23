@@ -222,7 +222,7 @@ Coordinates are required and must be in valid latitude/longitude ranges. PIN cod
 
 `GET /customers/me/address-lookup/reverse?latitude=&longitude=`
 
-Performs provider-neutral reverse lookup for map-pin selection. A configured provider may return address fields; otherwise the response data is null and no provider secret is required.
+Performs provider-neutral reverse lookup for map-pin selection. A configured provider may return `addressLine1`, `locality`, `city`, `state`, `pinCode`, `landmark`, and transient `country` metadata together with the selected coordinates; otherwise the response data is null and no provider secret is required. The client keeps the selected coordinates and current manually entered fields when lookup fails or a provider field is null/empty. Latitude and longitude are map state, not editable customer text fields.
 
 ### Customer administration
 
@@ -381,23 +381,43 @@ Requires audit reason.
 
 `POST /payments/create`
 
+Creates a server-owned payment attempt and, for Razorpay, a gateway order. The client receives only the public checkout details required to open hosted checkout. The backend persists the local attempt and gateway order identity before checkout starts.
+
 `POST /payments/verify`
+
+Treats the checkout callback as an untrusted signal. The backend verifies the gateway signature and queries Razorpay before any business transition. Acceptance requires mutually consistent gateway payment ID, order ID, amount, currency, status, capture flag, terminal-failure state, and payment identity. The response reflects the backend result, not the SDK callback.
 
 `GET /payments/{paymentId}`
 
+Returns server-authoritative local payment state and stored gateway identifiers. Client success flags are never evidence of capture.
+
+`POST /payments/{paymentId}/reconcile`
+
+Performs an authoritative Razorpay lookup. When a local gateway payment ID exists, direct payment lookup is used. When it is absent, the backend discovers payments for the stored Razorpay order and accepts exactly one matching captured payment only after the same identity, amount, currency, status, and capture validation. `Captured` may complete the target exactly once; `DefinitivelyNotCaptured` may close an eligible non-terminal attempt; `Pending` and `Ambiguous` remain unresolved and fail closed.
+
+`POST /payments/{paymentId}/cancel`
+
+Queries Razorpay before expiring or cancelling a Razorpay attempt. Cancellation is allowed only after every relevant prior attempt is definitively terminal and non-captured. Gateway timeout, unavailable gateway, malformed response, unknown status, refunded evidence, duplicate evidence, conflicting evidence, or identity/financial mismatch rejects the mutation.
+
 `POST /payments/{paymentId}/refund`
+
+Refunds are backend-authorized, audited, and idempotent. This hardening adds no automatic refunds and does not infer refund eligibility from a client callback.
 
 Webhook:
 
 `POST /webhooks/razorpay`
 
-Webhook must be signature verified and idempotent.
+Reads the raw request body, validates the Razorpay webhook HMAC with the configured webhook secret, persists provider event identity/hash, and processes each event idempotently. Webhook data is another trigger for the same gateway-authoritative verification path; it is not a substitute for strict payment lookup and validation.
+
+Verify, webhook, reconciliation, cancellation, and retry converge on the same backend state transition and side-effect boundary. Order confirmation, subscription activation, delivery creation, delivery OTP issuance, notification events, and refunds are exact-once operations under the payment transaction.
+
+The client treats `Captured` as successful only when returned by the backend. `Pending`, `Ambiguous`, unavailable, malformed, unknown, refunded, duplicated, conflicting, or inconsistent evidence remains non-success and must not create a replacement or retry.
 
 ---
 
 ## 10. Delivery APIs
 
-Delivery status values are `ReadyForAssignment`, `Assigned`, `PickedUp`, `OutForDelivery`, `Arrived`, `Delivered`, and `Failed`. OTP verification is recorded separately while the delivery remains `Arrived`. All routes require bearer authentication.
+Delivery status values are `ReadyForAssignment`, `Assigned`, `PickedUp`, `OutForDelivery`, `Arrived`, `Delivered`, and `Failed`. OTP verification is recorded separately while the delivery remains `Arrived`. One-time deliveries use source `OneTimeOrder`; subscription deliveries use source `SubscriptionOccurrence` and expose `Morning` or `Evening` slot metadata. All routes require bearer authentication.
 
 ### Customer delivery tracking
 
@@ -459,14 +479,17 @@ Rules and disclosure:
 
 ### Delivery management
 
-- `POST /delivery-management/materialize?throughDate=YYYY-MM-DD` idempotently creates delivery work from eligible confirmed orders and scheduled subscription occurrences.
-- `GET /delivery-management/branches/{branchId}?date=YYYY-MM-DD&status=Assigned` lists branch deliveries with optional filters.
+- `POST /delivery-management/materialize?throughDate=YYYY-MM-DD` idempotently creates missing delivery rows for eligible confirmed one-time orders and active scheduled subscription occurrences. The date is inclusive, must be today or later in India-local time, and must not exceed the configured operational generation window. Repeating the request is duplicate-safe.
+- `POST /delivery-management/fetch-subscriptions?throughDate=YYYY-MM-DD&slot=Morning|Evening` performs the same bounded, idempotent generation for subscription occurrences only. The slot filter is optional; persisted legacy occurrences default to `Morning`.
+- `GET /delivery-management/branches/{branchId}?date=YYYY-MM-DD&status=Assigned&sourceType=OneTimeOrder|SubscriptionOccurrence&slot=Morning|Evening` lists branch deliveries with optional date, status, source, and subscription-slot filters. `slot` applies only to subscription deliveries.
+- Paid one-time order confirmation automatically creates exactly one `ReadyForAssignment` delivery through the payment service's idempotent delivery creator. Failed, cancelled, or otherwise unsuccessful payments create no delivery.
 - `GET /delivery-management/branches/{branchId}/employees` lists employees eligible for delivery assignment in the branch.
-- `GET /delivery-management/{deliveryId}` returns operational delivery detail.
-- `POST /delivery-management/{deliveryId}/assign` accepts `{ "employeeId": "uuid", "reason": "optional assignment reason" }` and supports reassignment before terminal completion.
-- Branch reads require `DELIVERIES.READ_BRANCH`; materialization and assignment require `DELIVERIES.ASSIGN_BRANCH`. The requested delivery/branch must be within the actor's branch claims unless the actor has global access.
+- `GET /delivery-management/{deliveryId}` returns operational delivery detail, including source-specific quantity/order summary and subscription slot when applicable.
+- `POST /delivery-management/{deliveryId}/assign` accepts `{ "employeeId": "uuid", "reason": "optional assignment reason" }` and supports assignment from `ReadyForAssignment` before terminal completion.
+- `POST /delivery-management/bulk-assign` accepts `{ "deliveryIds": ["uuid"], "employeeId": "uuid", "reason": "optional assignment reason" }`. The backend validates every selected delivery, branch scope, status, and employee eligibility before changing any row; successful mutation emits the normal audit/notification/realtime effects for each assignment.
+- Branch reads require `DELIVERIES.READ_BRANCH`; generation and assignment require `DELIVERIES.ASSIGN_BRANCH`. The requested delivery/branch must be within the actor's branch claims unless the actor has global access.
 
-All successful responses use the standard API envelope. Invalid transitions and OTP failures return the standard error envelope without exposing stored OTP hashes or codes.
+All successful responses use the standard API envelope. Invalid transitions, validation failures, authorization failures, and OTP failures return the standard error envelope without exposing stored OTP hashes or codes.
 
 ---
 

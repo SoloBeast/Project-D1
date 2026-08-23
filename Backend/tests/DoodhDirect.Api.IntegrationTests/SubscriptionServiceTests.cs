@@ -341,9 +341,11 @@ public sealed class SubscriptionServiceTests
             await db.SaveChangesAsync();
 
             var category = new ProductCategory("MILK", "Milk");
+            category.Activate();
             db.ProductCategories.Add(category);
             await db.SaveChangesAsync();
             var product = new Product(category.Id, "MILK-001", "Fresh Milk", null, "litre", 80m);
+            product.Activate();
             var branch = new Branch("MAIN", "Main Branch", "Bengaluru", "Karnataka", 12.9716m, 77.5946m);
             var address = new CustomerAddress(
                 customer.Id,
@@ -456,6 +458,11 @@ public sealed class SubscriptionServiceTests
             Guid paymentId,
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
+        public Task<PaymentResult> CancelAsync(
+            long customerId,
+            Guid paymentId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<IReadOnlyList<PaymentCapability>> GetCapabilitiesAsync(
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
@@ -472,6 +479,12 @@ public sealed class SubscriptionServiceTests
 
         public Task<PaymentResult> GetAsync(
             long userId,
+            Guid paymentId,
+            bool bypassOwnership,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<PaymentReconciliationResult> ReconcileAsync(
+            long requestedByUserId,
             Guid paymentId,
             bool bypassOwnership,
             CancellationToken cancellationToken) => throw new NotSupportedException();

@@ -83,7 +83,7 @@ public sealed class DoodhDirectDbContext(
         ConfigureOtpChallenge(modelBuilder);
         ConfigureUserSession(modelBuilder);
         ConfigureRefreshToken(modelBuilder);
-        ConfigureAuditLog(modelBuilder);
+        ConfigureAuditLog(modelBuilder, usesSqlite);
         ConfigureSystemConfiguration(modelBuilder);
         ConfigureCustomerProfile(modelBuilder);
         ConfigureCustomerAddress(modelBuilder);
@@ -122,18 +122,64 @@ public sealed class DoodhDirectDbContext(
         ConfigureDeliveryLocation(modelBuilder, usesSqlite);
     }
 
+    public void AddAuditLog(AuditLog audit)
+    {
+        AssignSqliteAuditKey(audit);
+        AuditLogs.Add(audit);
+    }
+
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         ApplyAuditTimestamps();
+        ApplySqliteAuditKeys();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
 
-    public override Task<int> SaveChangesAsync(
+    public override async Task<int> SaveChangesAsync(
         bool acceptAllChangesOnSuccess,
         CancellationToken cancellationToken = default)
     {
         ApplyAuditTimestamps();
-        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        await ApplySqliteAuditKeysAsync(cancellationToken);
+        return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void ApplySqliteAuditKeys()
+    {
+        foreach (var audit in ChangeTracker.Entries<AuditLog>()
+            .Where(x => x.State == EntityState.Added)
+            .Select(x => x.Entity))
+        {
+            AssignSqliteAuditKey(audit);
+        }
+    }
+
+    private void AssignSqliteAuditKey(AuditLog audit)
+    {
+        if (Database.ProviderName != "Microsoft.EntityFrameworkCore.Sqlite" || audit.Id != 0)
+        {
+            return;
+        }
+
+        var persistedMax = AuditLogs
+            .Where(x => x.Id != 0)
+            .Select(x => x.Id)
+            .AsEnumerable()
+            .DefaultIfEmpty()
+            .Max();
+        var trackedMax = ChangeTracker.Entries<AuditLog>()
+            .Where(x => x.Entity.Id != 0)
+            .Select(x => x.Entity.Id)
+            .DefaultIfEmpty()
+            .Max();
+
+        audit.SetPersistenceId(Math.Max(persistedMax, trackedMax) + 1);
+    }
+
+    private Task ApplySqliteAuditKeysAsync(CancellationToken cancellationToken)
+    {
+        ApplySqliteAuditKeys();
+        return Task.CompletedTask;
     }
 
     private void ApplyAuditTimestamps()
@@ -284,12 +330,19 @@ public sealed class DoodhDirectDbContext(
         entity.HasOne(x => x.Session).WithMany(x => x.RefreshTokens).HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Restrict);
     }
 
-    private static void ConfigureAuditLog(ModelBuilder modelBuilder)
+    private static void ConfigureAuditLog(ModelBuilder modelBuilder, bool usesSqlite)
     {
         var entity = modelBuilder.Entity<AuditLog>();
         entity.ToTable("AuditLog");
         entity.HasKey(x => x.Id);
-        entity.Property(x => x.Id).UseIdentityColumn();
+        if (usesSqlite)
+        {
+            entity.Property(x => x.Id).ValueGeneratedNever();
+        }
+        else
+        {
+            entity.Property(x => x.Id).UseIdentityColumn();
+        }
         entity.Property(x => x.Action).HasMaxLength(100).IsRequired();
         entity.Property(x => x.EntityType).HasMaxLength(100).IsRequired();
         entity.Property(x => x.EntityId).HasMaxLength(100).IsRequired();
@@ -686,6 +739,7 @@ public sealed class DoodhDirectDbContext(
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).UseIdentityColumn();
         entity.Property(x => x.DayOfWeek).HasConversion<string>().HasMaxLength(15).IsRequired();
+        entity.Property(x => x.Slot).HasConversion<string>().HasMaxLength(15).IsRequired();
         entity.HasIndex(x => new { x.SubscriptionId, x.DayOfWeek }).IsUnique();
         entity.HasOne(x => x.Subscription).WithMany(x => x.Schedules).HasForeignKey(x => x.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -700,6 +754,7 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.Id).UseIdentityColumn();
         ConfigurePublicEntity(entity);
         entity.Property(x => x.ScheduledDate).HasColumnType("date").IsRequired();
+        entity.Property(x => x.Slot).HasConversion<string>().HasMaxLength(15).IsRequired();
         entity.Property(x => x.Quantity).HasPrecision(18, 3).IsRequired();
         entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
         entity.Property(x => x.BranchCodeSnapshot).HasMaxLength(50).IsRequired();
@@ -790,6 +845,8 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.Id).UseIdentityColumn();
         ConfigurePublicEntity(entity);
         entity.Property(x => x.CodeHash).HasMaxLength(128).IsRequired();
+        entity.Property(x => x.ProtectedCode).HasMaxLength(2048);
+        entity.Property(x => x.SentAt).HasColumnName("SentAtUtc");
         entity.Property(x => x.CreatedAt).HasColumnName("CreatedAtUtc").IsRequired();
         entity.Property(x => x.ExpiresAt).HasColumnName("ExpiresAtUtc").IsRequired();
         entity.Property(x => x.ConsumedAt).HasColumnName("ConsumedAtUtc");

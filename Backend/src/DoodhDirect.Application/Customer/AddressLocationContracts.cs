@@ -7,7 +7,9 @@ public sealed record AddressLookupResult(
     string? State,
     string? PinCode,
     decimal Latitude,
-    decimal Longitude);
+    decimal Longitude,
+    string? Landmark = null,
+    string? Country = null);
 
 public interface IAddressLocationLookup
 {

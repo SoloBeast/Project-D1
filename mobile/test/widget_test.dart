@@ -3,6 +3,8 @@ import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/auth/session_state.dart';
+import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
+import 'package:doodh_direct_mobile/features/catalogue/catalogue_repository.dart';
 import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/orders/order_repository.dart';
@@ -64,6 +66,154 @@ void main() {
   );
 
   group('authenticated customer routing', () {
+    testWidgets('customer Home shows an empty Cart action without a badge', (
+      tester,
+    ) async {
+      final harness = await _pumpAuthenticatedApp(tester);
+
+      expect(find.byTooltip('Cart'), findsOneWidget);
+      expect(find.text('0'), findsNothing);
+
+      harness.router.go('/checkout');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Your cart is empty'), findsOneWidget);
+      expect(find.text('Continue Shopping'), findsOneWidget);
+
+      await tester.tap(find.text('Continue Shopping'));
+      await tester.pumpAndSettle();
+      expect(
+        harness.router.routerDelegate.currentConfiguration.uri.path,
+        '/catalogue',
+      );
+    });
+
+    testWidgets('customer Home counts distinct Cart lines and opens Cart', (
+      tester,
+    ) async {
+      final harness = await _pumpAuthenticatedApp(tester);
+      final secondProduct = CatalogueProduct(
+        publicId: '00000000-0000-0000-0000-000000000031',
+        sku: 'CURD-500G',
+        name: 'Curd',
+        description: 'Fresh curd.',
+        category: _catalogueProduct.category,
+        unitOfMeasure: 'kilogram',
+        price: 80,
+        isActive: true,
+        branchAvailability: _catalogueProduct.branchAvailability,
+      );
+      final controller = harness.container.read(
+        orderControllerProvider.notifier,
+      );
+      controller.setCartItem(_catalogueProduct, 1);
+      controller.setCartItem(secondProduct, 2.5);
+      await tester.pump();
+
+      final cartAction = find.ancestor(
+        of: find.byTooltip('Cart'),
+        matching: find.byType(IconButton),
+      );
+      expect(cartAction, findsOneWidget);
+      expect(find.text('2'), findsOneWidget);
+
+      await tester.tap(cartAction);
+      await tester.pumpAndSettle();
+
+      expect(
+        harness.router.routerDelegate.currentConfiguration.uri.path,
+        '/checkout',
+      );
+      expect(find.text('Your order'), findsOneWidget);
+      expect(find.text(_catalogueProduct.name), findsOneWidget);
+      expect(find.text('2.5 kilogram · ₹80.00 each'), findsOneWidget);
+      expect(find.text('2.5'), findsOneWidget);
+    });
+
+    testWidgets('Shop Cart badge counts distinct Cart lines', (tester) async {
+      final harness = await _pumpAuthenticatedApp(tester);
+      final secondProduct = CatalogueProduct(
+        publicId: '00000000-0000-0000-0000-000000000032',
+        sku: 'PANEER-250G',
+        name: 'Paneer',
+        description: 'Fresh paneer.',
+        category: _catalogueProduct.category,
+        unitOfMeasure: 'kilogram',
+        price: 120,
+        isActive: true,
+        branchAvailability: _catalogueProduct.branchAvailability,
+      );
+      final controller = harness.container.read(
+        orderControllerProvider.notifier,
+      );
+      controller.setCartItem(_catalogueProduct, 1);
+      controller.setCartItem(secondProduct, 2.5);
+      harness.router.go('/catalogue');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Cart (2)'), findsOneWidget);
+    });
+
+    testWidgets('add-to-cart snackbar dismisses automatically', (tester) async {
+      final harness = await _pumpAuthenticatedApp(
+        tester,
+        catalogue: _FakeCatalogueRepository(_catalogueProduct),
+      );
+
+      harness.router.go('/catalogue/products/${_catalogueProduct.publicId}');
+      await tester.pumpAndSettle();
+      expect(find.text('Add to cart'), findsOneWidget);
+
+      await tester.tap(find.text('Add to cart'));
+      await tester.pump();
+      expect(
+        find.text('${_catalogueProduct.name} added to your cart'),
+        findsOneWidget,
+      );
+
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('${_catalogueProduct.name} added to your cart'),
+        findsNothing,
+      );
+    });
+
+    testWidgets('View cart clears the add-to-cart snackbar before navigation', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(800, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final harness = await _pumpAuthenticatedApp(
+        tester,
+        catalogue: _FakeCatalogueRepository(_catalogueProduct),
+      );
+
+      harness.router.go('/catalogue/products/${_catalogueProduct.publicId}');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add to cart'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.text('${_catalogueProduct.name} added to your cart'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('View cart'));
+      await tester.pumpAndSettle();
+
+      expect(
+        harness.router.routerDelegate.currentConfiguration.uri.path,
+        '/checkout',
+      );
+      expect(
+        find.text('${_catalogueProduct.name} added to your cart'),
+        findsNothing,
+      );
+
+      await tester.pump(const Duration(seconds: 3));
+    });
+
     testWidgets('forward payment navigation uses the supplied order', (
       tester,
     ) async {
@@ -75,6 +225,26 @@ void main() {
       expect(find.text(_order.orderNumber), findsOneWidget);
       expect(find.text('Amount due: ${_order.formattedTotal}'), findsOneWidget);
       expect(harness.orders.requestedOrderIds, isEmpty);
+    });
+
+    testWidgets('expired session redirects the protected route to login', (
+      tester,
+    ) async {
+      final harness = await _pumpAuthenticatedApp(tester);
+
+      harness.router.go('/deliveries/delivery-1');
+      await tester.pumpAndSettle();
+      await harness.container
+          .read(sessionControllerProvider.notifier)
+          .expireSession();
+      await tester.pumpAndSettle();
+
+      expect(
+        harness.router.routerDelegate.currentConfiguration.uri.path,
+        '/login',
+      );
+      expect(find.text('Sign in to your account'), findsOneWidget);
+      expect(find.text('Authentication is required.'), findsNothing);
     });
 
     testWidgets(
@@ -229,13 +399,18 @@ void main() {
   });
 }
 
-Future<_RouterHarness> _pumpAuthenticatedApp(WidgetTester tester) async {
+Future<_RouterHarness> _pumpAuthenticatedApp(
+  WidgetTester tester, {
+  CatalogueRepository? catalogue,
+}) async {
   final auth = _AuthenticatedCustomerRepository();
   final orders = _FakeOrderRepository();
   final container = ProviderContainer(
     overrides: [
       authRepositoryProvider.overrideWithValue(auth),
       orderRepositoryProvider.overrideWithValue(orders),
+      if (catalogue != null)
+        catalogueRepositoryProvider.overrideWithValue(catalogue),
     ],
   );
   addTearDown(container.dispose);
@@ -261,6 +436,7 @@ class _RouterHarness {
 
 class _AuthenticatedCustomerRepository extends AuthRepository {
   bool loggedOut = false;
+  bool cleared = false;
 
   @override
   Future<AuthSession?> restore() async => _customerSession;
@@ -269,6 +445,21 @@ class _AuthenticatedCustomerRepository extends AuthRepository {
   Future<void> logout(AuthSession session) async {
     loggedOut = true;
   }
+
+  @override
+  Future<void> clear() async {
+    cleared = true;
+  }
+}
+
+class _FakeCatalogueRepository extends CatalogueRepository {
+  _FakeCatalogueRepository(this.product)
+    : super(api: ApiClient(baseUrl: 'https://api.example.test'));
+
+  final CatalogueProduct product;
+
+  @override
+  Future<CatalogueProduct> getProduct(String productId) async => product;
 }
 
 class _FakeOrderRepository extends OrderRepository {
@@ -286,6 +477,32 @@ class _FakeOrderRepository extends OrderRepository {
     return _order;
   }
 }
+
+final _catalogueProduct = CatalogueProduct(
+  publicId: '00000000-0000-0000-0000-000000000030',
+  sku: 'MILK-1L',
+  name: 'Whole Milk',
+  description: 'Fresh whole milk.',
+  category: const ProductCategory(
+    publicId: '00000000-0000-0000-0000-000000000040',
+    code: 'MILK',
+    name: 'Milk',
+    description: 'Fresh dairy products.',
+    isActive: true,
+  ),
+  unitOfMeasure: 'litre',
+  price: 60,
+  isActive: true,
+  branchAvailability: const [
+    BranchAvailability(
+      branchId: '00000000-0000-0000-0000-000000000050',
+      branchCode: 'CENTRAL',
+      branchName: 'Central Dairy',
+      isAvailable: true,
+      maxDailyQuantity: 10,
+    ),
+  ],
+);
 
 final _order = OrderSummary(
   publicId: '00000000-0000-0000-0000-000000000010',
@@ -311,6 +528,12 @@ final _order = OrderSummary(
   discountAmount: 0,
   payableAmount: 60,
   cancelledAt: null,
+  paymentPublicId: null,
+  paymentStatus: null,
+  gatewayPaymentId: null,
+  deliveryPublicId: null,
+  deliveryReferenceNumber: null,
+  deliveryStatus: null,
 );
 
 final _customerSession = AuthSession(

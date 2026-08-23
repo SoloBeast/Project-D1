@@ -11,6 +11,42 @@ namespace DoodhDirect.Api.IntegrationTests;
 public sealed class CatalogueServiceTests
 {
     [Fact]
+    public void NewCatalogueEntities_AreInactiveByDefault()
+    {
+        var category = new ProductCategory("MILK", "Milk");
+        var product = new Product(1, "MILK-001", "Fresh Milk", null, "litre", 80m);
+
+        Assert.False(category.IsActive);
+        Assert.False(product.IsActive);
+    }
+
+    [Fact]
+    public async Task CreateProduct_DefaultsInactiveAndHasNoBranchAssignment()
+    {
+        await using var harness = await CatalogueHarness.CreateAsync();
+        var product = await harness.Service.CreateProductAsync(
+            ValidProduct(harness.Category.PublicId, "MILK-001"),
+            CancellationToken.None);
+
+        Assert.False(product.IsActive);
+        Assert.Empty(product.BranchAvailability);
+    }
+
+    [Fact]
+    public async Task CreateCategory_DefaultsInactiveAndIsExcludedFromPublicCatalogue()
+    {
+        await using var harness = await CatalogueHarness.CreateAsync();
+        var category = await harness.Service.CreateCategoryAsync(
+            new UpsertProductCategoryRequest("YOGURT", "Yogurt", null),
+            CancellationToken.None);
+
+        Assert.False(category.IsActive);
+        Assert.DoesNotContain(
+            await harness.Service.GetActiveCategoriesAsync(CancellationToken.None),
+            item => item.PublicId == category.PublicId);
+    }
+
+    [Fact]
     public async Task CreateProduct_NormalizesValuesAndSupportsDecimalPrice()
     {
         await using var harness = await CatalogueHarness.CreateAsync();
@@ -79,6 +115,10 @@ public sealed class CatalogueServiceTests
         await harness.Service.SetBranchAvailabilityAsync(
             available.PublicId,
             new SetProductBranchAvailabilityRequest(harness.Branch.PublicId, true, 125.375m),
+            CancellationToken.None);
+        await harness.Service.SetProductActiveAsync(
+            available.PublicId,
+            true,
             CancellationToken.None);
         await harness.Service.SetBranchAvailabilityAsync(
             unavailable.PublicId,
@@ -170,6 +210,7 @@ public sealed class CatalogueServiceTests
     {
         var db = CreateDb();
         var category = new ProductCategory("MILK", "Milk", "Milk products.");
+        category.Activate();
         var branch = new Branch("MAIN", "Main Branch", "Bengaluru", "Karnataka", 12.9716m, 77.5946m);
         db.ProductCategories.Add(category);
         db.Branches.Add(branch);

@@ -92,9 +92,31 @@ INITIATED -> PENDING -> SUCCESS
                   |
                   -> EXPIRED
 SUCCESS -> REFUND_PENDING -> REFUNDED
+
+EXPIRED --validated Razorpay capture--> SUCCESS
+FAILED  --validated Razorpay capture--> SUCCESS
 ```
 
-Payment webhook processing must be idempotent.
+### Gateway-authoritative payment evidence
+
+Razorpay is authoritative for capture evidence; the backend is authoritative for local state and every business side effect. A browser or Flutter SDK callback only supplies candidate identifiers and a signature. Before `SUCCESS`, the backend validates all of the following against a Razorpay query:
+
+- Gateway payment ID and gateway order ID are present and belong together.
+- The gateway order matches the local payment attempt.
+- Amount and currency exactly match the local attempt.
+- The gateway status is a captured/success state and the capture flag is true.
+- The response is not terminally failed, refunded, malformed, duplicated, or conflicting.
+- There is exactly one authoritative matching capture; uncertainty is not success evidence.
+
+Resolution is classified as `Captured`, `DefinitivelyNotCaptured`, `Pending`, or `Ambiguous`. `Pending` and `Ambiguous` remain unresolved. Gateway unavailability, timeouts, malformed responses, unknown statuses, identity mismatch, amount/currency mismatch, refunded evidence, and duplicate/conflicting order-payment evidence fail closed.
+
+When the local gateway payment ID is known, direct payment lookup is used. If it is absent, the backend discovers payments for the stored order and applies the same strict matching rules.
+
+### Replacement, retry, and convergence rules
+
+A Razorpay payment may be expired, cancelled, replaced, or retried only after every relevant earlier Razorpay attempt is proven definitively terminal and non-captured. Captured, pending, ambiguous, unavailable, malformed, refunded, duplicated, conflicting, or otherwise inconsistent evidence blocks replacement/retry. Evidence is revalidated inside the serializable mutation boundary so a concurrent attempt or target-state change cannot bypass the safety check.
+
+A validated capture may recover `Expired -> SUCCESS`, `Order PaymentFailed -> Confirmed`, and `Subscription PaymentFailed -> Active`. The resulting order confirmation, subscription activation, delivery creation, delivery OTP issuance, notification event, and refund effects are idempotent and converge across verify, webhook, reconciliation, and replay. Payment webhook processing must also be signature verified and idempotent.
 
 ---
 

@@ -1,5 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_models.dart';
@@ -9,7 +9,7 @@ import 'subscription_models.dart';
 import 'subscription_repository.dart';
 
 final subscriptionRepositoryProvider = Provider<SubscriptionRepository>(
-  (ref) => SubscriptionRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => SubscriptionRepository(api: authenticatedApiClient(ref)),
 );
 
 final subscriptionControllerProvider =

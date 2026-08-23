@@ -182,7 +182,8 @@ public sealed class ReportService(DoodhDirectDbContext db, IIndiaTimeProvider ti
 
     private async Task<ReportPage<PaymentReportRow>> PagePayments(ReportActor a, ReportFilter f, CancellationToken ct)
     {
-        var q = ApplyPaymentBranches(db.Payments.AsNoTracking(), await ResolveBranchesAsync(a, f.BranchIds, ct)); if (f.CustomerId.HasValue) q = q.Where(x => x.Customer.PublicId == f.CustomerId); var statuses = ParseStatuses<PaymentStatus>(f.Statuses); if (statuses.Count > 0) q = q.Where(x => statuses.Contains(x.Status)); if (!string.IsNullOrWhiteSpace(f.PaymentState)) { var paymentState = ParseStatus<PaymentStatus>(f.PaymentState); q = q.Where(x => x.Status == paymentState); } if (f.DateRange?.From is { } from) q = q.Where(x => x.CreatedAt >= from); if (f.DateRange?.To is { } to) q = q.Where(x => x.CreatedAt < to);
+        var q = ApplyPaymentBranches(db.Payments.AsNoTracking(), await ResolveBranchesAsync(a, f.BranchIds, ct)); if (f.CustomerId.HasValue) q = q.Where(x => x.Customer.PublicId == f.CustomerId); var statuses = ParseStatuses<PaymentStatus>(f.Statuses); if (statuses.Count > 0) q = q.Where(x => statuses.Contains(x.Status)); if (!string.IsNullOrWhiteSpace(f.PaymentState)) { var paymentState = ParseStatus<PaymentStatus>(f.PaymentState); q = q.Where(x => x.Status == paymentState); }
+        if (f.DateRange?.From is { } from) q = q.Where(x => x.CreatedAt >= from); if (f.DateRange?.To is { } to) q = q.Where(x => x.CreatedAt < to);
         var total = await q.CountAsync(ct); var data = await ApplyPaymentSort(q, f).Skip((f.Page - 1) * f.PageSize).Take(f.PageSize).Select(x => new PaymentReportRow(x.PublicId, x.Customer.PublicId, x.Method, x.Status, x.Amount, x.RefundedAmount, x.Currency, x.CreatedAt, x.VerifiedAt, x.FailedAt)).ToListAsync(ct); return MakePage(data, f, total);
     }
 

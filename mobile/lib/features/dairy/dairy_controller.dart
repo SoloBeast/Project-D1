@@ -1,5 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,7 +7,7 @@ import 'dairy_models.dart';
 import 'dairy_repository.dart';
 
 final dairyRepositoryProvider = Provider<DairyRepository>(
-  (ref) => DairyRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => DairyRepository(api: authenticatedApiClient(ref)),
 );
 
 final dairyControllerProvider = NotifierProvider<DairyController, DairyState>(

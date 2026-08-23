@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 
 import 'admin_report_models.dart';
 
@@ -18,8 +17,7 @@ class ReportExportFile {
 }
 
 class AdminReportRepository {
-  AdminReportRepository({ApiClient? api})
-    : _api = api ?? ApiClient(baseUrl: apiBaseUrl);
+  AdminReportRepository({required this._api});
 
   final ApiClient _api;
 

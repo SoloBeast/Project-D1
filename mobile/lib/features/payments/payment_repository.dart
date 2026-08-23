@@ -70,4 +70,15 @@ class PaymentRepository {
     );
     return PaymentDetails.fromJson(response['data'] as Map<String, dynamic>);
   }
+
+  Future<PaymentDetails> cancel({
+    required String token,
+    required String paymentId,
+  }) async {
+    final response = await api.post(
+      '/api/v1/payments/$paymentId/cancel',
+      accessToken: token,
+    );
+    return PaymentDetails.fromJson(response['data'] as Map<String, dynamic>);
+  }
 }

@@ -1,5 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,7 +8,7 @@ import 'payment_models.dart';
 import 'payment_repository.dart';
 
 final paymentRepositoryProvider = Provider<PaymentRepository>(
-  (ref) => PaymentRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => PaymentRepository(api: authenticatedApiClient(ref)),
 );
 
 final paymentGatewayLauncherProvider = Provider<PaymentGatewayLauncher>(
@@ -68,7 +68,8 @@ class PaymentController extends Notifier<PaymentState> {
     try {
       final capabilities = await _repository.getCapabilities(token);
       final available = capabilities.where((item) => item.isAvailable).toList();
-      final selected = available.any((item) => item.method == state.selectedMethod)
+      final selected =
+          available.any((item) => item.method == state.selectedMethod)
           ? state.selectedMethod
           : available.firstOrNull?.method ?? PaymentMethod.wallet;
       state = state.copyWith(
@@ -149,9 +150,8 @@ class PaymentController extends Notifier<PaymentState> {
   }
 
   Future<bool> openRazorpayAndVerify() async {
-    final token = _token;
     final current = state.payment;
-    if (token == null ||
+    if (_token == null ||
         current == null ||
         !current.usesRazorpay ||
         !current.status.isPending) {
@@ -163,6 +163,11 @@ class PaymentController extends Notifier<PaymentState> {
       final callback = await ref
           .read(paymentGatewayLauncherProvider)
           .open(current);
+      final token = _token;
+      if (token == null) {
+        state = state.copyWith(isLoading: false);
+        return false;
+      }
       final payment = await _repository.verify(
         token: token,
         paymentId: current.publicId,
@@ -173,6 +178,23 @@ class PaymentController extends Notifier<PaymentState> {
       state = state.copyWith(payment: payment, isLoading: false);
       return true;
     } on PaymentGatewayException catch (error) {
+      final token = _token;
+      if (token != null) {
+        try {
+          final cancelled = await _repository.cancel(
+            token: token,
+            paymentId: current.publicId,
+          );
+          state = state.copyWith(
+            payment: cancelled,
+            isLoading: false,
+            errorMessage: error.message,
+          );
+          return false;
+        } on Object {
+          // Preserve the gateway message if cancellation cannot be persisted.
+        }
+      }
       state = state.copyWith(isLoading: false, errorMessage: error.message);
     } on ApiException catch (error) {
       state = state.copyWith(isLoading: false, errorMessage: error.message);

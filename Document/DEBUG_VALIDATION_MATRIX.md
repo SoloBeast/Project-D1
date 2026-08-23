@@ -12,8 +12,11 @@
 | Webhook | raw payload/signature | signature, duplicate webhook, payment state | webhook and payment transition | rejected or processed once |
 | Wallet top-up | positive amount | development-only/provider rules | wallet ledger and balance | forbidden/business error |
 | Refund | valid amount/reason | successful payment, duplicate/idempotency, gateway | refund/payment/wallet/order events | refund failure |
-| Subscription | plan/date/quantity | schedule, balance/payment, updateable state | subscription/schedule/deliveries | invalid state |
-| Delivery materialize | branch/date request | eligible orders/occurrences and duplicate prevention | delivery rows/assignments/events | conflict/business |
+| Subscription | plan/date/quantity/slot | schedule, balance/payment, updateable state, Morning/Evening slot | subscription/schedule/slot snapshots | invalid state |
+| Payment-to-delivery | payment target/gateway response | successful terminal confirmation, cancelled terminal state, order ownership, duplicate prevention | payment/order and exactly one `ReadyForAssignment` one-time delivery in one transaction | failed/cancelled creates none; replay processes once |
+| Subscription generation | branch/through-date/slot request | branch scope, inclusive operational window, eligible scheduled occurrences, subscription-only source, duplicate prevention | subscription delivery rows/events | validation/conflict with no out-of-window mutation |
+| Delivery queue | date/status/source/slot filters | branch/global actor scope and compatible source/slot filtering | read-only delivery projection | 403/validation |
+| Delivery bulk assignment | non-empty unique selected IDs, employee, optional reason | all-row existence/state/branch validation and employee role/branch eligibility | atomic assignments/audits/notifications/realtime events | any invalid row leaves all unchanged |
 | Delivery actions | OTP/code/location fields | assignment, branch, state transition, OTP limits | delivery/OTP/location/audit | 403/validation/business |
 | Milk test | image/readings form | ownership/assignment, eligible delivery, image validator, readings/state | test/parameters/images/media/events | validation/business |
 | Dairy production | positive quantities/date | branch, batch/product/day rules | production and batch transaction | branch/business |

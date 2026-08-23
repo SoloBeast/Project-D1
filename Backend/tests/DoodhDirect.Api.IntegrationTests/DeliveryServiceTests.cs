@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Deliveries;
@@ -9,12 +10,16 @@ using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
+using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Infrastructure.Deliveries;
+using DoodhDirect.Infrastructure.Notifications;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+
+using Microsoft.AspNetCore.DataProtection;
 
 namespace DoodhDirect.Api.IntegrationTests;
 
@@ -41,17 +46,172 @@ public sealed class DeliveryServiceTests
             .OrderBy(x => x.SourceType)
             .ToListAsync();
         Assert.Equal(2, deliveries.Count);
-        Assert.Contains(deliveries, x =>
+        var orderDelivery = Assert.Single(deliveries, x =>
             x.SourceType == DeliverySourceType.OneTimeOrder &&
             x.OrderId == harness.Order.Id &&
             x.ScheduledDate == harness.Today);
-        Assert.Contains(deliveries, x =>
+        var subscriptionDelivery = Assert.Single(deliveries, x =>
             x.SourceType == DeliverySourceType.SubscriptionOccurrence &&
             x.SubscriptionDeliveryId == harness.SubscriptionDelivery.Id &&
             x.ScheduledDate == harness.Today);
+
+        var otps = await harness.Db.DeliveryOtps
+            .AsNoTracking()
+            .Where(x => x.DeliveryId == orderDelivery.Id || x.DeliveryId == subscriptionDelivery.Id)
+            .ToListAsync();
+        Assert.Equal(2, otps.Count);
+        Assert.All(otps, otp =>
+        {
+            Assert.NotEmpty(otp.CodeHash);
+            Assert.NotNull(otp.ProtectedCode);
+            Assert.NotNull(otp.SentAt);
+        });
+        Assert.Equal(
+            1,
+            await harness.Db.DeliveryOtps.AsNoTracking()
+                .CountAsync(x => x.DeliveryId == orderDelivery.Id));
+        Assert.Equal(
+            2,
+            await harness.Db.NotificationEvents.AsNoTracking()
+                .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued));
+        Assert.Equal(2, harness.OtpDelivery.Messages.Count);
+        foreach (var delivery in deliveries)
+        {
+            var otp = Assert.Single(otps, x => x.DeliveryId == delivery.Id);
+            var code = harness.OtpProtector.Unprotect(Assert.IsType<string>(otp.ProtectedCode));
+            Assert.Contains(harness.OtpDelivery.Messages, message => message.Code == code);
+            Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+                .Where(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued &&
+                    x.EventKey == $"delivery:{delivery.PublicId:N}:otp-issued")
+                .ToListAsync());
+        }
+
         Assert.Single(await harness.Db.AuditLogs.AsNoTracking()
             .Where(x => x.Action == "DELIVERY.MATERIALIZE")
             .ToListAsync());
+    }
+
+    [Fact]
+    public async Task MaterializeEligible_RetryAfterOtpTransportFailureReusesPendingOtp()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        harness.OtpDelivery.FailNextSend = true;
+
+        await harness.MaterializeOrderAsync();
+
+        var delivery = await harness.Db.Deliveries
+            .AsNoTracking()
+            .Where(x => x.OrderId == harness.Order.Id)
+            .SingleAsync();
+        var deliveryId = delivery.Id;
+        var firstOtp = Assert.Single(await harness.Db.DeliveryOtps
+            .AsNoTracking()
+            .Where(x => x.DeliveryId == deliveryId)
+            .ToListAsync());
+        Assert.Null(firstOtp.SentAt);
+        var firstCode = harness.OtpProtector.Unprotect(Assert.IsType<string>(firstOtp.ProtectedCode));
+        Assert.Equal(1, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued &&
+                x.EventKey == $"delivery:{delivery.PublicId:N}:otp-issued"));
+        Assert.Equal(2, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued));
+
+        await harness.Service.IssuePendingOtpsAsync(
+            CancellationToken.None);
+
+        var otps = await harness.Db.DeliveryOtps
+            .AsNoTracking()
+            .Where(x => x.DeliveryId == deliveryId)
+            .ToListAsync();
+        Assert.Single(otps);
+        Assert.NotNull(otps[0].SentAt);
+        Assert.Equal(firstCode, Assert.Single(
+            harness.OtpDelivery.Messages,
+            message => message.Code == firstCode).Code);
+        Assert.Equal(1, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued &&
+                x.EventKey == $"delivery:{delivery.PublicId:N}:otp-issued"));
+        Assert.Equal(2, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued));
+    }
+
+    [Fact]
+    public async Task ConcurrentOtpIssuance_ReusesOneOtpAndOneDeterministicEvent()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        harness.OtpDelivery.FailNextSend = true;
+        var deliveryId = await harness.MaterializeOrderAsync();
+        var delivery = await harness.Db.Deliveries
+            .AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        var initialOtp = Assert.Single(await harness.Db.DeliveryOtps
+            .AsNoTracking()
+            .Where(x => x.DeliveryId == delivery.Id)
+            .ToListAsync());
+        var initialEvent = Assert.Single(await harness.Db.NotificationEvents
+            .AsNoTracking()
+            .Where(x => x.EventKey == $"delivery:{deliveryId:N}:otp-issued")
+            .ToListAsync());
+        Assert.Null(initialOtp.SentAt);
+        var initialCode = harness.OtpProtector.Unprotect(
+            Assert.IsType<string>(initialOtp.ProtectedCode));
+        harness.OtpDelivery.Messages.Clear();
+        harness.OtpDelivery.Attempts.Clear();
+        harness.OtpDelivery.BlockNextSend = true;
+
+        await using var firstDb = harness.CreateContext();
+        await using var secondDb = harness.CreateContext();
+        var firstService = harness.CreateService(firstDb);
+        var secondService = harness.CreateService(secondDb);
+
+        var firstIssuance = firstService.IssuePendingOtpsAsync(CancellationToken.None);
+        await harness.OtpDelivery.SendStarted.Task;
+        var secondIssuance = secondService.IssuePendingOtpsAsync(CancellationToken.None);
+        await Task.Delay(100);
+        Assert.Equal(
+            1,
+            harness.OtpDelivery.Attempts.Count(x =>
+                x.Destination == delivery.CustomerMobileSnapshot &&
+                x.Code == initialCode));
+
+        harness.OtpDelivery.ReleaseBlockedSend();
+        var outcomes = await Task.WhenAll(
+            ObserveAsync(() => firstIssuance),
+            ObserveAsync(() => secondIssuance));
+
+        Assert.All(outcomes, exception => Assert.Null(exception));
+        harness.Db.ChangeTracker.Clear();
+        var otps = await harness.Db.DeliveryOtps
+            .AsNoTracking()
+            .Where(x => x.DeliveryId == delivery.Id)
+            .ToListAsync();
+        var events = await harness.Db.NotificationEvents
+            .AsNoTracking()
+            .Where(x => x.EventKey == $"delivery:{deliveryId:N}:otp-issued")
+            .ToListAsync();
+
+        Assert.Single(otps);
+        Assert.Single(events);
+        Assert.Equal(initialOtp.ProtectedCode, otps[0].ProtectedCode);
+        Assert.Equal(initialEvent.Id, events[0].Id);
+        Assert.NotNull(otps[0].SentAt);
+        Assert.Contains(
+            harness.OtpDelivery.Messages,
+            x => x.Destination == delivery.CustomerMobileSnapshot &&
+                x.Code == initialCode);
+    }
+
+    private static async Task<Exception?> ObserveAsync(Func<Task> operation)
+    {
+        try
+        {
+            await operation();
+            return null;
+        }
+        catch (Exception exception)
+        {
+            return exception;
+        }
     }
 
     [Theory]
@@ -116,6 +276,208 @@ public sealed class DeliveryServiceTests
 
         Assert.Contains("branch assignment", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task BranchReads_SourceAndSlotFiltersMapOperationalResults()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        await harness.MaterializeAsync();
+
+        var all = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            null,
+            DeliveryStatus.ReadyForAssignment,
+            null,
+            null,
+            CancellationToken.None);
+        var oneTime = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            null,
+            DeliveryStatus.ReadyForAssignment,
+            DeliverySourceType.OneTimeOrder,
+            null,
+            CancellationToken.None);
+        var subscription = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            null,
+            DeliveryStatus.ReadyForAssignment,
+            DeliverySourceType.SubscriptionOccurrence,
+            SubscriptionDeliverySlot.Morning,
+            CancellationToken.None);
+        var evening = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            null,
+            DeliveryStatus.ReadyForAssignment,
+            null,
+            SubscriptionDeliverySlot.Evening,
+            CancellationToken.None);
+
+        Assert.Equal(2, all.Count);
+        var orderDelivery = Assert.Single(oneTime);
+        Assert.Equal(DeliverySourceType.OneTimeOrder, orderDelivery.SourceType);
+        Assert.NotNull(orderDelivery.OrderSummary);
+        Assert.Equal(harness.Order.OrderNumber, orderDelivery.OrderSummary.OrderNumber);
+        Assert.Equal(2m, orderDelivery.OrderSummary.TotalQuantity);
+        Assert.Equal(80m, orderDelivery.OrderSummary.TotalAmount);
+        Assert.Equal(["Fresh Milk x 2 litre"], orderDelivery.OrderSummary.Items);
+
+        var subscriptionDelivery = Assert.Single(subscription);
+        Assert.Equal(DeliverySourceType.SubscriptionOccurrence, subscriptionDelivery.SourceType);
+        Assert.Equal(SubscriptionDeliverySlot.Morning, subscriptionDelivery.SubscriptionSlot);
+        Assert.Equal(1m, subscriptionDelivery.Quantity);
+        Assert.Empty(evening);
+    }
+
+    [Fact]
+    public async Task FetchSubscriptionDeliveries_SlotFilterOnlyMaterializesMatchingOccurrences()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var subscription = await harness.Db.Subscriptions
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        subscription.AddDelivery(harness.Today.AddDays(1), SubscriptionDeliverySlot.Evening);
+        await harness.Db.SaveChangesAsync();
+
+        var fetched = await harness.Service.FetchSubscriptionDeliveriesAsync(
+            harness.ManagerActor,
+            harness.Today.AddDays(1),
+            SubscriptionDeliverySlot.Evening,
+            CancellationToken.None);
+
+        Assert.Equal(new DeliveryMaterializationResult(0, 1), fetched);
+        var deliveries = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            null,
+            null,
+            DeliverySourceType.SubscriptionOccurrence,
+            null,
+            CancellationToken.None);
+        var delivery = Assert.Single(deliveries);
+        Assert.Equal(harness.Today.AddDays(1), delivery.ScheduledDate);
+        Assert.Equal(SubscriptionDeliverySlot.Evening, delivery.SubscriptionSlot);
+        Assert.Equal(1m, delivery.Quantity);
+    }
+
+    [Fact]
+    public async Task SubscriptionGenerationWindow_IncludesLastAllowedDate()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync(
+            subscriptionGenerationWindowDays: 3);
+        var subscription = await harness.Db.Subscriptions
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        subscription.AddDelivery(
+            harness.Today.AddDays(2),
+            SubscriptionDeliverySlot.Evening);
+        await harness.Db.SaveChangesAsync();
+
+        var result = await harness.Service.FetchSubscriptionDeliveriesAsync(
+            harness.ManagerActor,
+            harness.Today.AddDays(2),
+            CancellationToken.None);
+
+        Assert.Equal(new DeliveryMaterializationResult(0, 2), result);
+        Assert.Equal(
+            [harness.Today, harness.Today.AddDays(2)],
+            await harness.Db.Deliveries
+                .AsNoTracking()
+                .Where(x => x.SourceType == DeliverySourceType.SubscriptionOccurrence)
+                .OrderBy(x => x.ScheduledDate)
+                .Select(x => x.ScheduledDate)
+                .ToArrayAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SubscriptionGenerationWindow_RejectsDateBeyondConfiguredWindowWithoutMutation(
+        bool subscriptionOnly)
+    {
+        await using var harness = await DeliveryHarness.CreateAsync(
+            subscriptionGenerationWindowDays: 3);
+
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            subscriptionOnly
+                ? harness.Service.FetchSubscriptionDeliveriesAsync(
+                    harness.ManagerActor,
+                    harness.Today.AddDays(3),
+                    CancellationToken.None)
+                : harness.Service.MaterializeEligibleAsync(
+                    harness.ManagerActor,
+                    harness.Today.AddDays(3),
+                    CancellationToken.None));
+
+        Assert.Equal("throughDate", exception.Field);
+        Assert.Contains("next 3 days", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.AuditLogs.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task BulkAssign_AssignsAllSelectedDeliveriesAtomically()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        await harness.MaterializeAsync();
+        var deliveryIds = await harness.Db.Deliveries
+            .AsNoTracking()
+            .Select(x => x.PublicId)
+            .ToArrayAsync();
+
+        var result = await harness.Service.BulkAssignAsync(
+            harness.ManagerActor,
+            new BulkAssignDeliveriesRequest(deliveryIds, harness.Staff.PublicId, "Morning route"),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.Deliveries.Count);
+        Assert.All(result.Deliveries, delivery =>
+        {
+            Assert.Equal(DeliveryStatus.Assigned, delivery.Status);
+            Assert.Equal(harness.Staff.PublicId, delivery.AssignedEmployeeId);
+        });
+        Assert.Equal(OrderStatus.Assigned,
+            (await harness.Db.Orders.AsNoTracking().SingleAsync(x => x.Id == harness.Order.Id)).Status);
+        Assert.Equal(2, await harness.Db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.Action == "DELIVERY.ASSIGN"));
+        Assert.Equal(2, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryAssigned));
+        Assert.Equal(2, harness.Realtime.Deliveries.Count);
+    }
+
+    [Fact]
+    public async Task BulkAssign_RejectsNonReadySelectionWithoutPartialMutation()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        await harness.MaterializeAsync();
+        var deliveryIds = await harness.Db.Deliveries
+            .AsNoTracking()
+            .OrderBy(x => x.SourceType)
+            .Select(x => x.PublicId)
+            .ToArrayAsync();
+        await harness.Service.AssignAsync(
+            harness.ManagerActor,
+            deliveryIds[0],
+            new AssignDeliveryRequest(harness.Staff.PublicId, "Already assigned"),
+            CancellationToken.None);
+        harness.Realtime.Deliveries.Clear();
+        var auditCount = await harness.Db.AuditLogs.AsNoTracking().CountAsync();
+        var eventCount = await harness.Db.NotificationEvents.AsNoTracking().CountAsync();
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.BulkAssignAsync(
+            harness.ManagerActor,
+            new BulkAssignDeliveriesRequest(deliveryIds, harness.SecondStaff.PublicId, null),
+            CancellationToken.None));
+
+        var second = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryIds[1]);
+        Assert.Equal(DeliveryStatus.ReadyForAssignment, second.Status);
+        Assert.Null(second.AssignedEmployeeId);
+        Assert.Equal(auditCount, await harness.Db.AuditLogs.AsNoTracking().CountAsync());
+        Assert.Equal(eventCount, await harness.Db.NotificationEvents.AsNoTracking().CountAsync());
+        Assert.Empty(harness.Realtime.Deliveries);
     }
 
     [Fact]
@@ -283,13 +645,17 @@ public sealed class DeliveryServiceTests
             deliveryId,
             new DeliveryNotesRequest(null),
             CancellationToken.None));
-        await harness.Service.IssueOtpAsync(harness.StaffActor(harness.Staff), deliveryId, CancellationToken.None);
-        await Assert.ThrowsAsync<ConflictException>(() => harness.Service.IssueOtpAsync(
-            harness.StaffActor(harness.Staff),
-            deliveryId,
-            CancellationToken.None));
 
-        var message = Assert.Single(harness.OtpDelivery.Messages);
+        var targetDeliveryId = await harness.Db.Deliveries
+            .AsNoTracking()
+            .Where(x => x.PublicId == deliveryId)
+            .Select(x => x.Id)
+            .SingleAsync();
+        var issuedOtp = await harness.Db.DeliveryOtps
+            .AsNoTracking()
+            .SingleAsync(x => x.DeliveryId == targetDeliveryId);
+        var issuedCode = harness.OtpProtector.Unprotect(Assert.IsType<string>(issuedOtp.ProtectedCode));
+        var message = Assert.Single(harness.OtpDelivery.Messages, x => x.Code == issuedCode);
         Assert.Equal("9999999999", message.Destination);
         var invalid = await Assert.ThrowsAsync<ValidationAppException>(() => harness.Service.VerifyOtpAsync(
             harness.StaffActor(harness.Staff),
@@ -303,27 +669,37 @@ public sealed class DeliveryServiceTests
             deliveryId,
             new VerifyDeliveryOtpRequest(message.Code),
             CancellationToken.None);
-        var completed = await harness.Service.CompleteAsync(
-            harness.StaffActor(harness.Staff),
-            deliveryId,
-            new DeliveryNotesRequest("Handed to customer"),
-            CancellationToken.None);
 
         Assert.NotNull(verified.OtpVerifiedAt);
-        Assert.Equal(DeliveryStatus.Delivered, completed.Status);
-        Assert.False(completed.IsTrackingActive);
+        Assert.Equal(DeliveryStatus.Delivered, verified.Status);
+        Assert.False(verified.IsTrackingActive);
+        await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(message.Code),
+            CancellationToken.None));
         harness.Db.ChangeTracker.Clear();
         Assert.Equal(OrderStatus.Delivered,
             (await harness.Db.Orders.AsNoTracking().SingleAsync(x => x.Id == harness.Order.Id)).Status);
-        var otp = await harness.Db.DeliveryOtps.AsNoTracking().SingleAsync();
+        var otp = await harness.Db.DeliveryOtps
+            .AsNoTracking()
+            .SingleAsync(x => x.DeliveryId == targetDeliveryId);
         Assert.Equal(1, otp.AttemptCount);
         Assert.NotNull(otp.ConsumedAt);
 
+        Assert.Equal(1, harness.Realtime.Deliveries.Count(x => x.Status == DeliveryStatus.Delivered));
+        Assert.Equal(1, await harness.Db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.Action == "DELIVERY.COMPLETE"));
+        Assert.Equal(1, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryCompleted));
+
+        var eventKeyPrefix = $"delivery:{deliveryId:N}:";
         var events = await harness.Db.NotificationEvents
             .AsNoTracking()
+            .Where(x => x.EventKey.StartsWith(eventKeyPrefix))
             .OrderBy(x => x.EventType)
             .ToListAsync();
-        Assert.Equal(4, events.Count);
+        Assert.Equal(5, events.Count);
         Assert.All(events, notificationEvent =>
         {
             Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
@@ -336,6 +712,9 @@ public sealed class DeliveryServiceTests
                 harness.Order.OrderNumber,
                 Variables(notificationEvent).GetProperty("referenceNumber").GetString());
         });
+        Assert.Contains(events, notificationEvent =>
+            notificationEvent.EventType == NotificationEventTypes.DeliveryOtpIssued &&
+            notificationEvent.EventKey == $"delivery:{deliveryId:N}:otp-issued");
         Assert.Contains(events, notificationEvent =>
             notificationEvent.EventType == NotificationEventTypes.DeliveryAssigned &&
             notificationEvent.EventKey ==
@@ -352,6 +731,215 @@ public sealed class DeliveryServiceTests
             notificationEvent.EventType == NotificationEventTypes.DeliveryCompleted &&
             notificationEvent.EventKey ==
                 $"delivery:{deliveryId:N}:completed:{harness.TimeProvider.Now.Ticks}");
+    }
+
+    [Fact]
+    public async Task SubscriptionOtpVerification_CompletesOccurrenceAndConsumesEntitlementExactlyOnce()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeSubscriptionAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+
+        var verified = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+
+        Assert.Equal(DeliveryStatus.Delivered, verified.Status);
+        Assert.NotNull(verified.OtpVerifiedAt);
+        await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None));
+
+        harness.Db.ChangeTracker.Clear();
+        var occurrence = await harness.Db.SubscriptionDeliveries.AsNoTracking()
+            .SingleAsync(x => x.Id == harness.SubscriptionDelivery.Id);
+        var subscription = await harness.Db.Subscriptions.AsNoTracking()
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        Assert.Equal(SubscriptionDeliveryStatus.Delivered, occurrence.Status);
+        Assert.Equal(1, subscription.UsedEntitlement);
+        Assert.Equal(1, await harness.Db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.Action == "DELIVERY.COMPLETE"));
+        Assert.Equal(1, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryCompleted));
+        Assert.Equal(1, harness.Realtime.Deliveries.Count(x =>
+            x.DeliveryId == deliveryId && x.Status == DeliveryStatus.Delivered));
+    }
+
+    [Fact]
+    public async Task OtpVerification_RemainsValidPastLegacyExpiryAndRejectsConsumedOrAttemptLimitedCodes()
+    {
+        await using var activeHarness = await DeliveryHarness.CreateAsync();
+        var activeDeliveryId = await activeHarness.MaterializeOrderAsync();
+        await activeHarness.AdvanceToArrivedAsync(activeDeliveryId, activeHarness.Staff);
+        var activeCode = await activeHarness.GetOtpCodeAsync(activeDeliveryId);
+        activeHarness.Clock.Advance(TimeSpan.FromMinutes(11));
+
+        var verified = await activeHarness.Service.VerifyOtpAsync(
+            activeHarness.StaffActor(activeHarness.Staff),
+            activeDeliveryId,
+            new VerifyDeliveryOtpRequest(activeCode),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, verified.Status);
+        var activeDeliveryKey = await activeHarness.Db.Deliveries.AsNoTracking()
+            .Where(x => x.PublicId == activeDeliveryId)
+            .Select(x => x.Id)
+            .SingleAsync();
+        var activeOtp = await activeHarness.Db.DeliveryOtps.AsNoTracking()
+            .SingleAsync(x => x.DeliveryId == activeDeliveryKey);
+        Assert.NotNull(activeOtp.ConsumedAt);
+        Assert.Null(activeOtp.ProtectedCode);
+
+        await using var consumedHarness = await DeliveryHarness.CreateAsync();
+        var consumedDeliveryId = await consumedHarness.MaterializeOrderAsync();
+        await consumedHarness.AdvanceToArrivedAsync(consumedDeliveryId, consumedHarness.Staff);
+        var consumedDeliveryKey = await consumedHarness.Db.Deliveries.AsNoTracking()
+            .Where(x => x.PublicId == consumedDeliveryId)
+            .Select(x => x.Id)
+            .SingleAsync();
+        var consumedOtp = await consumedHarness.Db.DeliveryOtps
+            .SingleAsync(x => x.DeliveryId == consumedDeliveryKey);
+        consumedOtp.Consume(consumedHarness.TimeProvider.Now);
+        await consumedHarness.Db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<NotFoundException>(() => consumedHarness.Service.VerifyOtpAsync(
+            consumedHarness.StaffActor(consumedHarness.Staff),
+            consumedDeliveryId,
+            new VerifyDeliveryOtpRequest("482913"),
+            CancellationToken.None));
+        Assert.Equal(DeliveryStatus.Arrived, (await consumedHarness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == consumedDeliveryId)).Status);
+
+        await using var limitedHarness = await DeliveryHarness.CreateAsync();
+        var limitedDeliveryId = await limitedHarness.MaterializeOrderAsync();
+        await limitedHarness.AdvanceToArrivedAsync(limitedDeliveryId, limitedHarness.Staff);
+        var correctCode = await limitedHarness.GetOtpCodeAsync(limitedDeliveryId);
+        var wrongCode = correctCode == "000000" ? "111111" : "000000";
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await Assert.ThrowsAsync<ValidationAppException>(() => limitedHarness.Service.VerifyOtpAsync(
+                limitedHarness.StaffActor(limitedHarness.Staff),
+                limitedDeliveryId,
+                new VerifyDeliveryOtpRequest(wrongCode),
+                CancellationToken.None));
+        }
+
+        var limited = await Assert.ThrowsAsync<BusinessRuleException>(() => limitedHarness.Service.VerifyOtpAsync(
+            limitedHarness.StaffActor(limitedHarness.Staff),
+            limitedDeliveryId,
+            new VerifyDeliveryOtpRequest(correctCode),
+            CancellationToken.None));
+        Assert.Contains("attempt limit", limited.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(DeliveryStatus.Arrived, (await limitedHarness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == limitedDeliveryId)).Status);
+        Assert.Equal(0, await limitedHarness.Db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.Action == "DELIVERY.COMPLETE"));
+    }
+
+    [Fact]
+    public async Task OtpVerification_DownstreamFailureRollsBackAllCompletionMutations()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        await using var failingDb = harness.CreateContext();
+        var failingService = harness.CreateService(
+            failingDb,
+            notificationEventWriter: new ThrowingNotificationEventWriter(NotificationEventTypes.DeliveryCompleted));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => failingService.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None));
+
+        harness.Db.ChangeTracker.Clear();
+        var delivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        var otp = await harness.Db.DeliveryOtps.AsNoTracking()
+            .SingleAsync(x => x.DeliveryId == delivery.Id);
+        Assert.Equal(DeliveryStatus.Arrived, delivery.Status);
+        Assert.Null(delivery.OtpVerifiedAt);
+        Assert.Null(otp.ConsumedAt);
+        Assert.NotNull(otp.ProtectedCode);
+        Assert.Equal(OrderStatus.OutForDelivery, (await harness.Db.Orders.AsNoTracking()
+            .SingleAsync(x => x.Id == harness.Order.Id)).Status);
+        Assert.Equal(0, await harness.Db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.Action == "DELIVERY.OTP_SUCCESS" || x.Action == "DELIVERY.COMPLETE"));
+        Assert.Equal(0, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryCompleted));
+        Assert.Equal(0, harness.Realtime.Deliveries.Count(x => x.Status == DeliveryStatus.Delivered));
+
+        var retried = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, retried.Status);
+    }
+
+    [Fact]
+    public async Task ConcurrentCorrectOtpVerification_CompletesExactlyOnce()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        await using var firstDb = harness.CreateContext();
+        await using var secondDb = harness.CreateContext();
+        var firstService = harness.CreateService(firstDb);
+        var secondService = harness.CreateService(secondDb);
+
+        var requests = new[]
+        {
+            firstService.VerifyOtpAsync(
+                harness.StaffActor(harness.Staff),
+                deliveryId,
+                new VerifyDeliveryOtpRequest(code),
+                CancellationToken.None),
+            secondService.VerifyOtpAsync(
+                harness.StaffActor(harness.Staff),
+                deliveryId,
+                new VerifyDeliveryOtpRequest(code),
+                CancellationToken.None)
+        };
+        var outcomes = await Task.WhenAll(requests.Select(async request =>
+        {
+            try
+            {
+                return (Result: await request, Error: (Exception?)null);
+            }
+            catch (Exception exception)
+            {
+                return (Result: (DeliveryResult?)null, Error: exception);
+            }
+        }));
+
+        Assert.Single(outcomes, x => x.Result?.Status == DeliveryStatus.Delivered);
+        Assert.Single(outcomes, x => x.Error is BusinessRuleException);
+        harness.Db.ChangeTracker.Clear();
+        var delivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        var otp = await harness.Db.DeliveryOtps.AsNoTracking()
+            .SingleAsync(x => x.DeliveryId == delivery.Id);
+        Assert.Equal(DeliveryStatus.Delivered, delivery.Status);
+        Assert.NotNull(delivery.OtpVerifiedAt);
+        Assert.NotNull(otp.ConsumedAt);
+        Assert.Equal(OrderStatus.Delivered, (await harness.Db.Orders.AsNoTracking()
+            .SingleAsync(x => x.Id == harness.Order.Id)).Status);
+        Assert.Equal(1, await harness.Db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.Action == "DELIVERY.OTP_SUCCESS"));
+        Assert.Equal(1, await harness.Db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.Action == "DELIVERY.COMPLETE"));
+        Assert.Equal(1, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryCompleted));
+        Assert.Equal(1, harness.Realtime.Deliveries.Count(x =>
+            x.DeliveryId == deliveryId && x.Status == DeliveryStatus.Delivered));
     }
 
     [Fact]
@@ -445,13 +1033,18 @@ public sealed class DeliveryServiceTests
     private sealed class DeliveryHarness : IAsyncDisposable
     {
         private readonly SqliteConnection connection;
+        private readonly string connectionString;
+        private readonly int subscriptionGenerationWindowDays;
 
         private DeliveryHarness(
             SqliteConnection connection,
+            string connectionString,
+            int subscriptionGenerationWindowDays,
             DoodhDirectDbContext db,
             TestClock clock,
             TestIndiaTimeProvider timeProvider,
             CapturingOtpDeliveryService otpDelivery,
+            DeliveryOtpHandoffProtector otpProtector,
             CapturingRealtimePublisher realtime,
             DeliveryService service,
             User customer,
@@ -467,10 +1060,13 @@ public sealed class DeliveryServiceTests
             SubscriptionDelivery subscriptionDelivery)
         {
             this.connection = connection;
+            this.connectionString = connectionString;
+            this.subscriptionGenerationWindowDays = subscriptionGenerationWindowDays;
             Db = db;
             Clock = clock;
             TimeProvider = timeProvider;
             OtpDelivery = otpDelivery;
+            OtpProtector = otpProtector;
             Realtime = realtime;
             Service = service;
             Customer = customer;
@@ -490,6 +1086,7 @@ public sealed class DeliveryServiceTests
         public TestClock Clock { get; }
         public TestIndiaTimeProvider TimeProvider { get; }
         public CapturingOtpDeliveryService OtpDelivery { get; }
+        public DeliveryOtpHandoffProtector OtpProtector { get; }
         public CapturingRealtimePublisher Realtime { get; }
         public DeliveryService Service { get; }
         public User Customer { get; }
@@ -530,6 +1127,17 @@ public sealed class DeliveryServiceTests
                 .SingleAsync();
         }
 
+        public async Task<string> GetOtpCodeAsync(Guid deliveryId)
+        {
+            var delivery = await Db.Deliveries
+                .AsNoTracking()
+                .SingleAsync(x => x.PublicId == deliveryId);
+            var otp = await Db.DeliveryOtps
+                .AsNoTracking()
+                .SingleAsync(x => x.DeliveryId == delivery.Id);
+            return OtpProtector.Unprotect(Assert.IsType<string>(otp.ProtectedCode));
+        }
+
         public Task<DeliveryResult> AssignAsync(Guid deliveryId, User employee) =>
             Service.AssignAsync(
                 ManagerActor,
@@ -546,15 +1154,45 @@ public sealed class DeliveryServiceTests
             await Service.ArriveAsync(actor, deliveryId, CancellationToken.None);
         }
 
-        public static async Task<DeliveryHarness> CreateAsync(DateTime? indiaLocalNow = null)
+        public DoodhDirectDbContext CreateContext()
+        {
+            var options = new DbContextOptionsBuilder<DoodhDirectDbContext>()
+                .UseSqlite(connectionString, sqlite => sqlite.CommandTimeout(10))
+                .Options;
+            return new DoodhDirectDbContext(options);
+        }
+
+        public DeliveryService CreateService(
+            DoodhDirectDbContext db,
+            CapturingRealtimePublisher? realtime = null,
+            INotificationEventWriter? notificationEventWriter = null) => new(
+                db,
+                TimeProvider,
+                new TestPasswordHasher(),
+                OtpDelivery,
+                realtime ?? Realtime,
+                DeliveryOptionsFor(subscriptionGenerationWindowDays),
+                notificationEventWriter ?? new TestNotificationEventWriter(db, Clock),
+                OtpProtector);
+
+        public static async Task<DeliveryHarness> CreateAsync(
+            DateTime? indiaLocalNow = null,
+            int subscriptionGenerationWindowDays = 31)
         {
             var clock = new TestClock(
                 indiaLocalNow ?? new DateTime(2026, 8, 16, 9, 30, 0, DateTimeKind.Unspecified));
             var timeProvider = new TestIndiaTimeProvider(clock);
-            var connection = new SqliteConnection("Data Source=:memory:");
+            var connectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = $"delivery-tests-{Guid.NewGuid():N}",
+                Mode = SqliteOpenMode.Memory,
+                Cache = SqliteCacheMode.Shared,
+                DefaultTimeout = 10
+            }.ToString();
+            var connection = new SqliteConnection(connectionString);
             await connection.OpenAsync();
             var options = new DbContextOptionsBuilder<DoodhDirectDbContext>()
-                .UseSqlite(connection)
+                .UseSqlite(connection, sqlite => sqlite.CommandTimeout(10))
                 .Options;
             var db = new DoodhDirectDbContext(options);
             await db.Database.EnsureCreatedAsync();
@@ -619,6 +1257,13 @@ public sealed class DeliveryServiceTests
                 address.Latitude,
                 address.Longitude);
             order.ConfirmPayment();
+            order.AddItem(new OrderItem(
+                product.Id,
+                2m,
+                40m,
+                product.Sku,
+                product.Name,
+                product.UnitOfMeasure));
             var today = timeProvider.Today;
             var subscription = new Subscription(
                 customer.Id,
@@ -645,6 +1290,7 @@ public sealed class DeliveryServiceTests
             db.ChangeTracker.Clear();
 
             var otpDelivery = new CapturingOtpDeliveryService();
+            var otpProtector = new DeliveryOtpHandoffProtector(new EphemeralDataProtectionProvider());
             var realtime = new CapturingRealtimePublisher();
             var service = new DeliveryService(
                 db,
@@ -652,23 +1298,18 @@ public sealed class DeliveryServiceTests
                 new TestPasswordHasher(),
                 otpDelivery,
                 realtime,
-                Options.Create(new DeliveryOptions
-                {
-                    OtpCodeLength = 6,
-                    OtpExpiryMinutes = 10,
-                    OtpMaximumAttempts = 3,
-                    MaximumLocationAgeMinutes = 15,
-                    MaximumLocationFutureSkewMinutes = 5,
-                    MaximumLocationsPerDelivery = 10,
-                    LocationRetentionDays = 30
-                }),
-                new TestNotificationEventWriter(db, clock));
+                DeliveryOptionsFor(subscriptionGenerationWindowDays),
+                new TestNotificationEventWriter(db, clock),
+                otpProtector);
             return new DeliveryHarness(
                 connection,
+                connectionString,
+                subscriptionGenerationWindowDays,
                 db,
                 clock,
                 timeProvider,
                 otpDelivery,
+                otpProtector,
                 realtime,
                 service,
                 customer,
@@ -683,6 +1324,19 @@ public sealed class DeliveryServiceTests
                 subscription,
                 subscriptionDelivery);
         }
+
+        private static IOptions<DeliveryOptions> DeliveryOptionsFor(
+            int subscriptionGenerationWindowDays) => Options.Create(new DeliveryOptions
+            {
+                OtpCodeLength = 6,
+                OtpExpiryMinutes = 10,
+                OtpMaximumAttempts = 3,
+                MaximumLocationAgeMinutes = 15,
+                MaximumLocationFutureSkewMinutes = 5,
+                MaximumLocationsPerDelivery = 10,
+                LocationRetentionDays = 30,
+                SubscriptionGenerationWindowDays = subscriptionGenerationWindowDays
+            });
 
         private static User User(UserType type, string name, string mobile)
         {
@@ -702,11 +1356,53 @@ public sealed class DeliveryServiceTests
     private sealed class CapturingOtpDeliveryService : IOtpDeliveryService
     {
         public List<(string Destination, string Code)> Messages { get; } = [];
+        public List<(string Destination, string Code)> Attempts { get; } = [];
+        public TaskCompletionSource<bool> SendStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool FailNextSend { get; set; }
+        public bool BlockNextSend { get; set; }
 
-        public Task SendAsync(string destination, string code, CancellationToken cancellationToken)
+        private readonly TaskCompletionSource<bool> releaseBlockedSend =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task SendAsync(
+            string destination,
+            string code,
+            CancellationToken cancellationToken)
         {
+            lock (Attempts)
+            {
+                Attempts.Add((destination, code));
+            }
+
+            SendStarted.TrySetResult(true);
+
+            if (FailNextSend)
+            {
+                FailNextSend = false;
+                throw new InvalidOperationException("Simulated OTP transport failure.");
+            }
+
+            if (BlockNextSend)
+            {
+                BlockNextSend = false;
+                await releaseBlockedSend.Task.WaitAsync(cancellationToken);
+            }
+
             Messages.Add((destination, code));
-            return Task.CompletedTask;
+        }
+
+        public void ReleaseBlockedSend() => releaseBlockedSend.TrySetResult(true);
+    }
+
+    private sealed class ThrowingNotificationEventWriter(string eventType) : INotificationEventWriter
+    {
+        public void Add(NotificationEventRequest request)
+        {
+            if (request.EventType == eventType)
+            {
+                throw new InvalidOperationException("Simulated downstream persistence failure.");
+            }
         }
     }
 

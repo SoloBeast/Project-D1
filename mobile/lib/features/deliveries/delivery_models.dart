@@ -27,9 +27,34 @@ enum DeliverySourceType {
       };
 
   String get label => switch (this) {
-    DeliverySourceType.oneTimeOrder => 'Order',
+    DeliverySourceType.oneTimeOrder => 'One-time',
     DeliverySourceType.subscriptionOccurrence => 'Subscription',
     DeliverySourceType.unknown => 'Delivery',
+  };
+}
+
+enum SubscriptionDeliverySlot {
+  morning,
+  evening,
+  unknown;
+
+  factory SubscriptionDeliverySlot.fromApi(String? value) =>
+      switch (value?.toLowerCase()) {
+        'morning' => SubscriptionDeliverySlot.morning,
+        'evening' => SubscriptionDeliverySlot.evening,
+        _ => SubscriptionDeliverySlot.unknown,
+      };
+
+  String get label => switch (this) {
+    SubscriptionDeliverySlot.morning => 'Morning',
+    SubscriptionDeliverySlot.evening => 'Evening',
+    SubscriptionDeliverySlot.unknown => 'Unknown slot',
+  };
+
+  String get apiValue => switch (this) {
+    SubscriptionDeliverySlot.morning => 'Morning',
+    SubscriptionDeliverySlot.evening => 'Evening',
+    SubscriptionDeliverySlot.unknown => 'Unknown',
   };
 }
 
@@ -124,6 +149,7 @@ class CustomerDelivery {
     required this.completedAt,
     required this.failedAt,
     required this.failureReason,
+    required this.activeOtp,
   });
   factory CustomerDelivery.fromJson(Map<String, dynamic> json) =>
       CustomerDelivery(
@@ -140,6 +166,7 @@ class CustomerDelivery {
         completedAt: _date(json['completedAt']),
         failedAt: _date(json['failedAt']),
         failureReason: json['failureReason'] as String?,
+        activeOtp: json['activeOtp'] as String?,
       );
   final String deliveryId;
   final DeliverySourceType sourceType;
@@ -154,6 +181,29 @@ class CustomerDelivery {
   final DateTime? completedAt;
   final DateTime? failedAt;
   final String? failureReason;
+  final String? activeOtp;
+}
+
+class DeliveryOrderSummary {
+  const DeliveryOrderSummary({
+    required this.orderNumber,
+    required this.totalQuantity,
+    required this.totalAmount,
+    required this.items,
+  });
+
+  factory DeliveryOrderSummary.fromJson(Map<String, dynamic> json) =>
+      DeliveryOrderSummary(
+        orderNumber: json['orderNumber'] as String,
+        totalQuantity: (json['totalQuantity'] as num).toDouble(),
+        totalAmount: (json['totalAmount'] as num).toDouble(),
+        items: (json['items'] as List<dynamic>? ?? const []).cast<String>(),
+      );
+
+  final String orderNumber;
+  final double totalQuantity;
+  final double totalAmount;
+  final List<String> items;
 }
 
 class DeliveryDetails {
@@ -183,6 +233,9 @@ class DeliveryDetails {
     required this.failureReason,
     required this.remarks,
     required this.operationalNotes,
+    required this.subscriptionSlot,
+    required this.quantity,
+    required this.orderSummary,
     required this.isTrackingActive,
     required this.latestLocation,
     required this.assignments,
@@ -214,6 +267,17 @@ class DeliveryDetails {
         failureReason: json['failureReason'] as String?,
         remarks: json['remarks'] as String?,
         operationalNotes: json['operationalNotes'] as String?,
+        subscriptionSlot: json['subscriptionSlot'] == null
+            ? null
+            : SubscriptionDeliverySlot.fromApi(
+                json['subscriptionSlot'] as String,
+              ),
+        quantity: (json['quantity'] as num?)?.toDouble(),
+        orderSummary: json['orderSummary'] == null
+            ? null
+            : DeliveryOrderSummary.fromJson(
+                json['orderSummary'] as Map<String, dynamic>,
+              ),
         isTrackingActive: json['isTrackingActive'] as bool,
         latestLocation: _location(json['latestLocation']),
         assignments: (json['assignments'] as List<dynamic>? ?? const [])
@@ -246,6 +310,9 @@ class DeliveryDetails {
   final String? failureReason;
   final String? remarks;
   final String? operationalNotes;
+  final SubscriptionDeliverySlot? subscriptionSlot;
+  final double? quantity;
+  final DeliveryOrderSummary? orderSummary;
   final bool isTrackingActive;
   final DeliveryLocation? latestLocation;
   final List<DeliveryAssignment> assignments;
@@ -281,6 +348,20 @@ class DeliveryMaterialization {
       );
   final int ordersCreated;
   final int subscriptionOccurrencesCreated;
+}
+
+class BulkAssignmentResult {
+  const BulkAssignmentResult({required this.deliveries});
+
+  factory BulkAssignmentResult.fromJson(Map<String, dynamic> json) =>
+      BulkAssignmentResult(
+        deliveries: (json['deliveries'] as List<dynamic>? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(DeliveryDetails.fromJson)
+            .toList(growable: false),
+      );
+
+  final List<DeliveryDetails> deliveries;
 }
 
 class DeliveryNotesRequest {

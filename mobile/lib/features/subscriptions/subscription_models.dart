@@ -41,6 +41,21 @@ enum SubscriptionStatus {
       this == SubscriptionStatus.active || this == SubscriptionStatus.paused;
 }
 
+enum SubscriptionDeliverySlot {
+  morning('Morning'),
+  evening('Evening');
+
+  const SubscriptionDeliverySlot(this.apiValue);
+
+  final String apiValue;
+
+  factory SubscriptionDeliverySlot.fromApi(String value) =>
+      SubscriptionDeliverySlot.values.firstWhere(
+        (slot) => slot.apiValue.toLowerCase() == value.toLowerCase(),
+        orElse: () => SubscriptionDeliverySlot.morning,
+      );
+}
+
 enum SubscriptionDeliveryStatus {
   scheduled,
   skipped,
@@ -99,6 +114,7 @@ class CreateSubscriptionRequest {
     required this.quantity,
     required this.startDate,
     required this.deliveryDays,
+    this.slot = SubscriptionDeliverySlot.morning,
     required this.totalEntitlement,
     required this.paymentMethod,
   });
@@ -108,6 +124,7 @@ class CreateSubscriptionRequest {
   final double quantity;
   final DateTime startDate;
   final Set<DeliveryWeekday> deliveryDays;
+  final SubscriptionDeliverySlot slot;
   final int totalEntitlement;
   final PaymentMethod paymentMethod;
 
@@ -119,6 +136,7 @@ class CreateSubscriptionRequest {
     'deliveryDays': deliveryDays
         .map((day) => day.apiValue)
         .toList(growable: false),
+    'slot': slot.apiValue,
     'totalEntitlement': totalEntitlement,
     'paymentMethod': paymentMethod.apiValue,
   };
@@ -129,11 +147,13 @@ class UpdateSubscriptionRequest {
     this.quantity,
     this.addressId,
     this.deliveryDays,
+    this.slot,
   });
 
   final double? quantity;
   final String? addressId;
   final Set<DeliveryWeekday>? deliveryDays;
+  final SubscriptionDeliverySlot? slot;
 
   Map<String, dynamic> toJson() => {
     'quantity': quantity,
@@ -141,24 +161,30 @@ class UpdateSubscriptionRequest {
     'deliveryDays': deliveryDays
         ?.map((day) => day.apiValue)
         .toList(growable: false),
+    'slot': slot?.apiValue,
   };
 }
 
 class SubscriptionSchedule {
-  const SubscriptionSchedule({required this.dayOfWeek});
+  const SubscriptionSchedule({required this.dayOfWeek, required this.slot});
 
   factory SubscriptionSchedule.fromJson(Map<String, dynamic> json) =>
       SubscriptionSchedule(
         dayOfWeek: DeliveryWeekday.fromApi(json['dayOfWeek'] as String),
+        slot: SubscriptionDeliverySlot.fromApi(
+          (json['slot'] as String?) ?? 'Morning',
+        ),
       );
 
   final DeliveryWeekday dayOfWeek;
+  final SubscriptionDeliverySlot slot;
 }
 
 class SubscriptionDelivery {
   const SubscriptionDelivery({
     required this.publicId,
     required this.scheduledDate,
+    required this.slot,
     required this.quantity,
     required this.status,
     required this.branchId,
@@ -172,6 +198,9 @@ class SubscriptionDelivery {
       SubscriptionDelivery(
         publicId: json['publicId'] as String,
         scheduledDate: DateTime.parse(json['scheduledDate'] as String),
+        slot: SubscriptionDeliverySlot.fromApi(
+          (json['slot'] as String?) ?? 'Morning',
+        ),
         quantity: (json['quantity'] as num).toDouble(),
         status: SubscriptionDeliveryStatus.fromApi(json['status'] as String),
         branchId: json['branchId'] as String,
@@ -183,6 +212,7 @@ class SubscriptionDelivery {
 
   final String publicId;
   final DateTime scheduledDate;
+  final SubscriptionDeliverySlot slot;
   final double quantity;
   final SubscriptionDeliveryStatus status;
   final String branchId;
@@ -282,8 +312,12 @@ class SubscriptionDetails {
   String get formattedQuantity =>
       '${formatQuantity(quantity)} $unitOfMeasure per delivery';
   String get formattedPayableAmount => '₹${payableAmount.toStringAsFixed(2)}';
-  String get scheduleLabel =>
-      schedules.map((schedule) => schedule.dayOfWeek.shortLabel).join(', ');
+  String get scheduleLabel => schedules
+      .map(
+        (schedule) =>
+            '${schedule.dayOfWeek.shortLabel} ${schedule.slot.apiValue}',
+      )
+      .join(', ');
   double get entitlementProgress => totalEntitlement == 0
       ? 0
       : (usedEntitlement / totalEntitlement).clamp(0, 1).toDouble();

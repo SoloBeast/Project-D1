@@ -1,6 +1,6 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,7 +8,7 @@ import 'delivery_models.dart';
 import 'delivery_repository.dart';
 
 final deliveryRepositoryProvider = Provider<DeliveryRepository>(
-  (ref) => DeliveryRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => DeliveryRepository(api: authenticatedApiClient(ref)),
 );
 
 final deliveryControllerProvider =
@@ -20,8 +20,10 @@ class DeliveryState {
     this.staffDeliveries = const [],
     this.managedDeliveries = const [],
     this.employees = const [],
+    this.staffStatus = DeliveryStatus.assigned,
     this.selectedCustomerDelivery,
     this.selectedDelivery,
+    this.selectedManagedDeliveryIds = const {},
     this.isLoading = false,
     this.isSaving = false,
     this.isOffline = false,
@@ -32,8 +34,10 @@ class DeliveryState {
   final List<DeliveryDetails> staffDeliveries;
   final List<DeliveryDetails> managedDeliveries;
   final List<DeliveryEmployee> employees;
+  final DeliveryStatus? staffStatus;
   final CustomerDelivery? selectedCustomerDelivery;
   final DeliveryDetails? selectedDelivery;
+  final Set<String> selectedManagedDeliveryIds;
   final bool isLoading;
   final bool isSaving;
   final bool isOffline;
@@ -44,10 +48,13 @@ class DeliveryState {
     List<DeliveryDetails>? staffDeliveries,
     List<DeliveryDetails>? managedDeliveries,
     List<DeliveryEmployee>? employees,
+    DeliveryStatus? staffStatus,
+    bool clearStaffStatus = false,
     CustomerDelivery? selectedCustomerDelivery,
     bool clearSelectedCustomerDelivery = false,
     DeliveryDetails? selectedDelivery,
     bool clearSelectedDelivery = false,
+    Set<String>? selectedManagedDeliveryIds,
     bool? isLoading,
     bool? isSaving,
     bool? isOffline,
@@ -58,12 +65,15 @@ class DeliveryState {
     staffDeliveries: staffDeliveries ?? this.staffDeliveries,
     managedDeliveries: managedDeliveries ?? this.managedDeliveries,
     employees: employees ?? this.employees,
+    staffStatus: clearStaffStatus ? null : staffStatus ?? this.staffStatus,
     selectedCustomerDelivery: clearSelectedCustomerDelivery
         ? null
         : selectedCustomerDelivery ?? this.selectedCustomerDelivery,
     selectedDelivery: clearSelectedDelivery
         ? null
         : selectedDelivery ?? this.selectedDelivery,
+    selectedManagedDeliveryIds:
+        selectedManagedDeliveryIds ?? this.selectedManagedDeliveryIds,
     isLoading: isLoading ?? this.isLoading,
     isSaving: isSaving ?? this.isSaving,
     isOffline: isOffline ?? this.isOffline,
@@ -92,10 +102,25 @@ class DeliveryController extends Notifier<DeliveryState> {
     );
   });
 
-  Future<void> loadToday({DateTime? date}) async => _load(() async {
-    final deliveries = await _repository.getToday(_token!, date ?? indiaNow());
-    state = state.copyWith(staffDeliveries: deliveries);
-  });
+  Future<void> loadToday({DateTime? date}) =>
+      _loadToday(date: date, status: state.staffStatus);
+
+  Future<void> selectStaffStatus(DeliveryStatus? status, {DateTime? date}) =>
+      _loadToday(date: date, status: status);
+
+  Future<void> _loadToday({DateTime? date, required DeliveryStatus? status}) =>
+      _load(() async {
+        final deliveries = await _repository.getToday(
+          _token!,
+          date ?? indiaNow(),
+          status: status,
+        );
+        state = state.copyWith(
+          staffDeliveries: deliveries,
+          staffStatus: status,
+          clearStaffStatus: status == null,
+        );
+      });
 
   Future<void> loadStaffDelivery(String id) async => _load(() async {
     final delivery = await _repository.getStaff(_token!, id);
@@ -109,15 +134,26 @@ class DeliveryController extends Notifier<DeliveryState> {
     int branchId, {
     DateTime? date,
     DeliveryStatus? status,
+    DeliverySourceType? sourceType,
+    SubscriptionDeliverySlot? slot,
   }) async => _load(() async {
     final deliveries = await _repository.getBranch(
       _token!,
       branchId,
       date: date,
       status: status,
+      sourceType: sourceType,
+      slot: slot,
     );
     final employees = await _repository.getEmployees(_token!, branchId);
-    state = state.copyWith(managedDeliveries: deliveries, employees: employees);
+    final ids = deliveries.map((delivery) => delivery.deliveryId).toSet();
+    state = state.copyWith(
+      managedDeliveries: deliveries,
+      employees: employees,
+      selectedManagedDeliveryIds: state.selectedManagedDeliveryIds.intersection(
+        ids,
+      ),
+    );
   });
 
   Future<void> loadManagedDelivery(String id) async => _load(() async {
@@ -139,6 +175,55 @@ class DeliveryController extends Notifier<DeliveryState> {
     } on Object catch (error) {
       _setFailure(error, saving: true);
       return null;
+    }
+  }
+
+  void toggleManagedDelivery(String id) {
+    final selected = {...state.selectedManagedDeliveryIds};
+    if (!selected.add(id)) selected.remove(id);
+    state = state.copyWith(selectedManagedDeliveryIds: selected);
+  }
+
+  void selectAllManagedDeliveries() => state = state.copyWith(
+    selectedManagedDeliveryIds: state.managedDeliveries
+        .where(
+          (delivery) => delivery.status == DeliveryStatus.readyForAssignment,
+        )
+        .map((delivery) => delivery.deliveryId)
+        .toSet(),
+  );
+
+  void clearManagedSelection() =>
+      state = state.copyWith(selectedManagedDeliveryIds: const {});
+
+  Future<bool> bulkAssign(String employeeId, {String? reason}) async {
+    final token = _token;
+    final ids = state.selectedManagedDeliveryIds.toList(growable: false);
+    if (token == null || ids.isEmpty) return false;
+    state = state.copyWith(isSaving: true, isOffline: false, clearError: true);
+    try {
+      final result = await _repository.bulkAssign(
+        token: token,
+        deliveryIds: ids,
+        employeeId: employeeId,
+        reason: reason,
+      );
+      final assignedIds = result.deliveries
+          .map((item) => item.deliveryId)
+          .toSet();
+      state = state.copyWith(
+        managedDeliveries: result.deliveries.isEmpty
+            ? state.managedDeliveries
+            : result.deliveries,
+        selectedManagedDeliveryIds: state.selectedManagedDeliveryIds.difference(
+          assignedIds,
+        ),
+        isSaving: false,
+      );
+      return true;
+    } on Object catch (error) {
+      _setFailure(error, saving: true);
+      return false;
     }
   }
 
@@ -164,20 +249,6 @@ class DeliveryController extends Notifier<DeliveryState> {
       _save(
         () => _repository.fail(_token!, id, reason: reason, remarks: remarks),
       );
-
-  Future<bool> issueOtp(String id) async {
-    final token = _token;
-    if (token == null) return false;
-    state = state.copyWith(isSaving: true, isOffline: false, clearError: true);
-    try {
-      await _repository.issueOtp(token, id);
-      state = state.copyWith(isSaving: false);
-      return true;
-    } on Object catch (error) {
-      _setFailure(error, saving: true);
-      return false;
-    }
-  }
 
   Future<bool> _save(Future<DeliveryDetails> Function() operation) async {
     if (_token == null) return false;

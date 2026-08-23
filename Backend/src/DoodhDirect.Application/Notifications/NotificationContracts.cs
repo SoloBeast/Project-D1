@@ -19,6 +19,7 @@ public static class NotificationEventTypes
     public const string DeliveryAssigned = "DELIVERY_ASSIGNED";
     public const string DeliveryStarted = "DELIVERY_STARTED";
     public const string DeliveryNearCustomer = "DELIVERY_NEAR_CUSTOMER";
+    public const string DeliveryOtpIssued = "DELIVERY_OTP_ISSUED";
     public const string DeliveryCompleted = "DELIVERY_COMPLETED";
     public const string DeliveryFailed = "DELIVERY_FAILED";
     public const string MilkTestRequested = "MILK_TEST_REQUESTED";
@@ -37,6 +38,7 @@ public static class NotificationEventTypes
         DeliveryAssigned,
         DeliveryStarted,
         DeliveryNearCustomer,
+        DeliveryOtpIssued,
         DeliveryCompleted,
         DeliveryFailed,
         MilkTestRequested,
@@ -60,6 +62,7 @@ public static class NotificationEventTypes
         DeliveryAssigned,
         DeliveryStarted,
         DeliveryNearCustomer,
+        DeliveryOtpIssued,
         DeliveryCompleted,
         DeliveryFailed,
         MilkTestRequested,
@@ -80,7 +83,8 @@ public sealed record NotificationEventRequest(
     string EventKey,
     IReadOnlyDictionary<string, string> Variables,
     string? DeepLink = null,
-    DateTime? OccurredAt = null);
+    DateTime? OccurredAt = null,
+    IReadOnlyDictionary<string, string>? ProtectedVariables = null);
 
 public sealed record NotificationListRequest(
     int Page = 1,

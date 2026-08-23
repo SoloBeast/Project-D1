@@ -64,6 +64,9 @@ public sealed class CatalogueSeedService(DoodhDirectDbContext dbContext)
                 await dbContext.SaveChangesAsync(cancellationToken);
             }
 
+            category.Activate();
+            product.Activate();
+
             var availability = await dbContext.ProductBranches
                 .SingleOrDefaultAsync(
                     item => item.ProductId == product.Id && item.BranchId == branch.Id,

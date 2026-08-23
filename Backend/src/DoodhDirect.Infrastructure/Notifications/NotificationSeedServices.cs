@@ -18,28 +18,36 @@ public sealed class NotificationTemplateSeedService(DoodhDirectDbContext dbConte
                 System.Data.IsolationLevel.Serializable,
                 cancellationToken);
             var existing = await dbContext.NotificationTemplates
-                .Select(x => new { x.EventType, x.Channel, x.Language })
                 .ToListAsync(cancellationToken);
-            var keys = existing
-                .Select(x => (x.EventType, x.Channel, x.Language))
-                .ToHashSet();
 
             foreach (var eventType in NotificationEventTypes.All)
             {
                 foreach (var channel in Enum.GetValues<NotificationChannel>())
                 {
-                    if (keys.Contains((eventType, channel, "en")))
+                    var title = Humanize(eventType);
+                    var body = BodyTemplate(eventType, title);
+                    var existingTemplate = existing.SingleOrDefault(x =>
+                        x.EventType == eventType &&
+                        x.Channel == channel &&
+                        x.Language == "en");
+                    if (existingTemplate is not null)
                     {
+                        var previousDefault = $"{title}: {{{{message}}}}";
+                        if (eventType == NotificationEventTypes.DeliveryOtpIssued &&
+                            existingTemplate.BodyTemplate == previousDefault)
+                        {
+                            existingTemplate.Update(existingTemplate.TitleTemplate, body, existingTemplate.IsActive);
+                        }
+
                         continue;
                     }
 
-                    var title = Humanize(eventType);
                     dbContext.NotificationTemplates.Add(new NotificationTemplate(
                         eventType,
                         channel,
                         "en",
                         title,
-                        $"{title}: {{{{message}}}}"));
+                        body));
                 }
             }
 
@@ -47,6 +55,11 @@ public sealed class NotificationTemplateSeedService(DoodhDirectDbContext dbConte
             await transaction.CommitAsync(cancellationToken);
         });
     }
+
+    private static string BodyTemplate(string eventType, string title) =>
+        eventType == NotificationEventTypes.DeliveryOtpIssued
+            ? "Your delivery OTP is {{otp}}. Share it only with the assigned delivery staff."
+            : $"{title}: {{{{message}}}}";
 
     private static string Humanize(string eventType)
     {

@@ -1,4 +1,6 @@
+using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Orders;
+using DoodhDirect.Domain.Payments;
 
 namespace DoodhDirect.Application.Orders;
 
@@ -62,7 +64,13 @@ public sealed record OrderResult(
     decimal Subtotal,
     decimal DiscountAmount,
     decimal PayableAmount,
-    DateTime? CancelledAt);
+    DateTime? CancelledAt,
+    Guid? PaymentPublicId,
+    PaymentStatus? PaymentStatus,
+    string? GatewayPaymentId,
+    Guid? DeliveryPublicId,
+    string? DeliveryReferenceNumber,
+    DeliveryStatus? DeliveryStatus);
 
 public sealed record OrderItemResult(
     Guid ProductId,
@@ -114,34 +122,43 @@ public static class OrderMappings
         item.UnitPrice,
         item.LineTotal);
 
-    public static OrderResult ToResult(this Order order) => new(
-        order.PublicId,
-        order.OrderNumber,
-        order.Type,
-        order.Status,
-        order.CreatedAt,
-        order.Branch.PublicId,
-        order.BranchCodeSnapshot,
-        order.BranchNameSnapshot,
-        order.CustomerAddress.PublicId,
-        order.AddressLabelSnapshot,
-        order.AddressLine1Snapshot,
-        order.AddressLine2Snapshot,
-        order.LocalitySnapshot,
-        order.CitySnapshot,
-        order.StateSnapshot,
-        order.PinCodeSnapshot,
-        order.LandmarkSnapshot,
-        order.DeliveryInstructionsSnapshot,
-        order.ContactNameSnapshot,
-        order.ContactMobileSnapshot,
-        order.LatitudeSnapshot,
-        order.LongitudeSnapshot,
-        order.Items.Select(item => item.ToResult()).ToArray(),
-        order.Subtotal,
-        order.DiscountAmount,
-        order.PayableAmount,
-        order.CancelledAt);
+    public static OrderResult ToResult(
+        this Order order,
+        Payment? payment = null,
+        Delivery? delivery = null) => new(
+            order.PublicId,
+            order.OrderNumber,
+            order.Type,
+            order.Status,
+            order.CreatedAt,
+            order.Branch.PublicId,
+            order.BranchCodeSnapshot,
+            order.BranchNameSnapshot,
+            order.CustomerAddress.PublicId,
+            order.AddressLabelSnapshot,
+            order.AddressLine1Snapshot,
+            order.AddressLine2Snapshot,
+            order.LocalitySnapshot,
+            order.CitySnapshot,
+            order.StateSnapshot,
+            order.PinCodeSnapshot,
+            order.LandmarkSnapshot,
+            order.DeliveryInstructionsSnapshot,
+            order.ContactNameSnapshot,
+            order.ContactMobileSnapshot,
+            order.LatitudeSnapshot,
+            order.LongitudeSnapshot,
+            order.Items.Select(item => item.ToResult()).ToArray(),
+            order.Subtotal,
+            order.DiscountAmount,
+            order.PayableAmount,
+            order.CancelledAt,
+            payment?.PublicId,
+            payment?.Status,
+            payment?.GatewayPaymentId,
+            delivery?.PublicId,
+            delivery?.ReferenceNumber,
+            delivery?.Status);
 }
 
 public static class OrderValidation

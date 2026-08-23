@@ -31,6 +31,7 @@ void main() {
       );
       expect(customer.status, DeliveryStatus.outForDelivery);
       expect(customer.latestLocation?.latitude, 18.5204);
+      expect(customer.activeOtp, '482913');
       expect(customer.completedAt, isNull);
       expect(details.status, DeliveryStatus.arrived);
       expect(details.otpVerifiedAt, isNotNull);
@@ -88,6 +89,70 @@ void main() {
       ]);
     });
 
+    test('serializes source and slot branch filters', () async {
+      Uri? requestedUri;
+      final client = MockClient((request) async {
+        requestedUri = request.url;
+        return successResponse([deliveryDetailsJson()]);
+      });
+      final repository = testRepository(client);
+
+      await repository.getBranch(
+        'delivery-token',
+        7,
+        sourceType: DeliverySourceType.subscriptionOccurrence,
+        slot: SubscriptionDeliverySlot.evening,
+      );
+
+      expect(requestedUri?.path, '/api/v1/delivery-management/branches/7');
+      expect(requestedUri?.queryParameters, {
+        'sourceType': 'subscriptionOccurrence',
+        'slot': 'Evening',
+      });
+    });
+
+    test('posts bulk assignment IDs, employee, and optional reason', () async {
+      final requests = <Map<String, dynamic>>[];
+      final client = MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/api/v1/delivery-management/bulk-assign');
+        expect(request.headers['Authorization'], 'Bearer delivery-token');
+        requests.add(jsonDecode(request.body) as Map<String, dynamic>);
+        return successResponse({
+          'deliveries': [
+            deliveryDetailsJson(deliveryId: 'delivery-1', status: 'Assigned'),
+          ],
+        });
+      });
+      final repository = testRepository(client);
+
+      final withReason = await repository.bulkAssign(
+        token: 'delivery-token',
+        deliveryIds: const ['delivery-1', 'delivery-2'],
+        employeeId: 'employee-2',
+        reason: 'Route balancing',
+      );
+      await repository.bulkAssign(
+        token: 'delivery-token',
+        deliveryIds: const ['delivery-3'],
+        employeeId: 'employee-2',
+      );
+
+      expect(withReason.deliveries.single.deliveryId, 'delivery-1');
+      expect(requests, [
+        {
+          'deliveryIds': ['delivery-1', 'delivery-2'],
+          'employeeId': 'employee-2',
+          'reason': 'Route balancing',
+        },
+        {
+          'deliveryIds': ['delivery-3'],
+          'employeeId': 'employee-2',
+          'reason': null,
+        },
+      ]);
+    });
+
     test('posts the canonical failure reason and optional remarks', () async {
       Map<String, dynamic>? body;
       final client = MockClient((request) async {
@@ -110,54 +175,81 @@ void main() {
       });
     });
 
-    test('posts lifecycle, assignment, and India-local location payloads', () async {
-      final requests = <String>[];
-      final bodies = <Map<String, dynamic>>[];
+    test('parses immediate Delivered result from OTP verification', () async {
+      String? requestedPath;
+      Map<String, dynamic>? requestBody;
       final client = MockClient((request) async {
-        requests.add('${request.method} ${request.url.path}');
-        expect(request.headers['Authorization'], 'Bearer delivery-token');
-        bodies.add(jsonDecode(request.body) as Map<String, dynamic>);
-        if (request.url.path.endsWith('/location')) {
-          return successResponse(locationJson());
-        }
-        return successResponse(deliveryDetailsJson(status: 'Assigned'));
+        requestedPath = request.url.path;
+        requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return successResponse(
+          deliveryDetailsJson(status: 'Delivered', otpVerified: true),
+        );
       });
       final repository = testRepository(client);
 
-      await repository.start('delivery-token', 'delivery-1');
-      await repository.assign(
-        token: 'delivery-token',
-        deliveryId: 'delivery-1',
-        employeeId: 'employee-2',
-        reason: 'Route balancing',
-      );
-      final location = await repository.recordLocation(
-        token: 'delivery-token',
-        id: 'delivery-1',
-        latitude: 18.5,
-        longitude: 73.8,
-        accuracyMetres: 4.5,
-        recordedAt: DateTime(2026, 8, 16, 12, 30),
+      final result = await repository.verifyOtp(
+        'delivery-token',
+        'delivery-1',
+        '482913',
       );
 
-      expect(requests, [
-        'POST /api/v1/delivery/delivery-1/start',
-        'POST /api/v1/delivery-management/delivery-1/assign',
-        'POST /api/v1/delivery/delivery-1/location',
-      ]);
-      expect(bodies[0], isEmpty);
-      expect(bodies[1], {
-        'employeeId': 'employee-2',
-        'reason': 'Route balancing',
-      });
-      expect(bodies[2], {
-        'latitude': 18.5,
-        'longitude': 73.8,
-        'accuracyMetres': 4.5,
-        'recordedAt': '2026-08-16T12:30:00.000',
-      });
-      expect(location.accuracyMetres, 5.5);
+      expect(requestedPath, '/api/v1/delivery/delivery-1/verify-otp');
+      expect(requestBody, {'code': '482913'});
+      expect(result.status, DeliveryStatus.delivered);
+      expect(result.otpVerifiedAt, isNotNull);
     });
+
+    test(
+      'posts lifecycle, assignment, and India-local location payloads',
+      () async {
+        final requests = <String>[];
+        final bodies = <Map<String, dynamic>>[];
+        final client = MockClient((request) async {
+          requests.add('${request.method} ${request.url.path}');
+          expect(request.headers['Authorization'], 'Bearer delivery-token');
+          bodies.add(jsonDecode(request.body) as Map<String, dynamic>);
+          if (request.url.path.endsWith('/location')) {
+            return successResponse(locationJson());
+          }
+          return successResponse(deliveryDetailsJson(status: 'Assigned'));
+        });
+        final repository = testRepository(client);
+
+        await repository.start('delivery-token', 'delivery-1');
+        await repository.assign(
+          token: 'delivery-token',
+          deliveryId: 'delivery-1',
+          employeeId: 'employee-2',
+          reason: 'Route balancing',
+        );
+        final location = await repository.recordLocation(
+          token: 'delivery-token',
+          id: 'delivery-1',
+          latitude: 18.5,
+          longitude: 73.8,
+          accuracyMetres: 4.5,
+          recordedAt: DateTime(2026, 8, 16, 12, 30),
+        );
+
+        expect(requests, [
+          'POST /api/v1/delivery/delivery-1/start',
+          'POST /api/v1/delivery-management/delivery-1/assign',
+          'POST /api/v1/delivery/delivery-1/location',
+        ]);
+        expect(bodies[0], isEmpty);
+        expect(bodies[1], {
+          'employeeId': 'employee-2',
+          'reason': 'Route balancing',
+        });
+        expect(bodies[2], {
+          'latitude': 18.5,
+          'longitude': 73.8,
+          'accuracyMetres': 4.5,
+          'recordedAt': '2026-08-16T12:30:00.000',
+        });
+        expect(location.accuracyMetres, 5.5);
+      },
+    );
   });
 
   group('delivery navigation', () {
@@ -224,6 +316,134 @@ void main() {
       },
     );
 
+    test('selects assignable rows and clears or toggles selection', () async {
+      final repository = _FakeDeliveryRepository(
+        branchDeliveries: [
+          DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              deliveryId: 'ready-1',
+              status: 'ReadyForAssignment',
+              assigned: false,
+            ),
+          ),
+          DeliveryDetails.fromJson(
+            deliveryDetailsJson(deliveryId: 'assigned-1', status: 'Assigned'),
+          ),
+          DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              deliveryId: 'ready-2',
+              status: 'ReadyForAssignment',
+              assigned: false,
+            ),
+          ),
+        ],
+      );
+      final container = await authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(deliveryControllerProvider.notifier);
+
+      await controller.loadBranch(7);
+      controller.selectAllManagedDeliveries();
+      expect(
+        container.read(deliveryControllerProvider).selectedManagedDeliveryIds,
+        {'ready-1', 'ready-2'},
+      );
+
+      controller.toggleManagedDelivery('ready-1');
+      expect(
+        container.read(deliveryControllerProvider).selectedManagedDeliveryIds,
+        {'ready-2'},
+      );
+      controller.toggleManagedDelivery('assigned-1');
+      expect(
+        container.read(deliveryControllerProvider).selectedManagedDeliveryIds,
+        {'ready-2', 'assigned-1'},
+      );
+
+      controller.clearManagedSelection();
+      expect(
+        container.read(deliveryControllerProvider).selectedManagedDeliveryIds,
+        isEmpty,
+      );
+    });
+
+    test('bulk assignment removes assigned IDs from selection', () async {
+      final repository = _FakeDeliveryRepository(
+        branchDeliveries: [
+          DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              deliveryId: 'ready-1',
+              status: 'ReadyForAssignment',
+              assigned: false,
+            ),
+          ),
+          DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              deliveryId: 'ready-2',
+              status: 'ReadyForAssignment',
+              assigned: false,
+            ),
+          ),
+        ],
+      );
+      final container = await authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(deliveryControllerProvider.notifier);
+
+      await controller.loadBranch(7);
+      controller.selectAllManagedDeliveries();
+      final assigned = await controller.bulkAssign(
+        'employee-2',
+        reason: 'Coverage',
+      );
+      final state = container.read(deliveryControllerProvider);
+
+      expect(assigned, isTrue);
+      expect(repository.bulkDeliveryIds, {'ready-1', 'ready-2'});
+      expect(repository.bulkEmployeeId, 'employee-2');
+      expect(repository.bulkReason, 'Coverage');
+      expect(state.selectedManagedDeliveryIds, isEmpty);
+      expect(
+        state.managedDeliveries.map((item) => item.status),
+        everyElement(DeliveryStatus.assigned),
+      );
+      expect(state.isSaving, isFalse);
+    });
+
+    test('branch refresh retains only IDs still in the queue', () async {
+      final repository = _FakeDeliveryRepository(
+        branchDeliveries: [
+          DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              deliveryId: 'ready-1',
+              status: 'ReadyForAssignment',
+              assigned: false,
+            ),
+          ),
+          DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              deliveryId: 'ready-2',
+              status: 'ReadyForAssignment',
+              assigned: false,
+            ),
+          ),
+        ],
+      );
+      final container = await authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(deliveryControllerProvider.notifier);
+
+      await controller.loadBranch(7);
+      controller.selectAllManagedDeliveries();
+      repository.branchDeliveries = [repository.branchDeliveries.first];
+      await controller.loadBranch(7);
+
+      expect(
+        container.read(deliveryControllerProvider).selectedManagedDeliveryIds,
+        {'ready-1'},
+      );
+    });
+
     test('preserves API failures without marking the state offline', () async {
       final container = await authenticatedContainer(
         _FailingDeliveryRepository(
@@ -259,6 +479,37 @@ void main() {
   });
 
   group('delivery screens', () {
+    testWidgets(
+      'customer OTP is visible only when an active code is supplied',
+      (tester) async {
+        await _pumpDeliveryScreen(
+          tester,
+          const CustomerDeliveryDetailScreen(deliveryId: 'delivery-1'),
+          DeliveryState(
+            selectedCustomerDelivery: CustomerDelivery.fromJson(
+              customerDeliveryJson(tracking: false),
+            ),
+          ),
+        );
+
+        expect(find.text('Delivery OTP'), findsOneWidget);
+        expect(find.text('482913'), findsOneWidget);
+
+        await _pumpDeliveryScreen(
+          tester,
+          const CustomerDeliveryDetailScreen(deliveryId: 'delivery-1'),
+          DeliveryState(
+            selectedCustomerDelivery: CustomerDelivery.fromJson(
+              customerDeliveryJson(tracking: false, activeOtp: null),
+            ),
+          ),
+        );
+
+        expect(find.text('Delivery OTP'), findsNothing);
+        expect(find.text('482913'), findsNothing);
+      },
+    );
+
     testWidgets('customer location is visible only while tracking is active', (
       tester,
     ) async {
@@ -272,10 +523,10 @@ void main() {
         ),
       );
 
-      expect(find.text('Live location'), findsOneWidget);
-      expect(find.textContaining('18.52040'), findsNothing);
       await tester.drag(find.byType(ListView), const Offset(0, -400));
       await tester.pumpAndSettle();
+      expect(find.text('Live location'), findsOneWidget);
+      expect(find.textContaining('18.52040'), findsNothing);
       expect(find.text('Doorstep milk test'), findsOneWidget);
 
       await _pumpDeliveryScreen(
@@ -288,6 +539,8 @@ void main() {
         ),
       );
 
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
       expect(find.text('Live tracking is active'), findsOneWidget);
       expect(
         find.text(
@@ -312,8 +565,8 @@ void main() {
         ),
       );
 
-      expect(find.text('Send delivery OTP'), findsOneWidget);
-      expect(find.text('Verify OTP'), findsOneWidget);
+      expect(find.text('Send delivery OTP'), findsNothing);
+      expect(find.text('Verify delivery OTP'), findsOneWidget);
       expect(find.text('Complete delivery'), findsNothing);
       expect(find.text('Mark failed'), findsOneWidget);
       expect(find.text('Perform milk test'), findsOneWidget);
@@ -323,14 +576,14 @@ void main() {
         const StaffDeliveryDetailScreen(deliveryId: 'delivery-1'),
         DeliveryState(
           selectedDelivery: DeliveryDetails.fromJson(
-            deliveryDetailsJson(status: 'Arrived', otpVerified: true),
+            deliveryDetailsJson(status: 'Delivered', otpVerified: true),
           ),
         ),
       );
 
-      expect(find.text('Complete delivery'), findsOneWidget);
-      expect(find.text('Verify OTP'), findsNothing);
-      expect(find.text('Perform milk test'), findsOneWidget);
+      expect(find.text('Complete delivery'), findsNothing);
+      expect(find.text('Verify delivery OTP'), findsNothing);
+      expect(find.text('Perform milk test'), findsNothing);
 
       await _pumpDeliveryScreen(
         tester,
@@ -397,7 +650,10 @@ Map<String, dynamic> locationJson() => {
   'recordedAt': '2026-08-16T10:15:00.000',
 };
 
-Map<String, dynamic> customerDeliveryJson({required bool tracking}) => {
+Map<String, dynamic> customerDeliveryJson({
+  required bool tracking,
+  String? activeOtp = '482913',
+}) => {
   'deliveryId': 'delivery-1',
   'sourceType': 'OneTimeOrder',
   'referenceNumber': 'ORD-1001',
@@ -411,14 +667,16 @@ Map<String, dynamic> customerDeliveryJson({required bool tracking}) => {
   'completedAt': null,
   'failedAt': null,
   'failureReason': null,
+  'activeOtp': activeOtp,
 };
 
 Map<String, dynamic> deliveryDetailsJson({
+  String deliveryId = 'delivery-1',
   String status = 'Assigned',
   bool otpVerified = false,
   bool assigned = true,
 }) => {
-  'deliveryId': 'delivery-1',
+  'deliveryId': deliveryId,
   'sourceType': 'OneTimeOrder',
   'referenceNumber': 'ORD-1001',
   'status': status,
@@ -510,10 +768,16 @@ class _AuthenticatedRepository extends AuthRepository {
 }
 
 class _FakeDeliveryRepository extends DeliveryRepository {
-  _FakeDeliveryRepository()
-    : super(api: ApiClient(baseUrl: 'https://api.example.test'));
+  _FakeDeliveryRepository({List<DeliveryDetails>? branchDeliveries})
+    : branchDeliveries =
+          branchDeliveries ?? [DeliveryDetails.fromJson(deliveryDetailsJson())],
+      super(api: ApiClient(baseUrl: 'https://api.example.test'));
 
   String? lastToken;
+  List<DeliveryDetails> branchDeliveries;
+  Set<String>? bulkDeliveryIds;
+  String? bulkEmployeeId;
+  String? bulkReason;
 
   @override
   Future<List<DeliveryDetails>> getBranch(
@@ -521,9 +785,11 @@ class _FakeDeliveryRepository extends DeliveryRepository {
     int branchId, {
     DateTime? date,
     DeliveryStatus? status,
+    DeliverySourceType? sourceType,
+    SubscriptionDeliverySlot? slot,
   }) async {
     lastToken = token;
-    return [DeliveryDetails.fromJson(deliveryDetailsJson())];
+    return branchDeliveries;
   }
 
   @override
@@ -539,6 +805,32 @@ class _FakeDeliveryRepository extends DeliveryRepository {
         branchId: 7,
       ),
     ];
+  }
+
+  @override
+  Future<BulkAssignmentResult> bulkAssign({
+    required String token,
+    required List<String> deliveryIds,
+    required String employeeId,
+    String? reason,
+  }) async {
+    lastToken = token;
+    bulkDeliveryIds = deliveryIds.toSet();
+    bulkEmployeeId = employeeId;
+    bulkReason = reason;
+    return BulkAssignmentResult(
+      deliveries: branchDeliveries
+          .where((item) => bulkDeliveryIds!.contains(item.deliveryId))
+          .map(
+            (item) => DeliveryDetails.fromJson(
+              deliveryDetailsJson(
+                deliveryId: item.deliveryId,
+                status: 'Assigned',
+              ),
+            ),
+          )
+          .toList(growable: false),
+    );
   }
 
   @override

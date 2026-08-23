@@ -1,5 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'catalogue_models.dart';
@@ -162,5 +162,5 @@ class CatalogueRepository {
 }
 
 final catalogueRepositoryProvider = Provider<CatalogueRepository>(
-  (ref) => CatalogueRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => CatalogueRepository(api: authenticatedApiClient(ref)),
 );

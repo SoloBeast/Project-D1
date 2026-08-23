@@ -11,18 +11,22 @@ public sealed record CreateSubscriptionRequest(
     DateOnly StartDate,
     IReadOnlyCollection<DayOfWeek> DeliveryDays,
     int TotalEntitlement,
-    PaymentMethod PaymentMethod);
+    PaymentMethod PaymentMethod,
+    SubscriptionDeliverySlot Slot = SubscriptionDeliverySlot.Morning);
 
 public sealed record UpdateSubscriptionRequest(
     decimal? Quantity,
     Guid? AddressId,
-    IReadOnlyCollection<DayOfWeek>? DeliveryDays);
+    IReadOnlyCollection<DayOfWeek>? DeliveryDays,
+    SubscriptionDeliverySlot? Slot = null);
 
 public sealed record SkipSubscriptionDeliveryRequest(Guid DeliveryId);
 
 public sealed record RetrySubscriptionPaymentRequest(PaymentMethod PaymentMethod);
 
-public sealed record SubscriptionScheduleResult(DayOfWeek DayOfWeek);
+public sealed record SubscriptionScheduleResult(
+    DayOfWeek DayOfWeek,
+    SubscriptionDeliverySlot Slot = SubscriptionDeliverySlot.Morning);
 
 public sealed record SubscriptionDeliveryResult(
     Guid PublicId,
@@ -33,7 +37,8 @@ public sealed record SubscriptionDeliveryResult(
     string BranchCode,
     string BranchName,
     string Address,
-    DateTime? StatusChangedAt);
+    DateTime? StatusChangedAt,
+    SubscriptionDeliverySlot Slot = SubscriptionDeliverySlot.Morning);
 
 public sealed record SubscriptionResult(
     Guid PublicId,
@@ -151,7 +156,7 @@ public static class SubscriptionMappings
         subscription.BranchNameSnapshot,
         subscription.Schedules
             .OrderBy(schedule => schedule.DayOfWeek)
-            .Select(schedule => new SubscriptionScheduleResult(schedule.DayOfWeek))
+            .Select(schedule => new SubscriptionScheduleResult(schedule.DayOfWeek, schedule.Slot))
             .ToArray(),
         subscription.ActivatedAt,
         subscription.PausedAt,
@@ -168,5 +173,6 @@ public static class SubscriptionMappings
         delivery.BranchCodeSnapshot,
         delivery.BranchNameSnapshot,
         delivery.AddressSnapshot,
-        delivery.StatusChangedAt);
+        delivery.StatusChangedAt,
+        delivery.Slot);
 }

@@ -18,6 +18,7 @@ public enum PaymentStatus
     Pending,
     Success,
     Failed,
+    Cancelled,
     Expired,
     RefundPending,
     PartiallyRefunded,
@@ -149,7 +150,20 @@ public sealed class Payment : AuditableEntity
     public void Succeed(
         string? gatewayPaymentId,
         string gatewayStatus,
-        DateTime verifiedAt)
+        DateTime verifiedAt) =>
+        CompleteSuccess(gatewayPaymentId, gatewayStatus, verifiedAt, allowExpired: false);
+
+    public void RecoverCaptured(
+        string gatewayPaymentId,
+        string gatewayStatus,
+        DateTime verifiedAt) =>
+        CompleteSuccess(gatewayPaymentId, gatewayStatus, verifiedAt, allowExpired: true);
+
+    private void CompleteSuccess(
+        string? gatewayPaymentId,
+        string gatewayStatus,
+        DateTime verifiedAt,
+        bool allowExpired)
     {
         EnsureIndiaLocal(verifiedAt, nameof(verifiedAt));
 
@@ -163,7 +177,8 @@ public sealed class Payment : AuditableEntity
             return;
         }
 
-        if (Status is not (PaymentStatus.Initiated or PaymentStatus.Pending))
+        if (Status is not (PaymentStatus.Initiated or PaymentStatus.Pending) &&
+            !(allowExpired && Status == PaymentStatus.Expired && Method == PaymentMethod.Razorpay))
         {
             throw new InvalidOperationException($"A payment in status '{Status}' cannot succeed.");
         }
@@ -180,6 +195,7 @@ public sealed class Payment : AuditableEntity
         VerifiedAt = verifiedAt;
         FailureCode = null;
         FailureMessage = null;
+        FailedAt = null;
     }
 
     public void Fail(
@@ -224,6 +240,25 @@ public sealed class Payment : AuditableEntity
         Status = PaymentStatus.Expired;
         FailureCode = "PAYMENT_EXPIRED";
         FailedAt = expiredAt;
+    }
+
+    public void Cancel(DateTime cancelledAt)
+    {
+        EnsureIndiaLocal(cancelledAt, nameof(cancelledAt));
+
+        if (Status == PaymentStatus.Cancelled)
+        {
+            return;
+        }
+
+        if (Status is not (PaymentStatus.Initiated or PaymentStatus.Pending))
+        {
+            throw new InvalidOperationException($"A payment in status '{Status}' cannot be cancelled.");
+        }
+
+        Status = PaymentStatus.Cancelled;
+        FailureCode = "PAYMENT_CANCELLED";
+        FailedAt = cancelledAt;
     }
 
     public Refund StartRefund(

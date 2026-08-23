@@ -1,11 +1,19 @@
 using System.Net;
 using DoodhDirect.Application.Common;
+using DoodhDirect.Infrastructure.Notifications;
+using Microsoft.AspNetCore.DataProtection;
+using DoodhDirect.Application.Deliveries;
+using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Wallets;
+using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.Notifications;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.Wallets;
+using DoodhDirect.Infrastructure.Deliveries;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
 using DoodhDirect.Infrastructure.Wallets;
@@ -45,6 +53,14 @@ public sealed class PaymentWalletServiceTests
         Assert.Equal(created.PublicId, replay.PublicId);
         Assert.Equal(PaymentStatus.Success, created.Status);
         Assert.Equal(OrderStatus.Confirmed, (await harness.Db.Orders.SingleAsync()).Status);
+
+        var delivery = Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+        Assert.Equal(harness.Order.Id, delivery.OrderId);
+        Assert.Equal(harness.Customer.Id, delivery.CustomerId);
+        Assert.Equal(1, delivery.BranchId);
+        Assert.Equal(DeliverySourceType.OneTimeOrder, delivery.SourceType);
+        Assert.Equal(DeliveryStatus.ReadyForAssignment, delivery.Status);
+        Assert.Equal(harness.TimeProvider.Today, delivery.ScheduledDate);
 
         var wallet = await harness.Db.Wallets.SingleAsync();
         var entries = await harness.Db.WalletTransactions.OrderBy(x => x.Id).ToListAsync();
@@ -94,6 +110,7 @@ public sealed class PaymentWalletServiceTests
         Assert.Contains($"₹{expectedShortfall:0.##}", exception.Message);
 
         await harness.AssertInsufficientAttemptDidNotPersistAsync(startingBalance);
+        Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
     }
 
     [Fact]
@@ -116,6 +133,7 @@ public sealed class PaymentWalletServiceTests
 
             Assert.Equal(460m, exception.Shortfall);
             await harness.AssertInsufficientAttemptDidNotPersistAsync(expectedBalance: 340m);
+            Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
         }
     }
 
@@ -307,6 +325,218 @@ public sealed class PaymentWalletServiceTests
         Assert.Equal(PaymentStatus.Success, result.Status);
         Assert.Equal($"pay_test_{created.PublicId:N}", result.GatewayPaymentId);
         Assert.Equal(OrderStatus.Confirmed, (await harness.Db.Orders.SingleAsync()).Status);
+
+        var delivery = Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+        Assert.Equal(harness.Order.Id, delivery.OrderId);
+        Assert.Equal(DeliverySourceType.OneTimeOrder, delivery.SourceType);
+        Assert.Equal(DeliveryStatus.ReadyForAssignment, delivery.Status);
+
+        var replay = await harness.PaymentService.VerifyAsync(
+            harness.Customer.Id,
+            invalid with { Signature = "test_verified" },
+            CancellationToken.None);
+        Assert.Equal(result.PublicId, replay.PublicId);
+        Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task RazorpayCancellation_DefinitiveFailure_CancelsWithoutCreatingDelivery()
+    {
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            "cancel-payment-failed",
+            CancellationToken.None);
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [GatewayStatus(created, "failed", "failed", false, true)]);
+
+        var cancelled = await harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None);
+        var replay = await harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Cancelled, cancelled.Status);
+        Assert.Equal(PaymentStatus.Cancelled, replay.Status);
+        Assert.Equal(OrderStatus.PendingPayment, (await harness.Db.Orders.AsNoTracking().SingleAsync()).Status);
+        Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task RazorpayCancellation_ExpiredDefinitiveFailure_RemainsExpiredWithoutMutation()
+    {
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            "cancel-expired-payment-failed",
+            CancellationToken.None);
+        var payment = await harness.Db.Payments.SingleAsync();
+        payment.Expire(new DateTime(2026, 8, 16, 7, 45, 0));
+        harness.Order.FailPayment();
+        await harness.Db.SaveChangesAsync();
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [GatewayStatus(created, "failed", "failed", false, true)]);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.PaymentService.CancelAsync(
+                harness.Customer.Id, created.PublicId, CancellationToken.None));
+
+        Assert.Equal("The payment was not captured and is already expired.", exception.Message);
+        Assert.Equal(PaymentStatus.Expired, (await harness.Db.Payments.AsNoTracking().SingleAsync()).Status);
+        Assert.Equal(OrderStatus.PaymentFailed, (await harness.Db.Orders.AsNoTracking().SingleAsync()).Status);
+        Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task RazorpayCancellation_ExpiredValidatedCapture_RecoversOrderExactlyOnce()
+    {
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            "cancel-expired-payment-captured",
+            CancellationToken.None);
+        var payment = await harness.Db.Payments.SingleAsync();
+        payment.Expire(new DateTime(2026, 8, 16, 7, 45, 0));
+        harness.Order.FailPayment();
+        await harness.Db.SaveChangesAsync();
+        var captured = GatewayStatus(created, "captured", "captured", true, false);
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [captured]);
+
+        var recovered = await harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None);
+        gateway.DirectStatusResult = captured;
+        var replay = await harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Success, recovered.Status);
+        Assert.Equal(PaymentStatus.Success, replay.Status);
+        Assert.Equal(OrderStatus.Confirmed, (await harness.Db.Orders.AsNoTracking().SingleAsync()).Status);
+        Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
+            .ToListAsync());
+    }
+
+    [Fact]
+    public async Task RazorpayCancellation_ValidatedCapture_CompletesOrderExactlyOnce()
+    {
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            "cancel-payment-captured",
+            CancellationToken.None);
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [GatewayStatus(created, "captured", "captured", true, false)]);
+
+        var completed = await harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None);
+        var replay = await harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Success, completed.Status);
+        Assert.Equal(PaymentStatus.Success, replay.Status);
+        Assert.Equal(OrderStatus.Confirmed, (await harness.Db.Orders.AsNoTracking().SingleAsync()).Status);
+        Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
+            .ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("created", false, false)]
+    [InlineData("authorized", false, false)]
+    [InlineData("captured", false, false)]
+    [InlineData("failed", true, false)]
+    [InlineData("refunded", false, false)]
+    [InlineData("future_status", false, false)]
+    public async Task RazorpayCancellation_UnresolvedEvidence_BlocksWithoutMutation(
+        string status,
+        bool isSuccessful,
+        bool isTerminalFailure)
+    {
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            $"cancel-payment-{status}-{isSuccessful}-{isTerminalFailure}",
+            CancellationToken.None);
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [GatewayStatus(created, "unresolved", status, isSuccessful, isTerminalFailure)]);
+
+        await Assert.ThrowsAsync<ConflictException>(() => harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None));
+
+        Assert.Equal(PaymentStatus.Pending, (await harness.Db.Payments.AsNoTracking().SingleAsync()).Status);
+        Assert.Equal(OrderStatus.PendingPayment, (await harness.Db.Orders.AsNoTracking().SingleAsync()).Status);
+        Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("transport")]
+    [InlineData("malformed")]
+    [InlineData("empty")]
+    public async Task RazorpayCancellation_UnverifiableEvidence_BlocksWithoutMutation(string scenario)
+    {
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            $"cancel-payment-{scenario}",
+            CancellationToken.None);
+        gateway.OrderPaymentsResult = scenario == "empty"
+            ? new GatewayOrderPaymentsResult(created.GatewayOrderId!, [])
+            : null;
+        gateway.OrderPaymentsException = scenario switch
+        {
+            "transport" => new HttpRequestException("Razorpay unavailable."),
+            "malformed" => new System.Text.Json.JsonException("Invalid Razorpay JSON."),
+            _ => null
+        };
+
+        await Assert.ThrowsAsync<ConflictException>(() => harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None));
+
+        Assert.Equal(PaymentStatus.Pending, (await harness.Db.Payments.AsNoTracking().SingleAsync()).Status);
+        Assert.Equal(OrderStatus.PendingPayment, (await harness.Db.Orders.AsNoTracking().SingleAsync()).Status);
+        Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
     }
 
     [Fact]
@@ -403,6 +633,290 @@ public sealed class PaymentWalletServiceTests
         Assert.Empty(await harness.Db.PaymentWebhooks.ToListAsync());
     }
 
+    [Fact]
+    public async Task RazorpayWebhook_WithUnavailableOtpTransport_ConfirmsOnceAndRetriesSameOtp()
+    {
+        var options = Options.Create(new PaymentOptions
+        {
+            Provider = "Razorpay",
+            Currency = "INR",
+            RazorpayKeyId = "rzp_test_public",
+            RazorpayKeySecret = "api-secret",
+            MockSigningSecret = "unused"
+        });
+        var gateway = new TestRazorpayGateway(options);
+        var otpDelivery = new CapturingOtpDeliveryService { FailNextSend = true };
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway,
+            otpDelivery: otpDelivery);
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            "razorpay-webhook-otp-transport-failure",
+            CancellationToken.None);
+        gateway.WebhookEvent = new GatewayWebhookEvent(
+            "evt_payment_captured_1",
+            "payment.captured",
+            created.GatewayOrderId,
+            $"pay_test_{created.PublicId:N}",
+            GatewayRefundId: null,
+            Status: "captured",
+            AmountMinor: 10000,
+            Currency: "INR");
+        var payload = "{\"event\":\"payment.captured\",\"id\":\"evt_payment_captured_1\"}"u8.ToArray();
+
+        await harness.PaymentService.ProcessWebhookAsync(
+            payload, "test_webhook_verified", CancellationToken.None);
+        await harness.PaymentService.ProcessWebhookAsync(
+            payload, "test_webhook_verified", CancellationToken.None);
+
+        var result = await harness.PaymentService.GetAsync(
+            harness.Customer.Id,
+            created.PublicId,
+            bypassOwnership: false,
+            CancellationToken.None);
+        await harness.AssertConfirmedWithPendingOtpAsync(result);
+        Assert.Single(await harness.Db.Payments.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.Orders.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued)
+            .ToListAsync());
+        var receipt = Assert.Single(await harness.Db.PaymentWebhooks.AsNoTracking().ToListAsync());
+        Assert.Equal(PaymentWebhookStatus.Processed, receipt.Status);
+    }
+
+    [Fact]
+    public async Task WalletPayment_WithUnavailableOtpTransport_ConfirmsAndLeavesOtpPending()
+    {
+        await using var harness = await PaymentHarness.CreateAsync(
+            otpDelivery: new CapturingOtpDeliveryService { FailNextSend = true });
+        await harness.WalletService.TopUpAsync(
+            harness.Customer.Id,
+            new WalletTopUpRequest(100m, "topup-otp-transport"),
+            CancellationToken.None);
+
+        var result = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Wallet),
+            "wallet-otp-transport-failure",
+            CancellationToken.None);
+
+        await harness.AssertConfirmedWithPendingOtpAsync(result);
+    }
+
+    [Fact]
+    public async Task DevelopmentPayment_WithUnavailableOtpTransport_ConfirmsAndLeavesOtpPending()
+    {
+        await using var harness = await PaymentHarness.CreateAsync(
+            otpDelivery: new CapturingOtpDeliveryService { FailNextSend = true });
+
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Development),
+            "development-otp-transport-failure",
+            CancellationToken.None);
+        var result = await harness.PaymentService.CompleteDevelopmentAsync(
+            harness.Customer.Id,
+            created.PublicId,
+            CancellationToken.None);
+
+        await harness.AssertConfirmedWithPendingOtpAsync(result);
+    }
+
+    [Fact]
+    public async Task RazorpayVerification_WithUnavailableOtpTransport_ConfirmsAndLeavesOtpPending()
+    {
+        var options = Options.Create(new PaymentOptions
+        {
+            Provider = "Razorpay",
+            Currency = "INR",
+            RazorpayKeyId = "rzp_test_public",
+            RazorpayKeySecret = "api-secret",
+            MockSigningSecret = "unused"
+        });
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: new TestRazorpayGateway(options),
+            otpDelivery: new CapturingOtpDeliveryService { FailNextSend = true });
+
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            "razorpay-otp-transport-failure",
+            CancellationToken.None);
+        var result = await harness.PaymentService.VerifyAsync(
+            harness.Customer.Id,
+            new VerifyPaymentRequest(
+                created.PublicId,
+                created.GatewayOrderId!,
+                $"pay_test_{created.PublicId:N}",
+                "test_verified"),
+            CancellationToken.None);
+
+        await harness.AssertConfirmedWithPendingOtpAsync(result);
+    }
+
+    [Theory]
+    [InlineData("captured", true, false, PaymentReconciliationOutcome.Captured, PaymentStatus.Success)]
+    [InlineData("failed", false, true, PaymentReconciliationOutcome.DefinitivelyNotCaptured, PaymentStatus.Pending)]
+    [InlineData("created", false, false, PaymentReconciliationOutcome.Pending, PaymentStatus.Pending)]
+    [InlineData("authorized", false, false, PaymentReconciliationOutcome.Pending, PaymentStatus.Pending)]
+    [InlineData("refunded", false, false, PaymentReconciliationOutcome.Ambiguous, PaymentStatus.Pending)]
+    [InlineData("future_status", false, false, PaymentReconciliationOutcome.Ambiguous, PaymentStatus.Pending)]
+    [InlineData("captured", false, false, PaymentReconciliationOutcome.Ambiguous, PaymentStatus.Pending)]
+    [InlineData("failed", true, false, PaymentReconciliationOutcome.Ambiguous, PaymentStatus.Pending)]
+    [InlineData("authorized", false, true, PaymentReconciliationOutcome.Ambiguous, PaymentStatus.Pending)]
+    public async Task RazorpayReconciliation_ClassifiesDiscoveredStatusAndMutatesOnlyValidatedCapture(
+        string gatewayStatus,
+        bool isSuccessful,
+        bool isTerminalFailure,
+        PaymentReconciliationOutcome expectedOutcome,
+        PaymentStatus expectedPaymentStatus)
+    {
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            $"reconcile-status-{gatewayStatus}-{isSuccessful}-{isTerminalFailure}",
+            CancellationToken.None);
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [GatewayStatus(created, "status", gatewayStatus, isSuccessful, isTerminalFailure)]);
+
+        var result = await harness.PaymentService.ReconcileAsync(
+            harness.Administrator.Id,
+            created.PublicId,
+            bypassOwnership: true,
+            CancellationToken.None);
+
+        Assert.Equal(expectedOutcome, result.Outcome);
+        Assert.Equal(expectedPaymentStatus, result.Payment.Status);
+        Assert.Equal(
+            expectedPaymentStatus == PaymentStatus.Success ? OrderStatus.Confirmed : OrderStatus.PendingPayment,
+            (await harness.Db.Orders.AsNoTracking().SingleAsync()).Status);
+        Assert.Equal(
+            expectedPaymentStatus == PaymentStatus.Success ? 1 : 0,
+            await harness.Db.Deliveries.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task RazorpayReconciliation_OneCaptureAmongFailures_RecoversExactlyOnce()
+    {
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            "reconcile-one-capture",
+            CancellationToken.None);
+        var captured = GatewayStatus(created, "captured", "captured", true, false);
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [
+                GatewayStatus(created, "failed-1", "failed", false, true),
+                captured,
+                GatewayStatus(created, "failed-2", "failed", false, true)
+            ]);
+
+        var first = await harness.PaymentService.ReconcileAsync(
+            harness.Administrator.Id, created.PublicId, true, CancellationToken.None);
+        gateway.DirectStatusResult = captured;
+        var replay = await harness.PaymentService.ReconcileAsync(
+            harness.Administrator.Id, created.PublicId, true, CancellationToken.None);
+
+        Assert.Equal(PaymentReconciliationOutcome.Captured, first.Outcome);
+        Assert.Equal(PaymentReconciliationOutcome.Captured, replay.Outcome);
+        Assert.Equal(PaymentStatus.Success, replay.Payment.Status);
+        Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
+            .ToListAsync());
+    }
+
+    [Theory]
+    [InlineData("empty")]
+    [InlineData("duplicate-payment-id")]
+    [InlineData("wrong-order-id")]
+    [InlineData("amount-mismatch")]
+    [InlineData("currency-mismatch")]
+    [InlineData("multiple-captures")]
+    [InlineData("transport-failure")]
+    [InlineData("malformed-response")]
+    public async Task RazorpayReconciliation_UnsafeDiscoveryEvidence_IsAmbiguous(string scenario)
+    {
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            $"reconcile-unsafe-{scenario}",
+            CancellationToken.None);
+        var captured = GatewayStatus(created, "captured-1", "captured", true, false);
+        gateway.OrderPaymentsResult = scenario switch
+        {
+            "empty" => new(created.GatewayOrderId!, []),
+            "duplicate-payment-id" => new(created.GatewayOrderId!, [captured, captured]),
+            "wrong-order-id" => new(created.GatewayOrderId!, [captured with { GatewayOrderId = "order_other" }]),
+            "amount-mismatch" => new(created.GatewayOrderId!, [captured with { AmountMinor = captured.AmountMinor + 1 }]),
+            "currency-mismatch" => new(created.GatewayOrderId!, [captured with { Currency = "USD" }]),
+            "multiple-captures" => new(created.GatewayOrderId!,
+                [captured, GatewayStatus(created, "captured-2", "captured", true, false)]),
+            _ => null
+        };
+        gateway.OrderPaymentsException = scenario switch
+        {
+            "transport-failure" => new HttpRequestException("Razorpay unavailable."),
+            "malformed-response" => new System.Text.Json.JsonException("Invalid Razorpay JSON."),
+            _ => null
+        };
+
+        var result = await harness.PaymentService.ReconcileAsync(
+            harness.Administrator.Id, created.PublicId, true, CancellationToken.None);
+
+        Assert.Equal(PaymentReconciliationOutcome.Ambiguous, result.Outcome);
+        Assert.Equal(PaymentStatus.Pending, result.Payment.Status);
+        Assert.Equal(OrderStatus.PendingPayment, (await harness.Db.Orders.AsNoTracking().SingleAsync()).Status);
+        Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
+    }
+
+    private static IOptions<PaymentOptions> RazorpayOptions() => Options.Create(new PaymentOptions
+    {
+        Provider = "Razorpay",
+        Currency = "INR",
+        RazorpayKeyId = "rzp_test_public",
+        RazorpayKeySecret = "api-secret",
+        MockSigningSecret = "unused"
+    });
+
+    private static GatewayPaymentStatusResult GatewayStatus(
+        PaymentResult payment,
+        string suffix,
+        string status,
+        bool isSuccessful,
+        bool isTerminalFailure) =>
+        new(
+            $"pay_{suffix}_{payment.PublicId:N}",
+            payment.GatewayOrderId!,
+            status,
+            checked((long)(payment.Amount * 100m)),
+            payment.Currency,
+            isSuccessful,
+            isTerminalFailure);
+
     private sealed class PaymentHarness : IAsyncDisposable
     {
         private readonly SqliteConnection connection;
@@ -414,8 +928,12 @@ public sealed class PaymentWalletServiceTests
             User otherCustomer,
             User administrator,
             Order order,
+            TestIndiaTimeProvider timeProvider,
             PaymentService paymentService,
-            WalletService walletService)
+            WalletService walletService,
+            DeliveryService deliveryService,
+            CapturingOtpDeliveryService otpDelivery,
+            DeliveryOtpHandoffProtector otpHandoffProtector)
         {
             this.connection = connection;
             Db = db;
@@ -423,8 +941,12 @@ public sealed class PaymentWalletServiceTests
             OtherCustomer = otherCustomer;
             Administrator = administrator;
             Order = order;
+            TimeProvider = timeProvider;
             PaymentService = paymentService;
             WalletService = walletService;
+            DeliveryService = deliveryService;
+            OtpDelivery = otpDelivery;
+            OtpHandoffProtector = otpHandoffProtector;
         }
 
         public DoodhDirectDbContext Db { get; }
@@ -432,13 +954,18 @@ public sealed class PaymentWalletServiceTests
         public User OtherCustomer { get; }
         public User Administrator { get; }
         public Order Order { get; }
+        public TestIndiaTimeProvider TimeProvider { get; }
         public PaymentService PaymentService { get; }
         public WalletService WalletService { get; }
+        public DeliveryService DeliveryService { get; }
+        public CapturingOtpDeliveryService OtpDelivery { get; }
+        public DeliveryOtpHandoffProtector OtpHandoffProtector { get; }
 
         public static async Task<PaymentHarness> CreateAsync(
             decimal payableAmount = 100m,
             IOptions<PaymentOptions>? paymentOptions = null,
-            IPaymentGateway? gateway = null)
+            IPaymentGateway? gateway = null,
+            CapturingOtpDeliveryService? otpDelivery = null)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -479,6 +1006,18 @@ public sealed class PaymentWalletServiceTests
             });
             var notificationEventWriter = new TestNotificationEventWriter(db, clock);
             var indiaTime = new TestIndiaTimeProvider(clock);
+            otpDelivery ??= new CapturingOtpDeliveryService();
+            var otpHandoffProtector = new DeliveryOtpHandoffProtector(
+                new EphemeralDataProtectionProvider());
+            var deliveryService = new DeliveryService(
+                db,
+                indiaTime,
+                new TestPasswordHasher(),
+                otpDelivery,
+                new NoOpDeliveryRealtimePublisher(),
+                Options.Create(new DeliveryOptions()),
+                notificationEventWriter,
+                otpHandoffProtector);
             var walletService = new WalletService(
                 db,
                 indiaTime,
@@ -490,9 +1029,54 @@ public sealed class PaymentWalletServiceTests
                 walletService,
                 indiaTime,
                 paymentOptions,
-                notificationEventWriter);
+                notificationEventWriter,
+                mockGateway: null,
+                hostEnvironment: null,
+                oneTimeDeliveryCreator: deliveryService);
             return new PaymentHarness(
-                connection, db, customer, otherCustomer, administrator, order, paymentService, walletService);
+                connection,
+                db,
+                customer,
+                otherCustomer,
+                administrator,
+                order,
+                indiaTime,
+                paymentService,
+                walletService,
+                deliveryService,
+                otpDelivery,
+                otpHandoffProtector);
+        }
+
+        public async Task AssertConfirmedWithPendingOtpAsync(PaymentResult result)
+        {
+            Assert.Equal(PaymentStatus.Success, result.Status);
+            Assert.Equal(
+                OrderStatus.Confirmed,
+                (await Db.Orders.AsNoTracking().SingleAsync()).Status);
+            Assert.Single(await Db.Deliveries.AsNoTracking().ToListAsync());
+
+            var otp = Assert.Single(await Db.DeliveryOtps.AsNoTracking().ToListAsync());
+            Assert.Null(otp.SentAt);
+            Assert.NotNull(otp.ProtectedCode);
+            var protectedCode = otp.ProtectedCode;
+            var expectedCode = OtpHandoffProtector.Unprotect(protectedCode);
+            var events = await Db.NotificationEvents.AsNoTracking()
+                .Where(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued)
+                .ToListAsync();
+            Assert.Single(events);
+            Assert.Equal(NotificationEventStatus.Pending, events[0].Status);
+
+            await DeliveryService.IssuePendingOtpsAsync(CancellationToken.None);
+
+            var retriedOtp = Assert.Single(await Db.DeliveryOtps.AsNoTracking().ToListAsync());
+            Assert.NotNull(retriedOtp.SentAt);
+            Assert.Equal(protectedCode, retriedOtp.ProtectedCode);
+            var sent = Assert.Single(OtpDelivery.Messages);
+            Assert.Equal(expectedCode, sent.Code);
+            Assert.Single(await Db.NotificationEvents.AsNoTracking()
+                .Where(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued)
+                .ToListAsync());
         }
 
         public async Task AssertInsufficientAttemptDidNotPersistAsync(decimal expectedBalance)
@@ -531,6 +1115,11 @@ public sealed class PaymentWalletServiceTests
     {
         private readonly Dictionary<Guid, GatewayOrderRequest> orders = [];
 
+        public GatewayWebhookEvent? WebhookEvent { get; set; }
+        public GatewayPaymentStatusResult? DirectStatusResult { get; set; }
+        public Exception? DirectStatusException { get; set; }
+        public GatewayOrderPaymentsResult? OrderPaymentsResult { get; set; }
+        public Exception? OrderPaymentsException { get; set; }
         public string ProviderName => "Razorpay";
         public string? PublicKeyId => options.Value.RazorpayKeyId;
         public bool IsLive => true;
@@ -560,26 +1149,48 @@ public sealed class PaymentWalletServiceTests
             string gatewayPaymentId,
             CancellationToken cancellationToken)
         {
+            if (DirectStatusException is not null)
+            {
+                return Task.FromException<GatewayPaymentStatusResult>(DirectStatusException);
+            }
+            if (DirectStatusResult is not null)
+            {
+                return Task.FromResult(DirectStatusResult);
+            }
             if (!TryGetPaymentId(gatewayPaymentId, out var paymentId) ||
                 !orders.TryGetValue(paymentId, out var request))
             {
                 throw new InvalidOperationException("The test payment was not created by this gateway.");
             }
 
-            return Task.FromResult(new GatewayPaymentStatusResult(
-                gatewayPaymentId,
-                $"order_test_{paymentId:N}",
-                "captured",
-                request.AmountMinor,
-                request.Currency,
-                IsSuccessful: true,
-                IsTerminalFailure: false));
+            return Task.FromResult(CreateCapturedStatus(paymentId, request));
         }
 
-        public bool VerifyWebhookSignature(ReadOnlySpan<byte> payload, string signature) => false;
+        public Task<GatewayOrderPaymentsResult> GetPaymentsForOrderAsync(
+            string gatewayOrderId,
+            CancellationToken cancellationToken)
+        {
+            if (OrderPaymentsException is not null)
+            {
+                return Task.FromException<GatewayOrderPaymentsResult>(OrderPaymentsException);
+            }
+            if (OrderPaymentsResult is not null)
+            {
+                return Task.FromResult(OrderPaymentsResult);
+            }
+
+            var match = orders.SingleOrDefault(x => gatewayOrderId == $"order_test_{x.Key:N}");
+            IReadOnlyList<GatewayPaymentStatusResult> payments = match.Value is null
+                ? []
+                : [CreateCapturedStatus(match.Key, match.Value)];
+            return Task.FromResult(new GatewayOrderPaymentsResult(gatewayOrderId, payments));
+        }
+
+        public bool VerifyWebhookSignature(ReadOnlySpan<byte> payload, string signature) =>
+            payload.Length > 0 && signature == "test_webhook_verified";
 
         public GatewayWebhookEvent ParseWebhook(ReadOnlySpan<byte> payload) =>
-            throw new NotSupportedException();
+            WebhookEvent ?? throw new InvalidOperationException("No test webhook event was configured.");
 
         public Task<GatewayRefundResult> RefundAsync(
             string gatewayPaymentId,
@@ -594,6 +1205,18 @@ public sealed class PaymentWalletServiceTests
                 FailureCode: null,
                 FailureMessage: null));
 
+        private static GatewayPaymentStatusResult CreateCapturedStatus(
+            Guid paymentId,
+            GatewayOrderRequest request) =>
+            new(
+                $"pay_test_{paymentId:N}",
+                $"order_test_{paymentId:N}",
+                "captured",
+                request.AmountMinor,
+                request.Currency,
+                IsSuccessful: true,
+                IsTerminalFailure: false);
+
         private static bool TryGetPaymentId(string gatewayPaymentId, out Guid paymentId)
         {
             const string prefix = "pay_test_";
@@ -601,6 +1224,39 @@ public sealed class PaymentWalletServiceTests
             return gatewayPaymentId.StartsWith(prefix, StringComparison.Ordinal) &&
                 Guid.TryParseExact(gatewayPaymentId[prefix.Length..], "N", out paymentId);
         }
+    }
+
+    private sealed class CapturingOtpDeliveryService : IOtpDeliveryService
+    {
+        public List<(string Destination, string Code)> Messages { get; } = [];
+        public bool FailNextSend { get; set; }
+
+        public Task SendAsync(
+            string destination,
+            string code,
+            CancellationToken cancellationToken)
+        {
+            if (FailNextSend)
+            {
+                FailNextSend = false;
+                throw new InvalidOperationException("Simulated OTP transport failure.");
+            }
+
+            Messages.Add((destination, code));
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class NoOpDeliveryRealtimePublisher : IDeliveryRealtimePublisher
+    {
+        public Task DeliveryChangedAsync(DeliveryResult delivery, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task LocationChangedAsync(
+            Guid deliveryId,
+            DeliveryLocationResult location,
+            CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 
     private sealed class StubHttpMessageHandler(

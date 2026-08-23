@@ -1,5 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,7 +7,7 @@ import 'wallet_models.dart';
 import 'wallet_repository.dart';
 
 final walletRepositoryProvider = Provider<WalletRepository>(
-  (ref) => WalletRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => WalletRepository(api: authenticatedApiClient(ref)),
 );
 
 final walletControllerProvider =

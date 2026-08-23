@@ -363,7 +363,7 @@ public sealed class CameraService(
     }
 
     private void AddAudit(long userId, string action, Guid cameraId, object? oldValue, object newValue) =>
-        dbContext.AuditLogs.Add(new AuditLog(
+        dbContext.AddAuditLog(new AuditLog(
             userId,
             action,
             "Camera",

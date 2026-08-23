@@ -1,5 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,7 +7,7 @@ import 'camera_models.dart';
 import 'camera_repository.dart';
 
 final cameraRepositoryProvider = Provider<CameraRepository>(
-  (ref) => CameraRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => CameraRepository(api: authenticatedApiClient(ref)),
 );
 
 final cameraControllerProvider =
@@ -82,13 +82,10 @@ class CameraController extends Notifier<CameraState> {
     state = state.copyWith(publicCameras: cameras);
   });
 
-  Future<void> loadStream(String cameraId) async => _load(
-    () async {
-      final stream = await _repository.getPublicStream(_token!, cameraId);
-      state = state.copyWith(stream: stream, clearError: true);
-    },
-    clearStream: true,
-  );
+  Future<void> loadStream(String cameraId) async => _load(() async {
+    final stream = await _repository.getPublicStream(_token!, cameraId);
+    state = state.copyWith(stream: stream, clearError: true);
+  }, clearStream: true);
 
   Future<void> loadManaged({int? branchId}) async => _load(() async {
     final cameras = await _repository.getManaged(_token!, branchId: branchId);

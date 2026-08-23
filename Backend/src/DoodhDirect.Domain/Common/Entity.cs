@@ -10,6 +10,16 @@ public interface IAuditableEntity
 public abstract class Entity
 {
     public long Id { get; protected set; }
+
+    internal void SetPersistenceId(long id)
+    {
+        if (id <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(id));
+        }
+
+        Id = id;
+    }
 }
 
 public abstract class PublicEntity : Entity

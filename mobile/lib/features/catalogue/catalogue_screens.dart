@@ -1,5 +1,6 @@
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -29,9 +30,22 @@ class _ProductCatalogueScreenState
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(catalogueControllerProvider);
+    final cartCount = ref.watch(
+      orderControllerProvider.select((orderState) => orderState.cart.length),
+    );
     return CustomerShell(
       currentPath: '/catalogue',
       title: 'Catalogue',
+      floatingActionButton: cartCount == 0
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: () {
+                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                context.push('/checkout');
+              },
+              icon: const Icon(Icons.shopping_cart_outlined),
+              label: Text('Cart ($cartCount)'),
+            ),
       child: state.isLoading && state.products.isEmpty
           ? const LoadingStatePanel(message: 'Loading products')
           : state.errorMessage != null && state.products.isEmpty
@@ -231,16 +245,30 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       );
                       return;
                     }
-                    context.push(
-                      '/checkout',
-                      extra: <String, dynamic>{
-                        'product': product,
-                        'quantity': quantity,
-                      },
+                    ref
+                        .read(orderControllerProvider.notifier)
+                        .setCartItem(product, quantity);
+                    final messenger = ScaffoldMessenger.of(context);
+                    final router = GoRouter.of(context);
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text('${product.name} added to your cart'),
+                        duration: const Duration(seconds: 3),
+                        action: SnackBarAction(
+                          label: 'View cart',
+                          onPressed: () {
+                            messenger.hideCurrentSnackBar();
+                            router.go('/checkout');
+                          },
+                        ),
+                      ),
                     );
+                    Future<void>.delayed(const Duration(seconds: 3), () {
+                      if (context.mounted) messenger.hideCurrentSnackBar();
+                    });
                   },
-                  icon: const Icon(Icons.shopping_cart_outlined),
-                  label: const Text('Continue to checkout'),
+                  icon: const Icon(Icons.add_shopping_cart_outlined),
+                  label: const Text('Add to cart'),
                 ),
                 const SizedBox(height: 12),
                 Text(
@@ -348,8 +376,11 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
                         child: ListTile(
                           title: Text(product.name),
                           subtitle: Text(
-                            '${product.sku} · ${product.formattedPrice}',
+                            '${product.sku} · ${product.formattedPrice}\n'
+                            '${product.isActive ? 'Active' : 'Inactive'} · '
+                            '${_branchSummary(product)}',
                           ),
+                          isThreeLine: true,
                           leading: Icon(
                             product.isActive
                                 ? Icons.check_circle
@@ -401,7 +432,10 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
                   ...state.categories.map(
                     (category) => ListTile(
                       title: Text(category.name),
-                      subtitle: Text(category.code),
+                      subtitle: Text(
+                        '${category.code} · '
+                        '${category.isActive ? 'Active' : 'Inactive'}',
+                      ),
                       leading: Icon(
                         category.isActive
                             ? Icons.check_circle
@@ -428,6 +462,18 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
               ),
             ),
     );
+  }
+
+  String _branchSummary(CatalogueProduct product) {
+    if (product.branchAvailability.isEmpty) return 'No branch assigned';
+    final main = product.branchAvailability
+        .where((branch) => branch.branchCode.toUpperCase() == 'MAIN')
+        .firstOrNull;
+    if (main != null) {
+      return 'MAIN: ${main.isAvailable ? 'Available' : 'Unavailable'}';
+    }
+    return '${product.branchAvailability.length} branch assignment'
+        '${product.branchAvailability.length == 1 ? '' : 's'}';
   }
 
   Future<void> _editProduct(
@@ -467,8 +513,19 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
     CatalogueProduct product,
   ) async {
     final state = ref.read(adminCatalogueControllerProvider);
-    final branch = product.branchAvailability.firstOrNull;
     if (state.branches.isEmpty) return;
+    final mainBranch = state.branches
+        .where((branch) => branch.code.toUpperCase() == 'MAIN')
+        .firstOrNull;
+    final branch =
+        product.branchAvailability
+            .where(
+              (availability) =>
+                  mainBranch != null &&
+                  availability.branchId == mainBranch.publicId,
+            )
+            .firstOrNull ??
+        product.branchAvailability.firstOrNull;
     final draft = await showDialog<BranchAvailabilityDraft>(
       context: context,
       builder: (_) =>
@@ -660,8 +717,13 @@ class _AvailabilityDialog extends StatefulWidget {
 
 class _AvailabilityDialogState extends State<_AvailabilityDialog> {
   late String _branchId =
-      widget.current?.branchId ?? widget.branches.first.publicId;
-  late bool _available = widget.current?.isAvailable ?? true;
+      widget.current?.branchId ??
+      widget.branches
+          .where((branch) => branch.code.toUpperCase() == 'MAIN')
+          .firstOrNull
+          ?.publicId ??
+      widget.branches.first.publicId;
+  late bool _available = widget.current?.isAvailable ?? false;
   late final _limit = TextEditingController(
     text: widget.current?.maxDailyQuantity?.toString(),
   );
@@ -673,21 +735,30 @@ class _AvailabilityDialogState extends State<_AvailabilityDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Branch availability'),
+    title: const Text('Configure branch availability'),
     content: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         DropdownButtonFormField<String>(
           initialValue: _branchId,
+          decoration: const InputDecoration(labelText: 'Branch'),
           items: widget.branches
               .map(
-                (b) => DropdownMenuItem(value: b.publicId, child: Text(b.name)),
+                (b) => DropdownMenuItem(
+                  value: b.publicId,
+                  child: Text('${b.code} · ${b.name}'),
+                ),
               )
               .toList(),
           onChanged: (value) => setState(() => _branchId = value!),
         ),
         SwitchListTile(
-          title: const Text('Available'),
+          title: const Text('Available for customer orders'),
+          subtitle: Text(
+            _available
+                ? 'This branch can fulfil the product.'
+                : 'Enable explicitly after assigning the branch.',
+          ),
           value: _available,
           onChanged: (value) => setState(() => _available = value),
         ),

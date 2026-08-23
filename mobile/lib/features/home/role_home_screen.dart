@@ -131,6 +131,30 @@ class _NotificationButton extends ConsumerWidget {
   }
 }
 
+class _CartButton extends ConsumerWidget {
+  const _CartButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cartCount = ref.watch(
+      orderControllerProvider.select((state) => state.cart.length),
+    );
+    return IconButton(
+      key: const ValueKey('customer-cart-action'),
+      tooltip: 'Cart',
+      onPressed: () {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        context.go('/checkout');
+      },
+      icon: Badge(
+        isLabelVisible: cartCount > 0,
+        label: Text(cartCount > 99 ? '99+' : '$cartCount'),
+        child: const Icon(Icons.shopping_cart_outlined),
+      ),
+    );
+  }
+}
+
 class _CustomerHomeActions extends ConsumerStatefulWidget {
   const _CustomerHomeActions();
 
@@ -154,7 +178,7 @@ class _CustomerHomeActionsState extends ConsumerState<_CustomerHomeActions> {
   @override
   Widget build(BuildContext context) => CustomerShell(
     currentPath: '/home',
-    actions: const [_SignOutButton()],
+    actions: const [_CartButton(), _SignOutButton()],
     child: DoodhPage(
       child: RefreshIndicator(
         onRefresh: () async {
@@ -187,7 +211,7 @@ class _CustomerHomeActionsState extends ConsumerState<_CustomerHomeActions> {
                   children: [
                     _QuickAction(
                       icon: Icons.shopping_bag_outlined,
-                      label: 'Buy milk',
+                      label: 'Shop',
                       onTap: () => context.push('/catalogue'),
                     ),
                     _QuickAction(

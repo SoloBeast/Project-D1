@@ -1,4 +1,5 @@
 using System.Data;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using DoodhDirect.Application.Abstractions;
@@ -15,6 +16,7 @@ internal sealed partial class NotificationProcessor(
     DoodhDirectDbContext dbContext,
     IEnumerable<INotificationChannelGateway> gateways,
     NotificationTokenProtector tokenProtector,
+    DeliveryOtpHandoffProtector deliveryOtpHandoffProtector,
     IOptions<NotificationOptions> options,
     IIndiaTimeProvider timeProvider) : INotificationProcessor
 {
@@ -116,8 +118,26 @@ internal sealed partial class NotificationProcessor(
     {
         var payload = JsonSerializer.Deserialize<StoredNotificationPayload>(notificationEvent.PayloadJson)
             ?? throw new NotificationMaterializationException("INVALID_PAYLOAD", "Notification payload is empty.");
-        var variables = payload.Variables
-            ?? throw new NotificationMaterializationException("INVALID_PAYLOAD", "Notification variables are required.");
+        var variables = payload.Variables is null
+            ? throw new NotificationMaterializationException("INVALID_PAYLOAD", "Notification variables are required.")
+            : new Dictionary<string, string>(payload.Variables, StringComparer.Ordinal);
+        if (payload.ProtectedVariables is not null)
+        {
+            foreach (var protectedVariable in payload.ProtectedVariables)
+            {
+                try
+                {
+                    variables[protectedVariable.Key] = deliveryOtpHandoffProtector.Unprotect(protectedVariable.Value);
+                }
+                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or CryptographicException)
+                {
+                    throw new NotificationMaterializationException(
+                        "INVALID_PROTECTED_PAYLOAD",
+                        $"Notification protected variable '{protectedVariable.Key}' could not be materialized.");
+                }
+            }
+        }
+
         var templates = await dbContext.NotificationTemplates
             .Where(x => x.EventType == notificationEvent.EventType && x.IsActive && x.Language == "en")
             .OrderBy(x => x.Channel)

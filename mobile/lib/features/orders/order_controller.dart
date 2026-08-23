@@ -1,5 +1,5 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,7 +8,7 @@ import 'order_models.dart';
 import 'order_repository.dart';
 
 final orderRepositoryProvider = Provider<OrderRepository>(
-  (ref) => OrderRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => OrderRepository(api: authenticatedApiClient(ref)),
 );
 
 final orderControllerProvider = NotifierProvider<OrderController, OrderState>(
@@ -61,8 +61,13 @@ class OrderState {
 class OrderController extends Notifier<OrderState> {
   OrderRepository get _repository => ref.read(orderRepositoryProvider);
 
+  late String _checkoutIdempotencyKey;
+
   @override
-  OrderState build() => const OrderState();
+  OrderState build() {
+    _checkoutIdempotencyKey = _newCheckoutIdempotencyKey();
+    return const OrderState();
+  }
 
   String? get _token =>
       ref.read(sessionControllerProvider).session?.accessToken;
@@ -78,7 +83,36 @@ class OrderController extends Notifier<OrderState> {
     } else {
       items[index] = value;
     }
-    state = state.copyWith(cart: items, clearError: true);
+    state = state.copyWith(
+      cart: items,
+      clearPreview: true,
+      clearError: true,
+    );
+  }
+
+  void updateCartQuantity(String productId, double quantity) {
+    if (quantity <= 0) {
+      removeCartItem(productId);
+      return;
+    }
+    final items = state.cart
+        .map(
+          (item) => item.product.publicId == productId
+              ? item.copyWith(quantity: quantity)
+              : item,
+        )
+        .toList(growable: false);
+    state = state.copyWith(cart: items, clearPreview: true, clearError: true);
+  }
+
+  void incrementCartItem(String productId) {
+    final item = state.cart.firstWhere((item) => item.product.publicId == productId);
+    updateCartQuantity(productId, item.quantity + 1);
+  }
+
+  void decrementCartItem(String productId) {
+    final item = state.cart.firstWhere((item) => item.product.publicId == productId);
+    updateCartQuantity(productId, item.quantity - 1);
   }
 
   void removeCartItem(String productId) {
@@ -88,6 +122,11 @@ class OrderController extends Notifier<OrderState> {
           .toList(growable: false),
       clearPreview: true,
     );
+  }
+
+  void clearCartAfterSuccessfulPayment() {
+    if (state.cart.isEmpty) return;
+    state = state.copyWith(cart: const <OrderCartItem>[], clearPreview: true);
   }
 
   void clearPreview() {
@@ -130,14 +169,13 @@ class OrderController extends Notifier<OrderState> {
       final order = await _repository.create(
         token,
         requestFor(addressId),
-        'mobile-${DateTime.now().microsecondsSinceEpoch}',
+        _checkoutIdempotencyKey,
       );
       state = state.copyWith(
         isSaving: false,
         selectedOrder: order,
-        cart: const <OrderCartItem>[],
-        clearPreview: true,
       );
+      _checkoutIdempotencyKey = _newCheckoutIdempotencyKey();
       return order;
     } on ApiException catch (error) {
       state = state.copyWith(isSaving: false, errorMessage: error.message);
@@ -196,6 +234,8 @@ class OrderController extends Notifier<OrderState> {
     }
     return false;
   }
+  String _newCheckoutIdempotencyKey() =>
+      'mobile-${DateTime.now().microsecondsSinceEpoch}';
 }
 
 const _offlineMessage =

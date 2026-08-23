@@ -145,7 +145,7 @@ Fields:
 - Contact mobile
 - Delivery instructions
 
-Location must be geocoded and stored as latitude/longitude.
+Location must be geocoded and stored as latitude/longitude. Selecting or moving the map pin performs provider-neutral reverse lookup when a provider is configured. Non-empty returned address fields may populate the form, while manually entered values remain intact when a provider omits a field or lookup fails. Latitude and longitude remain internal map state and are never editable as customer text fields. Existing saved coordinates initialize the map.
 
 ### 3.9 Checkout
 Sections:
@@ -232,10 +232,13 @@ Shows:
 Fields:
 - Quantity
 - Delivery days
+- Delivery slot: Morning or Evening
 - Start date
 - Entitlement period / prepaid amount
 - Address
 - Payment method
+
+Morning is the compatibility default for legacy or omitted slot values. The subscription delivery slot is separate from dairy production shifts.
 
 ### 3.17 Subscription Calendar
 Each scheduled date has status:
@@ -256,6 +259,7 @@ Shows:
 - Plan
 - Milk quantity
 - Delivery days
+- Delivery slot: Morning or Evening
 - Paid amount
 - Total entitlement
 - Used entitlement
@@ -328,8 +332,28 @@ Shows:
 
 ### 4.2 Delivery List
 Filters:
+- Date
 - Status
+- Delivery type: All, One-time, Subscription
+- Subscription slot: All, Morning, Evening
 - Route/order
+
+Paid one-time orders appear automatically as `ReadyForAssignment`. Failed or cancelled payments do not create delivery rows.
+
+### 4.2.1 Delivery Manager Operations
+Delivery Manager controls include:
+- Date selector.
+- Status filter.
+- Delivery type filter: All, One-time, or Subscription.
+- Subscription slot filter: All, Morning, or Evening; disabled when Delivery type is One-time.
+- `Generate Subscription Deliveries` action.
+- Row checkboxes for deliveries in `ReadyForAssignment`.
+- Select All, Clear Selection, selected count, and Assign Selected controls.
+- Employee selection followed by assignment confirmation.
+
+`Generate Subscription Deliveries` creates only eligible subscription deliveries through the selected operational date and is bounded to the configured generation window. It does not generate an entire future subscription lifetime. The operation is subscription-only; paid one-time deliveries are created by successful payment confirmation and appear in the queue automatically.
+
+Bulk assignment submits one backend operation. The server validates every selected delivery, branch authorization, employee eligibility, and current delivery state before mutating any row. Assignment is atomic: a validation failure leaves all selected deliveries unchanged. After success, audit, notification, and realtime effects are recorded, the list refreshes from the server, and selection is reconciled against the refreshed delivery IDs.
 
 ### 4.3 Delivery Detail
 Shows only permitted customer information.

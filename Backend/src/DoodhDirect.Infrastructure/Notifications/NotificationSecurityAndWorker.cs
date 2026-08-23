@@ -7,6 +7,24 @@ using Microsoft.Extensions.Options;
 
 namespace DoodhDirect.Infrastructure.Notifications;
 
+public sealed class DeliveryOtpHandoffProtector(IDataProtectionProvider dataProtectionProvider)
+{
+    private readonly IDataProtector _protector = dataProtectionProvider.CreateProtector(
+        "DoodhDirect.Deliveries.OtpHandoff.v1");
+
+    public string Protect(string code)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(code);
+        return _protector.Protect(code.Trim());
+    }
+
+    public string Unprotect(string protectedCode)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(protectedCode);
+        return _protector.Unprotect(protectedCode);
+    }
+}
+
 internal sealed class NotificationTokenProtector(IDataProtectionProvider dataProtectionProvider)
 {
     private readonly IDataProtector _protector = dataProtectionProvider.CreateProtector(

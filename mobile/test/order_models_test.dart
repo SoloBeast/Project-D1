@@ -75,12 +75,12 @@ void main() {
     expect(OrderSummary.fromJson(json('Confirmed')).formattedTotal, '₹90.00');
   });
 
-  test('order timestamps remain UTC instants and display in device local time', () {
+  test('order summary parses persisted payment and delivery metadata', () {
     final order = OrderSummary.fromJson({
       'publicId': 'order-1',
       'orderNumber': 'DD-000001',
       'type': 'OneTime',
-      'status': 'PendingPayment',
+      'status': 'Confirmed',
       'createdAt': '2026-08-20T02:41:00.000',
       'addressLabel': 'Home',
       'city': 'Bengaluru',
@@ -90,10 +90,43 @@ void main() {
       'discountAmount': 0,
       'payableAmount': 90,
       'cancelledAt': null,
+      'paymentPublicId': 'payment-1',
+      'paymentStatus': 'Success',
+      'gatewayPaymentId': 'pay_authoritative_123',
+      'deliveryPublicId': 'delivery-1',
+      'deliveryReferenceNumber': 'DEL-000001',
+      'deliveryStatus': 'OutForDelivery',
     });
 
-    expect(order.createdAt.isUtc, isFalse);
-    expect(order.createdAt.toIso8601String(), '2026-08-20T02:41:00.000');
-    expect(formatOrderDate(order.createdAt), '20-Aug-2026 02:41 AM');
+    expect(order.paymentStatus, 'Success');
+    expect(order.gatewayPaymentId, 'pay_authoritative_123');
+    expect(order.deliveryPublicId, 'delivery-1');
+    expect(order.deliveryReferenceNumber, 'DEL-000001');
+    expect(order.deliveryStatus, 'OutForDelivery');
   });
+
+  test(
+    'order timestamps remain UTC instants and display in device local time',
+    () {
+      final order = OrderSummary.fromJson({
+        'publicId': 'order-1',
+        'orderNumber': 'DD-000001',
+        'type': 'OneTime',
+        'status': 'PendingPayment',
+        'createdAt': '2026-08-20T02:41:00.000',
+        'addressLabel': 'Home',
+        'city': 'Bengaluru',
+        'branchName': 'Main Branch',
+        'items': <Map<String, dynamic>>[],
+        'subtotal': 90,
+        'discountAmount': 0,
+        'payableAmount': 90,
+        'cancelledAt': null,
+      });
+
+      expect(order.createdAt.isUtc, isFalse);
+      expect(order.createdAt.toIso8601String(), '2026-08-20T02:41:00.000');
+      expect(formatOrderDate(order.createdAt), '20-Aug-2026 02:41 AM');
+    },
+  );
 }

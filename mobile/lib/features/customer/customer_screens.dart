@@ -276,6 +276,7 @@ class _CustomerProfileEditScreenState
   late final TextEditingController _lastName;
   late final TextEditingController _mobile;
   late final TextEditingController _gender;
+  final _formKey = GlobalKey<FormState>();
   DateTime? _dateOfBirth;
 
   @override
@@ -305,6 +306,7 @@ class _CustomerProfileEditScreenState
       appBar: AppBar(title: const Text('Edit profile')),
       body: DoodhPage(
         child: Form(
+          key: _formKey,
           child: ListView(
             children: [
               DoodhSectionHeader(
@@ -322,14 +324,25 @@ class _CustomerProfileEditScreenState
               ),
               TextFormField(
                 controller: _mobile,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Alternate mobile',
+                  errorText: _fieldError('alternateMobile'),
                 ),
                 keyboardType: TextInputType.phone,
+                validator: _mobileValidator,
               ),
-              TextFormField(
-                controller: _gender,
-                decoration: const InputDecoration(labelText: 'Gender'),
+              DropdownButtonFormField<String>(
+                initialValue: _gender.text.isEmpty ? null : _gender.text,
+                decoration: InputDecoration(
+                  labelText: 'Gender',
+                  errorText: _fieldError('gender'),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'Male', child: Text('Male')),
+                  DropdownMenuItem(value: 'Female', child: Text('Female')),
+                  DropdownMenuItem(value: 'Other', child: Text('Other')),
+                ],
+                onChanged: (value) => _gender.text = value ?? '',
               ),
               ListTile(
                 contentPadding: EdgeInsets.zero,
@@ -366,7 +379,19 @@ class _CustomerProfileEditScreenState
     );
   }
 
+  String? _fieldError(String field) =>
+      ref.read(customerControllerProvider).fieldErrors[field];
+
+  String? _mobileValidator(String? value) {
+    final normalized = value?.trim() ?? '';
+    if (normalized.isEmpty) return null;
+    return RegExp(r'^(?:\+?91)?[6-9][0-9]{9}$').hasMatch(normalized)
+        ? null
+        : 'Enter a valid Indian mobile number';
+  }
+
   Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
     final saved = await ref
         .read(customerControllerProvider.notifier)
         .saveProfile(
@@ -477,6 +502,7 @@ class _CustomerAddressEditScreenState
                 'Contact mobile',
                 required: true,
                 keyboardType: TextInputType.phone,
+                validator: _mobileValidator,
               ),
               const SizedBox(height: 8),
               Text('Location', style: Theme.of(context).textTheme.titleMedium),
@@ -570,16 +596,29 @@ class _CustomerAddressEditScreenState
     String label, {
     bool required = false,
     TextInputType? keyboardType,
+    String? Function(String?)? validator,
   }) => TextFormField(
     controller: _fields[key],
     keyboardType: keyboardType,
-    decoration: InputDecoration(labelText: label),
-    validator: required
-        ? (value) => value == null || value.trim().isEmpty
-              ? '$label is required'
-              : null
-        : null,
+    decoration: InputDecoration(
+      labelText: label,
+      errorText: ref.watch(customerControllerProvider).fieldErrors[key],
+    ),
+    validator: validator ??
+        (required
+            ? (value) => value == null || value.trim().isEmpty
+                  ? '$label is required'
+                  : null
+            : null),
   );
+
+  String? _mobileValidator(String? value) {
+    final normalized = value?.trim() ?? '';
+    if (normalized.isEmpty) return 'Contact mobile is required';
+    return RegExp(r'^(?:\+?91)?[6-9][0-9]{9}$').hasMatch(normalized)
+        ? null
+        : 'Enter a valid Indian mobile number';
+  }
 
   Future<void> _lookup() async {
     final latitude = double.tryParse(_fields['latitude']!.text);
@@ -593,7 +632,7 @@ class _CustomerAddressEditScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Address lookup is not configured for this environment.',
+            'Address lookup is unavailable right now. Your coordinates and address fields were preserved.',
           ),
         ),
       );
@@ -605,8 +644,12 @@ class _CustomerAddressEditScreenState
       'city': lookup.city,
       'state': lookup.state,
       'pinCode': lookup.pinCode,
+      'landmark': lookup.landmark,
     }.entries) {
-      if (entry.value != null) _fields[entry.key]!.text = entry.value!;
+      final value = entry.value?.trim();
+      if (value != null && value.isNotEmpty) {
+        _fields[entry.key]!.text = value;
+      }
     }
   }
 

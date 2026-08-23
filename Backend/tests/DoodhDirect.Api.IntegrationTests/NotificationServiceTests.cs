@@ -56,6 +56,40 @@ public sealed class NotificationServiceTests
     }
 
     [Fact]
+    public async Task Delivery_otp_seeded_template_decrypts_only_during_rendering()
+    {
+        await using var harness = await NotificationHarness.CreateAsync();
+        await new NotificationTemplateSeedService(harness.Db).SeedAsync(default);
+        const string code = "731946";
+        var protectedCode = harness.OtpProtector.Protect(code);
+
+        await harness.AddEventAsync(
+            harness.Customer.Id,
+            NotificationEventTypes.DeliveryOtpIssued,
+            "delivery:test:otp-issued",
+            new Dictionary<string, string> { ["message"] = "Your delivery OTP is ready." },
+            "/deliveries/test",
+            new Dictionary<string, string> { ["otp"] = protectedCode });
+
+        var storedEvent = await harness.Db.NotificationEvents.AsNoTracking().SingleAsync();
+        Assert.DoesNotContain(code, storedEvent.PayloadJson, StringComparison.Ordinal);
+        Assert.Contains(protectedCode, storedEvent.PayloadJson, StringComparison.Ordinal);
+
+        Assert.Equal(1, await harness.Processor.ProcessPendingEventsAsync(default));
+        await harness.Processor.ProcessDueDeliveriesAsync(default);
+
+        var notification = await harness.Db.Notifications.AsNoTracking().SingleAsync();
+        Assert.Equal(
+            $"Your delivery OTP is {code}. Share it only with the assigned delivery staff.",
+            notification.Body);
+        Assert.Equal("/deliveries/test", notification.DeepLink);
+
+        var sms = Assert.Single(harness.Gateway(NotificationChannel.Sms).Messages);
+        Assert.Contains(code, sms.Body, StringComparison.Ordinal);
+        Assert.Equal("/deliveries/test", sms.DeepLink);
+    }
+
+    [Fact]
     public async Task Preferences_suppress_optional_channels_and_reject_disabling_critical_events()
     {
         await using var harness = await NotificationHarness.CreateAsync();
@@ -311,6 +345,7 @@ public sealed class NotificationServiceTests
             User otherCustomer,
             SecureTokenGenerator tokenGenerator,
             NotificationTokenProtector tokenProtector,
+            DeliveryOtpHandoffProtector otpProtector,
             IReadOnlyDictionary<NotificationChannel, ScriptedNotificationGateway> gateways,
             NotificationProcessor processor,
             NotificationService service,
@@ -323,6 +358,7 @@ public sealed class NotificationServiceTests
             OtherCustomer = otherCustomer;
             TokenGenerator = tokenGenerator;
             TokenProtector = tokenProtector;
+            OtpProtector = otpProtector;
             _gateways = gateways;
             Processor = processor;
             Service = service;
@@ -335,6 +371,7 @@ public sealed class NotificationServiceTests
         public User OtherCustomer { get; }
         public SecureTokenGenerator TokenGenerator { get; }
         public NotificationTokenProtector TokenProtector { get; }
+        public DeliveryOtpHandoffProtector OtpProtector { get; }
         public NotificationProcessor Processor { get; }
         public NotificationService Service { get; }
         public NotificationTemplateService TemplateService { get; }
@@ -364,7 +401,8 @@ public sealed class NotificationServiceTests
             string eventType,
             string? eventKey = null,
             IReadOnlyDictionary<string, string>? variables = null,
-            string? deepLink = null)
+            string? deepLink = null,
+            IReadOnlyDictionary<string, string>? protectedVariables = null)
         {
             var writer = new NotificationEventWriter(Db, new TestIndiaTimeProvider(Clock));
             writer.Add(new NotificationEventRequest(
@@ -373,7 +411,8 @@ public sealed class NotificationServiceTests
                 eventKey ?? $"notification-test:{Interlocked.Increment(ref _eventSequence)}",
                 variables ?? new Dictionary<string, string>(),
                 deepLink,
-                Clock.Now));
+                Clock.Now,
+                protectedVariables));
             await Db.SaveChangesAsync();
         }
 
@@ -402,7 +441,9 @@ public sealed class NotificationServiceTests
 
             var clock = new TestClock(new DateTime(2026, 8, 17, 12, 0, 0, DateTimeKind.Unspecified));
             var tokenGenerator = new SecureTokenGenerator();
-            var tokenProtector = new NotificationTokenProtector(new EphemeralDataProtectionProvider());
+            var dataProtectionProvider = new EphemeralDataProtectionProvider();
+            var tokenProtector = new NotificationTokenProtector(dataProtectionProvider);
+            var otpProtector = new DeliveryOtpHandoffProtector(dataProtectionProvider);
             var gateways = Enum.GetValues<NotificationChannel>()
                 .ToDictionary(channel => channel, channel => new ScriptedNotificationGateway(channel));
             var notificationOptions = Options.Create(new NotificationOptions
@@ -416,8 +457,9 @@ public sealed class NotificationServiceTests
                 db,
                 gateways.Values,
                 tokenProtector,
+                otpProtector,
                 notificationOptions,
-                clock);
+                new TestIndiaTimeProvider(clock));
             var service = new NotificationService(db, tokenGenerator, tokenProtector, clock);
             var templateService = new NotificationTemplateService(db, clock);
 
@@ -429,6 +471,7 @@ public sealed class NotificationServiceTests
                 otherCustomer,
                 tokenGenerator,
                 tokenProtector,
+                otpProtector,
                 gateways,
                 processor,
                 service,

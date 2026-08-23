@@ -14,7 +14,14 @@ public sealed class CustomerService(
     IIndiaTimeProvider timeProvider) : ICustomerService
 {
     private static readonly Regex PinCodePattern = new("^[1-9][0-9]{5}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex MobilePattern = new("^[0-9+()\\- ]{7,20}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex MobilePattern = new("^(?:\\+?91)?[6-9][0-9]{9}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly IReadOnlySet<string> SupportedGenders =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Male",
+            "Female",
+            "Other",
+        };
 
     public async Task<CustomerProfileResult> GetProfileAsync(long userId, CancellationToken cancellationToken)
     {
@@ -62,17 +69,18 @@ public sealed class CustomerService(
                 request.ContactMobile.Trim(),
                 request.Latitude!.Value,
                 request.Longitude!.Value);
+            if (request.IsDefault)
+            {
+                await ClearOtherDefaultsAsync(userId, 0, cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+
             createdAddress.Update(
                 request.Label, request.AddressLine1, request.AddressLine2, request.Locality, request.City,
                 request.State, request.PinCode, request.Landmark, request.DeliveryInstructions,
                 request.ContactName, request.ContactMobile, request.IsDefault, request.Latitude.Value, request.Longitude.Value);
             dbContext.CustomerAddresses.Add(createdAddress);
             await dbContext.SaveChangesAsync(cancellationToken);
-            if (request.IsDefault)
-            {
-                await ClearOtherDefaultsAsync(userId, createdAddress.Id, cancellationToken);
-                await dbContext.SaveChangesAsync(cancellationToken);
-            }
         }, cancellationToken);
         return createdAddress!.ToResult();
     }
@@ -84,14 +92,16 @@ public sealed class CustomerService(
         await ExecuteInTransactionAsync(async () =>
         {
             updatedAddress = await FindAddressAsync(userId, publicId, cancellationToken);
+            if (request.IsDefault && !updatedAddress.IsDefault)
+            {
+                await ClearOtherDefaultsAsync(userId, updatedAddress.Id, cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+
             updatedAddress.Update(
                 request.Label, request.AddressLine1, request.AddressLine2, request.Locality, request.City,
                 request.State, request.PinCode, request.Landmark, request.DeliveryInstructions,
                 request.ContactName, request.ContactMobile, request.IsDefault, request.Latitude!.Value, request.Longitude!.Value);
-            if (request.IsDefault)
-            {
-                await ClearOtherDefaultsAsync(userId, updatedAddress.Id, cancellationToken);
-            }
             await dbContext.SaveChangesAsync(cancellationToken);
         }, cancellationToken);
         return updatedAddress!.ToResult();
@@ -196,6 +206,7 @@ public sealed class CustomerService(
             throw new ValidationAppException("Date of birth cannot be in the future.", nameof(request.DateOfBirth));
         }
 
+        ValidateGender(request.Gender);
         ValidateMobile(request.AlternateMobile, nameof(request.AlternateMobile));
     }
 
@@ -240,11 +251,24 @@ public sealed class CustomerService(
         }
     }
 
+    private static void ValidateGender(string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value) &&
+            !SupportedGenders.Contains(value.Trim()))
+        {
+            throw new ValidationAppException(
+                "Gender must be Male, Female, or Other.",
+                nameof(UpdateCustomerProfileRequest.Gender));
+        }
+    }
+
     private static void ValidateMobile(string? value, string field)
     {
         if (!string.IsNullOrWhiteSpace(value) && !MobilePattern.IsMatch(value.Trim()))
         {
-            throw new ValidationAppException("Mobile number format is invalid.", field);
+            throw new ValidationAppException(
+                "Mobile number must be a valid Indian mobile number.",
+                field);
         }
     }
 }

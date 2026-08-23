@@ -94,6 +94,10 @@ public static class DependencyInjection
                     && uri.Scheme == Uri.UriSchemeHttps,
                 "CameraStreams:DevelopmentHlsPlaybackUrl must be an absolute HTTPS URL when DevelopmentMock is selected.")
             .ValidateOnStart();
+        services.AddOptions<AddressGeocodingOptions>()
+            .Bind(configuration.GetSection(AddressGeocodingOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
         services.AddOptions<NotificationOptions>()
             .Bind(configuration.GetSection(NotificationOptions.SectionName))
             .ValidateDataAnnotations()
@@ -132,7 +136,10 @@ public static class DependencyInjection
         services.AddScoped<IBranchAllocationService, BranchAllocationService>();
         services.AddScoped<IOrderService, OrderService>();
         services.AddScoped<ISubscriptionService, SubscriptionService>();
-        services.AddScoped<IDeliveryService, DeliveryService>();
+        services.AddSingleton<DeliveryOtpSendGate>();
+        services.AddScoped<DeliveryService>();
+        services.AddScoped<IDeliveryService>(provider => provider.GetRequiredService<DeliveryService>());
+        services.AddScoped<IOneTimeDeliveryCreator>(provider => provider.GetRequiredService<DeliveryService>());
         services.AddScoped<IDairyService, DairyService>();
         services.AddScoped<IMilkTestService, MilkTestService>();
         services.AddScoped<ICameraService, CameraService>();
@@ -141,6 +148,7 @@ public static class DependencyInjection
         services.AddScoped<INotificationTemplateService, NotificationTemplateService>();
         services.AddScoped<INotificationProcessor, NotificationProcessor>();
         services.AddSingleton<NotificationTokenProtector>();
+        services.AddSingleton<DeliveryOtpHandoffProtector>();
         services.AddHostedService<NotificationWorker>();
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IWalletService, WalletService>();
@@ -156,7 +164,13 @@ public static class DependencyInjection
         });
         services.AddScoped<IPaymentGateway>(provider =>
             provider.GetRequiredService<RazorpayPaymentGateway>());
-        services.AddSingleton<IAddressLocationLookup, UnconfiguredAddressLocationLookup>();
+        services.AddHttpClient<GoogleAddressLocationLookup>((provider, client) =>
+        {
+            var options = provider.GetRequiredService<IOptions<AddressGeocodingOptions>>().Value;
+            client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+        });
+        services.AddScoped<IAddressLocationLookup>(provider =>
+            provider.GetRequiredService<GoogleAddressLocationLookup>());
         services.AddScoped<IdentitySeedService>();
         services.AddScoped<DevelopmentCustomerSeedService>();
         services.AddScoped<DevelopmentDeliveryStaffSeedService>();

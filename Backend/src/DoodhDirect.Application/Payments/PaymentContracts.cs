@@ -81,6 +81,24 @@ public sealed record GatewayPaymentStatusResult(
     bool IsSuccessful,
     bool IsTerminalFailure);
 
+public sealed record GatewayOrderPaymentsResult(
+    string GatewayOrderId,
+    IReadOnlyList<GatewayPaymentStatusResult> Payments);
+
+public enum PaymentReconciliationOutcome
+{
+    Captured,
+    DefinitivelyNotCaptured,
+    Pending,
+    Ambiguous
+}
+
+public sealed record PaymentReconciliationResult(
+    PaymentResult Payment,
+    PaymentReconciliationOutcome Outcome,
+    string GatewayStatus,
+    bool TargetRecovered);
+
 public sealed record GatewayRefundResult(
     string GatewayRefundId,
     string Status,
@@ -116,6 +134,10 @@ public interface IPaymentGateway
 
     Task<GatewayPaymentStatusResult> GetPaymentStatusAsync(
         string gatewayPaymentId,
+        CancellationToken cancellationToken);
+
+    Task<GatewayOrderPaymentsResult> GetPaymentsForOrderAsync(
+        string gatewayOrderId,
         CancellationToken cancellationToken);
 
     bool VerifyWebhookSignature(
@@ -163,6 +185,11 @@ public interface IPaymentService
         Guid paymentId,
         CancellationToken cancellationToken);
 
+    Task<PaymentResult> CancelAsync(
+        long customerId,
+        Guid paymentId,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<PaymentCapability>> GetCapabilitiesAsync(
         CancellationToken cancellationToken);
 
@@ -176,6 +203,12 @@ public interface IPaymentService
         long requestedByUserId,
         Guid paymentId,
         RefundPaymentRequest request,
+        CancellationToken cancellationToken);
+
+    Task<PaymentReconciliationResult> ReconcileAsync(
+        long requestedByUserId,
+        Guid paymentId,
+        bool bypassOwnership,
         CancellationToken cancellationToken);
 
     Task ProcessWebhookAsync(

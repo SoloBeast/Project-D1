@@ -164,7 +164,7 @@ public sealed class AuthenticationService(
             authUser.BranchIds,
             now);
         dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAt, session.Id, now));
-        dbContext.AuditLogs.Add(new AuditLog(
+        dbContext.AddAuditLog(new AuditLog(
             user.Id,
             action,
             "UserSession",
@@ -229,7 +229,7 @@ public sealed class AuthenticationService(
 
     private async Task WriteAuditAsync(long? userId, string action, string entityType, string entityId, string? ipAddress, string? userAgent, string? reason, CancellationToken cancellationToken)
     {
-        dbContext.AuditLogs.Add(new AuditLog(userId, action, entityType, entityId, null, null, ipAddress, userAgent, reason, timeProvider.Now));
+        dbContext.AddAuditLog(new AuditLog(userId, action, entityType, entityId, null, null, ipAddress, userAgent, reason, timeProvider.Now));
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 

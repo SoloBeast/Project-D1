@@ -44,12 +44,13 @@ Deliver:
 - Customer profile
 - Multiple addresses
 - Map pin
-- Geocoding
+- Geocoding and provider-neutral reverse geocoding
 - Default address
 - Address validation
 
 Acceptance:
-- Valid address coordinates are stored.
+- Valid address coordinates are stored as internal map state rather than editable text fields.
+- Pin movement may populate only non-empty lookup fields; lookup failure preserves the coordinates and current manual values.
 
 ## Phase 3 — Products & One-Time Orders
 
@@ -82,6 +83,7 @@ Acceptance:
 Deliver:
 - Prepaid subscription
 - Delivery-day schedules
+- Morning/Evening subscription delivery slots, separate from dairy production shifts
 - Subscription calendar
 - Skip
 - Pause/resume
@@ -90,11 +92,15 @@ Deliver:
 Acceptance:
 - Delivered consumes entitlement.
 - Skipped/failed does not.
+- Legacy or omitted delivery slots resolve to Morning without rewriting historical subscription outcomes.
 
 ## Phase 6 — Delivery Operations
 
 Deliver:
-- Delivery assignment
+- Delivery assignment and atomic bulk assignment
+- Branch-aware Delivery Manager filters for date, status, delivery type, and subscription slot
+- Automatic idempotent one-time delivery creation after successful payment confirmation
+- Bounded, subscription-only operational delivery generation
 - Delivery staff views
 - GPS
 - Navigation
@@ -105,6 +111,9 @@ Deliver:
 Acceptance:
 - Customer sees active delivery location.
 - OTP is required to complete delivery.
+- Successful one-time payment paths create exactly one `ReadyForAssignment` delivery; failed and cancelled payments create none.
+- Subscription generation cannot exceed the configured operational window or materialize an entire future subscription lifetime.
+- Bulk assignment validates every selected row, branch scope, and employee eligibility before one atomic mutation.
 
 ## Phase 7 — Complaints & Replacement
 
@@ -217,6 +226,19 @@ Acceptance:
 - CSV and XLSX exports contain the selected authorized report data, are handed to the platform save boundary, and transient export bytes are cleared after handoff.
 - Backend and Flutter focused/full regressions, Release/web builds, OpenAPI validation, migration/model alignment, and SQL schema inspection pass.
 - Phase 13 hardening work remains deferred until this acceptance is complete.
+
+### Payment-safety release acceptance
+
+The Razorpay payment-safety acceptance is recorded with Phase 12 release evidence because it hardens the existing payment boundary without starting Phase 13. Razorpay is authoritative only for strictly validated capture evidence; the backend owns state transitions and side effects. Verify, webhook, reconciliation, cancellation, expiry, replacement, and retry converge, fail closed on uncertainty, and revalidate evidence under serializable isolation. No automatic refunds were performed or added.
+
+Release evidence completed:
+- Backend Release tests: 61 domain tests and 422 integration tests passed.
+- Flutter: 265 tests passed and `flutter analyze` reported no issues.
+- Backend Release build passed with zero warnings and zero errors.
+- Flutter web JavaScript Release build passed; WebAssembly dry-run/package and missing Cupertino font messages were non-blocking toolchain warnings.
+- EF reported no changes since the last migration; no additional migration was generated.
+- Read-only historical evidence snapshots for the four INR 2,800 incidents were byte-identical before and after, with SHA-256 `E533CD9396C744B8999090DA9E48B037292E98A80431EFA0D6F35058995F3DA8`.
+- Phase 13 implementation was not started.
 
 ## Phase 13 — Hardening
 

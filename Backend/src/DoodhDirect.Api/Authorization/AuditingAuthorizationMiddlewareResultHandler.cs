@@ -67,7 +67,7 @@ public sealed class AuditingAuthorizationMiddlewareResultHandler(
             }
 
             var endpoint = context.GetEndpoint()?.DisplayName ?? context.Request.Path.Value ?? "unknown";
-            dbContext.AuditLogs.Add(new AuditLog(
+            dbContext.AddAuditLog(new AuditLog(
                 userId,
                 forbidden ? "AUTHORIZATION_FORBIDDEN" : "AUTHORIZATION_CHALLENGED",
                 "Endpoint",

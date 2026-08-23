@@ -56,15 +56,31 @@ class SessionController extends Notifier<SessionState> {
   );
 
   Future<void> refresh() async {
-    final current = state.session;
-    if (current == null) return;
+    await refreshAccessToken();
+  }
 
+  Future<String?> refreshAccessToken() {
+    final current = state.session;
+    if (current == null) return Future.value(null);
+    final inFlight = _refreshInFlight;
+    if (inFlight != null) return inFlight;
+
+    final operation = _refreshAccessToken(current);
+    _refreshInFlight = operation;
+    return operation.whenComplete(() => _refreshInFlight = null);
+  }
+
+  Future<String?>? _refreshInFlight;
+
+  Future<String?> _refreshAccessToken(AuthSession current) async {
     try {
-      state = SessionState.authenticated(await _repository.refresh(current));
+      final refreshed = await _repository.refresh(current);
+      state = SessionState.authenticated(refreshed);
+      return refreshed.accessToken;
     } on ApiException catch (error) {
       if (error.statusCode == 401) {
         await expireSession();
-        return;
+        return null;
       }
       rethrow;
     }

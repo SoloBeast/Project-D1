@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:doodh_direct_mobile/core/device/device_metadata_service.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/auth/session_state.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,7 +17,7 @@ final deviceMetadataServiceProvider = Provider<DeviceMetadataService>(
 );
 
 final notificationRepositoryProvider = Provider<NotificationRepository>(
-  (ref) => NotificationRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => NotificationRepository(api: authenticatedApiClient(ref)),
 );
 
 final pushNotificationGatewayProvider = Provider<PushNotificationGateway>(

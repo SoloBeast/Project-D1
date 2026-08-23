@@ -30,6 +30,7 @@ void main() {
         quantity: 1.125,
         startDate: DateTime(2026, 8, 17, 14, 30),
         deliveryDays: const {DeliveryWeekday.monday, DeliveryWeekday.wednesday},
+        slot: SubscriptionDeliverySlot.evening,
         totalEntitlement: 30,
         paymentMethod: PaymentMethod.wallet,
       );
@@ -37,6 +38,7 @@ void main() {
         quantity: 0.75,
         addressId: 'address-2',
         deliveryDays: {DeliveryWeekday.friday},
+        slot: SubscriptionDeliverySlot.morning,
       );
 
       expect(create.toJson(), {
@@ -45,6 +47,7 @@ void main() {
         'quantity': 1.125,
         'startDate': '2026-08-17',
         'deliveryDays': ['Monday', 'Wednesday'],
+        'slot': 'Evening',
         'totalEntitlement': 30,
         'paymentMethod': 'Wallet',
       });
@@ -52,6 +55,7 @@ void main() {
         'quantity': 0.75,
         'addressId': 'address-2',
         'deliveryDays': ['Friday'],
+        'slot': 'Morning',
       });
     });
 
@@ -64,7 +68,18 @@ void main() {
 
       expect(created.subscription.status, SubscriptionStatus.active);
       expect(created.subscription.status.canPause, isTrue);
-      expect(created.subscription.scheduleLabel, 'Mon, Wed, Fri');
+      expect(
+        created.subscription.scheduleLabel,
+        'Mon Morning, Wed Morning, Fri Morning',
+      );
+      expect(
+        SubscriptionDeliverySlot.fromApi('Evening'),
+        SubscriptionDeliverySlot.evening,
+      );
+      expect(
+        SubscriptionDeliverySlot.fromApi('unexpected'),
+        SubscriptionDeliverySlot.morning,
+      );
       expect(
         created.subscription.formattedQuantity,
         '1.125 litre per delivery',
@@ -98,6 +113,7 @@ void main() {
           'quantity': 1.125,
           'startDate': '2026-08-17',
           'deliveryDays': ['Monday', 'Wednesday'],
+          'slot': 'Morning',
           'totalEntitlement': 30,
           'paymentMethod': 'Wallet',
         });
@@ -174,6 +190,7 @@ void main() {
               'quantity': 0.75,
               'addressId': null,
               'deliveryDays': null,
+              'slot': null,
             });
           }
           if (request.url.path.endsWith('/skip')) {
@@ -492,7 +509,10 @@ void main() {
       expect(find.text('Subscriptions'), findsOneWidget);
       expect(find.text('Whole Milk'), findsOneWidget);
       expect(find.textContaining('24 deliveries remaining'), findsOneWidget);
-      expect(find.textContaining('Mon, Wed, Fri'), findsOneWidget);
+      expect(
+        find.textContaining('Mon Morning, Wed Morning, Fri Morning'),
+        findsOneWidget,
+      );
       expect(find.byTooltip('Create subscription'), findsOneWidget);
     });
 
@@ -763,6 +783,7 @@ Map<String, dynamic> paymentJson({
 Map<String, dynamic> deliveryJson({String status = 'Scheduled'}) => {
   'publicId': status == 'Scheduled' ? 'delivery-1' : 'delivery-2',
   'scheduledDate': '2026-08-17',
+  'slot': 'Evening',
   'quantity': 1.125,
   'status': status,
   'branchId': 'branch-1',

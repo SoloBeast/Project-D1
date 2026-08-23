@@ -26,4 +26,7 @@ public sealed class DeliveryOptions
 
     [Range(1, 365)]
     public int LocationRetentionDays { get; init; } = 30;
+
+    [Range(1, 365)]
+    public int SubscriptionGenerationWindowDays { get; init; } = 31;
 }

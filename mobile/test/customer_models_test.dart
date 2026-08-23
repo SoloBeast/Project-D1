@@ -103,18 +103,37 @@ void main() {
     });
   });
 
-  test('reverse lookup parses provider-neutral response', () {
+  test('reverse lookup parses optional landmark and country metadata', () {
     final lookup = AddressLookup.fromJson({
       'addressLine1': '12 Market Road',
       'locality': 'Indiranagar',
       'city': 'Bengaluru',
       'state': 'Karnataka',
       'pinCode': '560038',
+      'landmark': 'Near Metro',
+      'country': 'India',
       'latitude': 12.9716,
       'longitude': 77.5946,
     });
 
     expect(lookup.city, 'Bengaluru');
+    expect(lookup.landmark, 'Near Metro');
+    expect(lookup.country, 'India');
     expect(lookup.latitude, 12.9716);
+  });
+
+  test('reverse lookup keeps legacy responses compatible', () {
+    final lookup = AddressLookup.fromJson({
+      'addressLine1': null,
+      'locality': null,
+      'city': null,
+      'state': null,
+      'pinCode': null,
+      'latitude': 12.9716,
+      'longitude': 77.5946,
+    });
+
+    expect(lookup.landmark, isNull);
+    expect(lookup.country, isNull);
   });
 }

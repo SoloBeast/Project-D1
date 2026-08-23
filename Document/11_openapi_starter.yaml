@@ -91,6 +91,7 @@ paths:
   /customers/me/address-lookup/reverse:
     get:
       summary: Reverse geocode a map pin for address entry
+      description: Coordinates remain the selected pin even when no provider match is available. Nullable or empty provider fields must not overwrite customer-entered values.
       security:
         - bearerAuth: []
       parameters:
@@ -103,8 +104,14 @@ paths:
           required: true
           schema: { type: number, format: double, minimum: -180, maximum: 180 }
       responses:
-        '200': { description: Optional provider lookup result }
+        '200':
+          description: Nullable provider lookup result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AddressLookupResponse' }
         '400': { description: Invalid coordinates }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /admin/customers/{customerId}/profile:
     get:
       summary: Read a customer profile
@@ -897,14 +904,34 @@ paths:
         '422': { $ref: '#/components/responses/BusinessRuleError' }
   /delivery-management/materialize:
     post:
-      summary: Materialize eligible confirmed orders and subscription occurrences as deliveries
+      summary: Generate eligible delivery work through an operational date
+      description: Idempotently creates missing delivery rows for eligible confirmed one-time orders and active scheduled subscription occurrences. The through date is inclusive and must be within the configured subscription generation window beginning on the current India-local date.
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/throughDate'
       responses:
         '200':
-          description: Materialization counts
+          description: Generation counts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeliveryMaterializationResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /delivery-management/fetch-subscriptions:
+    post:
+      summary: Generate eligible subscription deliveries through an operational date
+      description: Idempotently creates only active scheduled subscription occurrence deliveries. The through date is inclusive and must be within the configured window beginning on the current India-local date.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/throughDate'
+        - $ref: '#/components/parameters/subscriptionSlot'
+      responses:
+        '200':
+          description: Subscription generation counts
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeliveryMaterializationResponse' }
@@ -914,13 +941,15 @@ paths:
         '422': { $ref: '#/components/responses/BusinessRuleError' }
   /delivery-management/branches/{branchId}:
     get:
-      summary: List a branch delivery queue
+      summary: List a filtered branch delivery queue
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/deliveryBranchId'
         - $ref: '#/components/parameters/deliveryDate'
         - $ref: '#/components/parameters/deliveryStatus'
+        - $ref: '#/components/parameters/deliverySourceType'
+        - $ref: '#/components/parameters/subscriptionSlot'
       responses:
         '200':
           description: Branch delivery queue
@@ -961,6 +990,29 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /delivery-management/bulk-assign:
+    post:
+      summary: Atomically assign selected ready deliveries to one eligible employee
+      description: Validates every selected delivery, branch scope, ReadyForAssignment state, and employee eligibility before mutating any delivery. A failed validation produces no partial assignment.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BulkAssignDeliveriesRequest' }
+      responses:
+        '200':
+          description: Assigned deliveries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkAssignDeliveriesResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /delivery-management/{deliveryId}/assign:
     post:
       summary: Assign or reassign a delivery to an eligible employee in the delivery branch
@@ -1929,10 +1981,22 @@ components:
       in: query
       required: false
       schema: { $ref: '#/components/schemas/DeliveryStatus' }
+    deliverySourceType:
+      name: sourceType
+      in: query
+      required: false
+      schema: { $ref: '#/components/schemas/DeliverySourceType' }
+    subscriptionSlot:
+      name: slot
+      in: query
+      required: false
+      description: Morning or Evening subscription delivery slot. One-time deliveries do not have a slot.
+      schema: { $ref: '#/components/schemas/SubscriptionDeliverySlot' }
     throughDate:
       name: throughDate
       in: query
       required: true
+      description: Inclusive India-local generation date. Must be today or later and no later than the final day of the configured operational generation window.
       schema: { type: string, format: date }
     idempotencyKey:
       name: Idempotency-Key
@@ -2963,6 +3027,17 @@ components:
       properties:
         employeeId: { type: string, format: uuid }
         reason: { type: string, nullable: true }
+    BulkAssignDeliveriesRequest:
+      type: object
+      required: [deliveryIds, employeeId]
+      properties:
+        deliveryIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        employeeId: { type: string, format: uuid }
+        reason: { type: string, nullable: true }
     DeliveryNotesRequest:
       type: object
       properties:
@@ -3007,6 +3082,16 @@ components:
         assignedByUserId: { type: string, format: uuid }
         assignedAtUtc: { type: string, format: date-time }
         reason: { type: string, nullable: true }
+    DeliveryOrderSummary:
+      type: object
+      required: [orderNumber, totalQuantity, totalAmount, items]
+      properties:
+        orderNumber: { type: string }
+        totalQuantity: { type: number, format: double, minimum: 0 }
+        totalAmount: { type: number, format: double, minimum: 0 }
+        items:
+          type: array
+          items: { type: string }
     Delivery:
       type: object
       required: [deliveryId, sourceType, referenceNumber, status, scheduledDate, branchId, customerId, customerName, customerMobile, destinationAddress, destinationLatitude, destinationLongitude, isTrackingActive, assignments]
@@ -3045,6 +3130,13 @@ components:
         assignments:
           type: array
           items: { $ref: '#/components/schemas/DeliveryAssignment' }
+        subscriptionSlot:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/SubscriptionDeliverySlot' }]
+        quantity: { type: number, format: double, nullable: true, minimum: 0 }
+        orderSummary:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/DeliveryOrderSummary' }]
     CustomerDelivery:
       type: object
       description: Customer-safe tracking view that omits contact data, destination coordinates, operational notes, and assignment history.
@@ -3091,6 +3183,24 @@ components:
       properties:
         success: { type: boolean, enum: [true] }
         data: { $ref: '#/components/schemas/Delivery' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    BulkAssignDeliveriesResult:
+      type: object
+      required: [deliveries]
+      properties:
+        deliveries:
+          type: array
+          items: { $ref: '#/components/schemas/Delivery' }
+    BulkAssignDeliveriesResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/BulkAssignDeliveriesResult' }
         message: { type: string, nullable: true }
         errors:
           type: array
@@ -3194,6 +3304,9 @@ components:
           items: { $ref: '#/components/schemas/DeliveryWeekday' }
         totalEntitlement: { type: integer, format: int32, minimum: 1, maximum: 366 }
         paymentMethod: { $ref: '#/components/schemas/PaymentMethod' }
+        slot:
+          description: Defaults to Morning when omitted for backward compatibility.
+          allOf: [{ $ref: '#/components/schemas/SubscriptionDeliverySlot' }]
     UpdateSubscriptionRequest:
       type: object
       properties:
@@ -3205,6 +3318,9 @@ components:
           minItems: 1
           uniqueItems: true
           items: { $ref: '#/components/schemas/DeliveryWeekday' }
+        slot:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/SubscriptionDeliverySlot' }]
     SkipSubscriptionDeliveryRequest:
       type: object
       required: [deliveryId]
@@ -3213,12 +3329,16 @@ components:
     DeliveryWeekday:
       type: string
       enum: [Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday]
+    SubscriptionDeliverySlot:
+      type: string
+      enum: [Morning, Evening]
+      description: Subscription delivery timing; distinct from dairy production shifts.
     PaymentMethod:
       type: string
       enum: [Razorpay, Wallet]
     PaymentStatus:
       type: string
-      enum: [Initiated, Pending, Success, Failed, Expired, RefundPending, PartiallyRefunded, Refunded]
+      enum: [Initiated, Pending, Success, Failed, Cancelled, Expired, RefundPending, PartiallyRefunded, Refunded]
     SubscriptionStatus:
       type: string
       enum: [PaymentPending, Active, Paused, Completed, Cancelled, PaymentFailed]
@@ -3227,12 +3347,13 @@ components:
       enum: [Scheduled, Skipped, Delivered, Failed, Cancelled]
     SubscriptionSchedule:
       type: object
-      required: [dayOfWeek]
+      required: [dayOfWeek, slot]
       properties:
         dayOfWeek: { $ref: '#/components/schemas/DeliveryWeekday' }
+        slot: { $ref: '#/components/schemas/SubscriptionDeliverySlot' }
     SubscriptionDelivery:
       type: object
-      required: [publicId, scheduledDate, quantity, status, branchId, branchCode, branchName, address]
+      required: [publicId, scheduledDate, quantity, status, branchId, branchCode, branchName, address, slot]
       properties:
         publicId: { type: string, format: uuid }
         scheduledDate: { type: string, format: date }
@@ -3243,6 +3364,7 @@ components:
         branchName: { type: string }
         address: { type: string }
         statusChangedAt: { type: string, format: date-time, nullable: true }
+        slot: { $ref: '#/components/schemas/SubscriptionDeliverySlot' }
     Subscription:
       type: object
       required: [publicId, status, productId, productSku, productName, unitOfMeasure, quantity, unitPrice, payableAmount, startDate, endDate, totalEntitlement, usedEntitlement, remainingEntitlement, addressId, address, branchId, branchCode, branchName, schedules, createdAt]
@@ -3455,7 +3577,7 @@ components:
         isDefault: { type: boolean }
     AddressLookupResult:
       type: object
-      nullable: true
+      required: [latitude, longitude]
       properties:
         addressLine1: { type: string, nullable: true }
         locality: { type: string, nullable: true }
@@ -3464,6 +3586,21 @@ components:
         pinCode: { type: string, nullable: true }
         latitude: { type: number, format: double }
         longitude: { type: number, format: double }
+        landmark: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+    AddressLookupResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/AddressLookupResult' }]
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
     CheckoutRequest:
       type: object
       required: [addressId, items]

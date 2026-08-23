@@ -84,7 +84,7 @@ public sealed class CustomerAddress : AuditableEntity
         }
     }
 
-    public void Deactivate() 
+    public void Deactivate()
     {
         IsActive = false;
         IsDefault = false;

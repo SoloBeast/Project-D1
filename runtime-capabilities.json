@@ -1,0 +1,1 @@
+﻿{"success":true,"data":[{"method":"Wallet","provider":"Wallet","label":"Wallet","isAvailable":true,"unavailableReason":null},{"method":"Razorpay","provider":"Razorpay","label":"Razorpay","isAvailable":true,"unavailableReason":null},{"method":"Development","provider":"Mock","label":"Development payment","isAvailable":true,"unavailableReason":null}],"message":null,"errors":[]}

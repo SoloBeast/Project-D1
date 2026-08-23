@@ -199,6 +199,8 @@ class AddressLookup {
     required this.pinCode,
     required this.latitude,
     required this.longitude,
+    this.landmark,
+    this.country,
   });
 
   factory AddressLookup.fromJson(Map<String, dynamic> json) => AddressLookup(
@@ -207,6 +209,8 @@ class AddressLookup {
     city: json['city'] as String?,
     state: json['state'] as String?,
     pinCode: json['pinCode'] as String?,
+    landmark: json['landmark'] as String?,
+    country: json['country'] as String?,
     latitude: (json['latitude'] as num).toDouble(),
     longitude: (json['longitude'] as num).toDouble(),
   );
@@ -216,6 +220,8 @@ class AddressLookup {
   final String? city;
   final String? state;
   final String? pinCode;
+  final String? landmark;
+  final String? country;
   final double latitude;
   final double longitude;
 }

@@ -1,4 +1,6 @@
 using DoodhDirect.Domain.Deliveries;
+using DoodhDirect.Domain.Orders;
+using DoodhDirect.Domain.Subscriptions;
 
 namespace DoodhDirect.Application.Deliveries;
 
@@ -8,6 +10,17 @@ public sealed record DeliveryActor(
     bool HasGlobalAccess = false);
 
 public sealed record AssignDeliveryRequest(Guid EmployeeId, string? Reason);
+public sealed record BulkAssignDeliveriesRequest(
+    IReadOnlyCollection<Guid> DeliveryIds,
+    Guid EmployeeId,
+    string? Reason);
+public sealed record BulkAssignDeliveriesResult(
+    IReadOnlyList<DeliveryResult> Deliveries);
+public sealed record DeliveryOrderSummary(
+    string OrderNumber,
+    decimal TotalQuantity,
+    decimal TotalAmount,
+    IReadOnlyCollection<string> Items);
 public sealed record DeliveryNotesRequest(string? Remarks);
 public sealed record FailDeliveryRequest(string Reason, string? Remarks, decimal? Latitude, decimal? Longitude);
 public sealed record VerifyDeliveryOtpRequest(string Code);
@@ -54,7 +67,10 @@ public sealed record DeliveryResult(
     string? OperationalNotes,
     bool IsTrackingActive,
     DeliveryLocationResult? LatestLocation,
-    IReadOnlyCollection<DeliveryAssignmentResult> Assignments);
+    IReadOnlyCollection<DeliveryAssignmentResult> Assignments,
+    SubscriptionDeliverySlot? SubscriptionSlot = null,
+    decimal? Quantity = null,
+    DeliveryOrderSummary? OrderSummary = null);
 
 public sealed record CustomerDeliveryResult(
     Guid DeliveryId,
@@ -69,7 +85,8 @@ public sealed record CustomerDeliveryResult(
     DeliveryLocationResult? LatestLocation,
     DateTime? CompletedAt,
     DateTime? FailedAt,
-    string? FailureReason);
+    string? FailureReason,
+    string? ActiveOtp = null);
 
 public sealed record DeliveryEmployeeResult(
     Guid EmployeeId,
@@ -78,22 +95,35 @@ public sealed record DeliveryEmployeeResult(
 
 public sealed record DeliveryMaterializationResult(int OrdersCreated, int SubscriptionOccurrencesCreated);
 
+public interface IOneTimeDeliveryCreator
+{
+    void AddIfMissing(Order order, DateOnly scheduledDate);
+    Task IssuePendingOtpsAsync(CancellationToken cancellationToken);
+}
+
 public interface IDeliveryRealtimePublisher
 {
     Task DeliveryChangedAsync(DeliveryResult delivery, CancellationToken cancellationToken);
     Task LocationChangedAsync(Guid deliveryId, DeliveryLocationResult location, CancellationToken cancellationToken);
 }
 
-public interface IDeliveryService
+public interface IDeliveryService : IOneTimeDeliveryCreator
 {
     Task<DeliveryMaterializationResult> MaterializeEligibleAsync(
         DeliveryActor actor,
         DateOnly throughDate,
         CancellationToken cancellationToken);
 
+    Task<DeliveryMaterializationResult> FetchSubscriptionDeliveriesAsync(
+        DeliveryActor actor,
+        DateOnly throughDate,
+        SubscriptionDeliverySlot? slot,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<DeliveryResult>> GetTodayForStaffAsync(
         DeliveryActor actor,
         DateOnly date,
+        DeliveryStatus? status,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<DeliveryResult>> GetForBranchAsync(
@@ -101,6 +131,8 @@ public interface IDeliveryService
         long branchId,
         DateOnly? date,
         DeliveryStatus? status,
+        DeliverySourceType? sourceType,
+        SubscriptionDeliverySlot? slot,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<DeliveryEmployeeResult>> GetEmployeesAsync(
@@ -129,6 +161,11 @@ public interface IDeliveryService
         AssignDeliveryRequest request,
         CancellationToken cancellationToken);
 
+    Task<BulkAssignDeliveriesResult> BulkAssignAsync(
+        DeliveryActor actor,
+        BulkAssignDeliveriesRequest request,
+        CancellationToken cancellationToken);
+
     Task<DeliveryResult> PickUpAsync(
         DeliveryActor actor,
         Guid deliveryId,
@@ -137,8 +174,6 @@ public interface IDeliveryService
 
     Task<DeliveryResult> StartAsync(DeliveryActor actor, Guid deliveryId, CancellationToken cancellationToken);
     Task<DeliveryResult> ArriveAsync(DeliveryActor actor, Guid deliveryId, CancellationToken cancellationToken);
-
-    Task IssueOtpAsync(DeliveryActor actor, Guid deliveryId, CancellationToken cancellationToken);
 
     Task<DeliveryResult> VerifyOtpAsync(
         DeliveryActor actor,

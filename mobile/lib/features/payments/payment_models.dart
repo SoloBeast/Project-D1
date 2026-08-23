@@ -16,6 +16,7 @@ enum PaymentStatus {
   pending,
   success,
   failed,
+  cancelled,
   expired,
   refundPending,
   partiallyRefunded,
@@ -27,6 +28,7 @@ enum PaymentStatus {
     'pending' => PaymentStatus.pending,
     'success' => PaymentStatus.success,
     'failed' => PaymentStatus.failed,
+    'cancelled' => PaymentStatus.cancelled,
     'expired' => PaymentStatus.expired,
     'refundpending' => PaymentStatus.refundPending,
     'partiallyrefunded' => PaymentStatus.partiallyRefunded,
@@ -45,7 +47,9 @@ enum PaymentStatus {
       this == PaymentStatus.refundPending;
 
   bool get isTerminalFailure =>
-      this == PaymentStatus.failed || this == PaymentStatus.expired;
+      this == PaymentStatus.failed ||
+      this == PaymentStatus.cancelled ||
+      this == PaymentStatus.expired;
 }
 
 class PaymentCapability {
@@ -179,9 +183,7 @@ DateTime? _parseOptionalAbsoluteTimestamp(
       : json[compatibilityKey];
   if (value == null) return null;
   if (value is! String) {
-    throw FormatException(
-      'Invalid absolute timestamp: $preferredKey',
-    );
+    throw FormatException('Invalid absolute timestamp: $preferredKey');
   }
   return DateTime.parse(value).toUtc();
 }

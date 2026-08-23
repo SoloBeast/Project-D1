@@ -47,7 +47,7 @@ public sealed class OtpService(
             request.IpAddress);
         await delivery.SendAsync(destination, code, cancellationToken);
         dbContext.OtpChallenges.Add(challenge);
-        dbContext.AuditLogs.Add(new AuditLog(null, "AUTH_OTP_REQUESTED", "OtpChallenge", challenge.PublicId.ToString(), null, null, request.IpAddress, null, request.Purpose.ToString(), now));
+        dbContext.AddAuditLog(new AuditLog(null, "AUTH_OTP_REQUESTED", "OtpChallenge", challenge.PublicId.ToString(), null, null, request.IpAddress, null, request.Purpose.ToString(), now));
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -71,7 +71,7 @@ public sealed class OtpService(
         if (!passwordHasher.Verify(challenge.CodeHash, code))
         {
             challenge.RecordFailedAttempt();
-            dbContext.AuditLogs.Add(new AuditLog(null, "AUTH_OTP_FAILED", "OtpChallenge", challenge.PublicId.ToString(), null, null, request.Device.IpAddress, request.Device.UserAgent, "Invalid code", now));
+            dbContext.AddAuditLog(new AuditLog(null, "AUTH_OTP_FAILED", "OtpChallenge", challenge.PublicId.ToString(), null, null, request.Device.IpAddress, request.Device.UserAgent, "Invalid code", now));
             await dbContext.SaveChangesAsync(cancellationToken);
             throw new UnauthorizedAppException("The OTP is invalid or has expired.");
         }
@@ -119,7 +119,7 @@ public sealed class OtpService(
             authUser.BranchIds,
             now);
         dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAt, session.Id, now));
-        dbContext.AuditLogs.Add(new AuditLog(user.Id, "AUTH_OTP_LOGIN", "UserSession", session.PublicId.ToString(), null, null, request.Device.IpAddress, request.Device.UserAgent, request.Purpose.ToString(), now));
+        dbContext.AddAuditLog(new AuditLog(user.Id, "AUTH_OTP_LOGIN", "UserSession", session.PublicId.ToString(), null, null, request.Device.IpAddress, request.Device.UserAgent, request.Purpose.ToString(), now));
         if (registeredUser)
         {
             notificationEventWriter.Add(new NotificationEventRequest(
@@ -148,7 +148,7 @@ public sealed class OtpService(
 
     private async Task WriteAuditAsync(long? userId, string action, string entityId, string? ipAddress, string? userAgent, string? reason, CancellationToken cancellationToken)
     {
-        dbContext.AuditLogs.Add(new AuditLog(userId, action, "OtpChallenge", entityId, null, null, ipAddress, userAgent, reason, timeProvider.Now));
+        dbContext.AddAuditLog(new AuditLog(userId, action, "OtpChallenge", entityId, null, null, ipAddress, userAgent, reason, timeProvider.Now));
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 

@@ -78,7 +78,11 @@ The application should never store raw card details.
 
 Use Razorpay-hosted/tokenized mechanisms.
 
-Store gateway IDs and status, not sensitive payment credentials.
+Store gateway IDs and status, not sensitive payment credentials. Gateway payment and order IDs are operational evidence, not proof of capture without a fresh authoritative Razorpay query.
+
+For every Razorpay capture decision, compare gateway payment ID, order ID, amount, currency, status, capture flag, terminal-failure state, refund state, and duplicate/conflict conditions with the local attempt. Direct payment lookup is preferred when the payment ID is known; order-payment discovery is used when it is absent. Pending, ambiguous, unavailable, malformed, unknown, refunded, duplicated, conflicting, or financially inconsistent evidence fails closed.
+
+Before expiry, cancellation, replacement, or retry, all relevant previous Razorpay attempts must be proven definitively terminal and non-captured. The final evidence is revalidated within a serializable backend transaction. Business confirmation, subscription activation, delivery/OTP creation, notification events, and refunds remain backend-owned and idempotent. No automatic refund is introduced by this hardening.
 
 Manual refund/wallet operations require audit records.
 
@@ -259,8 +263,21 @@ The business should obtain professional tax/accounting advice before invoicing a
 
 ## 15. Operational Runbooks
 
+### Payment outage or capture discrepancy
+
+1. Stop replacement, retry, expiry, and cancellation actions for affected Razorpay attempts unless direct gateway evidence proves definitive terminal non-capture.
+2. Check API, Razorpay client, webhook, reconciliation, and database health using correlation IDs. Do not treat a missing or delayed webhook as a failed payment.
+3. Confirm the Razorpay Dashboard webhook uses the public HTTPS `POST /webhooks/razorpay` endpoint, the correct environment secret, and the release-approved payment/refund event list. Signature verification must use the exact raw request body.
+4. For a known gateway payment ID, query Razorpay directly. Otherwise discover payments for the stored Razorpay order. Compare identity, amount, currency, status, capture/refund flags, and duplicate/conflicting results.
+5. Apply only the shared backend reconciliation path. `Captured` may complete the local target exactly once; `Pending` or `Ambiguous` stays unresolved; definitive non-capture may close an eligible attempt. Never infer capture from local state or the client callback.
+6. After provider recovery, replay verification or reconciliation safely. Webhook delivery is asynchronous and may be delayed, duplicated, reordered, or absent; reconciliation is the fallback.
+7. Escalate captured-but-unconfirmed cases to payment operations with gateway IDs, local payment public ID, order/subscription ID, amount/currency, timestamps, correlation ID, and sanitized gateway evidence. Do not include credentials or raw card data.
+8. Do not issue an automatic refund. A refund is a separate audited backend decision after capture and customer/business disposition are established.
+
+Residual risk: provider-side delayed visibility, missing local gateway payment IDs, webhook delivery failure, and historical records that cannot be linked locally may require manual Razorpay Dashboard investigation. The historical INR 2,800 captured-payment investigation is documented in `Document/RAZORPAY_HISTORICAL_CAPTURED_PAYMENT_INCIDENT_REPORT.md`; a separate INR 80 anomaly was discovered and excluded from that scope. The investigation was read-only and caused no reconciliation, refund, cancellation, expiry, replacement, webhook processing, or database mutation.
+
 Create runbooks for:
-- Payment outage
+- Payment outage and capture discrepancy
 - Notification outage, including pending-event age, retry backlog, per-channel unconfigured/failure rates, invalid-token spikes, provider credential/configuration checks, worker health, and safe replay/idempotency verification
 - GPS outage
 - Camera outage, including metadata API, stream gateway, descriptor issuance, upstream camera/NVR, expiry, and protocol-specific diagnosis

@@ -106,7 +106,7 @@ public sealed class WalletService(
                 timeProvider.Now),
             (wallet, transaction) =>
             {
-                dbContext.AuditLogs.Add(new AuditLog(
+                dbContext.AddAuditLog(new AuditLog(
                     administratorUserId,
                     "WalletAdjusted",
                     nameof(Wallet),

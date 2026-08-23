@@ -4,7 +4,9 @@ using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Customer;
+using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Orders;
+using DoodhDirect.Domain.Payments;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -113,7 +115,7 @@ public sealed class OrderService(
             .SingleOrDefaultAsync(order => order.CustomerId == customerId && order.IdempotencyKey == idempotencyKey.Trim(), cancellationToken);
         if (existing is not null)
         {
-            return existing.ToResult();
+            return await ToResultAsync(existing, cancellationToken);
         }
 
         var calculation = await CalculateAsync(customerId, request, cancellationToken);
@@ -183,34 +185,36 @@ public sealed class OrderService(
             }
 
             var duplicate = await LoadOrderAsync(customerId, idempotencyKey.Trim(), cancellationToken);
-            if (duplicate is not null) return duplicate.ToResult();
+            if (duplicate is not null) return await ToResultAsync(duplicate, cancellationToken);
             throw;
         }
 
         await LoadNavigationAsync(order, cancellationToken);
-        return order.ToResult();
+        return await ToResultAsync(order, cancellationToken);
     }
 
     public async Task<IReadOnlyList<OrderResult>> GetForCustomerAsync(long customerId, CancellationToken cancellationToken) =>
-        (await QueryOrders()
-            .Where(order => order.CustomerId == customerId)
-            .OrderByDescending(order => order.CreatedAt)
-            .ToListAsync(cancellationToken))
-        .Select(order => order.ToResult())
-        .ToArray();
+        await ToResultsAsync(
+            await QueryOrders()
+                .Where(order => order.CustomerId == customerId)
+                .OrderByDescending(order => order.CreatedAt)
+                .ToListAsync(cancellationToken),
+            cancellationToken);
 
     public async Task<IReadOnlyList<OrderResult>> GetForAdministrationAsync(CancellationToken cancellationToken) =>
-        (await QueryOrders()
-            .OrderByDescending(order => order.CreatedAt)
-            .ToListAsync(cancellationToken))
-        .Select(order => order.ToResult())
-        .ToArray();
+        await ToResultsAsync(
+            await QueryOrders()
+                .OrderByDescending(order => order.CreatedAt)
+                .ToListAsync(cancellationToken),
+            cancellationToken);
 
     public async Task<OrderResult> GetAsync(long customerId, Guid orderId, bool bypassOwnership, CancellationToken cancellationToken)
     {
         var order = await QueryOrders()
             .SingleOrDefaultAsync(order => order.PublicId == orderId && (bypassOwnership || order.CustomerId == customerId), cancellationToken);
-        return order?.ToResult() ?? throw new NotFoundException("Order was not found.");
+        return order is null
+            ? throw new NotFoundException("Order was not found.")
+            : await ToResultAsync(order, cancellationToken);
     }
 
     public async Task<OrderResult> CancelAsync(long customerId, Guid orderId, CancellationToken cancellationToken)
@@ -218,17 +222,30 @@ public sealed class OrderService(
         var order = await QueryOrders()
             .SingleOrDefaultAsync(order => order.PublicId == orderId && order.CustomerId == customerId, cancellationToken)
             ?? throw new NotFoundException("Order was not found.");
+        var now = timeProvider.Now;
         try
         {
-            order.Cancel(timeProvider.Now);
+            order.Cancel(now);
         }
         catch (InvalidOperationException exception)
         {
             throw new BusinessRuleException(exception.Message);
         }
 
+        var deliveries = await dbContext.Deliveries
+            .Include(delivery => delivery.Otps)
+            .Where(delivery => delivery.OrderId == order.Id)
+            .ToListAsync(cancellationToken);
+        foreach (var delivery in deliveries)
+        {
+            foreach (var otp in delivery.Otps)
+            {
+                otp.Invalidate(now);
+            }
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
-        return order.ToResult();
+        return await ToResultAsync(order, cancellationToken);
     }
 
     private async Task<Calculation> CalculateAsync(long customerId, CheckoutRequest request, CancellationToken cancellationToken)
@@ -291,6 +308,43 @@ public sealed class OrderService(
 
     private async Task<Order?> LoadOrderAsync(long customerId, string idempotencyKey, CancellationToken cancellationToken) =>
         await QueryOrders().SingleOrDefaultAsync(order => order.CustomerId == customerId && order.IdempotencyKey == idempotencyKey, cancellationToken);
+
+    private async Task<OrderResult> ToResultAsync(Order order, CancellationToken cancellationToken) =>
+        (await ToResultsAsync([order], cancellationToken)).Single();
+
+    private async Task<IReadOnlyList<OrderResult>> ToResultsAsync(
+        IReadOnlyCollection<Order> orders,
+        CancellationToken cancellationToken)
+    {
+        if (orders.Count == 0)
+        {
+            return [];
+        }
+
+        var orderIds = orders.Select(order => order.Id).ToArray();
+        var paymentAttempts = await dbContext.Payments
+            .Where(payment => payment.OrderId.HasValue && orderIds.Contains(payment.OrderId.Value))
+            .ToListAsync(cancellationToken);
+        var payments = paymentAttempts
+            .Where(payment => payment.OrderId.HasValue)
+            .GroupBy(payment => payment.OrderId!.Value)
+            .ToDictionary(group => group.Key, group => group
+                .OrderByDescending(payment => payment.Status is
+                    PaymentStatus.Success or
+                    PaymentStatus.PartiallyRefunded or
+                    PaymentStatus.Refunded)
+                .ThenByDescending(payment => payment.CreatedAt)
+                .First());
+        var deliveries = await dbContext.Deliveries
+            .Where(delivery => delivery.OrderId.HasValue && orderIds.Contains(delivery.OrderId.Value))
+            .ToDictionaryAsync(delivery => delivery.OrderId!.Value, cancellationToken);
+
+        return orders
+            .Select(order => order.ToResult(
+                payments.GetValueOrDefault(order.Id),
+                deliveries.GetValueOrDefault(order.Id)))
+            .ToArray();
+    }
 
     private string CreateOrderNumber() => $"DD-{timeProvider.Now:yyyyMMddHHmmss}-{Guid.NewGuid():N}"[..25].ToUpperInvariant();
 

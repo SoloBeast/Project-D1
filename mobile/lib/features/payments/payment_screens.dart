@@ -257,6 +257,8 @@ class PaymentResultScreen extends ConsumerStatefulWidget {
 }
 
 class _PaymentResultScreenState extends ConsumerState<PaymentResultScreen> {
+  bool _cartClearedForSuccess = false;
+
   @override
   void initState() {
     super.initState();
@@ -276,6 +278,15 @@ class _PaymentResultScreenState extends ConsumerState<PaymentResultScreen> {
     final payment = state.payment?.publicId == widget.paymentId
         ? state.payment
         : null;
+    if (payment?.status.isSuccessful == true && !_cartClearedForSuccess) {
+      _cartClearedForSuccess = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref
+            .read(orderControllerProvider.notifier)
+            .clearCartAfterSuccessfulPayment();
+      });
+    }
     return Scaffold(
       appBar: AppBar(title: const Text('Payment status')),
       body: state.isLoading && payment == null

@@ -36,8 +36,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("EntityId")
                         .IsRequired()
@@ -72,11 +73,11 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CreatedAtUtc", "Id");
+                    b.HasIndex("CreatedAt", "Id");
 
-                    b.HasIndex("EntityType", "EntityId", "CreatedAtUtc");
+                    b.HasIndex("EntityType", "EntityId", "CreatedAt");
 
-                    b.HasIndex("UserId", "CreatedAtUtc", "Id");
+                    b.HasIndex("UserId", "CreatedAt", "Id");
 
                     b.ToTable("AuditLog", "dbo");
                 });
@@ -92,8 +93,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long>("BranchId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("DisplayName")
                         .IsRequired()
@@ -119,8 +121,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -151,8 +154,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long>("CameraId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("Protocol")
                         .IsRequired()
@@ -174,8 +178,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -214,8 +219,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
@@ -255,8 +261,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -289,8 +296,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long>("CategoryId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("Description")
                         .HasMaxLength(2000)
@@ -324,8 +332,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -392,8 +401,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("Description")
                         .HasMaxLength(500)
@@ -412,8 +422,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -436,8 +447,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("Description")
                         .HasMaxLength(500)
@@ -456,8 +468,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.Property<string>("Value")
                         .IsRequired()
@@ -512,8 +525,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(160)
                         .HasColumnType("nvarchar(160)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("DeliveryInstructions")
                         .HasMaxLength(500)
@@ -562,8 +576,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.Property<long>("UserId")
                         .HasColumnType("bigint");
@@ -594,8 +609,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<DateOnly?>("DateOfBirth")
                         .HasColumnType("date");
@@ -617,8 +633,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.Property<long>("UserId")
                         .HasColumnType("bigint");
@@ -650,11 +667,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long>("BranchId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
-                    b.Property<DateTime>("ProductionAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("ProductionAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ProductionAtUtc");
 
                     b.Property<long>("ProductionId")
                         .HasColumnType("bigint");
@@ -678,8 +697,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -692,7 +712,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("BranchId", "BatchNumber")
                         .IsUnique();
 
-                    b.HasIndex("BranchId", "ProductionAtUtc", "Status");
+                    b.HasIndex("BranchId", "ProductionAt", "Status");
 
                     b.ToTable("MilkBatch", "dbo", t =>
                         {
@@ -714,11 +734,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<int>("BuffaloCount")
                         .HasColumnType("int");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
-                    b.Property<DateTime>("ProductionAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("ProductionAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ProductionAtUtc");
 
                     b.Property<Guid>("PublicId")
                         .ValueGeneratedOnAdd()
@@ -745,8 +767,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -755,7 +778,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("RecordedByUserId");
 
-                    b.HasIndex("BranchId", "ProductionAtUtc");
+                    b.HasIndex("BranchId", "ProductionAt");
 
                     b.ToTable("MilkProduction", "dbo", t =>
                         {
@@ -779,8 +802,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long>("BranchId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<Guid>("PublicId")
                         .ValueGeneratedOnAdd()
@@ -803,11 +827,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
-                    b.Property<DateTime>("UsedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UsedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UsedAtUtc");
 
                     b.HasKey("Id");
 
@@ -816,9 +842,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("RecordedByUserId");
 
-                    b.HasIndex("BatchId", "UsedAtUtc");
+                    b.HasIndex("BatchId", "UsedAt");
 
-                    b.HasIndex("BranchId", "UsedAtUtc");
+                    b.HasIndex("BranchId", "UsedAt");
 
                     b.ToTable("MilkUsage", "dbo", t =>
                         {
@@ -834,11 +860,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime?>("ArrivedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("ArrivedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ArrivedAtUtc");
 
-                    b.Property<DateTime?>("AssignedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("AssignedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("AssignedAtUtc");
 
                     b.Property<long?>("AssignedEmployeeId")
                         .HasColumnType("bigint");
@@ -846,11 +874,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long>("BranchId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime?>("CompletedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CompletedAtUtc");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<long>("CustomerId")
                         .HasColumnType("bigint");
@@ -882,8 +912,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasPrecision(9, 6)
                         .HasColumnType("decimal(9,6)");
 
-                    b.Property<DateTime?>("FailedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("FailedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("FailedAtUtc");
 
                     b.Property<decimal?>("FailureLatitude")
                         .HasPrecision(9, 6)
@@ -904,14 +935,17 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long?>("OrderId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime?>("OtpVerifiedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("OtpVerifiedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("OtpVerifiedAtUtc");
 
-                    b.Property<DateTime?>("OutForDeliveryAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("OutForDeliveryAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("OutForDeliveryAtUtc");
 
-                    b.Property<DateTime?>("PickedUpAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("PickedUpAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("PickedUpAtUtc");
 
                     b.Property<Guid>("PublicId")
                         .ValueGeneratedOnAdd()
@@ -943,8 +977,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long?>("SubscriptionDeliveryId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -985,8 +1020,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime>("AssignedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("AssignedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("AssignedAtUtc");
 
                     b.Property<long>("AssignedByUserId")
                         .HasColumnType("bigint");
@@ -1010,9 +1046,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PreviousEmployeeId");
 
-                    b.HasIndex("DeliveryId", "AssignedAtUtc");
+                    b.HasIndex("DeliveryId", "AssignedAt");
 
-                    b.HasIndex("EmployeeId", "AssignedAtUtc");
+                    b.HasIndex("EmployeeId", "AssignedAt");
 
                     b.ToTable("DeliveryAssignment", "dbo");
                 });
@@ -1043,16 +1079,17 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasPrecision(9, 6)
                         .HasColumnType("decimal(9,6)");
 
-                    b.Property<DateTime>("RecordedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("RecordedAtUtc");
 
                     b.HasKey("Id");
 
                     b.HasIndex("EmployeeId");
 
-                    b.HasIndex("RecordedAtUtc");
+                    b.HasIndex("RecordedAt");
 
-                    b.HasIndex("DeliveryId", "RecordedAtUtc");
+                    b.HasIndex("DeliveryId", "RecordedAt");
 
                     b.ToTable("DeliveryLocation", "dbo", t =>
                         {
@@ -1080,34 +1117,45 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
-                    b.Property<DateTime?>("ConsumedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ConsumedAtUtc");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<long>("DeliveryId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime>("ExpiresAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ExpiresAtUtc");
 
                     b.Property<int>("MaximumAttempts")
                         .HasColumnType("int");
+
+                    b.Property<string>("ProtectedCode")
+                        .HasMaxLength(2048)
+                        .HasColumnType("nvarchar(2048)");
 
                     b.Property<Guid>("PublicId")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
+                    b.Property<DateTime?>("SentAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("SentAtUtc");
+
                     b.HasKey("Id");
 
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.HasIndex("DeliveryId", "CreatedAtUtc");
+                    b.HasIndex("DeliveryId", "CreatedAt");
 
-                    b.HasIndex("ExpiresAtUtc", "ConsumedAtUtc");
+                    b.HasIndex("ExpiresAt", "ConsumedAt");
 
                     b.ToTable("DeliveryOtp", "dbo", t =>
                         {
@@ -1128,19 +1176,22 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
-                    b.Property<DateTime?>("ConsumedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ConsumedAtUtc");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("Destination")
                         .IsRequired()
                         .HasMaxLength(320)
                         .HasColumnType("nvarchar(320)");
 
-                    b.Property<DateTime>("ExpiresAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ExpiresAtUtc");
 
                     b.Property<int>("FailedAttempts")
                         .HasColumnType("int");
@@ -1167,9 +1218,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.HasIndex("ExpiresAtUtc", "ConsumedAtUtc");
+                    b.HasIndex("ExpiresAt", "ConsumedAt");
 
-                    b.HasIndex("Destination", "Purpose", "CreatedAtUtc");
+                    b.HasIndex("Destination", "Purpose", "CreatedAt");
 
                     b.ToTable("OtpChallenge", "dbo");
                 });
@@ -1187,8 +1238,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(120)
                         .HasColumnType("nvarchar(120)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -1200,8 +1252,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -1222,18 +1275,21 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
-                    b.Property<DateTime>("ExpiresAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ExpiresAtUtc");
 
                     b.Property<string>("ReplacedByTokenHash")
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
-                    b.Property<DateTime?>("RevokedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("RevokedAtUtc");
 
                     b.Property<long?>("SessionId")
                         .HasColumnType("bigint");
@@ -1251,9 +1307,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("TokenHash")
                         .IsUnique();
 
-                    b.HasIndex("SessionId", "ExpiresAtUtc");
+                    b.HasIndex("SessionId", "ExpiresAt");
 
-                    b.HasIndex("UserId", "ExpiresAtUtc");
+                    b.HasIndex("UserId", "ExpiresAt");
 
                     b.ToTable("RefreshToken", "dbo");
                 });
@@ -1271,8 +1327,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(80)
                         .HasColumnType("nvarchar(80)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
@@ -1287,8 +1344,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -1333,8 +1391,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("DisplayName")
                         .HasMaxLength(160)
@@ -1347,8 +1406,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
-                    b.Property<DateTime?>("LastLoginAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("LastLoginAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("LastLoginAtUtc");
 
                     b.Property<string>("Mobile")
                         .HasMaxLength(20)
@@ -1363,8 +1423,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.Property<string>("UserType")
                         .IsRequired()
@@ -1384,7 +1445,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.HasIndex("UserType", "CreatedAtUtc", "Id");
+                    b.HasIndex("UserType", "CreatedAt", "Id");
 
                     b.ToTable("User", "dbo");
                 });
@@ -1431,8 +1492,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("DeviceIdentifierHash")
                         .IsRequired()
@@ -1447,8 +1509,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
-                    b.Property<DateTime>("LastSeenAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("LastSeenAtUtc");
 
                     b.Property<string>("Platform")
                         .HasMaxLength(40)
@@ -1463,8 +1526,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
-                    b.Property<DateTime?>("RevokedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("RevokedAtUtc");
 
                     b.Property<string>("UserAgent")
                         .HasMaxLength(1000)
@@ -1478,9 +1542,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.HasIndex("UserId", "DeviceIdentifierHash", "RevokedAtUtc");
+                    b.HasIndex("UserId", "DeviceIdentifierHash", "RevokedAt");
 
-                    b.HasIndex("UserId", "RevokedAtUtc", "LastSeenAtUtc");
+                    b.HasIndex("UserId", "RevokedAt", "LastSeenAt");
 
                     b.ToTable("UserSession", "dbo");
                 });
@@ -1496,17 +1560,20 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long>("BranchId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime?>("CompletedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CompletedAtUtc");
 
                     b.Property<long?>("CompletedByUserId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime?>("ConfirmedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ConfirmedAtUtc");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("CustomerDecision")
                         .IsRequired()
@@ -1528,11 +1595,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime?>("RejectedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("RejectedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("RejectedAtUtc");
 
-                    b.Property<DateTime>("RequestedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("RequestedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("RequestedAtUtc");
 
                     b.Property<long>("RequestedByUserId")
                         .HasColumnType("bigint");
@@ -1546,8 +1615,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -1561,9 +1631,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("RequestedByUserId");
 
-                    b.HasIndex("CustomerId", "RequestedAtUtc");
+                    b.HasIndex("CustomerId", "RequestedAt");
 
-                    b.HasIndex("BranchId", "Status", "RequestedAtUtc");
+                    b.HasIndex("BranchId", "Status", "RequestedAt");
 
                     b.ToTable("MilkTest", "dbo", t =>
                         {
@@ -1607,8 +1677,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<DateTime>("UploadedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UploadedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UploadedAtUtc");
 
                     b.Property<long>("UploadedByUserId")
                         .HasColumnType("bigint");
@@ -1623,7 +1694,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("UploadedByUserId");
 
-                    b.HasIndex("MilkTestId", "UploadedAtUtc");
+                    b.HasIndex("MilkTestId", "UploadedAt");
 
                     b.ToTable("MilkTestImage", "dbo", t =>
                         {
@@ -1682,8 +1753,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("nvarchar(2000)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("DeepLink")
                         .HasMaxLength(500)
@@ -1702,16 +1774,18 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime?>("ReadAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("ReadAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ReadAtUtc");
 
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(240)
                         .HasColumnType("nvarchar(240)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.Property<long>("UserId")
                         .HasColumnType("bigint");
@@ -1724,7 +1798,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.HasIndex("UserId", "ReadAtUtc", "CreatedAtUtc");
+                    b.HasIndex("UserId", "ReadAt", "CreatedAt");
 
                     b.ToTable("Notification", "dbo");
                 });
@@ -1740,8 +1814,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<int>("AttemptNumber")
                         .HasColumnType("int");
 
-                    b.Property<DateTime>("AttemptedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("AttemptedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("AttemptedAtUtc");
 
                     b.Property<string>("FailureCode")
                         .HasMaxLength(100)
@@ -1795,11 +1870,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
-                    b.Property<DateTime?>("DeliveredAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("DeliveredAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("DeliveredAtUtc");
 
                     b.Property<string>("DestinationReference")
                         .IsRequired()
@@ -1814,8 +1891,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
 
-                    b.Property<DateTime?>("NextAttemptAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("NextAttemptAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("NextAttemptAtUtc");
 
                     b.Property<long>("NotificationId")
                         .HasColumnType("bigint");
@@ -1839,8 +1917,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.Property<long?>("UserDeviceId")
                         .HasColumnType("bigint");
@@ -1857,7 +1936,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("UX_NotificationDelivery_NonDeviceChannel")
                         .HasFilter("[UserDeviceId] IS NULL");
 
-                    b.HasIndex("Status", "NextAttemptAtUtc");
+                    b.HasIndex("Status", "NextAttemptAt");
 
                     b.HasIndex("NotificationId", "Channel", "UserDeviceId")
                         .IsUnique()
@@ -1877,8 +1956,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("EventKey")
                         .IsRequired()
@@ -1901,16 +1981,18 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsCritical")
                         .HasColumnType("bit");
 
-                    b.Property<DateTime>("OccurredAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("OccurredAtUtc");
 
                     b.Property<string>("PayloadJson")
                         .IsRequired()
                         .HasMaxLength(8000)
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<DateTime?>("ProcessedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("ProcessedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ProcessedAtUtc");
 
                     b.Property<Guid>("PublicId")
                         .ValueGeneratedOnAdd()
@@ -1922,8 +2004,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.Property<long>("UserId")
                         .HasColumnType("bigint");
@@ -1936,9 +2019,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.HasIndex("Status", "OccurredAtUtc");
+                    b.HasIndex("Status", "OccurredAt");
 
-                    b.HasIndex("UserId", "OccurredAtUtc");
+                    b.HasIndex("UserId", "OccurredAt");
 
                     b.ToTable("NotificationEvent", "dbo");
                 });
@@ -1956,8 +2039,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("EventType")
                         .IsRequired()
@@ -1972,8 +2056,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.Property<long>("UserId")
                         .HasColumnType("bigint");
@@ -2007,8 +2092,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("EventType")
                         .IsRequired()
@@ -2032,8 +2118,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(240)
                         .HasColumnType("nvarchar(240)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -2056,8 +2143,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("DeviceIdentifierHash")
                         .IsRequired()
@@ -2068,14 +2156,16 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(160)
                         .HasColumnType("nvarchar(160)");
 
-                    b.Property<DateTime?>("InvalidatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("InvalidatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("InvalidatedAtUtc");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("bit");
 
-                    b.Property<DateTime?>("LastSeenAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("LastSeenAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("LastSeenAtUtc");
 
                     b.Property<string>("Platform")
                         .IsRequired()
@@ -2092,16 +2182,18 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("RegisteredAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("RegisteredAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("RegisteredAtUtc");
 
                     b.Property<string>("TokenHash")
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.Property<long>("UserId")
                         .HasColumnType("bigint");
@@ -2159,8 +2251,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
-                    b.Property<DateTime?>("CancelledAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CancelledAtUtc");
 
                     b.Property<string>("CitySnapshot")
                         .IsRequired()
@@ -2177,8 +2270,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(160)
                         .HasColumnType("nvarchar(160)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<long>("CustomerAddressId")
                         .HasColumnType("bigint");
@@ -2254,8 +2348,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -2267,12 +2362,12 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.HasIndex("CustomerId", "CreatedAtUtc");
+                    b.HasIndex("CustomerId", "CreatedAt");
 
                     b.HasIndex("CustomerId", "IdempotencyKey")
                         .IsUnique();
 
-                    b.HasIndex("BranchId", "Status", "CreatedAtUtc");
+                    b.HasIndex("BranchId", "Status", "CreatedAt");
 
                     b.ToTable("Order", "dbo", t =>
                         {
@@ -2359,8 +2454,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("Currency")
                         .IsRequired()
@@ -2370,11 +2466,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long>("CustomerId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime>("ExpiresAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ExpiresAtUtc");
 
-                    b.Property<DateTime?>("FailedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("FailedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("FailedAtUtc");
 
                     b.Property<string>("FailureCode")
                         .HasMaxLength(100)
@@ -2426,11 +2524,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long?>("SubscriptionId")
                         .HasColumnType("bigint");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
-                    b.Property<DateTime?>("VerifiedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("VerifiedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("VerifiedAtUtc");
 
                     b.HasKey("Id");
 
@@ -2454,9 +2554,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("CustomerId", "IdempotencyKey")
                         .IsUnique();
 
-                    b.HasIndex("CustomerId", "CreatedAtUtc", "Id");
+                    b.HasIndex("CustomerId", "CreatedAt", "Id");
 
-                    b.HasIndex("Status", "CreatedAtUtc", "Id");
+                    b.HasIndex("Status", "CreatedAt", "Id");
 
                     b.ToTable("Payment", "dbo", t =>
                         {
@@ -2476,8 +2576,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("ErrorCode")
                         .HasMaxLength(100)
@@ -2502,8 +2603,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
 
-                    b.Property<DateTime?>("ProcessedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("ProcessedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ProcessedAtUtc");
 
                     b.Property<string>("Provider")
                         .IsRequired()
@@ -2515,16 +2617,18 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasDefaultValueSql("NEWSEQUENTIALID()");
 
-                    b.Property<DateTime>("ReceivedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("ReceivedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ReceivedAtUtc");
 
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -2534,7 +2638,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("Provider", "EventId")
                         .IsUnique();
 
-                    b.HasIndex("Status", "ReceivedAtUtc");
+                    b.HasIndex("Status", "ReceivedAt");
 
                     b.ToTable("PaymentWebhook", "dbo");
                 });
@@ -2551,11 +2655,13 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
-                    b.Property<DateTime?>("CompletedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CompletedAtUtc");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("Currency")
                         .IsRequired()
@@ -2600,8 +2706,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -2631,8 +2738,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<DateTime?>("ActivatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("ActivatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ActivatedAtUtc");
 
                     b.Property<string>("AddressSnapshot")
                         .IsRequired()
@@ -2652,14 +2760,17 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
-                    b.Property<DateTime?>("CancelledAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CancelledAtUtc");
 
-                    b.Property<DateTime?>("CompletedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CompletedAtUtc");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<long>("CustomerAddressId")
                         .HasColumnType("bigint");
@@ -2675,8 +2786,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<DateTime?>("PausedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("PausedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("PausedAtUtc");
 
                     b.Property<decimal>("PayableAmount")
                         .HasPrecision(18, 2)
@@ -2724,8 +2836,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.Property<int>("UsedEntitlement")
                         .HasColumnType("int");
@@ -2742,11 +2855,11 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("CustomerId", "IdempotencyKey")
                         .IsUnique();
 
-                    b.HasIndex("BranchId", "CreatedAtUtc", "Id");
+                    b.HasIndex("BranchId", "CreatedAt", "Id");
 
                     b.HasIndex("BranchId", "Status", "StartDate");
 
-                    b.HasIndex("CustomerId", "Status", "CreatedAtUtc");
+                    b.HasIndex("CustomerId", "Status", "CreatedAt");
 
                     b.ToTable("Subscription", "dbo", t =>
                         {
@@ -2798,13 +2911,19 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<DateOnly>("ScheduledDate")
                         .HasColumnType("date");
 
+                    b.Property<string>("Slot")
+                        .IsRequired()
+                        .HasMaxLength(15)
+                        .HasColumnType("nvarchar(15)");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<DateTime?>("StatusChangedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime?>("StatusChangedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("StatusChangedAtUtc");
 
                     b.Property<long>("SubscriptionId")
                         .HasColumnType("bigint");
@@ -2840,6 +2959,11 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(15)
                         .HasColumnType("nvarchar(15)");
 
+                    b.Property<string>("Slot")
+                        .IsRequired()
+                        .HasMaxLength(15)
+                        .HasColumnType("nvarchar(15)");
+
                     b.Property<long>("SubscriptionId")
                         .HasColumnType("bigint");
 
@@ -2863,8 +2987,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
 
                     b.Property<string>("Currency")
                         .IsRequired()
@@ -2885,8 +3010,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("rowversion");
 
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
 
@@ -2937,8 +3063,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<DateTime>("OccurredAtUtc")
-                        .HasColumnType("datetime2");
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("OccurredAtUtc");
 
                     b.Property<long?>("OrderId")
                         .HasColumnType("bigint");
@@ -2982,7 +3109,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("WalletId", "IdempotencyKey")
                         .IsUnique();
 
-                    b.HasIndex("WalletId", "OccurredAtUtc");
+                    b.HasIndex("WalletId", "OccurredAt");
 
                     b.ToTable("WalletTransaction", "dbo", t =>
                         {

@@ -382,7 +382,13 @@ public sealed class DeliveryOtp : PublicEntity
 {
     private DeliveryOtp() { }
 
-    public DeliveryOtp(long deliveryId, string codeHash, DateTime expiresAt, int maximumAttempts, DateTime createdAt)
+    public DeliveryOtp(
+        long deliveryId,
+        string codeHash,
+        DateTime expiresAt,
+        int maximumAttempts,
+        DateTime createdAt,
+        string? protectedCode = null)
     {
         if (deliveryId <= 0) throw new ArgumentOutOfRangeException(nameof(deliveryId));
         if (maximumAttempts <= 0) throw new ArgumentOutOfRangeException(nameof(maximumAttempts));
@@ -396,6 +402,7 @@ public sealed class DeliveryOtp : PublicEntity
         CodeHash = string.IsNullOrWhiteSpace(codeHash)
             ? throw new ArgumentException("A code hash is required.", nameof(codeHash))
             : codeHash;
+        ProtectedCode = string.IsNullOrWhiteSpace(protectedCode) ? null : protectedCode.Trim();
         ExpiresAt = expiresAt;
         MaximumAttempts = maximumAttempts;
         CreatedAt = createdAt;
@@ -403,6 +410,8 @@ public sealed class DeliveryOtp : PublicEntity
 
     public long DeliveryId { get; private set; }
     public string CodeHash { get; private set; } = string.Empty;
+    public string? ProtectedCode { get; private set; }
+    public DateTime? SentAt { get; private set; }
     public DateTime ExpiresAt { get; private set; }
     public int AttemptCount { get; private set; }
     public int MaximumAttempts { get; private set; }
@@ -412,14 +421,8 @@ public sealed class DeliveryOtp : PublicEntity
 
     public void EnsureVerifiable(DateTime indiaLocalNow)
     {
-        if (indiaLocalNow.Kind != DateTimeKind.Unspecified)
-        {
-            throw new ArgumentException(
-                "The timestamp must be India-local with an unspecified DateTime kind.",
-                nameof(indiaLocalNow));
-        }
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (ConsumedAt.HasValue) throw new InvalidOperationException("The delivery OTP has already been consumed.");
-        if (indiaLocalNow >= ExpiresAt) throw new InvalidOperationException("The delivery OTP has expired.");
         if (AttemptCount >= MaximumAttempts) throw new InvalidOperationException("The delivery OTP attempt limit has been reached.");
     }
 
@@ -429,11 +432,41 @@ public sealed class DeliveryOtp : PublicEntity
         AttemptCount++;
     }
 
+    public void MarkSent(DateTime indiaLocalAt)
+    {
+        if (indiaLocalAt.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "The timestamp must be India-local with an unspecified DateTime kind.",
+                nameof(indiaLocalAt));
+        }
+        SentAt ??= indiaLocalAt;
+    }
+
     public void Consume(DateTime indiaLocalNow)
     {
         EnsureVerifiable(indiaLocalNow);
         ConsumedAt = indiaLocalNow;
+        ProtectedCode = null;
     }
+
+    public void Invalidate(DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        ConsumedAt ??= indiaLocalNow;
+        ProtectedCode = null;
+    }
+
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
+    {
+        if (value.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "The timestamp must be India-local with an unspecified DateTime kind.",
+                parameterName);
+        }
+    }
+
 }
 
 public sealed class DeliveryLocation : Entity

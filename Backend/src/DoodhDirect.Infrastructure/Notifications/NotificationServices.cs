@@ -20,7 +20,8 @@ internal sealed class NotificationEventWriter(
         var eventType = NormalizeEventType(request.EventType);
         var payload = JsonSerializer.Serialize(new StoredNotificationPayload(
             request.Variables,
-            string.IsNullOrWhiteSpace(request.DeepLink) ? null : request.DeepLink.Trim()));
+            string.IsNullOrWhiteSpace(request.DeepLink) ? null : request.DeepLink.Trim(),
+            request.ProtectedVariables));
         dbContext.NotificationEvents.Add(new NotificationEvent(
             request.UserId,
             eventType,
@@ -45,7 +46,8 @@ internal sealed class NotificationEventWriter(
 
 internal sealed record StoredNotificationPayload(
     IReadOnlyDictionary<string, string> Variables,
-    string? DeepLink);
+    string? DeepLink,
+    IReadOnlyDictionary<string, string>? ProtectedVariables = null);
 
 internal sealed class NotificationService(
     DoodhDirectDbContext dbContext,
@@ -322,7 +324,7 @@ internal sealed class NotificationTemplateService(
             template.BodyTemplate,
             template.IsActive
         });
-        dbContext.AuditLogs.Add(new AuditLog(
+        dbContext.AddAuditLog(new AuditLog(
             actorUserId,
             "NOTIFICATION_TEMPLATE_UPDATED",
             nameof(NotificationTemplate),

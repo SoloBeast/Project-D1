@@ -6,6 +6,7 @@ using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Subscriptions;
 using DoodhDirect.Domain.Configuration;
 using DoodhDirect.Domain.Customer;
+using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -77,11 +78,11 @@ public sealed class SubscriptionService(
 
         foreach (var day in request.DeliveryDays.Distinct())
         {
-            subscription.AddSchedule(day);
+            subscription.AddSchedule(day, request.Slot);
         }
         foreach (var date in dates)
         {
-            subscription.AddDelivery(date);
+            subscription.AddDelivery(date, request.Slot);
         }
 
         dbContext.Subscriptions.Add(subscription);
@@ -196,9 +197,12 @@ public sealed class SubscriptionService(
         {
             throw new BusinessRuleException("Address cannot be changed after subscription creation.");
         }
-        if (request.DeliveryDays is not null)
+        if (request.DeliveryDays is not null || request.Slot.HasValue)
         {
-            ValidateDays(request.DeliveryDays);
+            if (request.DeliveryDays is not null)
+            {
+                ValidateDays(request.DeliveryDays);
+            }
             throw new BusinessRuleException("Delivery schedule changes are not supported after occurrences are generated.");
         }
 
@@ -248,7 +252,9 @@ public sealed class SubscriptionService(
     public async Task<SubscriptionResult> CancelAsync(long customerId, Guid subscriptionId, CancellationToken cancellationToken)
     {
         var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
-        subscription.Cancel(timeProvider.Now);
+        var now = timeProvider.Now;
+        subscription.Cancel(now);
+        await InvalidateMaterializedOtpsAsync(subscription.Deliveries.Select(x => x.Id), now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         return subscription.ToResult();
     }
@@ -262,7 +268,8 @@ public sealed class SubscriptionService(
         var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
         var delivery = subscription.Deliveries.SingleOrDefault(x => x.PublicId == request.DeliveryId)
             ?? throw new NotFoundException("The subscription delivery was not found.");
-        subscription.Skip(delivery, timeProvider.Now, await GetCutoffAsync(cancellationToken));
+        var now = timeProvider.Now;
+        subscription.Skip(delivery, now, await GetCutoffAsync(cancellationToken));
         notificationEventWriter.Add(new NotificationEventRequest(
             customerId,
             NotificationEventTypes.SubscriptionSkipped,
@@ -275,6 +282,7 @@ public sealed class SubscriptionService(
             },
             $"/subscriptions/{subscription.PublicId}",
             delivery.StatusChangedAt));
+        await InvalidateMaterializedOtpsAsync([delivery.Id], now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
         await LoadDeliveryNavigationAsync(delivery, cancellationToken);
         return delivery.ToResult();
@@ -294,7 +302,9 @@ public sealed class SubscriptionService(
         var delivery = await dbContext.SubscriptionDeliveries
             .Include(x => x.Subscription)
             .SingleAsync(x => x.Id == deliveryId, cancellationToken);
-        delivery.Subscription.MarkFailed(delivery, timeProvider.Now);
+        var now = timeProvider.Now;
+        delivery.Subscription.MarkFailed(delivery, now);
+        await InvalidateMaterializedOtpsAsync([delivery.Id], now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -303,7 +313,9 @@ public sealed class SubscriptionService(
         var delivery = await dbContext.SubscriptionDeliveries
             .Include(x => x.Subscription)
             .SingleAsync(x => x.Id == deliveryId, cancellationToken);
-        delivery.Subscription.MarkDelivered(delivery, timeProvider.Now);
+        var now = timeProvider.Now;
+        delivery.Subscription.MarkDelivered(delivery, now);
+        await InvalidateMaterializedOtpsAsync([delivery.Id], now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
@@ -330,15 +342,41 @@ public sealed class SubscriptionService(
     {
         var requestedDays = request.DeliveryDays.Distinct().OrderBy(x => x).ToArray();
         var persistedDays = subscription.Schedules.Select(x => x.DayOfWeek).OrderBy(x => x).ToArray();
+        var persistedSlot = subscription.Schedules
+            .Select(x => x.Slot)
+            .Distinct()
+            .SingleOrDefault();
         if (subscription.Product.PublicId != request.ProductId ||
             subscription.CustomerAddress.PublicId != request.AddressId ||
             subscription.Quantity != request.Quantity ||
             subscription.StartDate != request.StartDate ||
             subscription.TotalEntitlement != request.TotalEntitlement ||
+            persistedSlot != request.Slot ||
             !persistedDays.SequenceEqual(requestedDays))
         {
             throw new ConflictException(
                 "The idempotency key is already associated with a different subscription request.");
+        }
+    }
+
+    private async Task InvalidateMaterializedOtpsAsync(
+        IEnumerable<long> subscriptionDeliveryIds,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var ids = subscriptionDeliveryIds.ToArray();
+        if (ids.Length == 0) return;
+
+        var deliveries = await dbContext.Deliveries
+            .Include(x => x.Otps)
+            .Where(x => x.SubscriptionDeliveryId.HasValue && ids.Contains(x.SubscriptionDeliveryId.Value))
+            .ToListAsync(cancellationToken);
+        foreach (var materializedDelivery in deliveries)
+        {
+            foreach (var otp in materializedDelivery.Otps)
+            {
+                otp.Invalidate(now);
+            }
         }
     }
 
@@ -424,6 +462,7 @@ public sealed class SubscriptionService(
         if (request.StartDate < timeProvider.Today) throw new ValidationAppException("Start date cannot be in the past.", "StartDate");
         if (request.TotalEntitlement is < 1 or > 366) throw new ValidationAppException("Entitlement must be between 1 and 366.", "TotalEntitlement");
         if (request.Quantity <= 0 || decimal.Round(request.Quantity, 3) != request.Quantity) throw new ValidationAppException("Quantity must be positive and use at most three decimal places.", "Quantity");
+        if (!Enum.IsDefined(request.Slot)) throw new ValidationAppException("A valid delivery slot is required.", "Slot");
         ValidateDays(request.DeliveryDays);
     }
 

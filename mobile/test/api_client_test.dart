@@ -233,26 +233,234 @@ void main() {
     );
   });
 
-  test('POST decodes standard API error envelope', () async {
-    final client = MockClient(
-      (request) async => http.Response(
-        '{"success":false,"message":"Access denied.","errors":[{"code":"FORBIDDEN","field":null,"message":"Access denied."}]}',
-        403,
+  test(
+    'POST preserves field metadata from a standard API error envelope',
+    () async {
+      final client = MockClient(
+        (request) async => http.Response(
+          '{"success":false,"message":"Validation failed.","errors":[{"code":"VALIDATION_ERROR","field":"AlternateMobile","message":"Mobile number format is invalid."}]}',
+          422,
+          headers: {'content-type': 'application/json'},
+        ),
+      );
+      final api = ApiClient(
+        client: client,
+        baseUrl: 'https://api.example.test',
+      );
+
+      await expectLater(
+        api.post('/api/v1/customers/me'),
+        throwsA(
+          isA<ApiException>()
+              .having((error) => error.statusCode, 'statusCode', 422)
+              .having((error) => error.code, 'code', 'VALIDATION_ERROR')
+              .having((error) => error.field, 'field', 'AlternateMobile')
+              .having(
+                (error) => error.message,
+                'message',
+                'Mobile number format is invalid.',
+              ),
+        ),
+      );
+    },
+  );
+
+  test('401 refreshes once and replays the exact payment request', () async {
+    final requests = <http.BaseRequest>[];
+    var refreshCalls = 0;
+    final client = MockClient((request) async {
+      requests.add(request);
+      if (requests.length == 1) {
+        return http.Response('', 401);
+      }
+
+      return http.Response(
+        '{"success":true,"data":{"status":"verified"},"errors":[]}',
+        200,
         headers: {'content-type': 'application/json'},
-      ),
+      );
+    });
+    final api = ApiClient(
+      client: client,
+      baseUrl: 'https://api.example.test',
+      refreshAccessToken: () async {
+        refreshCalls++;
+        return 'refreshed-token';
+      },
     );
-    final api = ApiClient(client: client, baseUrl: 'https://api.example.test');
+
+    final body = await api.post(
+      '/api/v1/payments/payment-1/verify',
+      body: {
+        'gatewayOrderId': 'order-1',
+        'gatewayPaymentId': 'payment-1',
+        'signature': 'signature-1',
+      },
+      accessToken: 'expired-token',
+      extraHeaders: {'Idempotency-Key': 'payment-replay-1'},
+    );
+
+    expect(body['success'], isTrue);
+    expect(refreshCalls, 1);
+    expect(requests, hasLength(2));
+    expect(requests[0].method, 'POST');
+    expect(requests[1].method, 'POST');
+    expect(requests[0].url, requests[1].url);
+    expect(
+      (requests[0] as http.Request).body,
+      (requests[1] as http.Request).body,
+    );
+    expect(requests[0].headers['Idempotency-Key'], 'payment-replay-1');
+    expect(requests[1].headers['Idempotency-Key'], 'payment-replay-1');
+    expect(requests[0].headers['Authorization'], 'Bearer expired-token');
+    expect(requests[1].headers['Authorization'], 'Bearer refreshed-token');
+  });
+
+  test('401 replay is bounded and returns the second 401', () async {
+    var requestCount = 0;
+    var refreshCalls = 0;
+    final client = MockClient((request) async {
+      requestCount++;
+      return http.Response('', 401);
+    });
+    final api = ApiClient(
+      client: client,
+      baseUrl: 'https://api.example.test',
+      refreshAccessToken: () async {
+        refreshCalls++;
+        return 'refreshed-token';
+      },
+    );
 
     await expectLater(
-      api.post('/protected'),
+      api.get('/api/v1/payments/payment-1', accessToken: 'expired-token'),
       throwsA(
-        isA<ApiException>()
-            .having((error) => error.statusCode, 'statusCode', 403)
-            .having((error) => error.code, 'code', 'FORBIDDEN')
-            .having((error) => error.message, 'message', 'Access denied.'),
+        isA<ApiException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          401,
+        ),
       ),
     );
+    expect(requestCount, 2);
+    expect(refreshCalls, 1);
   });
+
+  test('null refresh result does not replay the protected request', () async {
+    var requestCount = 0;
+    var refreshCalls = 0;
+    final client = MockClient((request) async {
+      requestCount++;
+      return http.Response('', 401);
+    });
+    final api = ApiClient(
+      client: client,
+      baseUrl: 'https://api.example.test',
+      refreshAccessToken: () async {
+        refreshCalls++;
+        return null;
+      },
+    );
+
+    await expectLater(
+      api.get('/api/v1/deliveries/delivery-1', accessToken: 'expired-token'),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.statusCode,
+          'statusCode',
+          401,
+        ),
+      ),
+    );
+    expect(requestCount, 1);
+    expect(refreshCalls, 1);
+  });
+
+  test(
+    '403 does not invoke refresh or change the authorization semantics',
+    () async {
+      var refreshCalls = 0;
+      final client = MockClient((request) async {
+        expect(request.headers['Authorization'], 'Bearer access-token');
+        return http.Response(
+          '{"success":false,"errors":[{"code":"FORBIDDEN","message":"Not allowed."}]}',
+          403,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final api = ApiClient(
+        client: client,
+        baseUrl: 'https://api.example.test',
+        refreshAccessToken: () async {
+          refreshCalls++;
+          return 'unexpected-token';
+        },
+      );
+
+      await expectLater(
+        api.get('/api/v1/deliveries/delivery-1', accessToken: 'access-token'),
+        throwsA(
+          isA<ApiException>()
+              .having((error) => error.statusCode, 'statusCode', 403)
+              .having((error) => error.code, 'code', 'FORBIDDEN'),
+        ),
+      );
+      expect(refreshCalls, 0);
+    },
+  );
+
+  test('network failures propagate without invoking refresh', () async {
+    var refreshCalls = 0;
+    final client = MockClient((request) async {
+      throw http.ClientException('socket closed');
+    });
+    final api = ApiClient(
+      client: client,
+      baseUrl: 'https://api.example.test',
+      refreshAccessToken: () async {
+        refreshCalls++;
+        return 'unexpected-token';
+      },
+    );
+
+    await expectLater(
+      api.get('/api/v1/deliveries/delivery-1', accessToken: 'access-token'),
+      throwsA(isA<http.ClientException>()),
+    );
+    expect(refreshCalls, 0);
+  });
+
+  test(
+    'refresh endpoint never recursively invokes the refresh callback',
+    () async {
+      var refreshCalls = 0;
+      final client = MockClient((request) async => http.Response('', 401));
+      final api = ApiClient(
+        client: client,
+        baseUrl: 'https://api.example.test',
+        refreshAccessToken: () async {
+          refreshCalls++;
+          return 'unexpected-token';
+        },
+      );
+
+      await expectLater(
+        api.post(
+          '/api/v1/auth/refresh',
+          body: {'refreshToken': 'refresh-token'},
+          accessToken: 'expired-token',
+        ),
+        throwsA(
+          isA<ApiException>().having(
+            (error) => error.statusCode,
+            'statusCode',
+            401,
+          ),
+        ),
+      );
+      expect(refreshCalls, 0);
+    },
+  );
 
   test(
     'GET uses standard fallback when an error has no structured details',

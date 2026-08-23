@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,7 +9,7 @@ import 'milk_test_models.dart';
 import 'milk_test_repository.dart';
 
 final milkTestRepositoryProvider = Provider<MilkTestRepository>(
-  (ref) => MilkTestRepository(api: ApiClient(baseUrl: apiBaseUrl)),
+  (ref) => MilkTestRepository(api: authenticatedApiClient(ref)),
 );
 
 final milkTestControllerProvider =

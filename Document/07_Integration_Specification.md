@@ -4,26 +4,48 @@
 
 ### Responsibilities
 - Payment creation
-- Payment verification
-- Refund
+- Authoritative payment lookup and capture verification
+- Refund execution when explicitly authorized by the backend
 - Supported recurring payment mechanisms for future subscriptions
 - Webhooks
 
 ### Rules
-- Server creates gateway-side payment/order reference.
-- Client opens checkout using safe public payment details.
-- Server verifies signature and final status.
-- Webhooks are idempotent.
-- Gateway transaction ID is unique.
-- Never trust a browser/app success callback as final payment confirmation.
+- The server creates the Razorpay order and persists the local attempt before checkout.
+- The client opens hosted checkout using safe public payment details only.
+- A client or SDK success callback is an untrusted candidate, never final confirmation.
+- The backend verifies the signature and queries Razorpay before changing local payment or business state.
+- Known gateway payment IDs use direct payment lookup. Missing payment IDs use Razorpay order-payment discovery.
+- Capture acceptance requires exact gateway order/payment identity, amount, currency, captured flag, success status, and absence of terminal failure or refund evidence.
+- Gateway IDs are unique and conflicting or duplicate matching evidence is rejected.
+- Verify, webhook, reconciliation, cancellation, expiry, replacement, and retry use one convergent backend transition boundary.
+- Webhooks are HMAC-verified from the raw request body and idempotent by provider/event identity and payload hash.
+
+### Evidence and failure matrix
+
+| Evidence | Backend action |
+|---|---|
+| One matching `captured=true`, successful payment with exact identity, amount, and currency | Accept capture and complete the target exactly once |
+| Definitive terminal non-capture | Close/cancel only an eligible local attempt; never create business success |
+| Pending, processing, delayed, or unknown finality | Keep unresolved; block cancellation, replacement, and retry |
+| Ambiguous, duplicate, or conflicting order-payment results | Fail closed and require later reconciliation/operations review |
+| Malformed response, timeout, gateway outage, identity mismatch, amount/currency mismatch, or refunded evidence | Fail closed; do not mutate payment or create a replacement |
+
+A validated capture may recover an expired payment or a failed order/subscription target. Automatic refunds are not performed by this hardening. Replacement and retry require all relevant previous Razorpay attempts to be definitively terminal and non-captured, with serializable revalidation immediately before mutation.
+
+### Production webhook setup
+
+Configure the Razorpay Dashboard webhook to the public HTTPS endpoint `POST /webhooks/razorpay`, using the environment-specific webhook secret. Configure the payment lifecycle events required by the deployed contract, including payment authorization/capture, failure, and refund lifecycle events supported by the account. The deployed event list and secret must be recorded in release configuration; secrets must never be committed or logged.
+
+The API validates the HMAC signature over the exact raw request body before parsing JSON, persists the provider event identity/hash, and ignores duplicate events after the first terminal processing result. Razorpay delivery is asynchronous: webhook arrival can be delayed, duplicated, reordered, or absent during a provider/network outage. Verification and scheduled/manual reconciliation remain the fallback; uncertainty remains pending and does not authorize replacement or retry.
 
 ### Failure cases
 - Payment pending
 - Payment failed
 - Customer closes checkout
-- Gateway webhook delayed
-- Duplicate webhook
+- Gateway webhook delayed, duplicated, reordered, or unavailable
 - Payment success but API response lost
+- Local payment ID absent while Razorpay order-payment discovery finds a capture
+- Local and gateway identity or financial fields disagree
 
 ---
 
@@ -42,6 +64,10 @@
 - Longitude
 - Human-readable address
 - Place identifier where useful
+
+Coordinates remain internal map state and are not exposed as editable customer text fields. Reverse-geocoding adapters may return nullable address line, locality, city, state, pin code, landmark, and transient country metadata. Only non-empty returned fields may populate the address form. A missing provider, empty provider field, or lookup failure preserves the selected coordinates and all current manual form values.
+
+The default backend adapter may be unconfigured and return no lookup result. Provider selection remains behind the address-location lookup boundary and must not alter customer address persistence or branch allocation behavior.
 
 ### Rule
 The backend must own branch-allocation distance decisions; do not rely only on frontend distance calculations.

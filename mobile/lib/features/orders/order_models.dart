@@ -166,6 +166,12 @@ class OrderSummary {
     required this.discountAmount,
     required this.payableAmount,
     required this.cancelledAt,
+    required this.paymentPublicId,
+    required this.paymentStatus,
+    required this.gatewayPaymentId,
+    required this.deliveryPublicId,
+    required this.deliveryReferenceNumber,
+    required this.deliveryStatus,
   });
 
   factory OrderSummary.fromJson(Map<String, dynamic> json) => OrderSummary(
@@ -187,6 +193,12 @@ class OrderSummary {
     cancelledAt: json['cancelledAt'] == null
         ? null
         : DateTime.parse(json['cancelledAt'] as String),
+    paymentPublicId: json['paymentPublicId'] as String?,
+    paymentStatus: json['paymentStatus'] as String?,
+    gatewayPaymentId: json['gatewayPaymentId'] as String?,
+    deliveryPublicId: json['deliveryPublicId'] as String?,
+    deliveryReferenceNumber: json['deliveryReferenceNumber'] as String?,
+    deliveryStatus: json['deliveryStatus'] as String?,
   );
 
   final String publicId;
@@ -202,6 +214,12 @@ class OrderSummary {
   final double discountAmount;
   final double payableAmount;
   final DateTime? cancelledAt;
+  final String? paymentPublicId;
+  final String? paymentStatus;
+  final String? gatewayPaymentId;
+  final String? deliveryPublicId;
+  final String? deliveryReferenceNumber;
+  final String? deliveryStatus;
 
   bool get canCancel => status.toLowerCase() == 'confirmed';
   String get formattedTotal => '₹${payableAmount.toStringAsFixed(2)}';

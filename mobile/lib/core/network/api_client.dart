@@ -4,12 +4,15 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
+typedef AccessTokenRefresh = Future<String?> Function();
+
 class ApiException implements Exception {
-  const ApiException(this.statusCode, this.code, this.message);
+  const ApiException(this.statusCode, this.code, this.message, {this.field});
 
   final int statusCode;
   final String code;
   final String message;
+  final String? field;
 
   @override
   String toString() => '$statusCode $code: $message';
@@ -28,32 +31,76 @@ class ApiByteResponse {
 }
 
 class ApiClient {
-  ApiClient({http.Client? client, required this.baseUrl})
-    : _client = client ?? http.Client();
+  ApiClient({
+    http.Client? client,
+    required this.baseUrl,
+    this.refreshAccessToken,
+  }) : _client = client ?? http.Client();
 
   final http.Client _client;
   final String baseUrl;
+  final AccessTokenRefresh? refreshAccessToken;
 
-  Future<Map<String, dynamic>> get(String path, {String? accessToken}) async {
-    final response = await _client.get(
-      Uri.parse('$baseUrl$path'),
-      headers: _headers(accessToken),
-    );
-    return _decode(response);
-  }
+  Future<Map<String, dynamic>> get(String path, {String? accessToken}) async =>
+      _sendJson(method: 'GET', path: path, accessToken: accessToken);
 
   Future<Map<String, dynamic>> post(
     String path, {
     Map<String, dynamic> body = const <String, dynamic>{},
     String? accessToken,
     Map<String, String> extraHeaders = const <String, String>{},
+  }) async => _sendJson(
+    method: 'POST',
+    path: path,
+    body: jsonEncode(body),
+    accessToken: accessToken,
+    extraHeaders: extraHeaders,
+  );
+
+  Future<Map<String, dynamic>> _sendJson({
+    required String method,
+    required String path,
+    String? body,
+    String? accessToken,
+    Map<String, String> extraHeaders = const <String, String>{},
   }) async {
-    final response = await _client.post(
-      Uri.parse('$baseUrl$path'),
-      headers: {..._headers(accessToken), ...extraHeaders},
-      body: jsonEncode(body),
+    var token = accessToken;
+    var response = await _sendJsonRequest(
+      method: method,
+      path: path,
+      body: body,
+      accessToken: token,
+      extraHeaders: extraHeaders,
     );
+
+    if (_shouldRefresh(response, path, token)) {
+      final refreshedToken = await refreshAccessToken!();
+      if (refreshedToken != null) {
+        token = refreshedToken;
+        response = await _sendJsonRequest(
+          method: method,
+          path: path,
+          body: body,
+          accessToken: token,
+          extraHeaders: extraHeaders,
+        );
+      }
+    }
+
     return _decode(response);
+  }
+
+  Future<http.Response> _sendJsonRequest({
+    required String method,
+    required String path,
+    required String? body,
+    required String? accessToken,
+    required Map<String, String> extraHeaders,
+  }) async {
+    final request = http.Request(method, Uri.parse('$baseUrl$path'))
+      ..headers.addAll({..._headers(accessToken), ...extraHeaders});
+    if (body != null) request.body = body;
+    return http.Response.fromStream(await _client.send(request));
   }
 
   Future<ApiByteResponse> postBytes(
@@ -61,11 +108,23 @@ class ApiClient {
     Map<String, dynamic> body = const <String, dynamic>{},
     String? accessToken,
   }) async {
-    final response = await _client.post(
+    final encodedBody = jsonEncode(body);
+    var token = accessToken;
+    var response = await _client.post(
       Uri.parse('$baseUrl$path'),
-      headers: _headers(accessToken),
-      body: jsonEncode(body),
+      headers: _headers(token),
+      body: encodedBody,
     );
+    if (_shouldRefresh(response, path, token)) {
+      token = await refreshAccessToken!();
+      if (token != null) {
+        response = await _client.post(
+          Uri.parse('$baseUrl$path'),
+          headers: _headers(token),
+          body: encodedBody,
+        );
+      }
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       _decode(response);
     }
@@ -85,19 +144,26 @@ class ApiClient {
     required String contentType,
     String? accessToken,
   }) async {
-    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'))
-      ..headers.addAll(_headers(accessToken, includeContentType: false))
-      ..files.add(
-        http.MultipartFile.fromBytes(
-          fieldName,
-          bytes,
-          filename: fileName,
-          contentType: MediaType.parse(contentType),
-        ),
-      );
-    final response = await http.Response.fromStream(
-      await _client.send(request),
-    );
+    Future<http.Response> send(String? token) async {
+      final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'))
+        ..headers.addAll(_headers(token, includeContentType: false))
+        ..files.add(
+          http.MultipartFile.fromBytes(
+            fieldName,
+            bytes,
+            filename: fileName,
+            contentType: MediaType.parse(contentType),
+          ),
+        );
+      return http.Response.fromStream(await _client.send(request));
+    }
+
+    var token = accessToken;
+    var response = await send(token);
+    if (_shouldRefresh(response, path, token)) {
+      token = await refreshAccessToken!();
+      if (token != null) response = await send(token);
+    }
     return _decode(response);
   }
 
@@ -105,38 +171,32 @@ class ApiClient {
     String path, {
     Map<String, dynamic> body = const <String, dynamic>{},
     String? accessToken,
-  }) async {
-    final response = await _client.patch(
-      Uri.parse('$baseUrl$path'),
-      headers: _headers(accessToken),
-      body: jsonEncode(body),
-    );
-    return _decode(response);
-  }
+  }) => _sendJson(
+    method: 'PATCH',
+    path: path,
+    body: jsonEncode(body),
+    accessToken: accessToken,
+  );
 
   Future<Map<String, dynamic>> put(
     String path, {
     Map<String, dynamic> body = const <String, dynamic>{},
     String? accessToken,
-  }) async {
-    final response = await _client.put(
-      Uri.parse('$baseUrl$path'),
-      headers: _headers(accessToken),
-      body: jsonEncode(body),
-    );
-    return _decode(response);
-  }
+  }) => _sendJson(
+    method: 'PUT',
+    path: path,
+    body: jsonEncode(body),
+    accessToken: accessToken,
+  );
 
-  Future<Map<String, dynamic>> delete(
-    String path, {
-    String? accessToken,
-  }) async {
-    final response = await _client.delete(
-      Uri.parse('$baseUrl$path'),
-      headers: _headers(accessToken),
-    );
-    return _decode(response);
-  }
+  Future<Map<String, dynamic>> delete(String path, {String? accessToken}) =>
+      _sendJson(method: 'DELETE', path: path, accessToken: accessToken);
+
+  bool _shouldRefresh(http.Response response, String path, String? token) =>
+      response.statusCode == 401 &&
+      token != null &&
+      refreshAccessToken != null &&
+      path != '/api/v1/auth/refresh';
 
   Map<String, String> _headers(
     String? accessToken, {
@@ -173,6 +233,7 @@ class ApiClient {
         firstError?['message'] as String? ??
             body['message'] as String? ??
             'The request could not be completed.',
+        field: firstError?['field'] as String?,
       );
     }
     return body;

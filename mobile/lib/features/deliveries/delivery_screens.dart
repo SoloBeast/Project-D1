@@ -113,6 +113,8 @@ class _CustomerDeliveryDetailScreenState
                     title: 'Delivery address',
                     text: delivery.destinationAddress,
                   ),
+                  if (delivery.activeOtp != null)
+                    _CustomerOtpCard(code: delivery.activeOtp!),
                   _InfoTile(
                     icon: Icons.badge_outlined,
                     title: 'Assigned to',
@@ -157,6 +159,14 @@ class StaffDeliveryListScreen extends ConsumerStatefulWidget {
 
 class _StaffDeliveryListScreenState
     extends ConsumerState<StaffDeliveryListScreen> {
+  static const _filterStatuses = [
+    DeliveryStatus.assigned,
+    DeliveryStatus.pickedUp,
+    DeliveryStatus.outForDelivery,
+    DeliveryStatus.arrived,
+    DeliveryStatus.delivered,
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -165,25 +175,61 @@ class _StaffDeliveryListScreenState
     );
   }
 
+  Future<void> _selectStatus(DeliveryStatus? status) =>
+      ref.read(deliveryControllerProvider.notifier).selectStaffStatus(status);
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(deliveryControllerProvider);
     return Scaffold(
       appBar: AppBar(title: const Text("Today's deliveries")),
-      body: _listBody<DeliveryDetails>(
-        state: state,
-        items: state.staffDeliveries,
-        emptyTitle: 'No assigned deliveries',
-        emptyMessage: 'Deliveries assigned for today will appear here.',
-        reload: () => ref.read(deliveryControllerProvider.notifier).loadToday(),
-        itemBuilder: (delivery) => DeliveryListTile(
-          reference: delivery.referenceNumber,
-          status: delivery.status,
-          date: delivery.scheduledDate,
-          subtitle: '${delivery.customerName} · ${delivery.destinationAddress}',
-          tracking: delivery.isTrackingActive,
-          onTap: () => context.push('/delivery/${delivery.deliveryId}'),
-        ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: DropdownButtonFormField<DeliveryStatus?>(
+              initialValue: state.staffStatus,
+              decoration: const InputDecoration(
+                labelText: 'Delivery status',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                const DropdownMenuItem<DeliveryStatus?>(
+                  value: null,
+                  child: Text('All'),
+                ),
+                ..._filterStatuses.map(
+                  (status) => DropdownMenuItem<DeliveryStatus?>(
+                    value: status,
+                    child: Text(status.label),
+                  ),
+                ),
+              ],
+              onChanged: state.isLoading ? null : _selectStatus,
+            ),
+          ),
+          Expanded(
+            child: _listBody<DeliveryDetails>(
+              state: state,
+              items: state.staffDeliveries,
+              emptyTitle: state.staffStatus == null
+                  ? 'No deliveries today'
+                  : 'No ${state.staffStatus!.label.toLowerCase()} deliveries',
+              emptyMessage: 'Assigned deliveries for today will appear here.',
+              reload: () =>
+                  ref.read(deliveryControllerProvider.notifier).loadToday(),
+              itemBuilder: (delivery) => DeliveryListTile(
+                reference: delivery.referenceNumber,
+                status: delivery.status,
+                date: delivery.scheduledDate,
+                subtitle:
+                    '${delivery.customerName} · ${delivery.destinationAddress}',
+                tracking: delivery.isTrackingActive,
+                onTap: () => context.push('/delivery/${delivery.deliveryId}'),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -281,7 +327,11 @@ class DeliveryManagementScreen extends ConsumerStatefulWidget {
 
 class _DeliveryManagementScreenState
     extends ConsumerState<DeliveryManagementScreen> {
+  DateTime _date = indiaNow();
   DeliveryStatus? _status;
+  DeliverySourceType? _sourceType;
+  SubscriptionDeliverySlot? _slot;
+
   @override
   void initState() {
     super.initState();
@@ -290,24 +340,72 @@ class _DeliveryManagementScreenState
 
   Future<void> _load() => ref
       .read(deliveryControllerProvider.notifier)
-      .loadBranch(widget.branchId, date: indiaNow(), status: _status);
+      .loadBranch(
+        widget.branchId,
+        date: _date,
+        status: _status,
+        sourceType: _sourceType,
+        slot: _slot,
+      );
+
+  Future<void> _chooseDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _date,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (selected == null) return;
+    setState(() => _date = selected);
+    await _load();
+  }
+
+  Future<void> _assignSelected(DeliveryState state) async {
+    final choice = await _showBulkAssignmentDialog(context, state.employees);
+    if (choice == null) return;
+    final assigned = await ref
+        .read(deliveryControllerProvider.notifier)
+        .bulkAssign(choice.employeeId, reason: choice.reason);
+    if (!mounted) return;
+    if (assigned) {
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selected deliveries assigned.')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(deliveryControllerProvider);
+    final readyCount = state.managedDeliveries
+        .where(
+          (delivery) => delivery.status == DeliveryStatus.readyForAssignment,
+        )
+        .length;
+    final selectedCount = state.selectedManagedDeliveryIds.length;
+    final canFilterSlot =
+        _sourceType == null ||
+        _sourceType == DeliverySourceType.subscriptionOccurrence;
     return Scaffold(
       appBar: AppBar(
         title: Text('Branch ${widget.branchId} deliveries'),
         actions: [
           IconButton(
-            tooltip: 'Materialize eligible deliveries',
+            tooltip: 'Choose date',
+            icon: const Icon(Icons.calendar_today_outlined),
+            onPressed: state.isSaving ? null : _chooseDate,
+          ),
+          IconButton(
+            tooltip: 'Generate Subscription Deliveries',
             icon: const Icon(Icons.sync),
             onPressed: state.isSaving
                 ? null
                 : () async {
                     await ref
                         .read(deliveryControllerProvider.notifier)
-                        .materialize(indiaNow());
+                        .materialize(_date);
                     await _load();
                   },
           ),
@@ -316,46 +414,160 @@ class _DeliveryManagementScreenState
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(12),
-            child: DropdownButtonFormField<DeliveryStatus?>(
-              initialValue: _status,
-              decoration: const InputDecoration(
-                labelText: 'Status',
-                border: OutlineInputBorder(),
-              ),
-              items: [
-                const DropdownMenuItem(
-                  value: null,
-                  child: Text('All statuses'),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: Column(
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Deliveries for ${formatDeliveryDate(_date)}',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ),
-                ...DeliveryStatus.values
-                    .where((value) => value != DeliveryStatus.unknown)
-                    .map(
-                      (value) => DropdownMenuItem(
-                        value: value,
-                        child: Text(value.label),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<DeliveryStatus?>(
+                  initialValue: _status,
+                  decoration: const InputDecoration(
+                    labelText: 'Status',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    const DropdownMenuItem(
+                      value: null,
+                      child: Text('All statuses'),
+                    ),
+                    ...DeliveryStatus.values
+                        .where((value) => value != DeliveryStatus.unknown)
+                        .map(
+                          (value) => DropdownMenuItem(
+                            value: value,
+                            child: Text(value.label),
+                          ),
+                        ),
+                  ],
+                  onChanged: (value) {
+                    setState(() => _status = value);
+                    _load();
+                  },
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<DeliverySourceType?>(
+                        initialValue: _sourceType,
+                        decoration: const InputDecoration(
+                          labelText: 'Delivery type',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: null, child: Text('All')),
+                          DropdownMenuItem(
+                            value: DeliverySourceType.oneTimeOrder,
+                            child: Text('One-time'),
+                          ),
+                          DropdownMenuItem(
+                            value: DeliverySourceType.subscriptionOccurrence,
+                            child: Text('Subscription'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          setState(() {
+                            _sourceType = value;
+                            if (_sourceType ==
+                                DeliverySourceType.oneTimeOrder) {
+                              _slot = null;
+                            }
+                          });
+                          _load();
+                        },
                       ),
                     ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: DropdownButtonFormField<SubscriptionDeliverySlot?>(
+                        initialValue: canFilterSlot ? _slot : null,
+                        decoration: const InputDecoration(
+                          labelText: 'Subscription slot',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: const [
+                          DropdownMenuItem(
+                            value: null,
+                            child: Text('All slots'),
+                          ),
+                          DropdownMenuItem(
+                            value: SubscriptionDeliverySlot.morning,
+                            child: Text('Morning'),
+                          ),
+                          DropdownMenuItem(
+                            value: SubscriptionDeliverySlot.evening,
+                            child: Text('Evening'),
+                          ),
+                        ],
+                        onChanged: canFilterSlot
+                            ? (value) {
+                                setState(() => _slot = value);
+                                _load();
+                              }
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
               ],
-              onChanged: (value) {
-                setState(() => _status = value);
-                _load();
-              },
             ),
           ),
+          if (readyCount > 0)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: Row(
+                children: [
+                  Text('$selectedCount selected'),
+                  const Spacer(),
+                  TextButton(
+                    onPressed: selectedCount == readyCount
+                        ? null
+                        : () => ref
+                              .read(deliveryControllerProvider.notifier)
+                              .selectAllManagedDeliveries(),
+                    child: const Text('Select All'),
+                  ),
+                  TextButton(
+                    onPressed: selectedCount == 0
+                        ? null
+                        : () => ref
+                              .read(deliveryControllerProvider.notifier)
+                              .clearManagedSelection(),
+                    child: const Text('Clear Selection'),
+                  ),
+                  FilledButton.icon(
+                    icon: const Icon(Icons.assignment_ind_outlined),
+                    label: const Text('Assign Selected'),
+                    onPressed: selectedCount == 0 || state.isSaving
+                        ? null
+                        : () => _assignSelected(state),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: _listBody<DeliveryDetails>(
               state: state,
               items: state.managedDeliveries,
               emptyTitle: 'No branch deliveries',
-              emptyMessage: 'No deliveries match the selected date and status.',
+              emptyMessage: 'No deliveries match the selected filters.',
               reload: _load,
-              itemBuilder: (delivery) => DeliveryListTile(
-                reference: delivery.referenceNumber,
-                status: delivery.status,
-                date: delivery.scheduledDate,
-                subtitle: delivery.assignedEmployeeName ?? 'Unassigned',
-                tracking: delivery.isTrackingActive,
+              itemBuilder: (delivery) => _ManagedDeliveryTile(
+                delivery: delivery,
+                selected: state.selectedManagedDeliveryIds.contains(
+                  delivery.deliveryId,
+                ),
+                onSelected: delivery.status == DeliveryStatus.readyForAssignment
+                    ? () => ref
+                          .read(deliveryControllerProvider.notifier)
+                          .toggleManagedDelivery(delivery.deliveryId)
+                    : null,
                 onTap: () =>
                     context.push('/delivery-management/${delivery.deliveryId}'),
               ),
@@ -502,41 +714,14 @@ class _StaffActions extends ConsumerWidget {
         ),
       );
     }
-    if (delivery.status == DeliveryStatus.arrived &&
-        delivery.otpVerifiedAt == null) {
-      actions.addAll([
-        OutlinedButton.icon(
-          icon: const Icon(Icons.sms_outlined),
-          label: const Text('Send delivery OTP'),
-          onPressed: saving
-              ? null
-              : () async {
-                  final sent = await controller.issueOtp(delivery.deliveryId);
-                  if (context.mounted && sent) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Delivery OTP sent.')),
-                    );
-                  }
-                },
-        ),
+    if (delivery.status == DeliveryStatus.arrived) {
+      actions.add(
         FilledButton.icon(
           icon: const Icon(Icons.password_outlined),
-          label: const Text('Verify OTP'),
+          label: const Text('Verify delivery OTP'),
           onPressed: saving
               ? null
               : () => _showOtpDialog(context, ref, delivery.deliveryId),
-        ),
-      ]);
-    }
-    if (delivery.status == DeliveryStatus.arrived &&
-        delivery.otpVerifiedAt != null) {
-      actions.add(
-        FilledButton.icon(
-          icon: const Icon(Icons.check_circle_outline),
-          label: const Text('Complete delivery'),
-          onPressed: saving
-              ? null
-              : () => controller.complete(delivery.deliveryId),
         ),
       );
     }
@@ -631,6 +816,28 @@ class _DeliveryHeader extends StatelessWidget {
         },
       ),
     ],
+  );
+}
+
+class _CustomerOtpCard extends StatelessWidget {
+  const _CustomerOtpCard({required this.code});
+
+  final String code;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: ListTile(
+      leading: const Icon(Icons.password_outlined),
+      title: const Text('Delivery OTP'),
+      subtitle: const Text(
+        'Share this code with the delivery staff at your door.',
+      ),
+      trailing: Text(
+        code,
+        style: Theme.of(context).textTheme.titleLarge
+            ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: 2),
+      ),
+    ),
   );
 }
 
@@ -842,7 +1049,14 @@ Future<void> _showOtpDialog(
   );
   input.dispose();
   if (code != null && code.isNotEmpty) {
-    await ref.read(deliveryControllerProvider.notifier).verifyOtp(id, code);
+    final verified = await ref
+        .read(deliveryControllerProvider.notifier)
+        .verifyOtp(id, code);
+    if (verified && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Delivery completed successfully')),
+      );
+    }
   }
 }
 
@@ -949,6 +1163,123 @@ Future<void> _showFailureDialog(
         );
   }
   remarks.dispose();
+}
+
+class _BulkAssignmentChoice {
+  const _BulkAssignmentChoice({required this.employeeId, required this.reason});
+  final String employeeId;
+  final String? reason;
+}
+
+class _ManagedDeliveryTile extends StatelessWidget {
+  const _ManagedDeliveryTile({
+    required this.delivery,
+    required this.selected,
+    required this.onSelected,
+    required this.onTap,
+  });
+  final DeliveryDetails delivery;
+  final bool selected;
+  final VoidCallback? onSelected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final detail =
+        delivery.sourceType == DeliverySourceType.subscriptionOccurrence
+        ? '${delivery.subscriptionSlot?.label ?? 'Slot unavailable'} · ${delivery.quantity?.toStringAsFixed(2) ?? '-'} quantity'
+        : delivery.orderSummary == null
+        ? 'One-time order'
+        : 'Order ${delivery.orderSummary!.orderNumber} · '
+              '${delivery.orderSummary!.totalQuantity.toStringAsFixed(2)} quantity';
+    return Card(
+      child: ListTile(
+        leading: onSelected == null
+            ? Icon(
+                delivery.isTrackingActive
+                    ? Icons.location_searching
+                    : Icons.local_shipping_outlined,
+              )
+            : Checkbox(value: selected, onChanged: (_) => onSelected!()),
+        title: Text(delivery.referenceNumber),
+        subtitle: Text(
+          '${formatDeliveryDate(delivery.scheduledDate)} · '
+          '${delivery.sourceType.label} · ${delivery.status.label}\n'
+          '$detail\n${delivery.assignedEmployeeName ?? 'Unassigned'}',
+        ),
+        isThreeLine: true,
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+Future<_BulkAssignmentChoice?> _showBulkAssignmentDialog(
+  BuildContext context,
+  List<DeliveryEmployee> employees,
+) async {
+  String? employeeId;
+  final reason = TextEditingController();
+  final result = await showDialog<_BulkAssignmentChoice>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: const Text('Assign selected deliveries'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: null,
+              decoration: const InputDecoration(
+                labelText: 'Employee',
+                border: OutlineInputBorder(),
+              ),
+              items: employees
+                  .map(
+                    (item) => DropdownMenuItem(
+                      value: item.employeeId,
+                      child: Text(item.displayName),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) => setState(() => employeeId = value),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reason,
+              decoration: const InputDecoration(
+                labelText: 'Reason (optional)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: employeeId == null
+                ? null
+                : () => Navigator.pop(
+                    context,
+                    _BulkAssignmentChoice(
+                      employeeId: employeeId!,
+                      reason: reason.text.trim().isEmpty
+                          ? null
+                          : reason.text.trim(),
+                    ),
+                  ),
+            child: const Text('Confirm assignment'),
+          ),
+        ],
+      ),
+    ),
+  );
+  reason.dispose();
+  return result;
 }
 
 Future<void> _showAssignmentDialog(

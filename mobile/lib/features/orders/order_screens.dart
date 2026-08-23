@@ -59,9 +59,17 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Checkout')),
       body: orderState.cart.isEmpty
-          ? const EmptyStatePanel(
+          ? EmptyStatePanel(
               title: 'Your cart is empty',
               message: 'Choose a product from the catalogue to start an order.',
+              action: FilledButton.icon(
+                onPressed: () {
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  context.go('/catalogue');
+                },
+                icon: const Icon(Icons.shopping_bag_outlined),
+                label: const Text('Continue Shopping'),
+              ),
             )
           : RefreshIndicator(
               onRefresh: () =>
@@ -70,7 +78,15 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
                 children: [
                   const _CheckoutProgress(),
-                  const SizedBox(height: 20),
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      context.go('/catalogue');
+                    },
+                    icon: const Icon(Icons.add_shopping_cart_outlined),
+                    label: const Text('Continue Shopping'),
+                  ),
+                  const SizedBox(height: 12),
                   _CheckoutSectionLabel(
                     step: '1',
                     title: 'Your order',
@@ -95,12 +111,34 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                         subtitle: Text(
                           '${formatQuantity(item.quantity)} ${item.product.unitLabel} · ₹${item.product.price.toStringAsFixed(2)} each',
                         ),
-                        trailing: IconButton(
-                          tooltip: 'Remove item',
-                          onPressed: () => ref
-                              .read(orderControllerProvider.notifier)
-                              .removeCartItem(item.product.publicId),
-                          icon: const Icon(Icons.delete_outline),
+                        trailing: SizedBox(
+                          width: 130,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              IconButton(
+                                tooltip: 'Decrease quantity',
+                                onPressed: () => ref
+                                    .read(orderControllerProvider.notifier)
+                                    .decrementCartItem(item.product.publicId),
+                                icon: const Icon(Icons.remove_circle_outline),
+                              ),
+                              SizedBox(
+                                width: 34,
+                                child: Text(
+                                  formatQuantity(item.quantity),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: 'Increase quantity',
+                                onPressed: () => ref
+                                    .read(orderControllerProvider.notifier)
+                                    .incrementCartItem(item.product.publicId),
+                                icon: const Icon(Icons.add_circle_outline),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -609,13 +647,43 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                             : Icons.verified_outlined,
                       ),
                       title: Text(
-                        order.status == 'PendingPayment'
-                            ? 'Payment pending'
-                            : 'Payment linked to order',
+                        order.paymentStatus == null
+                            ? (order.status == 'PendingPayment'
+                                  ? 'Payment pending'
+                                  : 'Payment linked to order')
+                            : 'Payment ${order.paymentStatus}',
                       ),
-                      subtitle: Text(order.formattedTotal),
+                      subtitle: Text(
+                        order.gatewayPaymentId == null
+                            ? order.formattedTotal
+                            : '${order.formattedTotal}\nRazorpay Payment ID: ${order.gatewayPaymentId}',
+                      ),
+                      isThreeLine: order.gatewayPaymentId != null,
                     ),
                   ),
+                  if (order.deliveryPublicId != null) ...[
+                    const SizedBox(height: 16),
+                    DoodhSectionHeader(title: 'Delivery tracking'),
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.location_on_outlined),
+                        title: Text(
+                          order.deliveryReferenceNumber == null
+                              ? 'Track delivery'
+                              : 'Delivery ${order.deliveryReferenceNumber}',
+                        ),
+                        subtitle: Text(
+                          order.deliveryStatus == null
+                              ? 'View delivery progress and OTP'
+                              : 'Status: ${order.deliveryStatus}',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => context.push(
+                          '/deliveries/${order.deliveryPublicId}',
+                        ),
+                      ),
+                    ),
+                  ],
                   if (state.errorMessage != null) ...[
                     const SizedBox(height: 12),
                     Text(

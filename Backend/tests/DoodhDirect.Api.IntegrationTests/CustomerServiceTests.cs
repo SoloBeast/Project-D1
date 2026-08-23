@@ -4,6 +4,7 @@ using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Infrastructure.Customer;
 using DoodhDirect.Infrastructure.Persistence;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace DoodhDirect.Api.IntegrationTests;
@@ -21,6 +22,73 @@ public sealed class CustomerServiceTests
         Assert.Equal(first.PublicId, second.PublicId);
         Assert.Equal(1, await harness.Db.CustomerProfiles.CountAsync());
         Assert.Null(first.FirstName);
+    }
+
+    [Theory]
+    [InlineData("9876543210")]
+    [InlineData("919876543210")]
+    [InlineData("+919876543210")]
+    public async Task UpdateProfile_AcceptsSupportedIndianMobileForms(string mobile)
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+
+        var result = await harness.Service.UpdateProfileAsync(
+            harness.Customer.Id,
+            new UpdateCustomerProfileRequest(null, null, null, null, mobile),
+            CancellationToken.None);
+
+        Assert.Equal(mobile, result.AlternateMobile);
+    }
+
+    [Theory]
+    [InlineData("1234567890")]
+    [InlineData("987654321")]
+    [InlineData("98765432101")]
+    [InlineData("+91 9876543210")]
+    [InlineData("98765-43210")]
+    public async Task UpdateProfile_RejectsInvalidAlternateMobile(string mobile)
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.UpdateProfileAsync(
+                harness.Customer.Id,
+                new UpdateCustomerProfileRequest(null, null, null, null, mobile),
+                CancellationToken.None));
+
+        Assert.Equal(nameof(UpdateCustomerProfileRequest.AlternateMobile), exception.Field);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Male")]
+    [InlineData("Female")]
+    [InlineData("Other")]
+    public async Task UpdateProfile_AllowsOptionalSupportedGender(string? gender)
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+
+        var result = await harness.Service.UpdateProfileAsync(
+            harness.Customer.Id,
+            new UpdateCustomerProfileRequest(null, null, null, gender, null),
+            CancellationToken.None);
+
+        Assert.Equal(string.IsNullOrWhiteSpace(gender) ? null : gender, result.Gender);
+    }
+
+    [Fact]
+    public async Task UpdateProfile_RejectsUnsupportedGender()
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.UpdateProfileAsync(
+                harness.Customer.Id,
+                new UpdateCustomerProfileRequest(null, null, null, "Unknown", null),
+                CancellationToken.None));
+
+        Assert.Equal(nameof(UpdateCustomerProfileRequest.Gender), exception.Field);
     }
 
     [Fact]
@@ -64,6 +132,96 @@ public sealed class CustomerServiceTests
 
         await Assert.ThrowsAsync<ValidationAppException>(() =>
             harness.Service.CreateAddressAsync(harness.Customer.Id, request, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task DefaultAddressSwitching_IsAtomicAndPreservesCoordinates()
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+
+        var first = await harness.Service.CreateAddressAsync(
+            harness.Customer.Id,
+            ValidAddress() with { IsDefault = true },
+            CancellationToken.None);
+        var second = await harness.Service.CreateAddressAsync(
+            harness.Customer.Id,
+            ValidAddress() with
+            {
+                Label = "Office",
+                IsDefault = false,
+                Latitude = 13.0827m,
+                Longitude = 80.2707m,
+            },
+            CancellationToken.None);
+
+        var switched = await harness.Service.UpdateAddressAsync(
+            harness.Customer.Id,
+            second.PublicId,
+            ValidAddress() with
+            {
+                Label = "Office updated",
+                IsDefault = true,
+                Latitude = second.Latitude,
+                Longitude = second.Longitude,
+            },
+            CancellationToken.None);
+
+        var addresses = await harness.Service.GetAddressesAsync(
+            harness.Customer.Id,
+            CancellationToken.None);
+        Assert.False(addresses.Single(x => x.PublicId == first.PublicId).IsDefault);
+        Assert.True(switched.IsDefault);
+        Assert.Equal(13.0827m, switched.Latitude);
+        Assert.Equal(80.2707m, switched.Longitude);
+        Assert.Single(addresses, x => x.IsDefault);
+    }
+
+    [Fact]
+    public async Task DeactivatedOrForeignAddress_CannotBeMutated()
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+        var address = await harness.Service.CreateAddressAsync(
+            harness.Customer.Id, ValidAddress(), CancellationToken.None);
+        await harness.Service.DeactivateAddressAsync(
+            harness.Customer.Id, address.PublicId, CancellationToken.None);
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            harness.Service.UpdateAddressAsync(
+                harness.Customer.Id,
+                address.PublicId,
+                ValidAddress(),
+                CancellationToken.None));
+
+        var otherCustomer = new User(UserType.Customer);
+        harness.Db.Users.Add(otherCustomer);
+        await harness.Db.SaveChangesAsync();
+        var foreignAddress = await harness.Service.CreateAddressAsync(
+            otherCustomer.Id, ValidAddress(), CancellationToken.None);
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            harness.Service.UpdateAddressAsync(
+                harness.Customer.Id,
+                foreignAddress.PublicId,
+                ValidAddress(),
+                CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("1234567890")]
+    [InlineData("987654321")]
+    [InlineData("98765432101")]
+    [InlineData("abc")]
+    public async Task CreateAddress_RejectsInvalidContactMobile(string mobile)
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.CreateAddressAsync(
+                harness.Customer.Id,
+                ValidAddress() with { ContactMobile = mobile },
+                CancellationToken.None));
+
+        Assert.Equal(nameof(UpsertCustomerAddressRequest.ContactMobile), exception.Field);
     }
 
     [Fact]
@@ -152,35 +310,46 @@ public sealed class CustomerServiceTests
 internal sealed class CustomerHarness : IAsyncDisposable
 {
     private CustomerHarness(
+        SqliteConnection connection,
         DoodhDirectDbContext db,
         User customer,
         CustomerService service)
     {
+        Connection = connection;
         Db = db;
         Customer = customer;
         Service = service;
     }
 
+    public SqliteConnection Connection { get; }
     public DoodhDirectDbContext Db { get; }
     public User Customer { get; }
     public CustomerService Service { get; }
 
     public static async Task<CustomerHarness> CreateAsync()
     {
+        var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
         var options = new DbContextOptionsBuilder<DoodhDirectDbContext>()
-            .UseInMemoryDatabase($"customer-tests-{Guid.NewGuid():N}")
+            .UseSqlite(connection)
             .Options;
         var db = new DoodhDirectDbContext(options);
+        await db.Database.EnsureCreatedAsync();
         var customer = new User(UserType.Customer);
         db.Users.Add(customer);
         await db.SaveChangesAsync();
         var clock = new TestClock(
             new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
         return new CustomerHarness(
+            connection,
             db,
             customer,
             new CustomerService(db, new TestIndiaTimeProvider(clock)));
     }
 
-    public ValueTask DisposeAsync() => Db.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await Db.DisposeAsync();
+        await Connection.DisposeAsync();
+    }
 }

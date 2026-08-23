@@ -33,7 +33,6 @@ public sealed class DeliveriesControllerTests
     [InlineData(typeof(DeliveryStaffController), nameof(DeliveryStaffController.PickUp), AuthorizationCodes.DeliveriesOperateAssigned)]
     [InlineData(typeof(DeliveryStaffController), nameof(DeliveryStaffController.Start), AuthorizationCodes.DeliveriesOperateAssigned)]
     [InlineData(typeof(DeliveryStaffController), nameof(DeliveryStaffController.Arrive), AuthorizationCodes.DeliveriesOperateAssigned)]
-    [InlineData(typeof(DeliveryStaffController), nameof(DeliveryStaffController.IssueOtp), AuthorizationCodes.DeliveriesOperateAssigned)]
     [InlineData(typeof(DeliveryStaffController), nameof(DeliveryStaffController.VerifyOtp), AuthorizationCodes.DeliveriesOperateAssigned)]
     [InlineData(typeof(DeliveryStaffController), nameof(DeliveryStaffController.Complete), AuthorizationCodes.DeliveriesOperateAssigned)]
     [InlineData(typeof(DeliveryStaffController), nameof(DeliveryStaffController.Fail), AuthorizationCodes.DeliveriesOperateAssigned)]
@@ -49,6 +48,19 @@ public sealed class DeliveriesControllerTests
 
         Assert.Equal($"permission:{permission}", authorize.Policy);
         Assert.Empty(method.GetCustomAttributes<AllowAnonymousAttribute>(inherit: true));
+    }
+
+    [Fact]
+    public void StaffController_DoesNotExposeManualOtpIssuanceRoute()
+    {
+        var routeTemplates = typeof(DeliveryStaffController)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .SelectMany(method => method.GetCustomAttributes<HttpMethodAttribute>(inherit: false))
+            .Select(attribute => attribute.Template);
+
+        Assert.DoesNotContain(
+            routeTemplates,
+            template => template?.Contains("issue-otp", StringComparison.OrdinalIgnoreCase) == true);
     }
 
     [Fact]

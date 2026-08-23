@@ -25,6 +25,7 @@ public sealed class PaymentsWalletControllerTests
     [InlineData(typeof(PaymentsController), nameof(PaymentsController.Create), AuthorizationCodes.PaymentsCreateOwn)]
     [InlineData(typeof(PaymentsController), nameof(PaymentsController.Verify), AuthorizationCodes.PaymentsCreateOwn)]
     [InlineData(typeof(PaymentsController), nameof(PaymentsController.Get), AuthorizationCodes.PaymentsReadOwn)]
+    [InlineData(typeof(PaymentsController), nameof(PaymentsController.Reconcile), AuthorizationCodes.PaymentsRefund)]
     [InlineData(typeof(PaymentsController), nameof(PaymentsController.Refund), AuthorizationCodes.PaymentsRefund)]
     [InlineData(typeof(WalletController), nameof(WalletController.Get), AuthorizationCodes.WalletReadOwn)]
     [InlineData(typeof(WalletController), nameof(WalletController.GetTransactions), AuthorizationCodes.WalletReadOwn)]
@@ -97,6 +98,24 @@ public sealed class PaymentsWalletControllerTests
 
         Assert.Equal("The webhook payload is too large.", exception.Message);
         Assert.Equal(0, paymentService.WebhookCalls);
+    }
+
+    [Fact]
+    public async Task Reconcile_ForwardsAuthenticatedOperatorWithOwnershipBypass()
+    {
+        var paymentService = new CapturingPaymentService();
+        var controller = CreatePaymentsController(paymentService, userId: 91);
+        var paymentId = Guid.NewGuid();
+
+        var response = await controller.Reconcile(paymentId, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(response.Result);
+        var envelope = Assert.IsType<ApiResponse<PaymentReconciliationResult>>(ok.Value);
+        Assert.Equal(paymentService.ReconciliationResult, envelope.Data);
+        Assert.Equal(91, paymentService.ReconciliationRequestedByUserId);
+        Assert.Equal(paymentId, paymentService.ReconciliationPaymentId);
+        Assert.True(paymentService.ReconciliationBypassOwnership);
+        Assert.Equal(1, paymentService.ReconciliationCalls);
     }
 
     [Fact]
@@ -223,6 +242,19 @@ public sealed class PaymentsWalletControllerTests
         Assert.False(options.IsValidForEnvironment(isDevelopment: false));
     }
 
+    private static PaymentsController CreatePaymentsController(
+        IPaymentService paymentService,
+        long userId)
+    {
+        var controller = new PaymentsController(paymentService);
+        var context = new DefaultHttpContext();
+        context.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim("user_id", userId.ToString())],
+            authenticationType: "Test"));
+        controller.ControllerContext = new ControllerContext { HttpContext = context };
+        return controller;
+    }
+
     private static WalletController CreateWalletController(
         IWalletService walletService,
         string environmentName,
@@ -259,9 +291,38 @@ public sealed class PaymentsWalletControllerTests
 
     private sealed class CapturingPaymentService : IPaymentService
     {
+        private static readonly DateTime PaymentOccurredAt =
+            new(2026, 8, 23, 10, 30, 0, DateTimeKind.Unspecified);
+
         public byte[]? WebhookPayload { get; private set; }
         public string? WebhookSignature { get; private set; }
         public int WebhookCalls { get; private set; }
+        public long? ReconciliationRequestedByUserId { get; private set; }
+        public Guid? ReconciliationPaymentId { get; private set; }
+        public bool ReconciliationBypassOwnership { get; private set; }
+        public int ReconciliationCalls { get; private set; }
+        public PaymentReconciliationResult ReconciliationResult { get; } = new(
+            new PaymentResult(
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                "ORD-TEST-1",
+                PaymentMethod.Razorpay,
+                "Razorpay",
+                PaymentStatus.Pending,
+                125.50m,
+                0m,
+                "INR",
+                "order_test_1",
+                null,
+                "rzp_test_key",
+                null,
+                null,
+                PaymentOccurredAt.AddMinutes(15),
+                null,
+                PaymentOccurredAt),
+            PaymentReconciliationOutcome.Pending,
+            "authorized",
+            TargetRecovered: false);
 
         public Task ProcessWebhookAsync(byte[] payload, string signature, CancellationToken cancellationToken)
         {
@@ -288,6 +349,12 @@ public sealed class PaymentsWalletControllerTests
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<PaymentResult> CancelAsync(
+            long customerId,
+            Guid paymentId,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<IReadOnlyList<PaymentCapability>> GetCapabilitiesAsync(
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -305,6 +372,19 @@ public sealed class PaymentsWalletControllerTests
 
         public Task<PaymentResult> GetAsync(long userId, Guid paymentId, bool bypassOwnership, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<PaymentReconciliationResult> ReconcileAsync(
+            long requestedByUserId,
+            Guid paymentId,
+            bool bypassOwnership,
+            CancellationToken cancellationToken)
+        {
+            ReconciliationRequestedByUserId = requestedByUserId;
+            ReconciliationPaymentId = paymentId;
+            ReconciliationBypassOwnership = bypassOwnership;
+            ReconciliationCalls++;
+            return Task.FromResult(ReconciliationResult);
+        }
 
         public Task<RefundResult> RefundAsync(long requestedByUserId, Guid paymentId, RefundPaymentRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

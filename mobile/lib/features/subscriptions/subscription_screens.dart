@@ -82,6 +82,7 @@ class _SubscriptionSetupScreenState
     DeliveryWeekday.friday,
   };
   PaymentMethod _paymentMethod = PaymentMethod.wallet;
+  SubscriptionDeliverySlot _slot = SubscriptionDeliverySlot.morning;
 
   @override
   void initState() {
@@ -201,6 +202,18 @@ class _SubscriptionSetupScreenState
               )
               .toList(),
         ),
+        DropdownButtonFormField<SubscriptionDeliverySlot>(
+          initialValue: _slot,
+          decoration: const InputDecoration(labelText: 'Delivery slot'),
+          items: SubscriptionDeliverySlot.values
+              .map(
+                (slot) =>
+                    DropdownMenuItem(value: slot, child: Text(slot.apiValue)),
+              )
+              .toList(),
+          onChanged: (value) => setState(() => _slot = value!),
+        ),
+        const SizedBox(height: 12),
         RadioGroup<PaymentMethod>(
           groupValue: _paymentMethod,
           onChanged: (value) => setState(() => _paymentMethod = value!),
@@ -298,6 +311,7 @@ class _SubscriptionSetupScreenState
             quantity: _quantity,
             startDate: _startDate,
             deliveryDays: _days,
+            slot: _slot,
             totalEntitlement: _entitlement,
             paymentMethod: _paymentMethod,
           ),

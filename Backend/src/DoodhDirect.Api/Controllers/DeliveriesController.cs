@@ -5,6 +5,7 @@ using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Identity;
 using DoodhDirect.Domain.Deliveries;
+using DoodhDirect.Domain.Subscriptions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -81,11 +82,13 @@ public sealed class DeliveryStaffController(
     [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<DeliveryResult>>), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<DeliveryResult>>>> GetToday(
         [FromQuery] DateOnly? date,
+        [FromQuery] DeliveryStatus? status,
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<IReadOnlyList<DeliveryResult>>.Ok(
             await deliveryService.GetTodayForStaffAsync(
                 RequireActor(),
                 date ?? timeProvider.Today,
+                status,
                 cancellationToken)));
 
     [HttpGet("{deliveryId:guid}")]
@@ -125,17 +128,6 @@ public sealed class DeliveryStaffController(
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<DeliveryResult>.Ok(await deliveryService.ArriveAsync(
             RequireActor(), deliveryId, cancellationToken)));
-
-    [HttpPost("{deliveryId:guid}/issue-otp")]
-    [Authorize(Policy = "permission:" + AuthorizationCodes.DeliveriesOperateAssigned)]
-    [ProducesResponseType(typeof(ApiResponse<DeliveryOtpIssuedResult>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<ApiResponse<DeliveryOtpIssuedResult>>> IssueOtp(
-        Guid deliveryId,
-        CancellationToken cancellationToken)
-    {
-        await deliveryService.IssueOtpAsync(RequireActor(), deliveryId, cancellationToken);
-        return Ok(ApiResponse<DeliveryOtpIssuedResult>.Ok(new DeliveryOtpIssuedResult(true)));
-    }
 
     [HttpPost("{deliveryId:guid}/verify-otp")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.DeliveriesOperateAssigned)]
@@ -194,15 +186,27 @@ public sealed class DeliveryManagementController(IDeliveryService deliveryServic
         Ok(ApiResponse<DeliveryMaterializationResult>.Ok(await deliveryService.MaterializeEligibleAsync(
             RequireActor(), throughDate, cancellationToken)));
 
+    [HttpPost("fetch-subscriptions")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.DeliveriesAssignBranch)]
+    [ProducesResponseType(typeof(ApiResponse<DeliveryMaterializationResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<DeliveryMaterializationResult>>> FetchSubscriptions(
+        [FromQuery] DateOnly throughDate,
+        [FromQuery] SubscriptionDeliverySlot? slot,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<DeliveryMaterializationResult>.Ok(await deliveryService.FetchSubscriptionDeliveriesAsync(
+            RequireActor(), throughDate, slot, cancellationToken)));
+
     [HttpGet("branches/{branchId:long}")]
     [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<DeliveryResult>>), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<DeliveryResult>>>> GetBranch(
         long branchId,
         [FromQuery] DateOnly? date,
         [FromQuery] DeliveryStatus? status,
+        [FromQuery] DeliverySourceType? sourceType,
+        [FromQuery] SubscriptionDeliverySlot? slot,
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<IReadOnlyList<DeliveryResult>>.Ok(await deliveryService.GetForBranchAsync(
-            RequireActor(), branchId, date, status, cancellationToken)));
+            RequireActor(), branchId, date, status, sourceType, slot, cancellationToken)));
 
     [HttpGet("branches/{branchId:long}/employees")]
     [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<DeliveryEmployeeResult>>), StatusCodes.Status200OK)]
@@ -229,6 +233,13 @@ public sealed class DeliveryManagementController(IDeliveryService deliveryServic
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<DeliveryResult>.Ok(await deliveryService.AssignAsync(
             RequireActor(), deliveryId, request, cancellationToken)));
-}
 
-public sealed record DeliveryOtpIssuedResult(bool Issued);
+    [HttpPost("bulk-assign")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.DeliveriesAssignBranch)]
+    [ProducesResponseType(typeof(ApiResponse<BulkAssignDeliveriesResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<BulkAssignDeliveriesResult>>> BulkAssign(
+        [FromBody] BulkAssignDeliveriesRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<BulkAssignDeliveriesResult>.Ok(await deliveryService.BulkAssignAsync(
+            RequireActor(), request, cancellationToken)));
+}
