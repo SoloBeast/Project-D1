@@ -6,6 +6,7 @@ using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Setup;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Deliveries;
@@ -27,6 +28,7 @@ public sealed class DeliveryService(
     IDeliveryRealtimePublisher realtimePublisher,
     IOptions<DeliveryOptions> deliveryOptions,
     INotificationEventWriter notificationEventWriter,
+    INumberSeriesService numberSeriesService,
     DeliveryOtpHandoffProtector deliveryOtpHandoffProtector,
     DeliveryOtpSendGate? deliveryOtpSendGate = null,
     ILogger<DeliveryService>? logger = null) : IDeliveryService
@@ -35,15 +37,15 @@ public sealed class DeliveryService(
     private readonly DeliveryOtpSendGate _deliveryOtpSendGate = deliveryOtpSendGate ?? DefaultDeliveryOtpSendGate;
     private readonly DeliveryOptions _options = deliveryOptions.Value;
 
-    public void AddIfMissing(Order order, DateOnly scheduledDate)
+    public async Task AddIfMissing(Order order, DateOnly scheduledDate, CancellationToken cancellationToken)
     {
         if (dbContext.Deliveries.Local.Any(x => x.OrderId == order.Id)
-            || dbContext.Deliveries.Any(x => x.OrderId == order.Id))
+            || await dbContext.Deliveries.AnyAsync(x => x.OrderId == order.Id, cancellationToken))
         {
             return;
         }
 
-        dbContext.Deliveries.Add(Delivery.ForOrder(
+        var delivery = Delivery.ForOrder(
             order.Id,
             order.CustomerId,
             order.BranchId,
@@ -54,7 +56,10 @@ public sealed class DeliveryService(
             FormatOrderAddress(order),
             order.DeliveryInstructionsSnapshot,
             order.LatitudeSnapshot,
-            order.LongitudeSnapshot));
+            order.LongitudeSnapshot);
+        delivery.AssignDeliveryNumber(
+            await numberSeriesService.GetNextNumberAsync("DELIVERY", order.CustomerId, cancellationToken));
+        dbContext.Deliveries.Add(delivery);
     }
 
     public async Task<DeliveryMaterializationResult> MaterializeEligibleAsync(
@@ -89,36 +94,42 @@ public sealed class DeliveryService(
         var occurrences = await occurrenceQuery.ToListAsync(cancellationToken);
         var now = timeProvider.Now;
 
-        foreach (var order in orders)
+        await ExecuteSerializableAsync(async () =>
         {
-            AddIfMissing(order, today);
-        }
+            foreach (var order in orders)
+            {
+                await AddIfMissing(order, today, cancellationToken);
+            }
 
-        foreach (var occurrence in occurrences)
-        {
-            var subscription = occurrence.Subscription;
-            var address = subscription.CustomerAddress;
-            dbContext.Deliveries.Add(Delivery.ForSubscriptionOccurrence(
-                occurrence.Id,
-                subscription.CustomerId,
-                occurrence.BranchId,
-                occurrence.ScheduledDate,
-                $"SUB-{subscription.PublicId:N}-{occurrence.ScheduledDate:yyyyMMdd}",
-                address.ContactName,
-                address.ContactMobile,
-                occurrence.AddressSnapshot,
-                address.DeliveryInstructions,
-                address.Latitude,
-                address.Longitude));
-        }
+            foreach (var occurrence in occurrences)
+            {
+                var subscription = occurrence.Subscription;
+                var address = subscription.CustomerAddress;
+                var delivery = Delivery.ForSubscriptionOccurrence(
+                    occurrence.Id,
+                    subscription.CustomerId,
+                    occurrence.BranchId,
+                    occurrence.ScheduledDate,
+                    $"SUB-{subscription.PublicId:N}-{occurrence.ScheduledDate:yyyyMMdd}",
+                    address.ContactName,
+                    address.ContactMobile,
+                    occurrence.AddressSnapshot,
+                    address.DeliveryInstructions,
+                    address.Latitude,
+                    address.Longitude);
+                delivery.AssignDeliveryNumber(
+                    await numberSeriesService.GetNextNumberAsync("DELIVERY", subscription.CustomerId, cancellationToken));
+                dbContext.Deliveries.Add(delivery);
+            }
 
-        if (orders.Count + occurrences.Count > 0)
-        {
-            AddAudit(actor.UserId, "DELIVERY.MATERIALIZE", "Delivery", throughDate.ToString("yyyy-MM-dd"), null,
-                new { OrdersCreated = orders.Count, SubscriptionOccurrencesCreated = occurrences.Count }, null, now);
-            await dbContext.SaveChangesAsync(cancellationToken);
-            await IssuePendingOtpsAsync(cancellationToken);
-        }
+            if (orders.Count + occurrences.Count > 0)
+            {
+                AddAudit(actor.UserId, "DELIVERY.MATERIALIZE", "Delivery", throughDate.ToString("yyyy-MM-dd"), null,
+                    new { OrdersCreated = orders.Count, SubscriptionOccurrencesCreated = occurrences.Count }, null, now);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await IssuePendingOtpsAsync(cancellationToken);
+            }
+        }, cancellationToken);
 
         return new DeliveryMaterializationResult(orders.Count, occurrences.Count);
     }
@@ -159,31 +170,37 @@ public sealed class DeliveryService(
         }
 
         var occurrences = await occurrenceQuery.ToListAsync(cancellationToken);
-        foreach (var occurrence in occurrences)
+        await ExecuteSerializableAsync(async () =>
         {
-            var subscription = occurrence.Subscription;
-            var address = subscription.CustomerAddress;
-            dbContext.Deliveries.Add(Delivery.ForSubscriptionOccurrence(
-                occurrence.Id,
-                subscription.CustomerId,
-                occurrence.BranchId,
-                occurrence.ScheduledDate,
-                $"SUB-{subscription.PublicId:N}-{occurrence.ScheduledDate:yyyyMMdd}",
-                address.ContactName,
-                address.ContactMobile,
-                occurrence.AddressSnapshot,
-                address.DeliveryInstructions,
-                address.Latitude,
-                address.Longitude));
-        }
+            foreach (var occurrence in occurrences)
+            {
+                var subscription = occurrence.Subscription;
+                var address = subscription.CustomerAddress;
+                var delivery = Delivery.ForSubscriptionOccurrence(
+                    occurrence.Id,
+                    subscription.CustomerId,
+                    occurrence.BranchId,
+                    occurrence.ScheduledDate,
+                    $"SUB-{subscription.PublicId:N}-{occurrence.ScheduledDate:yyyyMMdd}",
+                    address.ContactName,
+                    address.ContactMobile,
+                    occurrence.AddressSnapshot,
+                    address.DeliveryInstructions,
+                    address.Latitude,
+                    address.Longitude);
+                delivery.AssignDeliveryNumber(
+                    await numberSeriesService.GetNextNumberAsync("DELIVERY", subscription.CustomerId, cancellationToken));
+                dbContext.Deliveries.Add(delivery);
+            }
 
-        if (occurrences.Count > 0)
-        {
-            AddAudit(actor.UserId, "DELIVERY.FETCH_SUBSCRIPTIONS", "SubscriptionDelivery", throughDate.ToString("yyyy-MM-dd"), null,
-                new { SubscriptionOccurrencesCreated = occurrences.Count }, null, timeProvider.Now);
-            await dbContext.SaveChangesAsync(cancellationToken);
-            await IssuePendingOtpsAsync(cancellationToken);
-        }
+            if (occurrences.Count > 0)
+            {
+                AddAudit(actor.UserId, "DELIVERY.FETCH_SUBSCRIPTIONS", "SubscriptionDelivery", throughDate.ToString("yyyy-MM-dd"), null,
+                    new { SubscriptionOccurrencesCreated = occurrences.Count }, null, timeProvider.Now);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await IssuePendingOtpsAsync(cancellationToken);
+            }
+        }, cancellationToken);
 
         return new DeliveryMaterializationResult(0, occurrences.Count);
     }

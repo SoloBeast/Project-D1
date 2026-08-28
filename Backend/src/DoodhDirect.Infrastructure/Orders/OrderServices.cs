@@ -1,7 +1,9 @@
+using System.Data;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
+using DoodhDirect.Application.Setup;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Deliveries;
@@ -88,6 +90,7 @@ public sealed class OrderService(
     DoodhDirectDbContext dbContext,
     IBranchAllocationService branchAllocationService,
     INotificationEventWriter notificationEventWriter,
+    INumberSeriesService numberSeriesService,
     IIndiaTimeProvider timeProvider) : IOrderService
 {
     public async Task<CheckoutResult> PreviewAsync(long customerId, CheckoutRequest request, CancellationToken cancellationToken)
@@ -119,69 +122,86 @@ public sealed class OrderService(
         }
 
         var calculation = await CalculateAsync(customerId, request, cancellationToken);
-        var order = new Order(
-            customerId,
-            calculation.Address.Id,
-            calculation.Allocation.BranchId,
-            idempotencyKey.Trim(),
-            CreateOrderNumber(),
-            calculation.Subtotal,
-            calculation.DiscountAmount,
-            calculation.Allocation.BranchCode,
-            calculation.Allocation.BranchName,
-            calculation.Address.Label,
-            calculation.Address.AddressLine1,
-            calculation.Address.AddressLine2,
-            calculation.Address.Locality,
-            calculation.Address.City,
-            calculation.Address.State,
-            calculation.Address.PinCode,
-            calculation.Address.Landmark,
-            calculation.Address.DeliveryInstructions,
-            calculation.Address.ContactName,
-            calculation.Address.ContactMobile,
-            calculation.Address.Latitude,
-            calculation.Address.Longitude);
-
-        foreach (var line in calculation.Lines)
-        {
-            order.AddItem(new OrderItem(
-                line.Product.Id,
-                line.Quantity,
-                line.Product.Price,
-                line.Product.Sku,
-                line.Product.Name,
-                line.Product.UnitOfMeasure));
-        }
-
-        dbContext.Orders.Add(order);
-        var notificationEventKey = $"order:{order.PublicId:N}:created";
-        notificationEventWriter.Add(new NotificationEventRequest(
-            customerId,
-            NotificationEventTypes.OrderCreated,
-            notificationEventKey,
-            new Dictionary<string, string>
-            {
-                ["message"] = $"Order {order.OrderNumber} has been created."
-            },
-            $"/orders/{order.PublicId}"));
+        string? orderNumber = null;
+        string? notificationEventKey = null;
+        Order? order = null;
         try
         {
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await ExecuteSerializableAsync(async () =>
+            {
+                orderNumber = await numberSeriesService.GetNextNumberAsync(
+                    "ORDER",
+                    customerId,
+                    cancellationToken,
+                    calculation.Allocation.BranchCode);
+                order = new Order(
+                    customerId,
+                    calculation.Address.Id,
+                    calculation.Allocation.BranchId,
+                    idempotencyKey.Trim(),
+                    orderNumber,
+                    calculation.Subtotal,
+                    calculation.DiscountAmount,
+                    calculation.Allocation.BranchCode,
+                    calculation.Allocation.BranchName,
+                    calculation.Address.Label,
+                    calculation.Address.AddressLine1,
+                    calculation.Address.AddressLine2,
+                    calculation.Address.Locality,
+                    calculation.Address.City,
+                    calculation.Address.State,
+                    calculation.Address.PinCode,
+                    calculation.Address.Landmark,
+                    calculation.Address.DeliveryInstructions,
+                    calculation.Address.ContactName,
+                    calculation.Address.ContactMobile,
+                    calculation.Address.Latitude,
+                    calculation.Address.Longitude);
+
+                foreach (var line in calculation.Lines)
+                {
+                    order.AddItem(new OrderItem(
+                        line.Product.Id,
+                        line.Quantity,
+                        line.Product.Price,
+                        line.Product.Sku,
+                        line.Product.Name,
+                        line.Product.UnitOfMeasure));
+                }
+
+                dbContext.Orders.Add(order);
+                notificationEventKey = $"order:{order.PublicId:N}:created";
+                notificationEventWriter.Add(new NotificationEventRequest(
+                    customerId,
+                    NotificationEventTypes.OrderCreated,
+                    notificationEventKey,
+                    new Dictionary<string, string>
+                    {
+                        ["message"] = $"Order {order.OrderNumber} has been created."
+                    },
+                    $"/orders/{order.PublicId}"));
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
         }
         catch (DbUpdateException)
         {
-            dbContext.Entry(order).State = EntityState.Detached;
-            foreach (var item in order.Items)
+            if (order is not null)
             {
-                dbContext.Entry(item).State = EntityState.Detached;
+                dbContext.Entry(order).State = EntityState.Detached;
+                foreach (var item in order.Items)
+                {
+                    dbContext.Entry(item).State = EntityState.Detached;
+                }
             }
 
-            var notificationEvent = dbContext.NotificationEvents.Local
-                .SingleOrDefault(item => item.EventKey == notificationEventKey);
-            if (notificationEvent is not null)
+            if (notificationEventKey is not null)
             {
-                dbContext.Entry(notificationEvent).State = EntityState.Detached;
+                var notificationEvent = dbContext.NotificationEvents.Local
+                    .SingleOrDefault(item => item.EventKey == notificationEventKey);
+                if (notificationEvent is not null)
+                {
+                    dbContext.Entry(notificationEvent).State = EntityState.Detached;
+                }
             }
 
             var duplicate = await LoadOrderAsync(customerId, idempotencyKey.Trim(), cancellationToken);
@@ -189,8 +209,8 @@ public sealed class OrderService(
             throw;
         }
 
-        await LoadNavigationAsync(order, cancellationToken);
-        return await ToResultAsync(order, cancellationToken);
+        await LoadNavigationAsync(order!, cancellationToken);
+        return await ToResultAsync(order!, cancellationToken);
     }
 
     public async Task<IReadOnlyList<OrderResult>> GetForCustomerAsync(long customerId, CancellationToken cancellationToken) =>
@@ -346,7 +366,24 @@ public sealed class OrderService(
             .ToArray();
     }
 
-    private string CreateOrderNumber() => $"DD-{timeProvider.Now:yyyyMMddHHmmss}-{Guid.NewGuid():N}"[..25].ToUpperInvariant();
+    private async Task ExecuteSerializableAsync(Func<Task> operation, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            await operation();
+            return;
+        }
+
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable,
+                cancellationToken);
+            await operation();
+            await transaction.CommitAsync(cancellationToken);
+        });
+    }
 
     private sealed record Calculation(
         CustomerAddress Address,

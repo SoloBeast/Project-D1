@@ -98,8 +98,24 @@ public sealed class Branch : AuditableEntity
     public decimal Longitude { get; private set; }
     public decimal? ServiceRadiusKm { get; private set; }
     public bool IsActive { get; private set; } = true;
+    public string? BranchNumber { get; private set; }
 
     public ICollection<ProductBranch> ProductBranches { get; private set; } = [];
+
+    public void AssignBranchNumber(string branchNumber)
+    {
+        if (string.IsNullOrWhiteSpace(branchNumber))
+        {
+            throw new ArgumentException("A branch number is required.", nameof(branchNumber));
+        }
+
+        if (BranchNumber is not null)
+        {
+            throw new InvalidOperationException("The branch number has already been assigned.");
+        }
+
+        BranchNumber = branchNumber.Trim();
+    }
 
     public void Activate() => IsActive = true;
     public void Deactivate() => IsActive = false;

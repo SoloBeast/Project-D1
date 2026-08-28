@@ -56,7 +56,11 @@ class MilkTestImage {
     fileName: json['fileName'] as String,
     contentType: json['contentType'] as String,
     fileSize: (json['fileSize'] as num).toInt(),
-    uploadedAtUtc: DateTime.parse(json['uploadedAtUtc'] as String).toUtc(),
+    uploadedAtUtc: _requiredProtocolDate(
+      json,
+      'uploadedAt',
+      'uploadedAtUtc',
+    ),
     contentPath: json['contentPath'] as String,
   );
 
@@ -111,22 +115,32 @@ class CustomerMilkTest {
     required this.images,
   });
 
-  factory CustomerMilkTest.fromJson(Map<String, dynamic> json) =>
-      CustomerMilkTest(
-        milkTestId: json['milkTestId'] as String,
-        deliveryId: json['deliveryId'] as String,
-        status: MilkTestStatus.parse(json['status']),
-        customerDecision: MilkTestCustomerDecision.parse(
-          json['customerDecision'],
-        ),
-        requestedAtUtc: DateTime.parse(json['requestedAtUtc'] as String)
-            .toUtc(),
-        completedAtUtc: _optionalDate(json['completedAtUtc']),
-        confirmedAtUtc: _optionalDate(json['confirmedAtUtc']),
-        rejectedAtUtc: _optionalDate(json['rejectedAtUtc']),
-        customerRemarks: json['customerRemarks'] as String?,
-        images: _images(json['images']),
-      );
+  factory CustomerMilkTest.fromJson(
+    Map<String, dynamic> json,
+  ) => CustomerMilkTest(
+    milkTestId: json['milkTestId'] as String,
+    deliveryId: json['deliveryId'] as String,
+    status: MilkTestStatus.parse(json['status']),
+    customerDecision: MilkTestCustomerDecision.parse(json['customerDecision']),
+    requestedAtUtc: _requiredProtocolDate(
+      json,
+      'requestedAt',
+      'requestedAtUtc',
+    ),
+    completedAtUtc: _optionalProtocolDate(
+      json,
+      'completedAt',
+      'completedAtUtc',
+    ),
+    confirmedAtUtc: _optionalProtocolDate(
+      json,
+      'confirmedAt',
+      'confirmedAtUtc',
+    ),
+    rejectedAtUtc: _optionalProtocolDate(json, 'rejectedAt', 'rejectedAtUtc'),
+    customerRemarks: json['customerRemarks'] as String?,
+    images: _images(json['images']),
+  );
 
   final String milkTestId;
   final String deliveryId;
@@ -164,11 +178,23 @@ class StaffMilkTest {
     deliveryId: json['deliveryId'] as String,
     status: MilkTestStatus.parse(json['status']),
     customerDecision: MilkTestCustomerDecision.parse(json['customerDecision']),
-    requestedAtUtc: DateTime.parse(json['requestedAtUtc'] as String).toUtc(),
-    completedAtUtc: _optionalDate(json['completedAtUtc']),
+    requestedAtUtc: _requiredProtocolDate(
+      json,
+      'requestedAt',
+      'requestedAtUtc',
+    ),
+    completedAtUtc: _optionalProtocolDate(
+      json,
+      'completedAt',
+      'completedAtUtc',
+    ),
     staffRemarks: json['staffRemarks'] as String?,
-    confirmedAtUtc: _optionalDate(json['confirmedAtUtc']),
-    rejectedAtUtc: _optionalDate(json['rejectedAtUtc']),
+    confirmedAtUtc: _optionalProtocolDate(
+      json,
+      'confirmedAt',
+      'confirmedAtUtc',
+    ),
+    rejectedAtUtc: _optionalProtocolDate(json, 'rejectedAt', 'rejectedAtUtc'),
     customerRemarks: json['customerRemarks'] as String?,
     parameters: (json['parameters'] as List<dynamic>? ?? const [])
         .cast<Map<String, dynamic>>()
@@ -191,8 +217,26 @@ class StaffMilkTest {
   final List<MilkTestImage> images;
 }
 
-DateTime? _optionalDate(Object? value) =>
-    value is String ? DateTime.parse(value).toUtc() : null;
+DateTime _requiredProtocolDate(
+  Map<String, dynamic> json,
+  String key,
+  String fallbackKey,
+) {
+  final value = json[key] ?? json[fallbackKey];
+  if (value is! String || value.isEmpty) {
+    throw FormatException('Missing milk-test timestamp: $key.');
+  }
+  return DateTime.parse(value).toUtc();
+}
+
+DateTime? _optionalProtocolDate(
+  Map<String, dynamic> json,
+  String key,
+  String fallbackKey,
+) {
+  final value = json[key] ?? json[fallbackKey];
+  return value is String ? DateTime.parse(value).toUtc() : null;
+}
 
 List<MilkTestImage> _images(Object? value) =>
     (value as List<dynamic>? ?? const [])

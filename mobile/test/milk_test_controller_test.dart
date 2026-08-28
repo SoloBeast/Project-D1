@@ -109,32 +109,47 @@ void main() {
       });
     }
 
-    test('preserves business-rule failures as online errors', () async {
-      final container = await authenticatedContainer(
-        _FailingMilkTestRepository(
-          const ApiException(
-            409,
-            'MILK_TEST_ALREADY_DECIDED',
-            'The customer decision is final.',
+    for (final statusCode in [422, 500]) {
+      test('maps $statusCode API failures to online error state', () async {
+        final container = await authenticatedContainer(
+          _FailingMilkTestRepository(
+            ApiException(statusCode, 'HTTP_ERROR', 'Server response failed.'),
           ),
-        ),
+        );
+        addTearDown(container.dispose);
+
+        await container
+            .read(milkTestControllerProvider.notifier)
+            .loadForCustomer('delivery-1');
+        final state = container.read(milkTestControllerProvider);
+
+        expect(state.isOffline, isFalse);
+        expect(state.isUnauthorized, isFalse);
+        expect(state.errorMessage, 'Server response failed.');
+      });
+    }
+
+    test('keeps response and model failures online instead of offline', () async {
+      final container = await authenticatedContainer(
+        _FailingMilkTestRepository(const FormatException('invalid date')),
       );
       addTearDown(container.dispose);
 
-      final saved = await container
+      await container
           .read(milkTestControllerProvider.notifier)
-          .reject('test-1');
+          .loadForCustomer('delivery-1');
       final state = container.read(milkTestControllerProvider);
 
-      expect(saved, isFalse);
       expect(state.isOffline, isFalse);
       expect(state.isUnauthorized, isFalse);
-      expect(state.errorMessage, 'The customer decision is final.');
+      expect(state.errorMessage, contains('could not be processed'));
     });
 
-    test('maps transport failures to offline state', () async {
+    test('maps genuine network failures to offline state', () async {
       final container = await authenticatedContainer(
-        _FailingMilkTestRepository(Exception('socket closed')),
+        _FailingMilkTestRepository(
+          const ApiNetworkException('socket closed'),
+        ),
       );
       addTearDown(container.dispose);
 

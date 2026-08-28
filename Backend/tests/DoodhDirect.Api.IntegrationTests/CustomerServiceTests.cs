@@ -2,8 +2,10 @@ using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Customer;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Infrastructure.Customer;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Setup;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
@@ -340,11 +342,15 @@ internal sealed class CustomerHarness : IAsyncDisposable
         await db.SaveChangesAsync();
         var clock = new TestClock(
             new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
+        var timeProvider = new TestIndiaTimeProvider(clock);
+        db.NumberSeries.Add(new NumberSeries(
+            "CUSTOMER", "Customer Number", "CUST/{NUMBER:0000}", 1, 1, NumberSeriesResetPolicy.Never));
+        await db.SaveChangesAsync();
         return new CustomerHarness(
             connection,
             db,
             customer,
-            new CustomerService(db, new TestIndiaTimeProvider(clock)));
+            new CustomerService(db, new NumberSeriesService(db, timeProvider), timeProvider));
     }
 
     public async ValueTask DisposeAsync()

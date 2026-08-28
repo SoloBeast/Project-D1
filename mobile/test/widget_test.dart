@@ -5,6 +5,10 @@ import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/auth/session_state.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_repository.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_controller.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_models.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_repository.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
 import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/orders/order_repository.dart';
@@ -62,6 +66,57 @@ void main() {
 
       expect(repository.loggedOut, isTrue);
       expect(find.text('Sign in to your account'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'restored Dairy Manager session opens the shared branch delivery workspace',
+    (tester) async {
+      final auth = _AuthenticatedDairyManagerRepository();
+      final deliveries = _EmptyDeliveryRepository();
+      final container = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(auth),
+          deliveryRepositoryProvider.overrideWithValue(deliveries),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const DoodhDirectApp(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Dairy workspace'), findsOneWidget);
+      expect(find.text('Delivery Management'), findsOneWidget);
+      expect(
+        find.text(
+          'Manage deliveries, generate subscription deliveries, and assign deliveries to delivery staff.',
+        ),
+        findsOneWidget,
+      );
+
+      final deliveryAction = find.ancestor(
+        of: find.byIcon(Icons.local_shipping_outlined),
+        matching: find.byType(ListTile),
+      );
+      expect(deliveryAction, findsOneWidget);
+      final deliveryTile = tester.widget<ListTile>(deliveryAction);
+      expect(deliveryTile.onTap, isNotNull);
+
+      final router = container.read(routerProvider);
+      router.go('/delivery-management/branch/7');
+      await tester.pumpAndSettle();
+      expect(
+        router.routerDelegate.currentConfiguration.uri.path,
+        '/delivery-management/branch/7',
+      );
+      expect(find.byType(DeliveryManagementScreen), findsOneWidget);
+      expect(find.text('Branch 7 deliveries'), findsOneWidget);
+      expect(deliveries.requestedBranchIds, [7]);
+      expect(auth.restoreCount, 1);
     },
   );
 
@@ -434,6 +489,16 @@ class _RouterHarness {
   GoRouter get router => container.read(routerProvider);
 }
 
+class _AuthenticatedDairyManagerRepository extends AuthRepository {
+  int restoreCount = 0;
+
+  @override
+  Future<AuthSession?> restore() async {
+    restoreCount += 1;
+    return _dairyManagerSession;
+  }
+}
+
 class _AuthenticatedCustomerRepository extends AuthRepository {
   bool loggedOut = false;
   bool cleared = false;
@@ -460,6 +525,30 @@ class _FakeCatalogueRepository extends CatalogueRepository {
 
   @override
   Future<CatalogueProduct> getProduct(String productId) async => product;
+}
+
+class _EmptyDeliveryRepository extends DeliveryRepository {
+  _EmptyDeliveryRepository()
+    : super(api: ApiClient(baseUrl: 'https://api.example.test'));
+
+  final List<int> requestedBranchIds = [];
+
+  @override
+  Future<List<DeliveryDetails>> getBranch(
+    String token,
+    int branchId, {
+    DateTime? date,
+    DeliveryStatus? status,
+    DeliverySourceType? sourceType,
+    SubscriptionDeliverySlot? slot,
+  }) async {
+    requestedBranchIds.add(branchId);
+    return [];
+  }
+
+  @override
+  Future<List<DeliveryEmployee>> getEmployees(String token, int branchId) async =>
+      [];
 }
 
 class _FakeOrderRepository extends OrderRepository {
@@ -534,6 +623,26 @@ final _order = OrderSummary(
   deliveryPublicId: null,
   deliveryReferenceNumber: null,
   deliveryStatus: null,
+);
+
+final _dairyManagerSession = AuthSession(
+  user: const AuthUser(
+    publicUserId: '00000000-0000-0000-0000-000000000007',
+    displayName: 'Dairy Manager User',
+    email: 'dairy-manager@example.test',
+    mobile: null,
+    roles: ['DAIRY_MANAGER'],
+    permissions: [
+      'IDENTITY.BRANCH.ACCESS',
+      'DELIVERIES.READ_BRANCH',
+      'DELIVERIES.ASSIGN_BRANCH',
+    ],
+    branchIds: [7],
+  ),
+  accessToken: 'dairy-manager-access-token',
+  refreshToken: 'dairy-manager-refresh-token',
+  accessTokenExpiresAtUtc: DateTime.utc(2099),
+  refreshTokenExpiresAtUtc: DateTime.utc(2099, 2),
 );
 
 final _customerSession = AuthSession(

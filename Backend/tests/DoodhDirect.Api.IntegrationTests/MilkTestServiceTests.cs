@@ -260,7 +260,7 @@ public sealed class MilkTestServiceTests
             harness.CustomerActor(harness.Customer), harness.Delivery.PublicId, CancellationToken.None);
         Assert.NotNull(beforeCompletion);
         Assert.Empty(beforeCompletion.Images);
-        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.OpenImageForCustomerAsync(
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.OpenImageAsync(
             harness.CustomerActor(harness.Customer), requested.MilkTestId, image.ImageId, CancellationToken.None));
 
         await harness.AdvanceToArrivedAsync();
@@ -290,9 +290,9 @@ public sealed class MilkTestServiceTests
         Assert.Equal(requested.MilkTestId.ToString(), variables.GetProperty("milkTestId").GetString());
         Assert.Equal(harness.Delivery.PublicId.ToString(), variables.GetProperty("deliveryId").GetString());
         Assert.Equal("1", variables.GetProperty("readingCount").GetString());
-        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.OpenImageForCustomerAsync(
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.OpenImageAsync(
             harness.CustomerActor(harness.OtherCustomer), requested.MilkTestId, image.ImageId, CancellationToken.None));
-        await using var content = await harness.Service.OpenImageForCustomerAsync(
+        await using var content = await harness.Service.OpenImageAsync(
             harness.CustomerActor(harness.Customer), requested.MilkTestId, image.ImageId, CancellationToken.None);
         using var copy = new MemoryStream();
         await content.Content.CopyToAsync(copy);
@@ -324,6 +324,166 @@ public sealed class MilkTestServiceTests
         await Assert.ThrowsAsync<ConflictException>(() => harness.Service.ConfirmAsync(
             harness.CustomerActor(harness.Customer), completed.MilkTestId, request, CancellationToken.None));
         Assert.Contains(expectedAudit, await harness.Db.AuditLogs.Select(x => x.Action).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task DeleteImage_removes_only_the_selected_image_and_audits_without_ef_conceptual_null()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var first = await harness.UploadAsync(requested.MilkTestId);
+        var second = await harness.UploadAsync(requested.MilkTestId);
+
+        var result = await harness.Service.DeleteImageAsync(
+            harness.StaffActor(harness.Staff), requested.MilkTestId, first.ImageId, CancellationToken.None);
+
+        Assert.Single(result.Images);
+        Assert.Equal(second.ImageId, result.Images.Single().ImageId);
+        Assert.Equal([second.ImageId], await harness.Db.MilkTestImages.Select(x => x.PublicId).ToArrayAsync());
+        Assert.Single(harness.Storage.DeletedKeys);
+        Assert.Equal([second.ImageId], await harness.Db.MilkTestImages.Select(x => x.PublicId).ToArrayAsync());
+        Assert.Contains("MILK_TEST.IMAGE_DELETE", await harness.Db.AuditLogs.Select(x => x.Action).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task DeleteImage_removes_the_only_image_row_and_blob_after_commit()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var image = await harness.UploadAsync(requested.MilkTestId);
+        var storageKey = (await harness.Db.MilkTestImages.SingleAsync()).StorageKey;
+
+        var result = await harness.Service.DeleteImageAsync(
+            harness.StaffActor(harness.Staff), requested.MilkTestId, image.ImageId, CancellationToken.None);
+
+        Assert.Empty(result.Images);
+        Assert.Empty(await harness.Db.MilkTestImages.ToArrayAsync());
+        Assert.Empty(harness.Storage.Files);
+        Assert.Equal([storageKey], harness.Storage.DeletedKeys);
+        Assert.Contains("MILK_TEST.IMAGE_DELETE", await harness.Db.AuditLogs.Select(x => x.Action).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task DeleteImage_does_not_delete_blob_when_database_mutation_fails()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var image = await harness.UploadAsync(requested.MilkTestId);
+        var storageKey = (await harness.Db.MilkTestImages.SingleAsync()).StorageKey;
+        harness.Db.MilkTests.Add(new MilkTest(
+            harness.Delivery.Id, harness.Customer.Id, harness.Branch.Id, harness.Customer.Id, harness.Clock.Now));
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => harness.Service.DeleteImageAsync(
+            harness.StaffActor(harness.Staff), requested.MilkTestId, image.ImageId, CancellationToken.None));
+
+        Assert.Empty(harness.Storage.DeletedKeys);
+        Assert.Single(harness.Storage.Files);
+        Assert.Equal(storageKey, (await harness.Db.MilkTestImages.SingleAsync()).StorageKey);
+        Assert.DoesNotContain("MILK_TEST.IMAGE_DELETE", await harness.Db.AuditLogs.Select(x => x.Action).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task ReplaceImage_removes_old_row_creates_new_row_and_audits_without_ef_conceptual_null()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var original = await harness.UploadAsync(requested.MilkTestId);
+        var originalKey = (await harness.Db.MilkTestImages.SingleAsync()).StorageKey;
+
+        var replaced = await harness.Service.ReplaceImageAsync(
+            harness.StaffActor(harness.Staff),
+            requested.MilkTestId,
+            original.ImageId,
+            new MemoryStream(harness.ImageBytes, writable: false),
+            "replacement.jpg",
+            "image/jpeg",
+            CancellationToken.None);
+
+        Assert.NotEqual(original.ImageId, replaced.ImageId);
+        var row = Assert.Single(await harness.Db.MilkTestImages.ToArrayAsync());
+        Assert.Equal(replaced.ImageId, row.PublicId);
+        Assert.Contains(originalKey, harness.Storage.DeletedKeys);
+        Assert.Contains("MILK_TEST.IMAGE_REPLACE", await harness.Db.AuditLogs.Select(x => x.Action).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task ReplaceImage_does_not_delete_old_blob_or_persist_when_database_mutation_fails()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var original = await harness.UploadAsync(requested.MilkTestId);
+        var originalKey = (await harness.Db.MilkTestImages.SingleAsync()).StorageKey;
+        harness.Db.MilkTests.Add(new MilkTest(
+            harness.Delivery.Id, harness.Customer.Id, harness.Branch.Id, harness.Customer.Id, harness.Clock.Now));
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => harness.Service.ReplaceImageAsync(
+            harness.StaffActor(harness.Staff),
+            requested.MilkTestId,
+            original.ImageId,
+            new MemoryStream(harness.ImageBytes, writable: false),
+            "replacement.jpg",
+            "image/jpeg",
+            CancellationToken.None));
+
+        Assert.DoesNotContain(originalKey, harness.Storage.DeletedKeys);
+        var remaining = Assert.Single(await harness.Db.MilkTestImages.ToArrayAsync());
+        Assert.Equal(originalKey, remaining.StorageKey);
+        Assert.DoesNotContain("MILK_TEST.IMAGE_REPLACE", await harness.Db.AuditLogs.Select(x => x.Action).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task OpenImage_serves_content_to_assigned_staff_on_requested_test()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var image = await harness.UploadAsync(requested.MilkTestId);
+
+        await using var content = await harness.Service.OpenImageAsync(
+            harness.StaffActor(harness.Staff), requested.MilkTestId, image.ImageId, CancellationToken.None);
+        using var copy = new MemoryStream();
+        await content.Content.CopyToAsync(copy);
+
+        Assert.Equal(harness.ImageBytes, copy.ToArray());
+    }
+
+    [Fact]
+    public async Task OpenImage_denies_unassigned_or_branch_mismatched_staff()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var image = await harness.UploadAsync(requested.MilkTestId);
+
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.OpenImageAsync(
+            harness.StaffActor(harness.OtherStaff), requested.MilkTestId, image.ImageId, CancellationToken.None));
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.OpenImageAsync(
+            new MilkTestActor(harness.Staff.Id, new HashSet<long> { harness.OtherBranch.Id }, false),
+            requested.MilkTestId,
+            image.ImageId,
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task OpenImage_serves_content_to_customer_owner_and_assigned_staff_after_completion()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var image = await harness.UploadAsync(requested.MilkTestId);
+        await harness.AdvanceToArrivedAsync();
+        harness.Clock.Advance(TimeSpan.FromMinutes(2));
+        await harness.Service.CompleteAsync(
+            harness.StaffActor(harness.Staff), requested.MilkTestId, harness.CompletionRequest(), CancellationToken.None);
+
+        await using var staffContent = await harness.Service.OpenImageAsync(
+            harness.StaffActor(harness.Staff), requested.MilkTestId, image.ImageId, CancellationToken.None);
+        await using var customerContent = await harness.Service.OpenImageAsync(
+            harness.CustomerActor(harness.Customer), requested.MilkTestId, image.ImageId, CancellationToken.None);
+
+        foreach (var content in new[] { staffContent, customerContent })
+        {
+            using var copy = new MemoryStream();
+            await content.Content.CopyToAsync(copy);
+            Assert.Equal(harness.ImageBytes, copy.ToArray());
+        }
     }
 
     [Fact]

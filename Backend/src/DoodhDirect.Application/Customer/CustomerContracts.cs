@@ -8,7 +8,8 @@ public sealed record CustomerProfileResult(
     string? LastName,
     DateOnly? DateOfBirth,
     string? Gender,
-    string? AlternateMobile);
+    string? AlternateMobile,
+    string? CustomerNumber);
 
 public sealed record CustomerAddressResult(
     Guid PublicId,
@@ -74,7 +75,7 @@ public static class CustomerMappings
 {
     public static CustomerProfileResult ToResult(this CustomerProfile profile) => new(
         profile.PublicId, profile.FirstName, profile.LastName, profile.DateOfBirth,
-        profile.Gender, profile.AlternateMobile);
+        profile.Gender, profile.AlternateMobile, profile.CustomerNumber);
 
     public static CustomerAddressResult ToResult(this CustomerAddress address) => new(
         address.PublicId, address.Label, address.AddressLine1, address.AddressLine2,

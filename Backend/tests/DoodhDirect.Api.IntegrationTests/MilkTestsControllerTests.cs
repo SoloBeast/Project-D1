@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Reflection;
 using System.Security.Claims;
+using DoodhDirect.Api.Authorization;
 using DoodhDirect.Api.Controllers;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Identity;
@@ -32,10 +33,12 @@ public sealed class MilkTestsControllerTests
     [InlineData(typeof(CustomerDeliveryMilkTestsController), nameof(CustomerDeliveryMilkTestsController.RequestTest), AuthorizationCodes.MilkTestsRequestOwn)]
     [InlineData(typeof(CustomerDeliveryMilkTestsController), nameof(CustomerDeliveryMilkTestsController.Get), AuthorizationCodes.MilkTestsReadOwn)]
     [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.UploadImage), AuthorizationCodes.MilkTestsOperateAssigned)]
+    [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.DeleteImage), AuthorizationCodes.MilkTestsOperateAssigned)]
+    [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.ReplaceImage), AuthorizationCodes.MilkTestsOperateAssigned)]
+    [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.ReplaceImageAsCustomer), AuthorizationCodes.MilkTestsDecideOwn)]
     [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.Complete), AuthorizationCodes.MilkTestsOperateAssigned)]
     [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.Confirm), AuthorizationCodes.MilkTestsDecideOwn)]
     [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.Reject), AuthorizationCodes.MilkTestsDecideOwn)]
-    [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.OpenImage), AuthorizationCodes.MilkTestsReadOwn)]
     public void Action_RequiresExpectedPermission(
         Type controllerType,
         string methodName,
@@ -46,6 +49,23 @@ public sealed class MilkTestsControllerTests
         var authorize = Assert.Single(method.GetCustomAttributes<AuthorizeAttribute>(inherit: false));
 
         Assert.Equal($"permission:{permission}", authorize.Policy);
+        Assert.Empty(method.GetCustomAttributes<AllowAnonymousAttribute>(inherit: true));
+    }
+
+    [Fact]
+    public void OpenImage_RequiresAnyPermission_OfReadOwnOrOperateAssigned()
+    {
+        var method = Assert.IsAssignableFrom<MethodInfo>(
+            typeof(MilkTestsController).GetMethod(
+                nameof(MilkTestsController.OpenImage),
+                BindingFlags.Instance | BindingFlags.Public));
+        var authorize = Assert.Single(method.GetCustomAttributes<AuthorizeAttribute>(inherit: false));
+
+        Assert.Equal(
+            AuthorizationPolicyNames.AnyPermission(
+                AuthorizationCodes.MilkTestsReadOwn,
+                AuthorizationCodes.MilkTestsOperateAssigned),
+            authorize.Policy);
         Assert.Empty(method.GetCustomAttributes<AllowAnonymousAttribute>(inherit: true));
     }
 
@@ -260,7 +280,22 @@ public sealed class MilkTestsControllerTests
             throw new NotSupportedException();
         }
 
-        public Task<StoredMediaContent> OpenImageForCustomerAsync(
+        public Task<StaffMilkTestResult> DeleteImageAsync(
+            MilkTestActor actor,
+            Guid milkTestId,
+            Guid imageId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<MilkTestImageResult> ReplaceImageAsync(
+            MilkTestActor actor,
+            Guid milkTestId,
+            Guid imageId,
+            Stream content,
+            string fileName,
+            string? declaredContentType,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<StoredMediaContent> OpenImageAsync(
             MilkTestActor actor,
             Guid milkTestId,
             Guid imageId,

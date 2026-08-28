@@ -116,6 +116,125 @@ public sealed class MilkTestDomainTests
             test.Confirm(RequestedAt.AddMinutes(7), null));
     }
 
+    [Fact]
+    public void RemoveImage_WhileRequested_RemovesOnlyTheTargetImage()
+    {
+        var test = CreateTest();
+        var keep = CreateImage();
+        var remove = CreateImage();
+        test.AddImage(keep);
+        test.AddImage(remove);
+
+        test.RemoveImage(remove.PublicId);
+
+        var remaining = Assert.Single(test.Images);
+        Assert.Equal(keep.PublicId, remaining.PublicId);
+    }
+
+    [Fact]
+    public void RemoveImage_AfterCompletion_Throws()
+    {
+        var test = CreateReadyTest();
+        var image = Assert.Single(test.Images);
+        test.Complete(4, RequestedAt.AddMinutes(5), null);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            test.RemoveImage(image.PublicId));
+    }
+
+    [Fact]
+    public void RemoveImage_WithUnknownImageId_Throws()
+    {
+        var test = CreateReadyTest();
+
+        Assert.Throws<InvalidOperationException>(() =>
+            test.RemoveImage(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void RemoveImage_OnlyRemovesImageBelongingToThisTest()
+    {
+        var first = CreateReadyTest();
+        var other = CreateReadyTest();
+        var otherImage = Assert.Single(other.Images);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            first.RemoveImage(otherImage.PublicId));
+        Assert.Single(first.Images);
+    }
+
+    [Fact]
+    public void AddImageDuringReview_WhileCompletedAndPending_Appends()
+    {
+        var test = CreateReadyTest();
+        test.Complete(4, RequestedAt.AddMinutes(5), null);
+        var reviewImage = CreateImage();
+
+        test.AddImageDuringReview(reviewImage);
+
+        Assert.Equal(2, test.Images.Count);
+        Assert.Contains(test.Images, x => x.PublicId == reviewImage.PublicId);
+    }
+
+    [Fact]
+    public void AddImageDuringReview_WhileRequested_Throws()
+    {
+        var test = CreateTest();
+
+        Assert.Throws<InvalidOperationException>(() =>
+            test.AddImageDuringReview(CreateImage()));
+    }
+
+    [Fact]
+    public void RemoveImageDuringReview_WhileCompletedAndPending_RemovesTarget()
+    {
+        var test = CreateReadyTest();
+        test.Complete(4, RequestedAt.AddMinutes(5), null);
+        var original = Assert.Single(test.Images);
+        var replacement = CreateImage();
+        test.AddImageDuringReview(replacement);
+
+        test.RemoveImageDuringReview(original.PublicId);
+
+        var remaining = Assert.Single(test.Images);
+        Assert.Equal(replacement.PublicId, remaining.PublicId);
+    }
+
+    [Fact]
+    public void RemoveImageDuringReview_AfterConfirmation_Throws()
+    {
+        var test = CreateReadyTest();
+        var image = Assert.Single(test.Images);
+        test.Complete(4, RequestedAt.AddMinutes(5), null);
+        test.Confirm(RequestedAt.AddMinutes(6), null);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            test.RemoveImageDuringReview(image.PublicId));
+    }
+
+    [Fact]
+    public void AddImageDuringReview_AfterConfirmation_Throws()
+    {
+        var test = CreateReadyTest();
+        test.Complete(4, RequestedAt.AddMinutes(5), null);
+        test.Confirm(RequestedAt.AddMinutes(6), null);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            test.AddImageDuringReview(CreateImage()));
+    }
+
+    [Fact]
+    public void RemoveImageDuringReview_AfterRejection_Throws()
+    {
+        var test = CreateReadyTest();
+        var image = Assert.Single(test.Images);
+        test.Complete(4, RequestedAt.AddMinutes(5), null);
+        test.Reject(RequestedAt.AddMinutes(6), null);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            test.RemoveImageDuringReview(image.PublicId));
+    }
+
     private static MilkTest CreateTest() => new(
         deliveryId: 1,
         customerId: 2,

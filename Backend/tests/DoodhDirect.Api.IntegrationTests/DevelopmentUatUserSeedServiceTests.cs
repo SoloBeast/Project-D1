@@ -1,8 +1,10 @@
 using DoodhDirect.Application.Identity;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Setup;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,7 +23,14 @@ public sealed class DevelopmentUatUserSeedServiceTests
         var db = scope.ServiceProvider.GetRequiredService<DoodhDirectDbContext>();
         var passwordHasher = new Pbkdf2PasswordHasher(Options.Create(new IdentityOptions()));
         var identitySeed = new IdentitySeedService(db);
-        var catalogueSeed = new CatalogueSeedService(db);
+        var timeProvider = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
+        db.NumberSeries.Add(new NumberSeries(
+            "BRANCH", "Branch Number", "BR/{NUMBER:000}", 1, 1, NumberSeriesResetPolicy.Never));
+        await db.SaveChangesAsync();
+        var catalogueSeed = new CatalogueSeedService(
+            db,
+            new NumberSeriesService(db, timeProvider),
+            new NumberSeriesSeedService(db));
         var developmentSeed = new DevelopmentUatUserSeedService(
             db,
             passwordHasher,

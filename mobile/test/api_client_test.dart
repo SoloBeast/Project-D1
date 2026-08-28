@@ -425,7 +425,13 @@ void main() {
 
     await expectLater(
       api.get('/api/v1/deliveries/delivery-1', accessToken: 'access-token'),
-      throwsA(isA<http.ClientException>()),
+      throwsA(
+        isA<ApiNetworkException>().having(
+          (error) => error.message,
+          'message',
+          'socket closed',
+        ),
+      ),
     );
     expect(refreshCalls, 0);
   });

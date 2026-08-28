@@ -11,7 +11,9 @@ Home | Orders | Subscription | Wallet | Live Dairy | Profile
 Today | Deliveries | Test | Replacement | Profile
 
 ### Dairy Manager navigation
-Dashboard | Production | Batches | Testing | Reports
+Dashboard | Production | Batches | Testing | Delivery Management | Reports
+
+Dairy Manager's `Delivery Management` home card opens the shared branch-scoped delivery-management workspace. It uses the existing delivery list/detail flows for filtering, subscription delivery generation, individual assignment, reassignment, and bulk assignment.
 
 ### Delivery Manager navigation
 Dashboard | Live Deliveries | Assignments | Staff | Reports
@@ -340,7 +342,9 @@ Filters:
 
 Paid one-time orders appear automatically as `ReadyForAssignment`. Failed or cancelled payments do not create delivery rows.
 
-### 4.2.1 Delivery Manager Operations
+### 4.2.1 Delivery Management Operations
+The shared delivery-management workspace is available to `DELIVERY_MANAGER` and `DAIRY_MANAGER` users with the existing delivery-management permissions. Dairy Manager users retain the Dairy workspace and enter this workspace through the `Delivery Management` home card; no duplicate Dairy-specific delivery screen is created.
+
 Delivery Manager controls include:
 - Date selector.
 - Status filter.
@@ -532,6 +536,27 @@ Exports:
 - Delivery tracking interval
 - Notification templates
 - Operational limits
+
+### Setup — Number Series
+
+The Setup → Number Series workspace is available only when the authenticated user holds `SETUP.NUMBER_SERIES.READ`. Reads (list, detail, and preview) require `SETUP.NUMBER_SERIES.READ`; creating, editing, activating, and deactivating require `SETUP.NUMBER_SERIES.MANAGE`. Users without `MANAGE` can view the list and preview but cannot create, edit, activate, or deactivate; every mutating control is hidden or disabled and a read-only `Access denied` panel explains the missing permission on the edit screen.
+
+#### Number Series List
+
+- Shows every series as a card: `Code` (for example `CUSTOMER`), `Description`, `Template`, `StartingNumber`, `LastUsedNumber`, `IncrementBy`, `ResetPolicy`, and an Active/Inactive badge.
+- Shows the next number to be allocated (`nextNumber`) without consuming it.
+- `MANAGE` holders see `Configure`, `Activate`, and `Deactivate` actions; read-only users see only the `Configure` icon, which opens the read-only config screen.
+- A `New series` action creates a series; on success the list refreshes and a `Series <code> created.` confirmation banner appears.
+- Required states: loading (`Loading number series`), empty (`No number series`), error with `Retry`, and the saved banner.
+
+#### Number Series Config
+
+- `Code` is a new-series-only field and is immutable when editing an existing series.
+- Fields: `Description`, `Template` (for example `CUST/{NUMBER:0000}`), `Starting number` (minimum 1), `Increment by` (minimum 1), and `Reset policy` (`Never`, `Daily`, `Monthly`, `CalendarYear`, `FinancialYear`).
+- `Preview template` renders the current template with the current counter without consuming it and shows the formatted example number.
+- `Save series` is disabled until `Description` and `Template` are non-empty and `Starting number` and `Increment by` are at least 1; validation re-runs as the user types.
+- On save the screen pops back to the list and the list refreshes.
+- A read-only user reaching the config route sees the `Access denied` panel with no editable fields.
 
 ---
 

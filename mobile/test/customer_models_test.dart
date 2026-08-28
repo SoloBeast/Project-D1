@@ -10,11 +10,13 @@ void main() {
       'dateOfBirth': '1992-04-09',
       'gender': null,
       'alternateMobile': null,
+      'customerNumber': 'CUST/0001',
     });
 
     expect(profile.fullName, 'Asha Sharma');
     expect(profile.dateOfBirth, DateTime(1992, 4, 9));
     expect(profile.gender, isNull);
+    expect(profile.customerNumber, 'CUST/0001');
   });
 
   test('profile update serializes date and normalizes optional strings', () {

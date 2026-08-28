@@ -10,6 +10,7 @@ using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Reports;
+using DoodhDirect.Application.Setup;
 using DoodhDirect.Application.Subscriptions;
 using DoodhDirect.Application.Wallets;
 using DoodhDirect.Infrastructure.Cameras;
@@ -24,6 +25,7 @@ using DoodhDirect.Infrastructure.Orders;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
 using DoodhDirect.Infrastructure.Reports;
+using DoodhDirect.Infrastructure.Setup;
 using DoodhDirect.Infrastructure.Subscriptions;
 using DoodhDirect.Infrastructure.Wallets;
 using Microsoft.AspNetCore.DataProtection;
@@ -153,6 +155,7 @@ public static class DependencyInjection
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<IWalletService, WalletService>();
         services.AddScoped<IReportService, ReportService>();
+        services.AddScoped<INumberSeriesService, NumberSeriesService>();
         services.AddSingleton<IDeliveryRealtimePublisher, NullDeliveryRealtimePublisher>();
         services.AddSingleton<IMilkTestImageValidator, MilkTestImageValidator>();
         services.AddSingleton<IMediaStorage, LocalMediaStorage>();
@@ -178,6 +181,7 @@ public static class DependencyInjection
         services.AddScoped<DevelopmentUatUserSeedService>();
         services.AddScoped<CatalogueSeedService>();
         services.AddScoped<NotificationTemplateSeedService>();
+        services.AddScoped<NumberSeriesSeedService>();
         if (environment.IsDevelopment())
         {
             services.AddScoped<IDevelopmentNotificationService, DevelopmentNotificationService>();

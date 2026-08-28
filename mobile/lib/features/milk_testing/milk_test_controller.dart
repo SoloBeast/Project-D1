@@ -106,6 +106,60 @@ class MilkTestController extends Notifier<MilkTestState> {
     state = state.copyWith(staffTest: test, clearStaffTest: test == null);
   });
 
+  Future<bool> deleteImage(
+    String deliveryId,
+    String milkTestId,
+    String imageId,
+  ) => _save(() async {
+    await _repository.deleteImage(_token!, milkTestId, imageId);
+    final test = await _repository.getForStaff(_token!, deliveryId);
+    state = state.copyWith(staffTest: test, clearStaffTest: test == null);
+  });
+
+  Future<bool> replaceImageAsStaff(
+    String deliveryId,
+    String milkTestId,
+    String imageId, {
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  }) => _save(() async {
+    await _repository.replaceImageAsStaff(
+      _token!,
+      milkTestId,
+      imageId,
+      bytes: bytes,
+      fileName: fileName,
+      contentType: contentType,
+    );
+    final test = await _repository.getForStaff(_token!, deliveryId);
+    state = state.copyWith(staffTest: test, clearStaffTest: test == null);
+  });
+
+  Future<bool> replaceImageAsCustomer(
+    String deliveryId,
+    String milkTestId,
+    String imageId, {
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  }) => _save(() async {
+    await _repository.replaceImageAsCustomer(
+      _token!,
+      milkTestId,
+      imageId,
+      bytes: bytes,
+      fileName: fileName,
+      contentType: contentType,
+    );
+    final test = await _repository.getForCustomer(_token!, deliveryId);
+    state = state.copyWith(
+      customerTest: test,
+      clearCustomerTest: test == null,
+      clearStaffTest: true,
+    );
+  });
+
   Future<bool> complete(
     String milkTestId, {
     required List<MilkTestParameter> parameters,
@@ -174,18 +228,25 @@ class MilkTestController extends Notifier<MilkTestState> {
   void clearError() => state = state.copyWith(clearError: true);
 
   void _setFailure(Object error, {bool saving = false}) {
+    final isNetworkError = error is ApiNetworkException;
     final isApiError = error is ApiException;
     final isUnauthorized =
         isApiError && (error.statusCode == 401 || error.statusCode == 403);
     state = state.copyWith(
       isLoading: saving ? state.isLoading : false,
       isSaving: saving ? false : state.isSaving,
-      isOffline: !isApiError,
+      isOffline: isNetworkError,
       isUnauthorized: isUnauthorized,
-      errorMessage: isApiError ? error.message : _offlineMessage,
+      errorMessage: isNetworkError
+          ? _offlineMessage
+          : isApiError
+          ? error.message
+          : _processingErrorMessage,
     );
   }
 }
 
 const _offlineMessage =
     'Unable to reach DoodhDirect. Check your connection and try again.';
+const _processingErrorMessage =
+    'The milk test response could not be processed. Please try again.';

@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Customer;
+using DoodhDirect.Application.Setup;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -11,6 +12,7 @@ namespace DoodhDirect.Infrastructure.Customer;
 
 public sealed class CustomerService(
     DoodhDirectDbContext dbContext,
+    INumberSeriesService numberSeriesService,
     IIndiaTimeProvider timeProvider) : ICustomerService
 {
     private static readonly Regex PinCodePattern = new("^[1-9][0-9]{5}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -154,10 +156,16 @@ public sealed class CustomerService(
         }
 
         await EnsureUserExistsAsync(userId, cancellationToken);
-        profile = new CustomerProfile(userId);
-        dbContext.CustomerProfiles.Add(profile);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return profile;
+        CustomerProfile? createdProfile = null;
+        await ExecuteInTransactionAsync(async () =>
+        {
+            createdProfile = new CustomerProfile(userId);
+            createdProfile.AssignCustomerNumber(
+                await numberSeriesService.GetNextNumberAsync("CUSTOMER", userId, cancellationToken));
+            dbContext.CustomerProfiles.Add(createdProfile);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
+        return createdProfile!;
     }
 
     private async Task<CustomerAddress> FindAddressAsync(long userId, Guid publicId, CancellationToken cancellationToken) =>

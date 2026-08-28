@@ -74,7 +74,9 @@ public sealed class DeliveriesControllerTests
 
     [Theory]
     [InlineData(nameof(DeliveryManagementController.Materialize))]
+    [InlineData(nameof(DeliveryManagementController.FetchSubscriptions))]
     [InlineData(nameof(DeliveryManagementController.Assign))]
+    [InlineData(nameof(DeliveryManagementController.BulkAssign))]
     public void ManagementMutation_AlsoRequiresBranchAssignmentPermission(string methodName)
     {
         var method = typeof(DeliveryManagementController).GetMethod(

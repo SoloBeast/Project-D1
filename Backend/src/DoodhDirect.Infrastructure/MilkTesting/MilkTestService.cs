@@ -117,13 +117,7 @@ public sealed class MilkTestService(
         }
 
         var now = timeProvider.Now;
-        var extension = validated.ContentType switch
-        {
-            "image/jpeg" => ".jpg",
-            "image/png" => ".png",
-            "image/webp" => ".webp",
-            _ => throw new ValidationAppException("The validated image type is unsupported.", "image")
-        };
+        var extension = ImageExtension(validated.ContentType);
         var storageKey = $"{now:yyyy/MM}/{milkTest.BranchId}/{milkTest.PublicId:N}/{Guid.NewGuid():N}{extension}";
         var stored = await mediaStorage.SaveAsync(
             storageKey,
@@ -159,21 +153,185 @@ public sealed class MilkTestService(
         }
     }
 
-    public async Task<StoredMediaContent> OpenImageForCustomerAsync(
+    public async Task<StaffMilkTestResult> DeleteImageAsync(
         MilkTestActor actor,
         Guid milkTestId,
         Guid imageId,
         CancellationToken cancellationToken)
     {
-        var image = await dbContext.MilkTestImages
-            .AsNoTracking()
-            .Include(x => x.MilkTest)
-            .SingleOrDefaultAsync(
-                x => x.PublicId == imageId &&
-                     x.MilkTest.PublicId == milkTestId &&
-                     x.MilkTest.CustomerId == actor.UserId &&
-                     x.MilkTest.Status == MilkTestStatus.Completed,
-                cancellationToken) ?? throw new NotFoundException("The doorstep test image was not found.");
+        StaffMilkTestResult? result = null;
+        await ExecuteSerializableAsync(async () =>
+        {
+            var milkTest = await TestQuery().SingleOrDefaultAsync(
+                x => x.PublicId == milkTestId,
+                cancellationToken) ?? throw new NotFoundException("The doorstep test was not found.");
+            EnsureStaffAccess(actor, milkTest);
+            if (milkTest.Status != MilkTestStatus.Requested)
+            {
+                throw new ConflictException("Images cannot be removed after the doorstep test is completed.");
+            }
+            if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed)
+            {
+                throw new BusinessRuleException("Images cannot be removed from a terminal delivery.");
+            }
+
+            var image = milkTest.Images.FirstOrDefault(x => x.PublicId == imageId)
+                ?? throw new NotFoundException("The doorstep test image was not found.");
+            Mutate(() => milkTest.RemoveImage(image.PublicId));
+            // Mark the removed image EF entity explicitly for deletion so EF does not
+            // attempt to null the required MilkTestId foreign key (conceptual-null).
+            dbContext.MilkTestImages.Remove(image);
+            AddAudit(actor.UserId, "MILK_TEST.IMAGE_DELETE", milkTest.PublicId,
+                new { ImageId = image.PublicId, image.FileName, image.ContentType, image.FileSize },
+                new { ImageCount = milkTest.Images.Count },
+                null,
+                timeProvider.Now);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await mediaStorage.DeleteIfExistsAsync(image.StorageKey, CancellationToken.None);
+            result = ToStaffResult(milkTest, milkTest.Delivery.PublicId);
+        }, cancellationToken);
+        return result!;
+    }
+
+    public async Task<MilkTestImageResult> ReplaceImageAsync(
+        MilkTestActor actor,
+        Guid milkTestId,
+        Guid imageId,
+        Stream content,
+        string fileName,
+        string? declaredContentType,
+        CancellationToken cancellationToken)
+    {
+        await using var validated = await imageValidator.ValidateAsync(
+            content,
+            fileName,
+            declaredContentType,
+            cancellationToken);
+
+        MilkTestImageResult? result = null;
+        await ExecuteSerializableAsync(async () =>
+        {
+            var milkTest = await TestQuery().SingleOrDefaultAsync(
+                x => x.PublicId == milkTestId,
+                cancellationToken) ?? throw new NotFoundException("The doorstep test was not found.");
+
+            var image = milkTest.Images.FirstOrDefault(x => x.PublicId == imageId)
+                ?? throw new NotFoundException("The doorstep test image was not found.");
+
+            var now = timeProvider.Now;
+            var actorIsCustomer = milkTest.CustomerId == actor.UserId;
+            if (actorIsCustomer)
+            {
+                if (milkTest.Status != MilkTestStatus.Completed)
+                {
+                    throw new ConflictException("Images can only be replaced while the customer is reviewing a completed test.");
+                }
+                if (milkTest.CustomerDecision != MilkTestCustomerDecision.Pending)
+                {
+                    throw new ConflictException("Images cannot be replaced after the customer decision is recorded.");
+                }
+            }
+            else
+            {
+                EnsureStaffAccess(actor, milkTest);
+                if (milkTest.Status != MilkTestStatus.Requested)
+                {
+                    throw new ConflictException("Images cannot be replaced after the doorstep test is completed.");
+                }
+                if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed)
+                {
+                    throw new BusinessRuleException("Images cannot be replaced on a terminal delivery.");
+                }
+            }
+
+            var extension = ImageExtension(validated.ContentType);
+            var storageKey = $"{now:yyyy/MM}/{milkTest.BranchId}/{milkTest.PublicId:N}/{Guid.NewGuid():N}{extension}";
+            var stored = await mediaStorage.SaveAsync(
+                storageKey,
+                validated.Content,
+                validated.ContentType,
+                cancellationToken);
+
+            try
+            {
+                if (stored.FileSize != validated.FileSize)
+                {
+                    throw new InvalidOperationException("The stored media size does not match the validated image size.");
+                }
+
+                var replacement = new MilkTestImage(
+                    milkTest.Id,
+                    stored.StorageKey,
+                    validated.FileName,
+                    validated.ContentType,
+                    stored.FileSize,
+                    actor.UserId,
+                    now);
+                if (actorIsCustomer)
+                {
+                    Mutate(() =>
+                    {
+                        milkTest.RemoveImageDuringReview(image.PublicId);
+                        milkTest.AddImageDuringReview(replacement);
+                    });
+                }
+                else
+                {
+                    Mutate(() =>
+                    {
+                        milkTest.RemoveImage(image.PublicId);
+                        milkTest.AddImage(replacement);
+                    });
+                }
+
+                // Mark the replaced image EF entity explicitly for deletion BEFORE any
+                // further change tracking (AddAudit triggers DetectChanges), so EF does
+                // not attempt to null the required MilkTestId foreign key (conceptual-null).
+                dbContext.MilkTestImages.Remove(image);
+                AddAudit(actor.UserId, "MILK_TEST.IMAGE_REPLACE", milkTest.PublicId,
+                    new { ImageId = image.PublicId, image.FileName, image.ContentType, image.FileSize },
+                    new { ImageId = replacement.PublicId, replacement.FileName, replacement.ContentType, replacement.FileSize },
+                    null,
+                    now);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                await mediaStorage.DeleteIfExistsAsync(image.StorageKey, CancellationToken.None);
+                result = ToImageResult(milkTest.PublicId, replacement);
+            }
+            catch
+            {
+                await mediaStorage.DeleteIfExistsAsync(stored.StorageKey, CancellationToken.None);
+                throw;
+            }
+        }, cancellationToken);
+        return result!;
+    }
+
+    public async Task<StoredMediaContent> OpenImageAsync(
+        MilkTestActor actor,
+        Guid milkTestId,
+        Guid imageId,
+        CancellationToken cancellationToken)
+    {
+        var milkTest = await TestQuery(asNoTracking: true).SingleOrDefaultAsync(
+            x => x.PublicId == milkTestId,
+            cancellationToken) ?? throw new NotFoundException("The doorstep test was not found.");
+
+        var image = milkTest.Images.FirstOrDefault(x => x.PublicId == imageId)
+            ?? throw new NotFoundException("The doorstep test image was not found.");
+
+        if (milkTest.CustomerId == actor.UserId)
+        {
+            // Customers may only view images on a completed test they own.
+            if (milkTest.Status != MilkTestStatus.Completed)
+            {
+                throw new NotFoundException("The doorstep test image was not found.");
+            }
+        }
+        else
+        {
+            // Delivery staff must be assigned to the delivery and within branch scope.
+            EnsureStaffAccess(actor, milkTest);
+        }
 
         var stored = await mediaStorage.OpenReadAsync(image.StorageKey, cancellationToken);
         return new StoredMediaContent(stored.Content, image.ContentType, image.FileSize);
@@ -342,6 +500,14 @@ public sealed class MilkTestService(
             throw new ValidationAppException($"{field} cannot exceed {maximumLength} characters.", field);
         }
     }
+
+    private static string ImageExtension(string contentType) => contentType switch
+    {
+        "image/jpeg" => ".jpg",
+        "image/png" => ".png",
+        "image/webp" => ".webp",
+        _ => throw new ValidationAppException("The validated image type is unsupported.", "image")
+    };
 
     private async Task ExecuteSerializableAsync(Func<Task> operation, CancellationToken cancellationToken)
     {

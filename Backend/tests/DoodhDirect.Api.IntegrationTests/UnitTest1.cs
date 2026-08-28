@@ -1,19 +1,25 @@
 ﻿using System.Net;
 using System.Text.Json;
+using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Infrastructure;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace DoodhDirect.Api.IntegrationTests;
 
-public sealed class ApiFoundationTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class ApiFoundationTests : IClassFixture<FoundationApiFactory>
 {
     private const string CorrelationHeader = "X-Correlation-Id";
     private const string AllowedDevelopmentOrigin = "http://localhost:54187";
-    private readonly WebApplicationFactory<Program> _factory;
+    private readonly FoundationApiFactory _factory;
 
-    public ApiFoundationTests(WebApplicationFactory<Program> factory)
+    public ApiFoundationTests(FoundationApiFactory factory)
     {
         _factory = factory;
     }
@@ -148,5 +154,39 @@ public sealed class ApiFoundationTests : IClassFixture<WebApplicationFactory<Pro
         var adminProducts = paths.GetProperty("/api/v1/admin/products").GetProperty("get");
         var adminRequirement = adminProducts.GetProperty("security")[0];
         Assert.True(adminRequirement.TryGetProperty("bearerAuth", out _));
+    }
+}
+
+public sealed class FoundationApiFactory : WebApplicationFactory<Program>
+{
+    private readonly SqliteConnection connection;
+
+    public FoundationApiFactory()
+    {
+        connection = new SqliteConnection("Data Source=:memory:");
+        connection.Open();
+        var options = new DbContextOptionsBuilder<DoodhDirectDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        using var db = new DoodhDirectDbContext(options);
+        db.Database.EnsureCreated();
+    }
+
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        builder.UseEnvironment("Development");
+        builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<DbContextOptions<DoodhDirectDbContext>>();
+            services.RemoveAll<IDbContextOptionsConfiguration<DoodhDirectDbContext>>();
+            services.RemoveAll<DoodhDirectDbContext>();
+            services.AddDbContext<DoodhDirectDbContext>(options => options.UseSqlite(connection));
+        });
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        await base.DisposeAsync();
+        await connection.DisposeAsync();
     }
 }

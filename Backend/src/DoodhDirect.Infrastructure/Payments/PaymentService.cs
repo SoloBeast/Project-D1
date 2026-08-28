@@ -1216,7 +1216,7 @@ public sealed class PaymentService(
             }
             if (oneTimeDeliveryCreator is not null)
             {
-                oneTimeDeliveryCreator.AddIfMissing(payment.Order, timeProvider.Today);
+                await oneTimeDeliveryCreator.AddIfMissing(payment.Order, timeProvider.Today, cancellationToken);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 await oneTimeDeliveryCreator.IssuePendingOtpsAsync(cancellationToken);
             }

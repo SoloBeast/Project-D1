@@ -18,6 +18,8 @@ import 'package:doodh_direct_mobile/features/notifications/notification_screen.d
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/orders/order_screens.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_screens.dart';
+import 'package:doodh_direct_mobile/features/setup/number_series_models.dart';
+import 'package:doodh_direct_mobile/features/setup/number_series_screens.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_screens.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_screens.dart';
 import 'package:flutter/material.dart';
@@ -195,6 +197,26 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/admin/cameras',
         builder: (context, state) => const AdminCameraListScreen(),
+      ),
+      GoRoute(
+        path: '/admin/setup/number-series',
+        builder: (context, state) => const NumberSeriesListScreen(),
+      ),
+      GoRoute(
+        path: '/admin/setup/number-series/new',
+        builder: (context, state) =>
+            const NumberSeriesConfigScreen(code: '', series: null),
+      ),
+      GoRoute(
+        path: '/admin/setup/number-series/:code/edit',
+        builder: (context, state) {
+          final extra = state.extra;
+          final series = extra is NumberSeries ? extra : null;
+          return NumberSeriesConfigScreen(
+            code: state.pathParameters['code'] ?? '',
+            series: series,
+          );
+        },
       ),
       GoRoute(
         path: '/deliveries',

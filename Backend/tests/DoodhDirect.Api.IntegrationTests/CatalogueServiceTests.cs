@@ -1,8 +1,10 @@
 using DoodhDirect.Application.Catalogue;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Domain.Catalogue;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Setup;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 
@@ -180,7 +182,14 @@ public sealed class CatalogueServiceTests
     public async Task SeedAsync_IsIdempotentAndCreatesAvailableBuffaloMilk()
     {
         await using var db = CreateDb();
-        var seed = new CatalogueSeedService(db);
+        var timeProvider = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
+        db.NumberSeries.Add(new NumberSeries(
+            "BRANCH", "Branch Number", "BR/{NUMBER:000}", 1, 1, NumberSeriesResetPolicy.Never));
+        await db.SaveChangesAsync();
+        var seed = new CatalogueSeedService(
+            db,
+            new NumberSeriesService(db, timeProvider),
+            new NumberSeriesSeedService(db));
 
         await seed.SeedAsync(CancellationToken.None);
         await seed.SeedAsync(CancellationToken.None);

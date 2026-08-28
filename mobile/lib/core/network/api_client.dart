@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -5,6 +6,15 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 typedef AccessTokenRefresh = Future<String?> Function();
+
+class ApiNetworkException implements Exception {
+  const ApiNetworkException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => 'Network error: $message';
+}
 
 class ApiException implements Exception {
   const ApiException(this.statusCode, this.code, this.message, {this.field});
@@ -100,7 +110,45 @@ class ApiClient {
     final request = http.Request(method, Uri.parse('$baseUrl$path'))
       ..headers.addAll({..._headers(accessToken), ...extraHeaders});
     if (body != null) request.body = body;
-    return http.Response.fromStream(await _client.send(request));
+    try {
+      return await http.Response.fromStream(await _client.send(request));
+    } on http.ClientException catch (error) {
+      throw ApiNetworkException(error.message);
+    } on TimeoutException catch (error) {
+      throw ApiNetworkException(error.message ?? 'The request timed out.');
+    }
+  }
+
+  /// Fetches a binary payload (e.g. an image) over the authenticated channel.
+  ///
+  /// Unlike [Image.network] — which cannot send an Authorization header on the
+  /// web because the browser's <img> element does not expose headers — dart's
+  /// [http] client CAN attach the JWT, so protected media is fetched here and
+  /// rendered from bytes. The media endpoint is never requested unauthenticated.
+  Future<ApiByteResponse> getBytes(String path, {String? accessToken}) async {
+    var token = accessToken;
+    var response = await _client.get(
+      Uri.parse('$baseUrl$path'),
+      headers: _headers(token),
+    );
+    if (_shouldRefresh(response, path, token)) {
+      token = await refreshAccessToken!();
+      if (token != null) {
+        response = await _client.get(
+          Uri.parse('$baseUrl$path'),
+          headers: _headers(token),
+        );
+      }
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      _decode(response);
+    }
+    return ApiByteResponse(
+      bytes: response.bodyBytes,
+      contentType:
+          response.headers['content-type'] ?? 'application/octet-stream',
+      fileName: _fileName(response.headers['content-disposition']),
+    );
   }
 
   Future<ApiByteResponse> postBytes(
@@ -143,9 +191,44 @@ class ApiClient {
     required String fileName,
     required String contentType,
     String? accessToken,
+  }) => _multipart(
+    'POST',
+    path,
+    fieldName: fieldName,
+    bytes: bytes,
+    fileName: fileName,
+    contentType: contentType,
+    accessToken: accessToken,
+  );
+
+  Future<Map<String, dynamic>> putMultipart(
+    String path, {
+    required String fieldName,
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+    String? accessToken,
+  }) => _multipart(
+    'PUT',
+    path,
+    fieldName: fieldName,
+    bytes: bytes,
+    fileName: fileName,
+    contentType: contentType,
+    accessToken: accessToken,
+  );
+
+  Future<Map<String, dynamic>> _multipart(
+    String method,
+    String path, {
+    required String fieldName,
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+    String? accessToken,
   }) async {
     Future<http.Response> send(String? token) async {
-      final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'))
+      final request = http.MultipartRequest(method, Uri.parse('$baseUrl$path'))
         ..headers.addAll(_headers(token, includeContentType: false))
         ..files.add(
           http.MultipartFile.fromBytes(

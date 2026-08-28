@@ -222,8 +222,22 @@ Lifecycle:
 - Reading values support at most six decimal places and must fit `decimal(18,6)`.
 - Customer DTOs and UI never expose numeric readings or staff remarks in the MVP.
 - Customer image metadata and content remain hidden until completion. Image content additionally requires customer ownership.
+
+Image mutability state machine (enforced by the domain entity, not only the UI):
+
+| Test state | Staff (assigned Delivery Boy) | Customer (owner) |
+| --- | --- | --- |
+| `Requested`, decision `Pending` | Add, delete, and replace images freely | No images visible yet |
+| `Completed`, decision `Pending` | Read-only (review completed test) | Add and replace own images during review |
+| `Confirmed` or `Rejected` (terminal) | Read-only | Read-only |
+
+- Staff delete and replace are permitted only while `Status == Requested` **and** the delivery is not terminal (`Delivered`/`Failed`); otherwise the service returns `409 Conflict`. The image must belong to the test — an unknown or foreign image id returns `404 Not Found`.
+- Staff replace is atomic: validate → store new image externally → remove old row and add new row in one serialized transaction → delete the old external blob only after the transaction commits. If validation, storage, or persistence fails, the original image row and blob are untouched.
+- Customer replace is permitted only while `Status == Completed` and `CustomerDecision == Pending` (the customer is reviewing). Confirming or rejecting is terminal and locks every image.
+- After `Completed` the staff flow is immutable (no delete/replace); after `Confirmed`/`Rejected` the customer flow is immutable too.
+- A successful replacement never appends: the replaced image id is removed and exactly one new image row replaces it.
 - Confirmation and rejection require a completed test. The first decision is terminal; repeated or conflicting decisions are rejected.
-- Request, record creation, image upload, completion, confirmation, and rejection are audited with the authenticated actor.
+- Request, record creation, image upload, image delete, image replace, completion, confirmation, and rejection are audited with the authenticated actor.
 - Testing is free to the customer. Physical readings may be shown by staff at the doorstep, but the result is an indicative check and must not be represented as laboratory certification.
 - Phase 9 is delivery-owned. Future batch/lab testing may extend the abstraction only through a separately approved model.
 
@@ -334,3 +348,44 @@ Use an idempotency key/reference unique within the operation scope.
 - Internal identifiers are normalized and unique within a branch; display order is non-negative.
 - Create and update operations are audited.
 - Credentials, internal network addresses, hardware configuration, recordings, and raw/private stream URLs must not be stored in camera metadata or exposed through APIs.
+
+---
+
+## 20. Number Series Rules
+
+### Template engine
+
+- A template is literal text containing `{TOKEN}` placeholders: `{NUMBER:0000}` (zero-padded counter to the given width), `{PREFIX}` (code-derived uppercase prefix), `{FY}` (India financial year `YYYY-YY`), `{YEAR}`, `{YY}`, `{MONTH}`, and `{DATE:yyyyMMdd}`.
+- A template must be non-empty, contain exactly one `{NUMBER:...}` counter token, and contain no unsupported tokens. Malformed templates are rejected at create, update, and preview time.
+
+### Reset policy
+
+- `ResetPolicy` is one of `Never`, `Daily`, `Monthly`, `CalendarYear`, or `FinancialYear`.
+- After a reset the counter restarts at `StartingNumber`.
+- Financial-year resets use the India financial year: the year starting 1 April and ending 31 March, labelled `YYYY-YY` (for example `2026-27`).
+- Reset detection is based on the India-local (`Asia/Kolkata`) date at allocation time, not UTC.
+
+### Allocation semantics
+
+- Allocation is transactional: business services call the centralized number service inside their own serializable transaction, so a rolled-back business save also rolls back the counter increment.
+- Allocation is concurrency-safe at the database level; concurrent transactions never receive the same number for a series.
+- `LastUsedNumber`, `LastUsedAt`, and the audit trail update on every allocation.
+- A deactivated series cannot be allocated; the allocating business service fails rather than skipping the series or generating an out-of-sequence number.
+- Preview never consumes the counter: rendering a candidate template or computing the next number leaves `LastUsedNumber` unchanged.
+
+### Editing safety
+
+- Code is immutable after creation and unique across all series; only `Description`, `Template`, `StartingNumber`, `IncrementBy`, and `ResetPolicy` are editable.
+- The counter, template, and reset policy are validated together on update, and lowering `StartingNumber` below the already-issued `LastUsedNumber` is rejected.
+- Activating and deactivating change only the active flag; a deactivation does not reset the counter.
+
+### Unique numbering guarantee
+
+- Each `NumberSeries` row has a database-level unique index on `Code`.
+- Generated numbers are unique in practice because allocation is transactional and concurrency-safe; no generated number is ever reused after issuance.
+
+### Audit and permissions
+
+- Create, update, activate, and deactivate are audited as `NUMBER_SERIES.CREATED`, `NUMBER_SERIES.UPDATED`, `NUMBER_SERIES.ACTIVATED`, and `NUMBER_SERIES.DEACTIVATED` with the acting user recorded.
+- Reads require `SETUP.NUMBER_SERIES.READ`; create, update, activate, and deactivate require `SETUP.NUMBER_SERIES.MANAGE`.
+- `Code` (for example `CUSTOMER`, `ORDER`, `BRANCH`, `DELIVERY`) is the stable lookup key used by business services; it is independent of any display prefix.

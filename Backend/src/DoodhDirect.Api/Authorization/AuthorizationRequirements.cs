@@ -9,10 +9,19 @@ public static class AuthorizationPolicyNames
 {
     private const string PermissionPrefix = "Permission:";
     private const string BranchPrefix = "Branch:";
+    private const string AnyPermissionPrefix = "AnyPermission:";
 
     public static string Permission(string permission) => $"{PermissionPrefix}{permission}";
 
     public static string Branch(string permission) => $"{BranchPrefix}{permission}";
+
+    public static string AnyPermission(params string[] permissions) =>
+        $"{AnyPermissionPrefix}{string.Join(",", permissions)}";
+
+    // Attribute arguments must be constant expressions (string.Join is not const),
+    // so concrete OR-policy names used on endpoints are exposed as consts.
+    public const string AnyMilkTestImageContent =
+        AnyPermissionPrefix + AuthorizationCodes.MilkTestsReadOwn + "," + AuthorizationCodes.MilkTestsOperateAssigned;
 
     internal static bool TryGetPermission(string policyName, out string permission)
     {
@@ -37,9 +46,24 @@ public static class AuthorizationPolicyNames
         permission = string.Empty;
         return false;
     }
+
+    internal static bool TryGetAnyPermission(string policyName, out IReadOnlyList<string> permissions)
+    {
+        if (policyName.StartsWith(AnyPermissionPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            permissions = policyName[AnyPermissionPrefix.Length..]
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return permissions.Count > 0;
+        }
+
+        permissions = Array.Empty<string>();
+        return false;
+    }
 }
 
 public sealed record PermissionRequirement(string Permission) : IAuthorizationRequirement;
+
+public sealed record AnyPermissionRequirement(IReadOnlyList<string> Permissions) : IAuthorizationRequirement;
 
 public sealed record BranchScopeRequirement(string RouteValueKey = "branchId") : IAuthorizationRequirement;
 
@@ -51,6 +75,23 @@ public sealed class PermissionAuthorizationHandler : AuthorizationHandler<Permis
     {
         if (context.User.HasClaim(AuthorizationCodes.PermissionClaim, requirement.Permission))
             context.Succeed(requirement);
+
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class AnyPermissionAuthorizationHandler : AuthorizationHandler<AnyPermissionRequirement>
+{
+    protected override Task HandleRequirementAsync(
+        AuthorizationHandlerContext context,
+        AnyPermissionRequirement requirement)
+    {
+        var permissionClaims = context.User.FindAll(AuthorizationCodes.PermissionClaim);
+        if (requirement.Permissions.Any(required =>
+                permissionClaims.Any(claim => claim.Value == required)))
+        {
+            context.Succeed(requirement);
+        }
 
         return Task.CompletedTask;
     }
@@ -101,6 +142,15 @@ public sealed class DoodhDirectAuthorizationPolicyProvider(
                 new AuthorizationPolicyBuilder()
                     .RequireAuthenticatedUser()
                     .AddRequirements(new PermissionRequirement(permission))
+                    .Build());
+        }
+
+        if (AuthorizationPolicyNames.TryGetAnyPermission(policyName, out var permissions))
+        {
+            return Task.FromResult<AuthorizationPolicy?>(
+                new AuthorizationPolicyBuilder()
+                    .RequireAuthenticatedUser()
+                    .AddRequirements(new AnyPermissionRequirement(permissions))
                     .Build());
         }
 

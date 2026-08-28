@@ -103,6 +103,57 @@ public sealed class AuthorizationHandlerTests
     }
 
     [Fact]
+    public async Task AnyPermissionHandler_Succeeds_WhenAnyRequiredPermissionClaimIsPresent()
+    {
+        var requirement = new AnyPermissionRequirement([
+            "MILK_TESTS.READ_OWN",
+            "MILK_TESTS.OPERATE_ASSIGNED"]);
+        var context = CreateContext(
+            requirement,
+            Claim(AuthorizationCodes.PermissionClaim, "MILK_TESTS.OPERATE_ASSIGNED"));
+
+        await new AnyPermissionAuthorizationHandler().HandleAsync(context);
+
+        Assert.True(context.HasSucceeded);
+    }
+
+    [Fact]
+    public async Task AnyPermissionHandler_DoesNotSucceed_WhenNoRequiredPermissionClaimIsPresent()
+    {
+        var requirement = new AnyPermissionRequirement([
+            "MILK_TESTS.READ_OWN",
+            "MILK_TESTS.OPERATE_ASSIGNED"]);
+        var context = CreateContext(
+            requirement,
+            Claim(AuthorizationCodes.PermissionClaim, "MILK_TESTS.DECIDE_OWN"));
+
+        await new AnyPermissionAuthorizationHandler().HandleAsync(context);
+
+        Assert.False(context.HasSucceeded);
+        Assert.False(context.HasFailed);
+    }
+
+    [Fact]
+    public async Task PolicyProvider_BuildsAuthenticatedAnyPermissionPolicy()
+    {
+        var provider = CreatePolicyProvider();
+
+        var policy = await provider.GetPolicyAsync(
+            AuthorizationPolicyNames.AnyPermission(
+                "MILK_TESTS.READ_OWN",
+                "MILK_TESTS.OPERATE_ASSIGNED"));
+
+        Assert.NotNull(policy);
+        Assert.Contains(policy.Requirements, requirement =>
+            requirement is DenyAnonymousAuthorizationRequirement);
+        var requirement = Assert.Single(policy.Requirements.OfType<AnyPermissionRequirement>());
+        Assert.Equal(
+            ["MILK_TESTS.READ_OWN", "MILK_TESTS.OPERATE_ASSIGNED"],
+            requirement.Permissions);
+        Assert.Empty(policy.Requirements.OfType<BranchScopeRequirement>());
+    }
+
+    [Fact]
     public async Task PolicyProvider_BuildsAuthenticatedPermissionPolicy()
     {
         var provider = CreatePolicyProvider();

@@ -209,6 +209,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("nvarchar(300)");
 
+                    b.Property<string>("BranchNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
                     b.Property<string>("City")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -266,6 +270,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BranchNumber")
+                        .IsUnique()
+                        .HasFilter("[BranchNumber] IS NOT NULL");
 
                     b.HasIndex("Code")
                         .IsUnique();
@@ -613,6 +621,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAtUtc");
 
+                    b.Property<string>("CustomerNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
                     b.Property<DateOnly?>("DateOfBirth")
                         .HasColumnType("date");
 
@@ -641,6 +653,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("bigint");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CustomerNumber")
+                        .IsUnique()
+                        .HasFilter("[CustomerNumber] IS NOT NULL");
 
                     b.HasIndex("PublicId")
                         .IsUnique();
@@ -899,6 +915,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
+                    b.Property<string>("DeliveryNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
                     b.Property<string>("DestinationAddressSnapshot")
                         .IsRequired()
                         .HasMaxLength(2000)
@@ -982,6 +1002,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("DeliveryNumber")
+                        .IsUnique()
+                        .HasFilter("[DeliveryNumber] IS NOT NULL");
 
                     b.HasIndex("OrderId")
                         .IsUnique()
@@ -2728,6 +2752,93 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("CK_Refund_Amount", "[Amount] > 0");
                         });
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Setup.NumberSeries", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
+
+                    b.Property<long?>("CreatedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<int>("IncrementBy")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("LastUsedAtUtc");
+
+                    b.Property<long>("LastUsedNumber")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<string>("ResetPolicy")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
+                    b.Property<string>("ScopeKey")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasDefaultValue("");
+
+                    b.Property<long>("StartingNumber")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Template")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
+
+                    b.Property<long?>("UpdatedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("Code", "ScopeKey")
+                        .IsUnique();
+
+                    b.ToTable("NumberSeries", "dbo");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Subscriptions.Subscription", b =>

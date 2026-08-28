@@ -12,9 +12,11 @@ using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Subscriptions;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Infrastructure.Deliveries;
 using DoodhDirect.Infrastructure.Notifications;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Setup;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -1173,6 +1175,7 @@ public sealed class DeliveryServiceTests
                 realtime ?? Realtime,
                 DeliveryOptionsFor(subscriptionGenerationWindowDays),
                 notificationEventWriter ?? new TestNotificationEventWriter(db, Clock),
+                new NumberSeriesService(db, TimeProvider),
                 OtpProtector);
 
         public static async Task<DeliveryHarness> CreateAsync(
@@ -1196,6 +1199,8 @@ public sealed class DeliveryServiceTests
                 .Options;
             var db = new DoodhDirectDbContext(options);
             await db.Database.EnsureCreatedAsync();
+            db.NumberSeries.Add(new NumberSeries(
+                "DELIVERY", "Delivery Number", "DEL/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never));
 
             var customer = User(UserType.Customer, "Customer", "9999999999");
             var manager = User(UserType.Employee, "Delivery Manager", "9000000000");
@@ -1300,6 +1305,7 @@ public sealed class DeliveryServiceTests
                 realtime,
                 DeliveryOptionsFor(subscriptionGenerationWindowDays),
                 new TestNotificationEventWriter(db, clock),
+                new NumberSeriesService(db, timeProvider),
                 otpProtector);
             return new DeliveryHarness(
                 connection,

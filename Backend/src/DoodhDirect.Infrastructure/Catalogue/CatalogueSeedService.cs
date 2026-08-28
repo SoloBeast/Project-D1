@@ -1,10 +1,15 @@
+using DoodhDirect.Application.Setup;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Setup;
 using Microsoft.EntityFrameworkCore;
 
 namespace DoodhDirect.Infrastructure.Catalogue;
 
-public sealed class CatalogueSeedService(DoodhDirectDbContext dbContext)
+public sealed class CatalogueSeedService(
+    DoodhDirectDbContext dbContext,
+    INumberSeriesService numberSeriesService,
+    NumberSeriesSeedService numberSeriesSeedService)
 {
     private const string MilkCategoryCode = "MILK";
     private const string MainBranchCode = "MAIN";
@@ -45,9 +50,18 @@ public sealed class CatalogueSeedService(DoodhDirectDbContext dbContext)
                     "Karnataka",
                     12.9716m,
                     77.5946m);
+                branch.AssignBranchNumber(
+                    await numberSeriesService.GetNextNumberAsync("BRANCH", null, cancellationToken));
                 dbContext.Branches.Add(branch);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }
+
+            // Guarantee the branch-scoped ORDER series exists the moment the MAIN
+            // branch does, independent of global seed ordering (the number-series
+            // seed runs before the catalogue seed on a fresh database).
+            await numberSeriesSeedService.EnsureScopedOrderSeriesAsync(
+                branch.Code,
+                cancellationToken);
 
             var product = await dbContext.Products
                 .SingleOrDefaultAsync(item => item.Sku == FreshBuffaloMilkSku, cancellationToken);

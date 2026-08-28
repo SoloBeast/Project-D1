@@ -454,9 +454,9 @@ class _DairyHomeActions extends ConsumerWidget {
             icon: Icons.location_off_outlined,
             title: 'No branch assigned',
             message:
-                'A branch assignment is required to manage dairy operations.',
+                'A branch assignment is required to manage dairy operations and deliveries.',
           )
-        else
+        else ...[
           Card(
             child: ListTile(
               leading: const Icon(Icons.agriculture_outlined),
@@ -468,6 +468,20 @@ class _DairyHomeActions extends ConsumerWidget {
               onTap: () => context.push('/dairy/dashboard'),
             ),
           ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.local_shipping_outlined),
+              title: const Text('Delivery Management'),
+              subtitle: const Text(
+                'Manage deliveries, generate subscription deliveries, and assign deliveries to delivery staff.',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () =>
+                  context.push('/delivery-management/branch/$branchId'),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -482,6 +496,10 @@ class _AdminHomeActions extends ConsumerWidget {
   bool get _canReadCameras =>
       permissions.contains('CAMERAS.READ') ||
       permissions.contains('CAMERAS.MANAGE');
+
+  bool get _canReadNumberSeries =>
+      permissions.contains('SETUP.NUMBER_SERIES.READ') ||
+      permissions.contains('SETUP.NUMBER_SERIES.MANAGE');
 
   bool get _canReadReports => permissions.any(
     const {
@@ -553,6 +571,18 @@ class _AdminHomeActions extends ConsumerWidget {
               ),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => context.push('/admin/cameras'),
+            ),
+          ),
+        if (_canReadNumberSeries)
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.numbers_outlined),
+              title: const Text('Number series'),
+              subtitle: const Text(
+                'Configure document number templates and reset policies',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push('/admin/setup/number-series'),
             ),
           ),
         if (branchIds.isNotEmpty)

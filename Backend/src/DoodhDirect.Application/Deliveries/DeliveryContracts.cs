@@ -97,7 +97,7 @@ public sealed record DeliveryMaterializationResult(int OrdersCreated, int Subscr
 
 public interface IOneTimeDeliveryCreator
 {
-    void AddIfMissing(Order order, DateOnly scheduledDate);
+    Task AddIfMissing(Order order, DateOnly scheduledDate, CancellationToken cancellationToken);
     Task IssuePendingOtpsAsync(CancellationToken cancellationToken);
 }
 

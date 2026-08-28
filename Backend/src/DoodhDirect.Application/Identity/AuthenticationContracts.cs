@@ -126,6 +126,8 @@ public static class AuthorizationCodes
     public const string ReportsMilkTestsRead = ReportPermissions.MilkTestsRead;
     public const string ReportsAuditRead = ReportPermissions.AuditRead;
     public const string ReportsExport = ReportPermissions.Export;
+    public const string SetupNumberSeriesRead = "SETUP.NUMBER_SERIES.READ";
+    public const string SetupNumberSeriesManage = "SETUP.NUMBER_SERIES.MANAGE";
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -192,6 +194,8 @@ public static class AuthorizationCodes
         [ReportsOperationsRead] = "Read authorized delivery, dairy, camera, and notification reports",
         [ReportsMilkTestsRead] = "Read authorized milk-test reports without protected media storage data",
         [ReportsAuditRead] = "Read audit-log metadata",
-        [ReportsExport] = "Export authorized reports as CSV or XLSX"
+        [ReportsExport] = "Export authorized reports as CSV or XLSX",
+        [SetupNumberSeriesRead] = "View numbering series configuration and live previews",
+        [SetupNumberSeriesManage] = "Create and manage numbering series configuration"
     };
 }

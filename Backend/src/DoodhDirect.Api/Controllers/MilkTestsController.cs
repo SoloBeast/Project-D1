@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Claims;
+using DoodhDirect.Api.Authorization;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Identity;
 using DoodhDirect.Application.MilkTesting;
@@ -117,6 +118,74 @@ public sealed class MilkTestsController(IMilkTestService milkTestService) : Milk
         return Ok(ApiResponse<MilkTestImageResult>.Ok(result));
     }
 
+    [HttpDelete("{milkTestId:guid}/images/{imageId:guid}")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.MilkTestsOperateAssigned)]
+    [ProducesResponseType(typeof(ApiResponse<StaffMilkTestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<StaffMilkTestResult>>> DeleteImage(
+        Guid milkTestId,
+        Guid imageId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<StaffMilkTestResult>.Ok(await milkTestService.DeleteImageAsync(
+            RequireMilkTestActor(), milkTestId, imageId, cancellationToken)));
+
+    [HttpPut("{milkTestId:guid}/images/{imageId:guid}")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.MilkTestsOperateAssigned)]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(MaximumTransportUploadSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaximumTransportUploadSize)]
+    [ProducesResponseType(typeof(ApiResponse<MilkTestImageResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<MilkTestImageResult>>> ReplaceImage(
+        Guid milkTestId,
+        Guid imageId,
+        [FromForm] MilkTestImageUploadForm request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Image is null)
+        {
+            throw new ValidationAppException("An image is required.", "image");
+        }
+
+        await using var content = request.Image.OpenReadStream();
+        var result = await milkTestService.ReplaceImageAsync(
+            RequireMilkTestActor(),
+            milkTestId,
+            imageId,
+            content,
+            request.Image.FileName,
+            request.Image.ContentType,
+            cancellationToken);
+        return Ok(ApiResponse<MilkTestImageResult>.Ok(result));
+    }
+
+    [HttpPost("{milkTestId:guid}/images/{imageId:guid}")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.MilkTestsDecideOwn)]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(MaximumTransportUploadSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaximumTransportUploadSize)]
+    [ProducesResponseType(typeof(ApiResponse<MilkTestImageResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<MilkTestImageResult>>> ReplaceImageAsCustomer(
+        Guid milkTestId,
+        Guid imageId,
+        [FromForm] MilkTestImageUploadForm request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Image is null)
+        {
+            throw new ValidationAppException("An image is required.", "image");
+        }
+
+        await using var content = request.Image.OpenReadStream();
+        var result = await milkTestService.ReplaceImageAsync(
+            RequireMilkTestActor(),
+            milkTestId,
+            imageId,
+            content,
+            request.Image.FileName,
+            request.Image.ContentType,
+            cancellationToken);
+        return Ok(ApiResponse<MilkTestImageResult>.Ok(result));
+    }
+
     [HttpPost("{milkTestId:guid}/complete")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.MilkTestsOperateAssigned)]
     [ProducesResponseType(typeof(ApiResponse<StaffMilkTestResult>), StatusCodes.Status200OK)]
@@ -148,14 +217,14 @@ public sealed class MilkTestsController(IMilkTestService milkTestService) : Milk
             RequireMilkTestActor(), milkTestId, request, cancellationToken)));
 
     [HttpGet("{milkTestId:guid}/images/{imageId:guid}/content")]
-    [Authorize(Policy = "permission:" + AuthorizationCodes.MilkTestsReadOwn)]
+    [Authorize(Policy = AuthorizationPolicyNames.AnyMilkTestImageContent)]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> OpenImage(
         Guid milkTestId,
         Guid imageId,
         CancellationToken cancellationToken)
     {
-        var media = await milkTestService.OpenImageForCustomerAsync(
+        var media = await milkTestService.OpenImageAsync(
             RequireMilkTestActor(), milkTestId, imageId, cancellationToken);
         Response.ContentLength = media.FileSize;
         return File(media.Content, media.ContentType, enableRangeProcessing: true);

@@ -13,11 +13,27 @@ public sealed class CustomerProfile : AuditableEntity
     }
 
     public long UserId { get; private set; }
+    public string? CustomerNumber { get; private set; }
     public string? FirstName { get; private set; }
     public string? LastName { get; private set; }
     public DateOnly? DateOfBirth { get; private set; }
     public string? Gender { get; private set; }
     public string? AlternateMobile { get; private set; }
+
+    public void AssignCustomerNumber(string customerNumber)
+    {
+        if (string.IsNullOrWhiteSpace(customerNumber))
+        {
+            throw new ArgumentException("A customer number is required.", nameof(customerNumber));
+        }
+
+        if (CustomerNumber is not null)
+        {
+            throw new InvalidOperationException("The customer number has already been assigned.");
+        }
+
+        CustomerNumber = customerNumber.Trim();
+    }
 
     public User User { get; private set; } = null!;
 

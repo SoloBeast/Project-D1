@@ -148,6 +148,7 @@ public sealed class Delivery : AuditableEntity
     public long? AssignedEmployeeId { get; private set; }
     public DateOnly ScheduledDate { get; private set; }
     public string ReferenceNumber { get; private set; } = string.Empty;
+    public string? DeliveryNumber { get; private set; }
     public DeliveryStatus Status { get; private set; }
     public string CustomerNameSnapshot { get; private set; } = string.Empty;
     public string CustomerMobileSnapshot { get; private set; } = string.Empty;
@@ -177,6 +178,21 @@ public sealed class Delivery : AuditableEntity
     public ICollection<DeliveryAssignment> Assignments { get; private set; } = [];
     public ICollection<DeliveryOtp> Otps { get; private set; } = [];
     public ICollection<DeliveryLocation> Locations { get; private set; } = [];
+
+    public void AssignDeliveryNumber(string deliveryNumber)
+    {
+        if (string.IsNullOrWhiteSpace(deliveryNumber))
+        {
+            throw new ArgumentException("A delivery number is required.", nameof(deliveryNumber));
+        }
+
+        if (DeliveryNumber is not null)
+        {
+            throw new InvalidOperationException("The delivery number has already been assigned.");
+        }
+
+        DeliveryNumber = deliveryNumber.Trim();
+    }
 
     public DeliveryAssignment Assign(long employeeId, long assignedByUserId, DateTime assignedAt, string? reason)
     {

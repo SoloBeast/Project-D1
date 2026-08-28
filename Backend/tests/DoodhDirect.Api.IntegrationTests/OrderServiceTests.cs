@@ -6,8 +6,10 @@ using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Infrastructure.Orders;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Setup;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 
@@ -90,7 +92,7 @@ public sealed class OrderServiceTests
 
         Assert.Equal(harness.NearBranch.PublicId, result.BranchId);
         Assert.Equal(OrderStatus.PendingPayment, result.Status);
-        Assert.StartsWith("DD-202608200241", result.OrderNumber, StringComparison.Ordinal);
+        Assert.StartsWith("ORD/NEAR/000001", result.OrderNumber, StringComparison.Ordinal);
         Assert.Equal(100m, result.Subtotal);
         Assert.Equal("Home", result.AddressLabel);
         Assert.Equal("Fresh Milk", Assert.Single(result.Items).ProductName);
@@ -246,6 +248,12 @@ public sealed class OrderServiceTests
                 .Options;
             var clock = new TestClock(new DateTime(2026, 8, 20, 2, 41, 0, DateTimeKind.Unspecified));
             var db = new DoodhDirectDbContext(options, new TestIndiaTimeProvider(clock));
+            // Order numbers are scoped per branch. Seed a scoped ORDER series for
+            // each branch that an order can be allocated to.
+            db.NumberSeries.Add(new NumberSeries(
+                "ORDER", "Order Number", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "NEAR"));
+            db.NumberSeries.Add(new NumberSeries(
+                "ORDER", "Order Number", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "FAR"));
 
             var customer = new User(UserType.Customer);
             customer.SetProfile("Customer");
@@ -284,7 +292,7 @@ public sealed class OrderServiceTests
             var timeProvider = new TestIndiaTimeProvider(clock);
             return new OrderHarness(
                 db, customer, otherCustomer, address, product, nearBranch, nearAvailability,
-                farAvailability, new OrderService(db, allocation, notificationEventWriter, timeProvider));
+                farAvailability, new OrderService(db, allocation, notificationEventWriter, new NumberSeriesService(db, timeProvider), timeProvider));
         }
 
         public ValueTask DisposeAsync() => Db.DisposeAsync();

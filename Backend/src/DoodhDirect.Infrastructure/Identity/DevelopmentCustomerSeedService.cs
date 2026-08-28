@@ -1,4 +1,5 @@
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Setup;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Infrastructure.Persistence;
@@ -8,6 +9,7 @@ namespace DoodhDirect.Infrastructure.Identity;
 
 public sealed class DevelopmentCustomerSeedService(
     DoodhDirectDbContext dbContext,
+    INumberSeriesService numberSeriesService,
     IPasswordHasher passwordHasher)
 {
     public const string Email = "customer@doodhdirect.local";
@@ -52,6 +54,8 @@ public sealed class DevelopmentCustomerSeedService(
                     cancellationToken))
             {
                 var profile = new CustomerProfile(user.Id);
+                profile.AssignCustomerNumber(
+                    await numberSeriesService.GetNextNumberAsync("CUSTOMER", user.Id, cancellationToken));
                 profile.Update("Development", "Customer", null, null, null);
                 dbContext.CustomerProfiles.Add(profile);
             }

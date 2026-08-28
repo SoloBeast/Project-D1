@@ -12,10 +12,12 @@ using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Notifications;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Payments;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Wallets;
 using DoodhDirect.Infrastructure.Deliveries;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Setup;
 using DoodhDirect.Infrastructure.Wallets;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -984,6 +986,8 @@ public sealed class PaymentWalletServiceTests
             administrator.SetProfile("Administrator");
             db.Users.AddRange(customer, otherCustomer, administrator);
             await db.SaveChangesAsync();
+            db.NumberSeries.Add(new NumberSeries(
+                "DELIVERY", "Delivery Number", "DEL/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never));
 
             var order = new Order(
                 customer.Id, 1, 1, "checkout-1", "DD-20260816020000-PAYMENT",
@@ -1017,6 +1021,7 @@ public sealed class PaymentWalletServiceTests
                 new NoOpDeliveryRealtimePublisher(),
                 Options.Create(new DeliveryOptions()),
                 notificationEventWriter,
+                new NumberSeriesService(db, indiaTime),
                 otpHandoffProtector);
             var walletService = new WalletService(
                 db,

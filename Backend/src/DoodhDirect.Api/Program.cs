@@ -13,6 +13,7 @@ using DoodhDirect.Infrastructure;
 using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Notifications;
+using DoodhDirect.Infrastructure.Setup;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Policy;
@@ -65,6 +66,7 @@ builder.Services.AddAuthorizationBuilder()
         .Build());
 builder.Services.AddSingleton<IAuthorizationPolicyProvider, DoodhDirectAuthorizationPolicyProvider>();
 builder.Services.AddSingleton<IAuthorizationHandler, PermissionAuthorizationHandler>();
+builder.Services.AddSingleton<IAuthorizationHandler, AnyPermissionAuthorizationHandler>();
 builder.Services.AddSingleton<IAuthorizationHandler, BranchScopeAuthorizationHandler>();
 builder.Services.AddSingleton<IAuthorizationMiddlewareResultHandler, AuditingAuthorizationMiddlewareResultHandler>();
 
@@ -188,6 +190,9 @@ await using (var scope = app.Services.CreateAsyncScope())
     var cancellationToken = CancellationToken.None;
     await scope.ServiceProvider
         .GetRequiredService<IdentitySeedService>()
+        .SeedAsync(cancellationToken);
+    await scope.ServiceProvider
+        .GetRequiredService<NumberSeriesSeedService>()
         .SeedAsync(cancellationToken);
     if (app.Environment.IsDevelopment())
     {

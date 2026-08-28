@@ -134,7 +134,22 @@ public interface IMilkTestService
         string? declaredContentType,
         CancellationToken cancellationToken);
 
-    Task<StoredMediaContent> OpenImageForCustomerAsync(
+    Task<StaffMilkTestResult> DeleteImageAsync(
+        MilkTestActor actor,
+        Guid milkTestId,
+        Guid imageId,
+        CancellationToken cancellationToken);
+
+    Task<MilkTestImageResult> ReplaceImageAsync(
+        MilkTestActor actor,
+        Guid milkTestId,
+        Guid imageId,
+        Stream content,
+        string fileName,
+        string? declaredContentType,
+        CancellationToken cancellationToken);
+
+    Task<StoredMediaContent> OpenImageAsync(
         MilkTestActor actor,
         Guid milkTestId,
         Guid imageId,

@@ -79,6 +79,59 @@ void main() {
       },
     );
 
+    test('parses the production customer GET shape including uploadedAt', () async {
+      var requestCount = 0;
+      final client = MockClient((request) async {
+        requestCount++;
+        expect(request.method, 'GET');
+        expect(
+          request.url.path,
+          '/api/v1/deliveries/d6c1e73f-02e6-477e-8ee6-64296c6aeb2b/milk-test',
+        );
+        return successResponse({
+          'milkTestId': 'c8538812-d33b-4fbc-9bac-bbd216eec933',
+          'deliveryId': 'd6c1e73f-02e6-477e-8ee6-64296c6aeb2b',
+          'status': 'Requested',
+          'customerDecision': 'Pending',
+          'requestedAt': '2026-08-24T17:16:30.617',
+          'completedAt': null,
+          'confirmedAt': null,
+          'rejectedAt': null,
+          'customerRemarks': null,
+          'images': [
+            {
+              'imageId': '9fafce38-5a3f-438d-93e3-af26482c5379',
+              'fileName': 'reading.png',
+              'contentType': 'image/png',
+              'fileSize': 378785,
+              'uploadedAt': '2026-08-25T01:44:20.935',
+              'contentPath': '/api/v1/milk-tests/images/image-1/content',
+            },
+          ],
+        });
+      });
+
+      final result = await testRepository(client)
+          .getForCustomer('milk-token', 'd6c1e73f-02e6-477e-8ee6-64296c6aeb2b');
+
+      expect(requestCount, 1);
+      expect(result?.status, MilkTestStatus.requested);
+      expect(result?.customerDecision, MilkTestCustomerDecision.pending);
+      expect(result?.requestedAtUtc.isUtc, isTrue);
+      expect(result?.images.single.imageId, '9fafce38-5a3f-438d-93e3-af26482c5379');
+      expect(result?.images.single.uploadedAtUtc.isUtc, isTrue);
+    });
+
+    test('reports malformed image timestamps as processing failures', () {
+      expect(
+        () => MilkTestImage.fromJson({
+          ...imageJson(),
+          'uploadedAtUtc': null,
+        }),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
     test('returns null when a role-specific read has no test', () async {
       final repository = testRepository(
         MockClient((_) async => successResponse(null)),

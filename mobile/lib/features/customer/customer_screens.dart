@@ -99,6 +99,8 @@ class _ProfileSection extends StatelessWidget {
             ],
           ),
           Text(profile.fullName.isEmpty ? 'Add your name' : profile.fullName),
+          if (profile.customerNumber?.isNotEmpty == true)
+            Text('Customer number: ${profile.customerNumber}'),
           if (profile.dateOfBirth != null)
             Text('Date of birth: ${_date(profile.dateOfBirth!)}'),
           if (profile.gender?.isNotEmpty == true) Text(profile.gender!),

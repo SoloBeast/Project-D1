@@ -5,9 +5,11 @@ using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Identity;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Setup;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Policy;
 using Microsoft.AspNetCore.Http;
@@ -43,15 +45,39 @@ public sealed class IdentitySeedServiceTests
         Assert.Equal(firstPermissionCount, await db.Permissions.CountAsync());
         Assert.Equal(firstAssignmentCount, await db.RolePermissions.CountAsync());
 
-        var ownerPermissionCodes = await db.RolePermissions
-            .Where(assignment => assignment.Role.Code == AuthorizationCodes.Owner)
-            .Select(assignment => assignment.Permission.Code)
+        var rolePermissionAssignments = await db.RolePermissions
+            .Where(assignment =>
+                assignment.Role.Code == AuthorizationCodes.Owner ||
+                assignment.Role.Code == AuthorizationCodes.DairyManager ||
+                assignment.Role.Code == AuthorizationCodes.DeliveryManager)
+            .Select(assignment => new
+            {
+                RoleCode = assignment.Role.Code,
+                PermissionCode = assignment.Permission.Code
+            })
             .ToListAsync();
+        var rolePermissionCodes = rolePermissionAssignments
+            .GroupBy(assignment => assignment.RoleCode)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(assignment => assignment.PermissionCode).ToArray());
 
+        var ownerPermissionCodes = rolePermissionCodes[AuthorizationCodes.Owner];
         Assert.Equal(
             AuthorizationCodes.Permissions.Keys.OrderBy(code => code),
             ownerPermissionCodes.OrderBy(code => code));
         Assert.Contains(AuthorizationCodes.GlobalAccess, ownerPermissionCodes);
+
+        var dairyManagerPermissionCodes = rolePermissionCodes[AuthorizationCodes.DairyManager];
+        Assert.Contains(AuthorizationCodes.DeliveriesReadBranch, dairyManagerPermissionCodes);
+        Assert.Contains(AuthorizationCodes.DeliveriesAssignBranch, dairyManagerPermissionCodes);
+        Assert.DoesNotContain(AuthorizationCodes.GlobalAccess, dairyManagerPermissionCodes);
+        Assert.DoesNotContain(AuthorizationCodes.UsersManage, dairyManagerPermissionCodes);
+
+        var deliveryManagerPermissionCodes = rolePermissionCodes[AuthorizationCodes.DeliveryManager];
+        Assert.Contains(AuthorizationCodes.DeliveriesReadBranch, deliveryManagerPermissionCodes);
+        Assert.Contains(AuthorizationCodes.DeliveriesAssignBranch, deliveryManagerPermissionCodes);
+        Assert.DoesNotContain(AuthorizationCodes.GlobalAccess, deliveryManagerPermissionCodes);
     }
 
     [Fact]
@@ -62,7 +88,11 @@ public sealed class IdentitySeedServiceTests
         var db = scope.ServiceProvider.GetRequiredService<DoodhDirectDbContext>();
         var passwordHasher = new Pbkdf2PasswordHasher(Options.Create(new IdentityOptions()));
         var identitySeed = new IdentitySeedService(db);
-        var developmentSeed = new DevelopmentCustomerSeedService(db, passwordHasher);
+        var timeProvider = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
+        db.NumberSeries.Add(new NumberSeries(
+            "CUSTOMER", "Customer Number", "CUST/{NUMBER:0000}", 1, 1, NumberSeriesResetPolicy.Never));
+        await db.SaveChangesAsync();
+        var developmentSeed = new DevelopmentCustomerSeedService(db, new NumberSeriesService(db, timeProvider), passwordHasher);
 
         await identitySeed.SeedAsync(CancellationToken.None);
         await developmentSeed.SeedAsync(CancellationToken.None);
@@ -94,7 +124,14 @@ public sealed class IdentitySeedServiceTests
         var db = scope.ServiceProvider.GetRequiredService<DoodhDirectDbContext>();
         var passwordHasher = new Pbkdf2PasswordHasher(Options.Create(new IdentityOptions()));
         var identitySeed = new IdentitySeedService(db);
-        var catalogueSeed = new CatalogueSeedService(db);
+        var timeProvider = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
+        db.NumberSeries.Add(new NumberSeries(
+            "BRANCH", "Branch Number", "BR/{NUMBER:000}", 1, 1, NumberSeriesResetPolicy.Never));
+        await db.SaveChangesAsync();
+        var catalogueSeed = new CatalogueSeedService(
+            db,
+            new NumberSeriesService(db, timeProvider),
+            new NumberSeriesSeedService(db));
         var developmentSeed = new DevelopmentDeliveryStaffSeedService(db, passwordHasher);
 
         await identitySeed.SeedAsync(CancellationToken.None);

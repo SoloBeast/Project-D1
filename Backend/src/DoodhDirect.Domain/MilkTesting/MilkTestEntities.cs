@@ -83,6 +83,32 @@ public sealed class MilkTest : AuditableEntity
         Images.Add(image);
     }
 
+    public void RemoveImage(Guid publicId)
+    {
+        EnsureRequested();
+        RemoveImageCore(publicId);
+    }
+
+    public void AddImageDuringReview(MilkTestImage image)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        EnsureCompletedForDecision();
+        Images.Add(image);
+    }
+
+    public void RemoveImageDuringReview(Guid publicId)
+    {
+        EnsureCompletedForDecision();
+        RemoveImageCore(publicId);
+    }
+
+    private void RemoveImageCore(Guid publicId)
+    {
+        var image = Images.FirstOrDefault(x => x.PublicId == publicId)
+            ?? throw new InvalidOperationException("The test image was not found.");
+        Images.Remove(image);
+    }
+
     public void Complete(long completedByUserId, DateTime completedAt, string? remarks)
     {
         EnsureRequested();

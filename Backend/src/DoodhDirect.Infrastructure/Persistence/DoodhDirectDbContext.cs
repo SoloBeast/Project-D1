@@ -11,6 +11,7 @@ using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.MilkTesting;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Payments;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Wallets;
 using DoodhDirect.Domain.Subscriptions;
 using Microsoft.EntityFrameworkCore;
@@ -70,6 +71,7 @@ public sealed class DoodhDirectDbContext(
     public DbSet<NotificationAttempt> NotificationAttempts => Set<NotificationAttempt>();
     public DbSet<DeliveryOtp> DeliveryOtps => Set<DeliveryOtp>();
     public DbSet<DeliveryLocation> DeliveryLocations => Set<DeliveryLocation>();
+    public DbSet<NumberSeries> NumberSeries => Set<NumberSeries>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -120,6 +122,7 @@ public sealed class DoodhDirectDbContext(
         ConfigureNotificationAttempt(modelBuilder);
         ConfigureDeliveryOtp(modelBuilder);
         ConfigureDeliveryLocation(modelBuilder, usesSqlite);
+        ConfigureNumberSeries(modelBuilder, usesSqlite);
     }
 
     public void AddAuditLog(AuditLog audit)
@@ -365,10 +368,12 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.Id).UseIdentityColumn();
         ConfigurePublicEntity(entity);
         entity.HasIndex(x => x.UserId).IsUnique();
+        entity.Property(x => x.CustomerNumber).HasMaxLength(40);
         entity.Property(x => x.FirstName).HasMaxLength(100);
         entity.Property(x => x.LastName).HasMaxLength(100);
         entity.Property(x => x.Gender).HasMaxLength(40);
         entity.Property(x => x.AlternateMobile).HasMaxLength(20);
+        entity.HasIndex(x => x.CustomerNumber).IsUnique().HasFilter("[CustomerNumber] IS NOT NULL");
         entity.HasOne(x => x.User).WithOne().HasForeignKey<CustomerProfile>(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
     }
 
@@ -460,7 +465,9 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.Latitude).HasPrecision(9, 6).IsRequired();
         entity.Property(x => x.Longitude).HasPrecision(9, 6).IsRequired();
         entity.Property(x => x.ServiceRadiusKm).HasPrecision(8, 2);
+        entity.Property(x => x.BranchNumber).HasMaxLength(40);
         entity.HasIndex(x => x.Code).IsUnique();
+        entity.HasIndex(x => x.BranchNumber).IsUnique().HasFilter("[BranchNumber] IS NOT NULL");
         entity.HasIndex(x => new { x.IsActive, x.Name });
     }
 
@@ -789,6 +796,7 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
         entity.Property(x => x.ScheduledDate).HasColumnType("date").IsRequired();
         entity.Property(x => x.ReferenceNumber).HasMaxLength(80).IsRequired();
+        entity.Property(x => x.DeliveryNumber).HasMaxLength(40);
         entity.Property(x => x.CustomerNameSnapshot).HasMaxLength(160).IsRequired();
         entity.Property(x => x.CustomerMobileSnapshot).HasMaxLength(20).IsRequired();
         entity.Property(x => x.DestinationAddressSnapshot).HasMaxLength(2000).IsRequired();
@@ -808,6 +816,7 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.CompletedAt).HasColumnName("CompletedAtUtc");
         entity.Property(x => x.FailedAt).HasColumnName("FailedAtUtc");
         entity.Ignore(x => x.IsTrackingActive);
+        entity.HasIndex(x => x.DeliveryNumber).IsUnique().HasFilter("[DeliveryNumber] IS NOT NULL");
         entity.HasIndex(x => x.OrderId).IsUnique().HasFilter("[OrderId] IS NOT NULL");
         entity.HasIndex(x => x.SubscriptionDeliveryId).IsUnique().HasFilter("[SubscriptionDeliveryId] IS NOT NULL");
         entity.HasIndex(x => new { x.BranchId, x.ScheduledDate, x.Status });
@@ -1224,6 +1233,40 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.AttemptedAt).HasColumnName("AttemptedAtUtc").IsRequired();
         entity.HasIndex(x => new { x.NotificationDeliveryId, x.AttemptNumber }).IsUnique();
         entity.HasOne(x => x.Delivery).WithMany(x => x.Attempts).HasForeignKey(x => x.NotificationDeliveryId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureNumberSeries(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<NumberSeries>();
+        entity.ToTable("NumberSeries");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.Code).HasMaxLength(50).IsRequired();
+        entity.Property(x => x.ScopeKey).HasMaxLength(50).IsRequired().HasDefaultValue("");
+        entity.Property(x => x.Description).HasMaxLength(300).IsRequired();
+        entity.Property(x => x.Template).HasMaxLength(120).IsRequired();
+        entity.Property(x => x.StartingNumber).IsRequired();
+        entity.Property(x => x.LastUsedNumber).IsRequired();
+        entity.Property(x => x.IncrementBy).IsRequired();
+        entity.Property(x => x.ResetPolicy).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.IsActive).IsRequired();
+        entity.Property(x => x.LastUsedAt).HasColumnName("LastUsedAtUtc");
+        entity.Property(x => x.CreatedByUserId);
+        entity.Property(x => x.UpdatedByUserId);
+
+        var rowVersion = entity.Property(x => x.RowVersion);
+        if (usesSqlite)
+        {
+            rowVersion.IsConcurrencyToken().ValueGeneratedNever();
+        }
+        else
+        {
+            rowVersion.IsRowVersion();
+        }
+
+        // A code may exist once per scope. string.Empty is the legacy global series.
+        entity.HasIndex(x => new { x.Code, x.ScopeKey }).IsUnique();
     }
 
     private static void ConfigurePublicEntity<TEntity>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<TEntity> entity)

@@ -905,7 +905,7 @@ paths:
   /delivery-management/materialize:
     post:
       summary: Generate eligible delivery work through an operational date
-      description: Idempotently creates missing delivery rows for eligible confirmed one-time orders and active scheduled subscription occurrences. The through date is inclusive and must be within the configured subscription generation window beginning on the current India-local date.
+      description: Available to DELIVERY_MANAGER and DAIRY_MANAGER with DELIVERIES.ASSIGN_BRANCH. Idempotently creates missing delivery rows for eligible confirmed one-time orders and active scheduled subscription occurrences. The authenticated actor remains the audit actor and branch scope is enforced; DAIRY_MANAGER does not receive ACCESS.GLOBAL.
       security:
         - bearerAuth: []
       parameters:
@@ -923,7 +923,7 @@ paths:
   /delivery-management/fetch-subscriptions:
     post:
       summary: Generate eligible subscription deliveries through an operational date
-      description: Idempotently creates only active scheduled subscription occurrence deliveries. The through date is inclusive and must be within the configured window beginning on the current India-local date.
+      description: Available to DELIVERY_MANAGER and DAIRY_MANAGER with DELIVERIES.ASSIGN_BRANCH. Idempotently creates only active scheduled subscription occurrence deliveries. The authenticated actor and branch scope are preserved.
       security:
         - bearerAuth: []
       parameters:
@@ -941,7 +941,7 @@ paths:
         '422': { $ref: '#/components/responses/BusinessRuleError' }
   /delivery-management/branches/{branchId}:
     get:
-      summary: List a filtered branch delivery queue
+      summary: List a filtered branch delivery queue for Delivery Manager or Dairy Manager
       security:
         - bearerAuth: []
       parameters:
@@ -961,7 +961,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
   /delivery-management/branches/{branchId}/employees:
     get:
-      summary: List delivery employees eligible for assignment in a branch
+      summary: List delivery employees eligible for assignment for Delivery Manager or Dairy Manager
       security:
         - bearerAuth: []
       parameters:
@@ -1835,6 +1835,142 @@ paths:
       <<: *administrationReportExport
       summary: Export audit report rows
       description: Requires REPORTS.EXPORT and REPORTS.AUDIT.READ. The same authenticated branch scope and filters used by report reads are applied.
+  /admin/setup/number-series:
+    get:
+      tags: [Number series setup]
+      summary: List numbering series
+      description: Requires SETUP.NUMBER_SERIES.READ. Returns every series with its counter, template, reset policy, activity flag, and the next number that would be allocated without consuming it.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Numbering series list envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NumberSeriesListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Number series setup]
+      summary: Create a numbering series
+      description: Requires SETUP.NUMBER_SERIES.MANAGE. The code is the stable lookup key used by business services and is immutable after creation.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNumberSeriesRequest' }
+      responses:
+        '200':
+          description: Numbering series created envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NumberSeriesResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/setup/number-series/preview:
+    post:
+      tags: [Number series setup]
+      summary: Preview a template without consuming the counter
+      description: Requires SETUP.NUMBER_SERIES.READ. Renders the candidate template; the optional nextNumber overrides the counter value. The live series counter is never advanced.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NumberSeriesPreviewRequest' }
+      responses:
+        '200':
+          description: Template preview envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NumberSeriesPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/setup/number-series/{code}:
+    get:
+      tags: [Number series setup]
+      summary: Get a numbering series by code
+      description: Requires SETUP.NUMBER_SERIES.READ.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/numberSeriesCode'
+      responses:
+        '200':
+          description: Numbering series envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NumberSeriesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Number series setup]
+      summary: Update a numbering series
+      description: Requires SETUP.NUMBER_SERIES.MANAGE. The code is fixed by the route. Counter, template, and reset policy are validated together; lowering the starting number below the last used number is rejected.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/numberSeriesCode'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNumberSeriesRequest' }
+      responses:
+        '200':
+          description: Numbering series updated envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NumberSeriesResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/setup/number-series/{code}/activate:
+    post:
+      tags: [Number series setup]
+      summary: Activate a numbering series
+      description: Requires SETUP.NUMBER_SERIES.MANAGE. Changing the active flag does not reset the counter.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/numberSeriesCode'
+      responses:
+        '200':
+          description: Numbering series activated envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NumberSeriesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/setup/number-series/{code}/deactivate:
+    post:
+      tags: [Number series setup]
+      summary: Deactivate a numbering series
+      description: Requires SETUP.NUMBER_SERIES.MANAGE. A deactivated series cannot be allocated; allocating business services fail rather than skipping the series.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/numberSeriesCode'
+      responses:
+        '200':
+          description: Numbering series deactivated envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NumberSeriesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /webhooks/razorpay:
     post:
       summary: Razorpay webhook
@@ -1936,6 +2072,12 @@ components:
       required: false
       description: Optional branch filter; authorization remains server-enforced.
       schema: { type: integer, format: int64, minimum: 1 }
+    numberSeriesCode:
+      name: code
+      in: path
+      required: true
+      description: Stable numbering-series code, for example CUSTOMER.
+      schema: { type: string, minLength: 1, maxLength: 40 }
     deliveryBranchId:
       name: branchId
       in: path
@@ -3635,3 +3777,79 @@ components:
           type: string
           minLength: 5
           maxLength: 2000
+    NumberSeriesResetPolicy:
+      type: string
+      enum: [Never, Daily, Monthly, CalendarYear, FinancialYear]
+      description: Financial-year resets use the India financial year starting 1 April.
+    NumberSeries:
+      type: object
+      required: [code, description, template, startingNumber, lastUsedNumber, incrementBy, resetPolicy, isActive, nextNumber]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 40, description: Stable lookup key used by business services; immutable after creation. }
+        description: { type: string, minLength: 1, maxLength: 200 }
+        template:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: >-
+            Literal text with exactly one {NUMBER:...} counter token plus
+            optional {PREFIX}, {FY}, {YEAR}, {YY}, {MONTH}, and {DATE:...}
+            tokens.
+        startingNumber: { type: integer, format: int64, minimum: 1 }
+        lastUsedNumber: { type: integer, format: int64, minimum: 0 }
+        incrementBy: { type: integer, format: int32, minimum: 1 }
+        resetPolicy: { $ref: '#/components/schemas/NumberSeriesResetPolicy' }
+        isActive: { type: boolean }
+        nextNumber: { type: string, nullable: true, description: The next number that would be allocated without consuming it. }
+        lastUsedAt: { type: string, format: date-time, nullable: true }
+        createdByUserId: { type: integer, format: int64, nullable: true }
+        updatedByUserId: { type: integer, format: int64, nullable: true }
+    CreateNumberSeriesRequest:
+      type: object
+      required: [code, description, template, startingNumber, incrementBy, resetPolicy]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 40 }
+        description: { type: string, minLength: 1, maxLength: 200 }
+        template: { type: string, minLength: 1, maxLength: 200 }
+        startingNumber: { type: integer, format: int64, minimum: 1 }
+        incrementBy: { type: integer, format: int32, minimum: 1 }
+        resetPolicy: { $ref: '#/components/schemas/NumberSeriesResetPolicy' }
+    UpdateNumberSeriesRequest:
+      type: object
+      required: [description, template, startingNumber, incrementBy, resetPolicy]
+      properties:
+        description: { type: string, minLength: 1, maxLength: 200 }
+        template: { type: string, minLength: 1, maxLength: 200 }
+        startingNumber: { type: integer, format: int64, minimum: 1 }
+        incrementBy: { type: integer, format: int32, minimum: 1 }
+        resetPolicy: { $ref: '#/components/schemas/NumberSeriesResetPolicy' }
+    NumberSeriesPreviewRequest:
+      type: object
+      required: [code, template]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 40 }
+        template: { type: string, minLength: 1, maxLength: 200 }
+        nextNumber: { type: integer, format: int64, nullable: true, minimum: 1, description: Optional override; the live series counter is never advanced. }
+    NumberSeriesPreview:
+      type: object
+      required: [code, template, nextNumber, formattedNumber]
+      properties:
+        code: { type: string }
+        template: { type: string }
+        nextNumber: { type: integer, format: int64 }
+        formattedNumber: { type: string }
+    NumberSeriesResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/NumberSeries' } }
+    NumberSeriesListResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { type: array, items: { $ref: '#/components/schemas/NumberSeries' } } }
+    NumberSeriesPreviewResponse:
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          properties: { data: { $ref: '#/components/schemas/NumberSeriesPreview' } }

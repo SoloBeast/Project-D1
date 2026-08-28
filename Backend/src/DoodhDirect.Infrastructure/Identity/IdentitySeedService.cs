@@ -48,6 +48,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.SessionsManageOwn,
                 AuthorizationCodes.UsersRead,
                 AuthorizationCodes.BranchAccess,
+                AuthorizationCodes.DeliveriesReadBranch,
+                AuthorizationCodes.DeliveriesAssignBranch,
                 AuthorizationCodes.DairyRead,
                 AuthorizationCodes.DairyManage,
                 AuthorizationCodes.CamerasRead,
@@ -128,7 +130,9 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.ReportsOperationsRead,
                 AuthorizationCodes.ReportsMilkTestsRead,
                 AuthorizationCodes.ReportsAuditRead,
-                AuthorizationCodes.ReportsExport
+                AuthorizationCodes.ReportsExport,
+                AuthorizationCodes.SetupNumberSeriesRead,
+                AuthorizationCodes.SetupNumberSeriesManage
             ],
             [AuthorizationCodes.Owner] = AuthorizationCodes.Permissions.Keys.ToArray()
         };

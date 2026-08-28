@@ -446,6 +446,7 @@ Customer routes:
 
 - `POST /deliveries/{deliveryId}/milk-test` requests one test for an active delivery owned by the authenticated customer. Required permission: `MILK_TESTS.REQUEST_OWN`.
 - `GET /deliveries/{deliveryId}/milk-test` returns the owned test or `null`. Required permission: `MILK_TESTS.READ_OWN`.
+- `PUT /milk-tests/{milkTestId}/images/{imageId}` replaces one of the customer's own images while reviewing a completed test with a pending decision. The replacement is atomic: the new image is validated and stored first, then the old row is removed in the same serialized transaction; if the new image fails validation, storage, or persistence, the original image remains. Returns the new image record. Required permission: `MILK_TESTS.OPERATE_ASSIGNED` (the policy gates the endpoint; the service further requires the authenticated user to be the test owner and the decision to be `Pending`).
 - `POST /milk-tests/{milkTestId}/confirm` and `POST /milk-tests/{milkTestId}/reject` accept `{ "remarks": "optional" }`. Required permission: `MILK_TESTS.DECIDE_OWN`.
 - `GET /milk-tests/{milkTestId}/images/{imageId}/content` streams authenticated image content with range processing. It returns content only to the owning customer and only after completion.
 
@@ -453,6 +454,8 @@ Assigned-delivery-staff routes:
 
 - `GET /delivery/{deliveryId}/milk-test` returns the assigned test or `null`. Required permission: `MILK_TESTS.OPERATE_ASSIGNED`.
 - `POST /milk-tests/{milkTestId}/images` accepts `multipart/form-data` with one `image` part. The server validates configured size, JPEG/PNG/WebP signature, and declared MIME compatibility before external storage.
+- `DELETE /milk-tests/{milkTestId}/images/{imageId}` removes the exact image that belongs to the test. Only the assigned staff can delete, only while the test is `Requested` (not yet completed) and the delivery is not terminal (`Delivered`/`Failed`); otherwise the server returns `409 Conflict`. Returns the updated staff test. Required permission: `MILK_TESTS.OPERATE_ASSIGNED`.
+- `PUT /milk-tests/{milkTestId}/images/{imageId}` replaces one image of the test. The replacement is atomic (validate → store new → persist → remove old in one serialized transaction; on any failure the old image is kept). Only assigned staff, only while the test is `Requested` and the delivery is not terminal. Returns the new image record. Required permission: `MILK_TESTS.OPERATE_ASSIGNED`.
 - `POST /milk-tests/{milkTestId}/complete` accepts configurable numeric parameters and optional remarks. Completion requires the delivery to be `Arrived`, at least one stored image, and at least one valid reading.
 
 Completion request:
@@ -479,6 +482,8 @@ Rules and disclosure:
 
 ### Delivery management
 
+The existing delivery-management endpoints are permission-based and are available to both `DELIVERY_MANAGER` and `DAIRY_MANAGER` through `DELIVERIES.READ_BRANCH` and `DELIVERIES.ASSIGN_BRANCH`. Dairy Manager access remains strictly branch-scoped and does not grant `ACCESS.GLOBAL` or unrelated owner/system-administrator permissions. The authenticated `user_id` remains the actor for audit, assignment history, notifications, and realtime events.
+
 - `POST /delivery-management/materialize?throughDate=YYYY-MM-DD` idempotently creates missing delivery rows for eligible confirmed one-time orders and active scheduled subscription occurrences. The date is inclusive, must be today or later in India-local time, and must not exceed the configured operational generation window. Repeating the request is duplicate-safe.
 - `POST /delivery-management/fetch-subscriptions?throughDate=YYYY-MM-DD&slot=Morning|Evening` performs the same bounded, idempotent generation for subscription occurrences only. The slot filter is optional; persisted legacy occurrences default to `Morning`.
 - `GET /delivery-management/branches/{branchId}?date=YYYY-MM-DD&status=Assigned&sourceType=OneTimeOrder|SubscriptionOccurrence&slot=Morning|Evening` lists branch deliveries with optional date, status, source, and subscription-slot filters. `slot` applies only to subscription deliveries.
@@ -487,7 +492,7 @@ Rules and disclosure:
 - `GET /delivery-management/{deliveryId}` returns operational delivery detail, including source-specific quantity/order summary and subscription slot when applicable.
 - `POST /delivery-management/{deliveryId}/assign` accepts `{ "employeeId": "uuid", "reason": "optional assignment reason" }` and supports assignment from `ReadyForAssignment` before terminal completion.
 - `POST /delivery-management/bulk-assign` accepts `{ "deliveryIds": ["uuid"], "employeeId": "uuid", "reason": "optional assignment reason" }`. The backend validates every selected delivery, branch scope, status, and employee eligibility before changing any row; successful mutation emits the normal audit/notification/realtime effects for each assignment.
-- Branch reads require `DELIVERIES.READ_BRANCH`; generation and assignment require `DELIVERIES.ASSIGN_BRANCH`. The requested delivery/branch must be within the actor's branch claims unless the actor has global access.
+- Branch reads require `DELIVERIES.READ_BRANCH`; generation and assignment require `DELIVERIES.ASSIGN_BRANCH`. The requested delivery/branch must be within the actor's branch claims unless the actor has global access. Dairy Manager is branch-scoped and is not seeded with global access.
 
 All successful responses use the standard API envelope. Invalid transitions, validation failures, authorization failures, and OTP failures return the standard error envelope without exposing stored OTP hashes or codes.
 
@@ -820,7 +825,64 @@ The JSON request body contains a nested `filter` with the report filter fields a
 
 ---
 
-## 17. Common HTTP Status Codes
+## 17. Setup Number Series APIs
+
+All setup endpoints are authenticated and rooted at `/admin/setup/number-series`. The class-level read permission `SETUP.NUMBER_SERIES.READ` covers the list, single-get, and preview endpoints; every mutating endpoint additionally requires `SETUP.NUMBER_SERIES.MANAGE`. A series `Code` is the stable lookup key used by business services to allocate numbers; it is immutable after creation and unique across all series.
+
+| Route | Permission |
+|---|---|
+| `GET /admin/setup/number-series` | `SETUP.NUMBER_SERIES.READ` |
+| `GET /admin/setup/number-series/{code}` | `SETUP.NUMBER_SERIES.READ` |
+| `POST /admin/setup/number-series/preview` | `SETUP.NUMBER_SERIES.READ` |
+| `POST /admin/setup/number-series` | `SETUP.NUMBER_SERIES.MANAGE` |
+| `PUT /admin/setup/number-series/{code}` | `SETUP.NUMBER_SERIES.MANAGE` |
+| `POST /admin/setup/number-series/{code}/activate` | `SETUP.NUMBER_SERIES.MANAGE` |
+| `POST /admin/setup/number-series/{code}/deactivate` | `SETUP.NUMBER_SERIES.MANAGE` |
+
+The list returns `NumberSeriesResult` objects in a stable order. `NumberSeriesResult` carries `code`, `description`, `template`, `startingNumber`, `lastUsedNumber`, `incrementBy`, `resetPolicy`, `isActive`, `nextNumber` (the number that would be allocated next without consuming it), `lastUsedAt`, `createdByUserId`, and `updatedByUserId`. `CreateNumberSeriesRequest` requires `code`, `description`, `template`, `startingNumber`, `incrementBy`, and `resetPolicy`; `UpdateNumberSeriesRequest` carries the same fields except `code`, which is fixed by the route.
+
+`POST /admin/setup/number-series/preview` renders a candidate `template` for `code` without touching any series row. The optional `nextNumber` overrides the counter value; when omitted the server computes the next number as it would be allocated, again without consuming it. The response is `NumberSeriesPreviewResult` with `code`, `template`, `nextNumber`, and `formattedNumber`.
+
+### Template engine
+
+Templates are literal text with `{TOKEN}` placeholders:
+
+- `{NUMBER:0000}` — the zero-padded counter to the given width (for example, counter `1` renders `0001`).
+- `{PREFIX}` — a short, code-derived uppercase prefix suitable for single-token prefixes.
+- `{FY}` — the India financial year as `YYYY-YY` (for example, `2026-27` for dates from 1 April 2026 through 31 March 2027).
+- `{YEAR}` — the four-digit calendar year.
+- `{YY}` — the two-digit calendar year.
+- `{MONTH}` — the two-digit calendar month.
+- `{DATE:yyyyMMdd}` — the date formatted with the given .NET date format string.
+
+A template must be non-empty, contain exactly one `{NUMBER:...}` counter token, and contain no unsupported tokens. Malformed templates are rejected with a business-validation error at create, update, and preview time.
+
+### Reset policy
+
+`ResetPolicy` is one of `Never`, `Daily`, `Monthly`, `CalendarYear`, or `FinancialYear`. After a reset the counter restarts at `startingNumber`. Financial-year resets use the India financial year (`1 April` to `31 March`). Reset detection is based on the India-local (`Asia/Kolkata`) date at allocation time.
+
+### Allocation semantics
+
+- Number allocation happens inside the caller's business transaction. A rolled-back business save also rolls back the counter increment.
+- Allocation is concurrency-safe at the database level so concurrent transactions never receive the same number.
+- `LastUsedNumber`, `LastUsedAt`, and the audit trail update on every allocation.
+- A deactivated series cannot be allocated; the allocating business service fails rather than skipping a series.
+- Editing a series is safe: the counter, template, and reset policy are validated together, and lowering `StartingNumber` below an already-issued `LastUsedNumber` is rejected.
+
+### Seeded series
+
+The following series are seeded at startup when no `NumberSeries` rows exist:
+
+| Code | Template | Start | Increment |
+|---|---|---|---|
+| `CUSTOMER` | `CUST/{NUMBER:0000}` | 1 | 1 |
+| `ORDER` | `ORD/{NUMBER:000000}` | 1 | 1 |
+| `BRANCH` | `BR/{NUMBER:000}` | 1 | 1 |
+| `DELIVERY` | `DEL/{NUMBER:000000}` | 1 | 1 |
+
+All seeded series use `ResetPolicy.Never`. All create, update, activate, and deactivate operations are audited as `NUMBER_SERIES.CREATED`, `NUMBER_SERIES.UPDATED`, `NUMBER_SERIES.ACTIVATED`, and `NUMBER_SERIES.DEACTIVATED` with the acting user recorded.
+
+## 18. Common HTTP Status Codes
 
 200 — success
 201 — created
@@ -837,7 +899,7 @@ The JSON request body contains a nested `filter` with the report filter fields a
 
 ---
 
-## 18. API Authorization Rule
+## 19. API Authorization Rule
 
 Every endpoint must have one of:
 

@@ -6,6 +6,7 @@ class CustomerProfile {
     required this.dateOfBirth,
     required this.gender,
     required this.alternateMobile,
+    this.customerNumber,
   });
 
   factory CustomerProfile.fromJson(Map<String, dynamic> json) =>
@@ -18,6 +19,7 @@ class CustomerProfile {
             : DateTime.parse(json['dateOfBirth'] as String),
         gender: json['gender'] as String?,
         alternateMobile: json['alternateMobile'] as String?,
+        customerNumber: json['customerNumber'] as String?,
       );
 
   final String publicId;
@@ -26,6 +28,7 @@ class CustomerProfile {
   final DateTime? dateOfBirth;
   final String? gender;
   final String? alternateMobile;
+  final String? customerNumber;
 
   String get fullName {
     final parts = [
