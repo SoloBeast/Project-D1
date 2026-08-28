@@ -1187,6 +1187,105 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Identity.EmployeeInvitation", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long?>("BranchId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CancelledAtUtc");
+
+                    b.Property<long?>("CancelledByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
+
+                    b.Property<long>("CreatedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ExpiresAtUtc");
+
+                    b.Property<string>("InviteeEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<string>("InviteeMobile")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("InviteeName")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
+
+                    b.Property<DateTime?>("LastResentAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("LastResentAtUtc");
+
+                    b.Property<long?>("LastResentByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<DateTime?>("RegisteredAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("RegisteredAtUtc");
+
+                    b.Property<long?>("RegisteredByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("RoleCode")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("BranchId", "Status")
+                        .HasFilter("[BranchId] IS NOT NULL");
+
+                    b.HasIndex("CreatedByUserId", "CreatedAt");
+
+                    b.HasIndex("Status", "ExpiresAt");
+
+                    b.ToTable("EmployeeInvitation", "dbo");
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Identity.OtpChallenge", b =>
                 {
                     b.Property<long>("Id")

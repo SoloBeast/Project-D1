@@ -47,6 +47,14 @@ class SessionController extends Notifier<SessionState> {
   Future<void> sendOtp(String mobile, {required bool registration}) =>
       _repository.sendOtp(mobile, registration: registration);
 
+  /// Establishes a session produced outside the standard login/register flows — e.g. the session
+  /// returned by the employee invitation completion endpoint — so the employee is immediately
+  /// routed to their assigned role workspace. Persists the session for subsequent launches.
+  Future<void> establishSession(AuthSession session) async {
+    await _repository.saveSession(session);
+    state = SessionState.authenticated(session);
+  }
+
   Future<bool> verifyOtp(
     String mobile,
     String code, {

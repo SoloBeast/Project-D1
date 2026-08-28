@@ -87,6 +87,9 @@ public static class AuthorizationCodes
     public const string UsersManage = "IDENTITY.USERS.MANAGE";
     public const string RolesRead = "IDENTITY.ROLES.READ";
     public const string RolesManage = "IDENTITY.ROLES.MANAGE";
+    public const string EmployeesRead = "EMPLOYEES.READ";
+    public const string EmployeesManage = "EMPLOYEES.MANAGE";
+    public const string IdentityAdministratorsManage = "IDENTITY.ADMINISTRATORS.MANAGE";
     public const string BranchAccess = "IDENTITY.BRANCH.ACCESS";
     public const string CatalogueRead = "CATALOGUE.READ";
     public const string CatalogueManage = "CATALOGUE.MANAGE";
@@ -128,6 +131,8 @@ public static class AuthorizationCodes
     public const string ReportsExport = ReportPermissions.Export;
     public const string SetupNumberSeriesRead = "SETUP.NUMBER_SERIES.READ";
     public const string SetupNumberSeriesManage = "SETUP.NUMBER_SERIES.MANAGE";
+    public const string BranchesRead = "BRANCHES.READ";
+    public const string BranchesManage = "BRANCHES.MANAGE";
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -156,6 +161,9 @@ public static class AuthorizationCodes
         [UsersManage] = "Manage users",
         [RolesRead] = "Read roles and permissions",
         [RolesManage] = "Manage roles and permissions",
+        [EmployeesRead] = "Read employees and employee invitations",
+        [EmployeesManage] = "Create, invite, update, deactivate, and reactivate employees",
+        [IdentityAdministratorsManage] = "Create and manage system administrators (ownership level)",
         [BranchAccess] = "Access assigned branch",
         [CatalogueRead] = "Read product catalogue",
         [CatalogueManage] = "Manage products, categories, and branch availability",
@@ -196,6 +204,8 @@ public static class AuthorizationCodes
         [ReportsAuditRead] = "Read audit-log metadata",
         [ReportsExport] = "Export authorized reports as CSV or XLSX",
         [SetupNumberSeriesRead] = "View numbering series configuration and live previews",
-        [SetupNumberSeriesManage] = "Create and manage numbering series configuration"
+        [SetupNumberSeriesManage] = "Create and manage numbering series configuration",
+        [BranchesRead] = "Read branch records and branch metadata",
+        [BranchesManage] = "Create, update, activate, and deactivate branch records"
     };
 }

@@ -154,14 +154,6 @@ public sealed class CatalogueAdministrationController(ICatalogueService catalogu
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<ProductCategoryResult>.Ok(await catalogueService.SetCategoryActiveAsync(
             categoryId, false, cancellationToken)));
-
-    [HttpGet("branches")]
-    [Authorize(Policy = "permission:" + AuthorizationCodes.CatalogueRead)]
-    [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<BranchResult>>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<BranchResult>>>> GetBranches(
-        CancellationToken cancellationToken) =>
-        Ok(ApiResponse<IReadOnlyList<BranchResult>>.Ok(
-            await catalogueService.GetBranchesForAdministrationAsync(cancellationToken)));
 }
 
 public sealed record UpsertProductApiRequest(

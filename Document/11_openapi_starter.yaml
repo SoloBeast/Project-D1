@@ -389,12 +389,58 @@ paths:
         '403': { description: Missing CATALOGUE.MANAGE permission }
   /admin/branches:
     get:
-      summary: List branches for catalogue administration
+      summary: List branches for Branch Management
       security:
         - bearerAuth: []
       responses:
         '200': { description: Branch list envelope }
-        '403': { description: Missing CATALOGUE.READ permission }
+        '403': { description: Missing BRANCHES.READ permission }
+    post:
+      summary: Create a branch
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { description: Branch envelope }
+        '403': { description: Missing BRANCHES.MANAGE permission }
+  /admin/branches/{branchId}:
+    get:
+      summary: Get a branch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/branchId'
+      responses:
+        '200': { description: Branch envelope }
+        '403': { description: Missing BRANCHES.READ permission }
+    put:
+      summary: Update a branch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/branchId'
+      responses:
+        '200': { description: Branch envelope }
+        '403': { description: Missing BRANCHES.MANAGE permission }
+  /admin/branches/{branchId}/activate:
+    post:
+      summary: Activate a branch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/branchId'
+      responses:
+        '200': { description: Branch envelope }
+        '403': { description: Missing BRANCHES.MANAGE permission }
+  /admin/branches/{branchId}/deactivate:
+    post:
+      summary: Deactivate a branch
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/branchId'
+      responses:
+        '200': { description: Branch envelope }
+        '403': { description: Missing BRANCHES.MANAGE permission }
   /branches/serviceability:
     get:
       summary: Check serviceability and eligible branches
@@ -1839,7 +1885,7 @@ paths:
     get:
       tags: [Number series setup]
       summary: List numbering series
-      description: Requires SETUP.NUMBER_SERIES.READ. Returns every series with its counter, template, reset policy, activity flag, and the next number that would be allocated without consuming it.
+      description: Requires SETUP.NUMBER_SERIES.READ. Returns every series with its counter, template, scope key, reset policy, activity flag, and the next number that would be allocated without consuming it.
       security:
         - bearerAuth: []
       responses:
@@ -1897,11 +1943,12 @@ paths:
     get:
       tags: [Number series setup]
       summary: Get a numbering series by code
-      description: Requires SETUP.NUMBER_SERIES.READ.
+      description: Requires SETUP.NUMBER_SERIES.READ. The optional scope query selects the scoped series; the default is the global (empty scope) series.
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/numberSeriesCode'
+        - $ref: '#/components/parameters/numberSeriesScope'
       responses:
         '200':
           description: Numbering series envelope
@@ -1914,11 +1961,12 @@ paths:
     put:
       tags: [Number series setup]
       summary: Update a numbering series
-      description: Requires SETUP.NUMBER_SERIES.MANAGE. The code is fixed by the route. Counter, template, and reset policy are validated together; lowering the starting number below the last used number is rejected.
+      description: Requires SETUP.NUMBER_SERIES.MANAGE. The code is fixed by the route; the optional scope query selects the scoped series (default global). Counter, template, and reset policy are validated together; lowering the starting number below the last used number is rejected.
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/numberSeriesCode'
+        - $ref: '#/components/parameters/numberSeriesScope'
       requestBody:
         required: true
         content:
@@ -1944,6 +1992,7 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/numberSeriesCode'
+        - $ref: '#/components/parameters/numberSeriesScope'
       responses:
         '200':
           description: Numbering series activated envelope
@@ -1962,6 +2011,7 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/numberSeriesCode'
+        - $ref: '#/components/parameters/numberSeriesScope'
       responses:
         '200':
           description: Numbering series deactivated envelope
@@ -1977,6 +2027,180 @@ paths:
       security: []
       responses:
         '200': { description: Webhook accepted }
+  /admin/employees:
+    get:
+      tags: [Employees]
+      summary: List employees and pending invitations
+      description: Requires EMPLOYEES.READ. Returns every employee with role, branch, active status and current invitation state. Role code and branch are authoritative server values set at invitation time.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Employee list envelope
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EmployeeResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Employees]
+      summary: Create an employee and optionally issue a secure invitation
+      description: Requires EMPLOYEES.MANAGE. Assigning the SYSTEM_ADMIN role additionally requires IDENTITY.ADMINISTRATORS.MANAGE (Owner-only) and is enforced server-side. The OWNER role can never be assigned. When sendInvitation is true a single-use SHA-256-hashed token is returned exactly once in the response.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEmployeeRequest' }
+      responses:
+        '200':
+          description: Created employee envelope with optional raw invitation token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreateEmployeeResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /admin/employees/branches:
+    get:
+      tags: [Employees]
+      summary: Branch options for the Create Employee screen
+      description: Requires EMPLOYEES.READ. Unlike the catalogue endpoint this exposes the internal numeric branch id required by CreateEmployeeRequest.branchId.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Branch options envelope
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/EmployeeBranchOption' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/employees/{employeeId}:
+    get:
+      tags: [Employees]
+      summary: Get a single employee
+      description: Requires EMPLOYEES.READ.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/employeeId'
+      responses:
+        '200':
+          description: Employee envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Employees]
+      summary: Update permitted employee attributes
+      description: Requires EMPLOYEES.MANAGE. Role and branch changes are audited with the real authenticated actor. The OWNER role can never be assigned; assigning SYSTEM_ADMIN requires IDENTITY.ADMINISTRATORS.MANAGE.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/employeeId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateEmployeeRequest' }
+      responses:
+        '200':
+          description: Updated employee envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /admin/employees/{employeeId}/invitations/{invitationId}/resend:
+    post:
+      tags: [Employees]
+      summary: Resend an employee invitation
+      description: Requires EMPLOYEES.MANAGE. The prior invitation is invalidated and a fresh single-use token is issued, so a previously delivered link can no longer be used. The new raw token is returned exactly once.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/employeeId'
+        - $ref: '#/components/parameters/invitationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResendEmployeeInvitationRequest' }
+      responses:
+        '200':
+          description: Fresh invitation token envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeInvitationResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /admin/employees/{employeeId}/invitations/{invitationId}/cancel:
+    post:
+      tags: [Employees]
+      summary: Cancel a pending employee invitation
+      description: Requires EMPLOYEES.MANAGE. The invitation is marked cancelled and can no longer be used for onboarding.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/employeeId'
+        - $ref: '#/components/parameters/invitationId'
+      responses:
+        '200': { description: Invitation cancelled envelope }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /employee-invitations/{token}/verify:
+    get:
+      tags: [Employee invitations]
+      summary: Verify an invitation token before completing registration
+      description: Anonymous by design - the invitation token itself is the bearer credential. Returns the fixed name, mobile, role and branch assigned by the administrator; the invitee can never change them from the client.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/invitationToken'
+      responses:
+        '200':
+          description: Invitation verification envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeeInvitationVerificationResult' }
+  /employee-invitations/complete:
+    post:
+      tags: [Employee invitations]
+      summary: Complete employee registration with mobile OTP
+      description: Anonymous by design - the invitation token is the bearer credential. Verifies the mobile OTP (OtpPurpose 3 - employee invitation), then creates and activates the account with exactly the role and branch carried by the invitation. The role and branch can never be altered by the client. Returns a full session so the employee lands directly in their role-routed workspace.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteEmployeeRegistrationRequest' }
+      responses:
+        '200':
+          description: Registered employee session envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompleteEmployeeRegistrationResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
 components:
   securitySchemes:
     bearerAuth:
@@ -1996,6 +2220,11 @@ components:
       schema: { type: string, format: uuid }
     categoryId:
       name: categoryId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    branchId:
+      name: branchId
       in: path
       required: true
       schema: { type: string, format: uuid }
@@ -2078,6 +2307,12 @@ components:
       required: true
       description: Stable numbering-series code, for example CUSTOMER.
       schema: { type: string, minLength: 1, maxLength: 40 }
+    numberSeriesScope:
+      name: scope
+      in: query
+      required: false
+      description: Optional scope key selecting a scoped series (for example a branch code). When omitted the global (empty scope) series is used. A series is uniquely identified by the pair (code, scopeKey).
+      schema: { type: string, maxLength: 40 }
     deliveryBranchId:
       name: branchId
       in: path
@@ -2218,6 +2453,24 @@ components:
       in: query
       required: false
       schema: { $ref: '#/components/schemas/ReportSortDirection' }
+    employeeId:
+      name: employeeId
+      in: path
+      required: true
+      description: Internal numeric employee identifier.
+      schema: { type: integer, format: int64, minimum: 1 }
+    invitationId:
+      name: invitationId
+      in: path
+      required: true
+      description: Internal numeric invitation identifier.
+      schema: { type: integer, format: int64, minimum: 1 }
+    invitationToken:
+      name: token
+      in: path
+      required: true
+      description: Raw single-use invitation token; only its SHA-256 hash is stored server-side.
+      schema: { type: string, minLength: 32, maxLength: 128 }
   requestBodies:
     ReportExportRequest:
       description: Report filters and requested server-generated file format.
@@ -2271,6 +2524,121 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorResponse' }
   schemas:
+    EmployeeInvitationStatus:
+      type: string
+      enum: [Invited, Registered, Cancelled, Expired]
+      description: Lifecycle state of an employee invitation. Registered is terminal; Cancelled and Expired are terminal and can no longer be used.
+    EmployeeResult:
+      type: object
+      required: [id, publicId, displayName, roleCode, isActive]
+      properties:
+        id: { type: integer, format: int64, description: Internal numeric employee (user) identifier. }
+        publicId: { type: string, format: uuid }
+        invitationId: { type: integer, format: int64, nullable: true, description: Current invitation identifier, when one exists. }
+        displayName: { type: string }
+        mobile: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        roleCode: { type: string, description: Authoritative role assigned by the administrator. One of DELIVERY_STAFF, DELIVERY_MANAGER, ACCOUNTANT, DAIRY_MANAGER, SYSTEM_ADMIN. Never OWNER. }
+        roleName: { type: string, nullable: true }
+        branchId: { type: integer, format: int64, nullable: true }
+        branchName: { type: string, nullable: true }
+        isActive: { type: boolean }
+        invitationStatus: { $ref: '#/components/schemas/EmployeeInvitationStatus', nullable: true }
+        invitationExpiresAt: { type: string, format: date-time, nullable: true }
+        registeredAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time, nullable: true }
+    EmployeeBranchOption:
+      type: object
+      required: [id, publicId, code, name, city, state, isActive]
+      properties:
+        id: { type: integer, format: int64, description: Internal numeric branch identifier required by CreateEmployeeRequest.branchId. }
+        publicId: { type: string, format: uuid }
+        code: { type: string }
+        name: { type: string }
+        city: { type: string }
+        state: { type: string }
+        isActive: { type: boolean }
+    CreateEmployeeRequest:
+      type: object
+      required: [displayName, mobile, roleCode]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        mobile: { type: string, minLength: 10, maxLength: 15, description: Normalized to a 10-digit India mobile number. }
+        email: { type: string, nullable: true, format: email }
+        roleCode: { type: string, enum: [DELIVERY_STAFF, DELIVERY_MANAGER, ACCOUNTANT, DAIRY_MANAGER, SYSTEM_ADMIN], description: SYSTEM_ADMIN additionally requires IDENTITY.ADMINISTRATORS.MANAGE (Owner-only). OWNER can never be assigned. }
+        branchId: { type: integer, format: int64, nullable: true }
+        sendInvitation: { type: boolean, default: true }
+        invitationExpiresAt: { type: string, format: date-time, nullable: true, description: Defaults to 7 days from creation. }
+    UpdateEmployeeRequest:
+      type: object
+      required: [displayName, isActive]
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        email: { type: string, nullable: true, format: email }
+        roleCode: { type: string, nullable: true, enum: [DELIVERY_STAFF, DELIVERY_MANAGER, ACCOUNTANT, DAIRY_MANAGER, SYSTEM_ADMIN], description: Same assignment rules as CreateEmployeeRequest. }
+        branchId: { type: integer, format: int64, nullable: true }
+        isActive: { type: boolean }
+    ResendEmployeeInvitationRequest:
+      type: object
+      required: [employeeId, invitationId]
+      properties:
+        employeeId: { type: integer, format: int64 }
+        invitationId: { type: integer, format: int64 }
+        invitationExpiresAt: { type: string, format: date-time, nullable: true, description: Defaults to 7 days from resend. }
+    EmployeeInvitationResult:
+      type: object
+      required: [invitationId, invitationPublicId, employeeId, token, expiresAt]
+      properties:
+        invitationId: { type: integer, format: int64 }
+        invitationPublicId: { type: string, format: uuid }
+        employeeId: { type: integer, format: int64 }
+        token: { type: string, description: Raw single-use token returned exactly once; only its SHA-256 hash is stored. }
+        expiresAt: { type: string, format: date-time }
+    CreateEmployeeResult:
+      type: object
+      required: [employee]
+      properties:
+        employee: { $ref: '#/components/schemas/EmployeeResult' }
+        invitation: { $ref: '#/components/schemas/EmployeeInvitationResult', nullable: true, description: Present only when sendInvitation was true. Carries the raw token exactly once. }
+    EmployeeInvitationVerificationResult:
+      type: object
+      required: [isValid, roleCode]
+      properties:
+        isValid: { type: boolean }
+        displayName: { type: string, nullable: true }
+        mobile: { type: string, nullable: true }
+        email: { type: string, nullable: true }
+        roleCode: { type: string, description: Role assigned by the administrator. Read-only for the invitee. }
+        branchId: { type: integer, format: int64, nullable: true, description: Branch assigned by the administrator. Read-only for the invitee. }
+        reason: { type: string, nullable: true, description: Human-readable reason when isValid is false (invalid, expired, cancelled, or already registered). }
+    CompleteEmployeeRegistrationRequest:
+      type: object
+      required: [token, displayName, mobile, password, otpCode, device]
+      properties:
+        token: { type: string, description: Invitation token verified earlier via the employee-invitations verify endpoint. }
+        displayName: { type: string, minLength: 1, maxLength: 120 }
+        email: { type: string, nullable: true, format: email }
+        mobile: { type: string, minLength: 10, maxLength: 15, description: Must match the invited mobile; OTP is delivered to it (OtpPurpose 3 - employee invitation). }
+        password: { type: string, minLength: 8, maxLength: 128, format: password }
+        otpCode: { type: string, minLength: 4, maxLength: 8 }
+        device: { $ref: '#/components/schemas/EmployeeDeviceInfo' }
+    EmployeeDeviceInfo:
+      type: object
+      required: [deviceIdentifier]
+      properties:
+        deviceIdentifier: { type: string, minLength: 1, maxLength: 200 }
+        deviceName: { type: string, nullable: true }
+        platform: { type: string, nullable: true }
+        ipAddress: { type: string, nullable: true }
+        userAgent: { type: string, nullable: true }
+    CompleteEmployeeRegistrationResult:
+      type: object
+      required: [session, invitationStatus]
+      properties:
+        session:
+          type: object
+          description: Full authenticated session (user, roles, permissions, branch ids, token pair) that routes the employee into their role workspace.
+        invitationStatus: { $ref: '#/components/schemas/EmployeeInvitationStatus' }
     ApiError:
       type: object
       required: [code, message]
@@ -3786,6 +4154,7 @@ components:
       required: [code, description, template, startingNumber, lastUsedNumber, incrementBy, resetPolicy, isActive, nextNumber]
       properties:
         code: { type: string, minLength: 1, maxLength: 40, description: Stable lookup key used by business services; immutable after creation. }
+        scopeKey: { type: string, nullable: true, maxLength: 40, description: Optional scope key; empty/null is the global series. A series is uniquely identified by (code, scopeKey). }
         description: { type: string, minLength: 1, maxLength: 200 }
         template:
           type: string
@@ -3793,8 +4162,9 @@ components:
           maxLength: 200
           description: >-
             Literal text with exactly one {NUMBER:...} counter token plus
-            optional {PREFIX}, {FY}, {YEAR}, {YY}, {MONTH}, and {DATE:...}
-            tokens.
+            optional {PREFIX}, {SCOPE}, {FY}, {YEAR}, {YY}, {MONTH}, and
+            {DATE:...} tokens. {SCOPE} renders the scope key and is empty for
+            the global series.
         startingNumber: { type: integer, format: int64, minimum: 1 }
         lastUsedNumber: { type: integer, format: int64, minimum: 0 }
         incrementBy: { type: integer, format: int32, minimum: 1 }
@@ -3809,6 +4179,7 @@ components:
       required: [code, description, template, startingNumber, incrementBy, resetPolicy]
       properties:
         code: { type: string, minLength: 1, maxLength: 40 }
+        scopeKey: { type: string, nullable: true, maxLength: 40, description: Optional scope key; empty/null creates the global series. }
         description: { type: string, minLength: 1, maxLength: 200 }
         template: { type: string, minLength: 1, maxLength: 200 }
         startingNumber: { type: integer, format: int64, minimum: 1 }
@@ -3828,6 +4199,7 @@ components:
       required: [code, template]
       properties:
         code: { type: string, minLength: 1, maxLength: 40 }
+        scope: { type: string, nullable: true, maxLength: 40, description: Optional scope key; when omitted the global series is assumed. }
         template: { type: string, minLength: 1, maxLength: 200 }
         nextNumber: { type: integer, format: int64, nullable: true, minimum: 1, description: Optional override; the live series counter is never advanced. }
     NumberSeriesPreview:
@@ -3835,6 +4207,7 @@ components:
       required: [code, template, nextNumber, formattedNumber]
       properties:
         code: { type: string }
+        scopeKey: { type: string, nullable: true, maxLength: 40, description: Optional scope key; empty/null is the global series. }
         template: { type: string }
         nextNumber: { type: integer, format: int64 }
         formattedNumber: { type: string }

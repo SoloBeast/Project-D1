@@ -134,14 +134,6 @@ public sealed class CatalogueService(DoodhDirectDbContext dbContext) : ICatalogu
         .Select(category => category.ToResult())
         .ToArray();
 
-    public async Task<IReadOnlyList<BranchResult>> GetBranchesForAdministrationAsync(CancellationToken cancellationToken) =>
-        (await dbContext.Branches.AsNoTracking()
-            .Where(branch => branch.IsActive)
-            .OrderBy(branch => branch.Name)
-            .ToListAsync(cancellationToken))
-        .Select(branch => new BranchResult(branch.PublicId, branch.Code, branch.Name, branch.City, branch.State, branch.IsActive))
-        .ToArray();
-
     public async Task<ProductCategoryResult> CreateCategoryAsync(UpsertProductCategoryRequest request, CancellationToken cancellationToken)
     {
         ValidateCategory(request);

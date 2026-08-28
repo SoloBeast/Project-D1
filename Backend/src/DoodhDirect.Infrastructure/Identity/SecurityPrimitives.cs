@@ -41,7 +41,19 @@ public sealed class Pbkdf2PasswordHasher(IOptions<IdentityOptions> identityOptio
 
 public sealed class SecureTokenGenerator
 {
-    public string Create(int byteCount = 32) => Convert.ToBase64String(RandomNumberGenerator.GetBytes(byteCount));
+    /// <summary>
+    /// Generates a cryptographically random token encoded as base64url (RFC 4648 §5) without
+    /// padding. Tokens travel in URL paths (e.g. /api/v1/employee-invitations/{token}/verify),
+    /// so standard base64 (which contains '+', '/', '=') is unsafe: ASP.NET Core routing refuses
+    /// to decode '%2F' inside a path segment, corrupting the bound value. base64url uses only
+    /// unreserved URL characters, so the token round-trips verbatim through a URL path or query.
+    /// The stored value is always the SHA-256 hash of this raw token, never the raw token itself.
+    /// </summary>
+    public string Create(int byteCount = 32) =>
+        Convert.ToBase64String(RandomNumberGenerator.GetBytes(byteCount))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
 
     public string Hash(string value)
     {

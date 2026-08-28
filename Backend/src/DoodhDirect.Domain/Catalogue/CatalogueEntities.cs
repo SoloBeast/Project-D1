@@ -117,8 +117,45 @@ public sealed class Branch : AuditableEntity
         BranchNumber = branchNumber.Trim();
     }
 
+    public void Update(
+        string name,
+        string? addressLine1,
+        string? addressLine2,
+        string? locality,
+        string city,
+        string state,
+        string? pinCode,
+        decimal latitude,
+        decimal longitude,
+        decimal? serviceRadiusKm)
+    {
+        Name = name.Trim();
+        AddressLine1 = Normalize(addressLine1);
+        AddressLine2 = Normalize(addressLine2);
+        Locality = Normalize(locality);
+        City = city.Trim();
+        State = state.Trim();
+        PinCode = Normalize(pinCode);
+        Latitude = latitude;
+        Longitude = longitude;
+        ServiceRadiusKm = serviceRadiusKm;
+    }
+
+    /// <summary>
+    /// Changes the branch code. Only allowed when the branch is not yet referenced
+    /// by orders, product availability, or a scoped ORDER numbering series; the
+    /// service enforces those guards before calling this method.
+    /// </summary>
+    public void ChangeCode(string code)
+    {
+        Code = code.Trim().ToUpperInvariant();
+    }
+
     public void Activate() => IsActive = true;
     public void Deactivate() => IsActive = false;
+
+    private static string? Normalize(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
 
 public sealed class ProductBranch : Entity

@@ -9,7 +9,11 @@ import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_screens.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_screens.dart';
 import 'package:doodh_direct_mobile/features/cameras/camera_screens.dart';
+import 'package:doodh_direct_mobile/features/branches/branch_models.dart';
+import 'package:doodh_direct_mobile/features/branches/branch_screens.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
+import 'package:doodh_direct_mobile/features/employees/employee_models.dart';
+import 'package:doodh_direct_mobile/features/employees/employee_screens.dart';
 import 'package:doodh_direct_mobile/features/home/role_home_screen.dart';
 import 'package:doodh_direct_mobile/features/dairy/dairy_screens.dart';
 import 'package:doodh_direct_mobile/features/milk_testing/milk_test_screens.dart';
@@ -33,7 +37,10 @@ final routerProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final location = state.matchedLocation;
       final isAuthRoute =
-          location == '/login' || location == '/register' || location == '/otp';
+          location == '/login' ||
+          location == '/register' ||
+          location == '/otp' ||
+          location.startsWith('/invite');
 
       if (session.isLoading) return location == '/restore' ? null : '/restore';
       if (!session.isAuthenticated) return isAuthRoute ? null : '/login';
@@ -217,6 +224,61 @@ final routerProvider = Provider<GoRouter>((ref) {
             series: series,
           );
         },
+      ),
+      GoRoute(
+        path: '/admin/employees',
+        builder: (context, state) => const EmployeeListScreen(),
+      ),
+      GoRoute(
+        path: '/admin/employees/new',
+        builder: (context, state) => const CreateEmployeeScreen(),
+      ),
+      GoRoute(
+        path: '/admin/employees/:id',
+        builder: (context, state) {
+          final id = int.tryParse(
+            _requiredPathParameter(state, 'id') ?? '',
+          );
+          final extra = state.extra;
+          final employee = extra is Employee ? extra : null;
+          return id == null
+              ? const _RouteErrorScreen(resource: 'employee')
+              : EmployeeEditScreen(employeeId: id, employee: employee);
+        },
+      ),
+      GoRoute(
+        path: '/admin/branches',
+        builder: (context, state) => const BranchListScreen(),
+      ),
+      GoRoute(
+        path: '/admin/branches/new',
+        builder: (context, state) => const BranchFormScreen(),
+      ),
+      GoRoute(
+        path: '/admin/branches/:branchId',
+        builder: (context, state) {
+          final branchId = _requiredPathParameter(state, 'branchId');
+          return branchId == null
+              ? const _RouteErrorScreen(resource: 'branch')
+              : BranchDetailScreen(branchId: branchId);
+        },
+      ),
+      GoRoute(
+        path: '/admin/branches/:branchId/edit',
+        builder: (context, state) {
+          final branchId = _requiredPathParameter(state, 'branchId');
+          final extra = state.extra;
+          final branch = extra is Branch ? extra : null;
+          return branchId == null
+              ? const _RouteErrorScreen(resource: 'branch')
+              : BranchFormScreen(branch: branch);
+        },
+      ),
+      GoRoute(
+        path: '/invite/:token',
+        builder: (context, state) => EmployeeInvitationScreen(
+          token: state.pathParameters['token'] ?? '',
+        ),
       ),
       GoRoute(
         path: '/deliveries',

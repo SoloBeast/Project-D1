@@ -19,7 +19,15 @@ The `mobile` project is the DoodhDirect client for Android, iOS, and web. It imp
 
 ## Configuration
 
-The centralized Development web API base URL defaults to `http://localhost:5209`. The `DOOHDIRECT_API_URL` Dart define can override it for Production and other deployment-specific endpoints. `DOOHDIRECT_ENABLE_DEV_TOOLS=true` exposes the quick customer login, wallet top-up, and mock payment controls; do not set it for distributable builds.
+The centralized Development web API base URL defaults to `http://localhost:5209`. The `DOOHDIRECT_API_URL` Dart define can override it for Production and other deployment-specific endpoints.
+
+Development-only controls — the quick customer login, wallet top-up, mock/development payment, and the "Development payment" subscription payment method — are gated by a single `devToolsEnabled` flag in [`lib/core/config/app_config.dart`](../mobile/lib/core/config/app_config.dart). It defaults to `true` in debug builds only, so `flutter run` (debug) shows them while `flutter build web --release` compiles them out unless the define below is explicitly set. For a UAT build that targets the Development backend and still needs the mock payment shortcuts, pass:
+
+```powershell
+--dart-define=DOOHDIRECT_ENABLE_DEV_TOOLS=true
+```
+
+Never set this define for a production distributable build.
 
 ### Google Maps — local Development
 
@@ -84,7 +92,7 @@ For an Android emulator connecting to the Development HTTP profile, use an API h
 6. For Wallet, open Wallet and add a Development top-up large enough for the order, then create another order and select Wallet. The backend debits the ledger and confirms the order atomically.
 7. Open Orders and the order detail. Verify the final status is Confirmed and that Wallet shows the matching debit for wallet-paid orders.
 
-The backend fixture is activated only by the ASP.NET Development environment. The visual shortcuts are compiled out unless `DOOHDIRECT_ENABLE_DEV_TOOLS` is explicitly enabled.
+The backend fixture is activated only by the ASP.NET Development environment. The visual shortcuts are compiled out of release builds unless `DOOHDIRECT_ENABLE_DEV_TOOLS=true` is explicitly passed.
 
 ## Development UAT accounts
 

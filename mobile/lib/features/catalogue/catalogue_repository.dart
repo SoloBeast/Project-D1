@@ -147,6 +147,9 @@ class CatalogueRepository {
     return ProductCategory.fromJson(response['data'] as Map<String, dynamic>);
   }
 
+  /// Branches are served by the shared Branch Management endpoint
+  /// (`GET /api/v1/admin/branches`). The availability picker only offers
+  /// active branches, matching the previous catalogue behaviour.
   Future<List<CatalogueBranch>> getBranches(String accessToken) async {
     final response = await api.get(
       '/api/v1/admin/branches',
@@ -154,6 +157,7 @@ class CatalogueRepository {
     );
     return _list(response)
         .map(CatalogueBranch.fromJson)
+        .where((branch) => branch.isActive)
         .toList(growable: false);
   }
 

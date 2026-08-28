@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/config/app_config.dart';
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
@@ -217,20 +218,21 @@ class _SubscriptionSetupScreenState
         RadioGroup<PaymentMethod>(
           groupValue: _paymentMethod,
           onChanged: (value) => setState(() => _paymentMethod = value!),
-          child: const Column(
+          child: Column(
             children: [
-              RadioListTile(
+              const RadioListTile(
                 value: PaymentMethod.wallet,
                 title: Text('DoodhDirect Wallet'),
               ),
-              RadioListTile(
+              const RadioListTile(
                 value: PaymentMethod.razorpay,
                 title: Text('Razorpay'),
               ),
-              RadioListTile(
-                value: PaymentMethod.development,
-                title: Text('Development payment'),
-              ),
+              if (devToolsEnabled)
+                const RadioListTile(
+                  value: PaymentMethod.development,
+                  title: Text('Development payment'),
+                ),
             ],
           ),
         ),
@@ -614,20 +616,21 @@ class _SubscriptionDetailScreenState
                 setState(() => _retryPaymentMethod = value);
               }
             },
-            child: const Column(
+            child: Column(
               children: [
-                RadioListTile(
+                const RadioListTile(
                   value: PaymentMethod.wallet,
                   title: Text('DoodhDirect Wallet'),
                 ),
-                RadioListTile(
+                const RadioListTile(
                   value: PaymentMethod.razorpay,
                   title: Text('Razorpay'),
                 ),
-                RadioListTile(
-                  value: PaymentMethod.development,
-                  title: Text('Development payment'),
-                ),
+                if (devToolsEnabled)
+                  const RadioListTile(
+                    value: PaymentMethod.development,
+                    title: Text('Development payment'),
+                  ),
               ],
             ),
           ),

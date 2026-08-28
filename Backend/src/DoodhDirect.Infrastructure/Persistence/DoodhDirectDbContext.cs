@@ -72,6 +72,7 @@ public sealed class DoodhDirectDbContext(
     public DbSet<DeliveryOtp> DeliveryOtps => Set<DeliveryOtp>();
     public DbSet<DeliveryLocation> DeliveryLocations => Set<DeliveryLocation>();
     public DbSet<NumberSeries> NumberSeries => Set<NumberSeries>();
+    public DbSet<EmployeeInvitation> EmployeeInvitations => Set<EmployeeInvitation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -123,6 +124,7 @@ public sealed class DoodhDirectDbContext(
         ConfigureDeliveryOtp(modelBuilder);
         ConfigureDeliveryLocation(modelBuilder, usesSqlite);
         ConfigureNumberSeries(modelBuilder, usesSqlite);
+        ConfigureEmployeeInvitation(modelBuilder);
     }
 
     public void AddAuditLog(AuditLog audit)
@@ -1233,6 +1235,30 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.AttemptedAt).HasColumnName("AttemptedAtUtc").IsRequired();
         entity.HasIndex(x => new { x.NotificationDeliveryId, x.AttemptNumber }).IsUnique();
         entity.HasOne(x => x.Delivery).WithMany(x => x.Attempts).HasForeignKey(x => x.NotificationDeliveryId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureEmployeeInvitation(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<EmployeeInvitation>();
+        entity.ToTable("EmployeeInvitation");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.InviteeName).HasMaxLength(160).IsRequired();
+        entity.Property(x => x.InviteeMobile).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.InviteeEmail).HasMaxLength(320);
+        entity.Property(x => x.RoleCode).HasMaxLength(80).IsRequired();
+        entity.Property(x => x.TokenHash).HasMaxLength(128).IsRequired();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.CreatedAt).HasColumnName("CreatedAtUtc");
+        entity.Property(x => x.ExpiresAt).HasColumnName("ExpiresAtUtc");
+        entity.Property(x => x.RegisteredAt).HasColumnName("RegisteredAtUtc");
+        entity.Property(x => x.CancelledAt).HasColumnName("CancelledAtUtc");
+        entity.Property(x => x.LastResentAt).HasColumnName("LastResentAtUtc");
+        entity.HasIndex(x => x.TokenHash).IsUnique();
+        entity.HasIndex(x => new { x.Status, x.ExpiresAt });
+        entity.HasIndex(x => new { x.BranchId, x.Status }).HasFilter("[BranchId] IS NOT NULL");
+        entity.HasIndex(x => new { x.CreatedByUserId, x.CreatedAt });
     }
 
     private static void ConfigureNumberSeries(ModelBuilder modelBuilder, bool usesSqlite)

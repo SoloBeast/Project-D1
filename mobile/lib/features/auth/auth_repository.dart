@@ -252,6 +252,11 @@ class AuthRepository {
 
   Future<void> clear() => _storage.delete(key: _sessionKey);
 
+  /// Persists a session produced outside the standard login/register flows — e.g. the session
+  /// returned by the employee invitation completion endpoint. Used so an invited employee lands
+  /// authenticated in their assigned role workspace.
+  Future<void> saveSession(AuthSession session) => _save(session);
+
   Future<AuthSession> _authenticate(
     String path,
     Map<String, dynamic> body,

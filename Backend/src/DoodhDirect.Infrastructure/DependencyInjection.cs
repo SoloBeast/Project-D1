@@ -1,4 +1,5 @@
 using DoodhDirect.Application.Abstractions;
+using DoodhDirect.Application.Branches;
 using DoodhDirect.Application.Cameras;
 using DoodhDirect.Application.Catalogue;
 using DoodhDirect.Application.Customer;
@@ -13,6 +14,7 @@ using DoodhDirect.Application.Reports;
 using DoodhDirect.Application.Setup;
 using DoodhDirect.Application.Subscriptions;
 using DoodhDirect.Application.Wallets;
+using DoodhDirect.Infrastructure.Branches;
 using DoodhDirect.Infrastructure.Cameras;
 using DoodhDirect.Infrastructure.Catalogue;
 using DoodhDirect.Infrastructure.Customer;
@@ -33,6 +35,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace DoodhDirect.Infrastructure;
@@ -156,6 +159,8 @@ public static class DependencyInjection
         services.AddScoped<IWalletService, WalletService>();
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<INumberSeriesService, NumberSeriesService>();
+        services.AddScoped<IEmployeeService, EmployeeService>();
+        services.AddScoped<IBranchService, BranchService>();
         services.AddSingleton<IDeliveryRealtimePublisher, NullDeliveryRealtimePublisher>();
         services.AddSingleton<IMilkTestImageValidator, MilkTestImageValidator>();
         services.AddSingleton<IMediaStorage, LocalMediaStorage>();
@@ -186,7 +191,10 @@ public static class DependencyInjection
         {
             services.AddScoped<IDevelopmentNotificationService, DevelopmentNotificationService>();
         }
-        services.AddSingleton<IOtpDeliveryService, UnconfiguredOtpDeliveryService>();
+        services.AddSingleton<IOtpDeliveryService>(provider =>
+            environment.IsDevelopment()
+                ? ActivatorUtilities.CreateInstance<DevelopmentOtpDeliveryService>(provider)
+                : new UnconfiguredOtpDeliveryService(provider.GetRequiredService<ILogger<UnconfiguredOtpDeliveryService>>()));
         services.AddSingleton<ICameraStreamGateway>(provider =>
         {
             var options = provider.GetRequiredService<IOptions<CameraStreamOptions>>().Value;

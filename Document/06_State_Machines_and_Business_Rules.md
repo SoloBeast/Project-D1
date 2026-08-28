@@ -51,7 +51,70 @@ Skipped, failed and customer-rejected deliveries do not consume entitlement unle
 
 ---
 
-## 3. Complaint State Machine
+## 3. Employee Lifecycle State Machine
+
+```text
+                +-----------------+
+                |   NO EMPLOYEE   |  (user does not exist yet)
+                +--------+--------+
+                         |
+                         |  create employee + send invitation (EMPLOYEE.MANAGE)
+                         v
+                  +-------------+
+                  |  INVITED    |<---------------------------+
+                  +------+------+                            |
+                         |  employee opens link +            |
+                         |  verifies mobile via OTP         | resend invitation
+                         |  (purpose: EmployeeInvitation)   | (invalidates prior link)
+                         v                                  |
+                  +-------------+                           |
+                  |  REGISTERED |---------------------------+
+                  +------+------+   (before completion the
+                         |          account is not yet active)
+                         |  backend activates account
+                         v
+                  +-------------+
+                  |   ACTIVE    |----------------+
+                  +------+------+                |
+                         |  deactivate           |  reactivate
+                         v                       |
+                  +-------------+                |
+                  | SUSPENDED / |----------------+
+                  | DEACTIVATED |
+                  +-------------+
+
+Cancelled / expired: INVITED -> CANCELLED | EXPIRED (terminal, requires a new invitation)
+```
+
+### Invitation rules
+- The invitation token is cryptographically random (`SecureTokenGenerator`); only its SHA-256 hash is stored and the raw token is returned to the caller exactly once.
+- Single-use: verification, resend, and completion all invalidate or replace the token. A completed invitation can never verify again.
+- Expiry: the invitation expires after its configured lifetime (default 7 days from creation; `invitationExpiresAt` may shorten it).
+- Bound to the invited employee: the token carries the invited employee's mobile/email and only that employee can complete registration.
+- No role escalation: Role and Branch always come from the backend invitation. The client cannot alter them. `OWNER` is not assignable; `SYSTEM_ADMIN` requires the actor to hold `IDENTITY.ADMINISTRATORS.MANAGE` (Owner-only).
+- Resend: generates a fresh token and invalidates the previous link.
+- Cancel: a usable invitation may be cancelled, after which the employee cannot complete onboarding.
+- Registration OTP uses `OtpPurpose.EmployeeInvitation` (`3`); it is not the same OTP purpose as customer login/registration.
+
+### Audit
+Every transition is audited with the real authenticated actor (`user_id`), never a generic system actor:
+
+| Event | Trigger |
+|---|---|
+| `EMPLOYEE.CREATED` | Employee record created |
+| `EMPLOYEE.INVITED` | Invitation generated |
+| `EMPLOYEE.REGISTERED` | Invited employee completes OTP + registration |
+| `EMPLOYEE.ACTIVATED` | Account activated after successful registration |
+| `EMPLOYEE.ROLE_CHANGED` | Authorized admin changes role |
+| `EMPLOYEE.BRANCH_CHANGED` | Authorized admin changes branch |
+| `EMPLOYEE.DEACTIVATED` | Authorized admin suspends |
+| `EMPLOYEE.REACTIVATED` | Authorized admin reactivates |
+| `EMPLOYEE.INVITATION_RESENT` | Authorized admin resends invitation |
+| `EMPLOYEE.INVITATION_CANCELLED` | Authorized admin cancels invitation |
+
+---
+
+## 4. Complaint State Machine
 
 ```text
 DRAFT -> SUBMITTED -> UNDER_REVIEW -> APPROVED_REPLACEMENT -> RESOLVED
@@ -71,7 +134,7 @@ Backend must calculate eligibility. Client calculations are informational only.
 
 ---
 
-## 4. Replacement State Machine
+## 5. Replacement State Machine
 
 ```text
 REQUESTED -> APPROVED -> ASSIGNED -> OUT_FOR_DELIVERY -> COMPLETED
@@ -83,7 +146,7 @@ If the customer is not available during replacement delivery, follow the same fa
 
 ---
 
-## 5. Payment State Machine
+## 6. Payment State Machine
 
 ```text
 INITIATED -> PENDING -> SUCCESS
@@ -120,7 +183,7 @@ A validated capture may recover `Expired -> SUCCESS`, `Order PaymentFailed -> Co
 
 ---
 
-## 6. Wallet Rules
+## 7. Wallet Rules
 
 Every wallet balance change creates a WalletTransaction.
 
@@ -139,7 +202,7 @@ Negative wallet balances should be prohibited unless a future finance policy exp
 
 ---
 
-## 7. Branch Allocation Rules
+## 8. Branch Allocation Rules
 
 1. Customer address must have valid latitude/longitude.
 2. Find active branches.
@@ -154,7 +217,7 @@ Negative wallet balances should be prohibited unless a future finance policy exp
 
 ---
 
-## 8. Address Change Rules
+## 9. Address Change Rules
 
 Customer may maintain multiple addresses.
 
@@ -164,7 +227,7 @@ For an active subscription, address changes should create a new effective addres
 
 ---
 
-## 9. Quantity Rules
+## 10. Quantity Rules
 
 Milk quantity is decimal litres.
 
@@ -181,7 +244,7 @@ Admin may configure minimum order quantity and increment later.
 
 ---
 
-## 10. Production Capacity Rule
+## 11. Production Capacity Rule
 
 A future order-capacity integration may check available milk capacity for a near-term delivery, but Phase 8 does not implement that reservation or allocation workflow.
 
@@ -195,7 +258,7 @@ The current dairy service rejects usage above a batch's derived available quanti
 
 ---
 
-## 11. Delivery GPS Rules
+## 12. Delivery GPS Rules
 
 - Capture delivery completion coordinates when available.
 - Live employee tracking begins only for active delivery.
@@ -206,7 +269,7 @@ The current dairy service rejects usage above a batch's derived available quanti
 
 ---
 
-## 12. Doorstep Test Rules
+## 13. Doorstep Test Rules
 
 Lifecycle:
 
@@ -243,7 +306,7 @@ Image mutability state machine (enforced by the domain entity, not only the UI):
 
 ---
 
-## 13. Refund Rules
+## 14. Refund Rules
 
 Refund may result from:
 
@@ -262,7 +325,7 @@ Every refund needs:
 
 ---
 
-## 14. Complaint Escalation
+## 15. Complaint Escalation
 
 Admin-configurable parameters:
 
@@ -277,7 +340,7 @@ Do not automatically block the customer.
 
 ---
 
-## 15. Coupon Rules
+## 16. Coupon Rules
 
 Backend validates:
 - Coupon active
@@ -291,7 +354,7 @@ Never trust discount value supplied by the client.
 
 ---
 
-## 16. Referral Rules
+## 17. Referral Rules
 
 Reward only after the referred customer completes the qualifying action defined by configuration.
 
@@ -299,7 +362,7 @@ Referral reward must be recorded as a wallet transaction.
 
 ---
 
-## 17. Admin Override Rule
+## 18. Admin Override Rule
 
 Owner/admin may override most operational rules, but the following should remain auditable:
 
@@ -316,7 +379,7 @@ Every override requires a reason.
 
 ---
 
-## 18. Idempotency Rules
+## 19. Idempotency Rules
 
 The following operations must be idempotent:
 
@@ -332,7 +395,7 @@ Use an idempotency key/reference unique within the operation scope.
 
 ---
 
-## 19. Live Dairy Camera Rules
+## 20. Live Dairy Camera Rules
 
 - Public discovery and playback require authentication and `CAMERAS.VIEW_PUBLIC`.
 - Public discovery includes only active cameras explicitly marked public.
@@ -351,11 +414,11 @@ Use an idempotency key/reference unique within the operation scope.
 
 ---
 
-## 20. Number Series Rules
+## 21. Number Series Rules
 
 ### Template engine
 
-- A template is literal text containing `{TOKEN}` placeholders: `{NUMBER:0000}` (zero-padded counter to the given width), `{PREFIX}` (code-derived uppercase prefix), `{FY}` (India financial year `YYYY-YY`), `{YEAR}`, `{YY}`, `{MONTH}`, and `{DATE:yyyyMMdd}`.
+- A template is literal text containing `{TOKEN}` placeholders: `{NUMBER:0000}` (zero-padded counter to the given width), `{PREFIX}` (code-derived uppercase prefix), `{SCOPE}` (the scope key, for example the branch code; renders empty for the global scope), `{FY}` (India financial year `YYYY-YY`), `{YEAR}`, `{YY}`, `{MONTH}`, and `{DATE:yyyyMMdd}`.
 - A template must be non-empty, contain exactly one `{NUMBER:...}` counter token, and contain no unsupported tokens. Malformed templates are rejected at create, update, and preview time.
 
 ### Reset policy
@@ -375,14 +438,16 @@ Use an idempotency key/reference unique within the operation scope.
 
 ### Editing safety
 
-- Code is immutable after creation and unique across all series; only `Description`, `Template`, `StartingNumber`, `IncrementBy`, and `ResetPolicy` are editable.
+- `Code` and `ScopeKey` are immutable after creation; only `Description`, `Template`, `StartingNumber`, `IncrementBy`, and `ResetPolicy` are editable.
 - The counter, template, and reset policy are validated together on update, and lowering `StartingNumber` below the already-issued `LastUsedNumber` is rejected.
 - Activating and deactivating change only the active flag; a deactivation does not reset the counter.
+- A branch whose `code` is changed is rejected with `409 Conflict` once a scoped `ORDER` number series exists for the old code, because the series is keyed by the old code.
 
 ### Unique numbering guarantee
 
-- Each `NumberSeries` row has a database-level unique index on `Code`.
-- Generated numbers are unique in practice because allocation is transactional and concurrency-safe; no generated number is ever reused after issuance.
+- Each `NumberSeries` row has a database-level unique index over `(Code, ScopeKey)` and over its reset scope.
+- The same `Code` can exist once per scope with an independent counter; an empty `ScopeKey` is the legacy global series.
+- Generated numbers are unique in practice because allocation is transactional and concurrency-safe; no generated number is ever reused after issuance. Scoped templates include `{SCOPE}` so numbers remain unique across scopes.
 
 ### Audit and permissions
 

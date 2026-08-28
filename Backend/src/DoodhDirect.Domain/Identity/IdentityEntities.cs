@@ -158,7 +158,8 @@ public enum OtpPurpose
 {
     Login,
     Registration,
-    PasswordReset
+    PasswordReset,
+    EmployeeInvitation
 }
 
 public sealed class OtpChallenge : PublicEntity
@@ -328,6 +329,126 @@ public sealed class RefreshToken : Entity
         if (RevokedAt is not null) return;
         RevokedAt = indiaLocalNow;
         ReplacedByTokenHash = replacedByTokenHash;
+    }
+
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
+    {
+        if (value.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "Identity timestamps must be India-local DateTime values with an unspecified kind.",
+                parameterName);
+        }
+    }
+}
+
+public enum EmployeeInvitationStatus
+{
+    Invited,
+    Registered,
+    Cancelled,
+    Expired
+}
+
+public sealed class EmployeeInvitation : AuditableEntity
+{
+    private EmployeeInvitation() { }
+
+    public EmployeeInvitation(
+        string inviteeName,
+        string inviteeMobile,
+        string? inviteeEmail,
+        string roleCode,
+        long? branchId,
+        string tokenHash,
+        DateTime createdAt,
+        DateTime expiresAt,
+        long createdByUserId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(inviteeName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(inviteeMobile);
+        ArgumentException.ThrowIfNullOrWhiteSpace(roleCode);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tokenHash);
+        EnsureIndiaLocal(createdAt, nameof(createdAt));
+        EnsureIndiaLocal(expiresAt, nameof(expiresAt));
+        if (expiresAt <= createdAt) throw new ArgumentOutOfRangeException(nameof(expiresAt));
+
+        InviteeName = inviteeName.Trim();
+        InviteeMobile = inviteeMobile.Trim();
+        InviteeEmail = string.IsNullOrWhiteSpace(inviteeEmail) ? null : inviteeEmail.Trim().ToLowerInvariant();
+        RoleCode = roleCode;
+        BranchId = branchId;
+        TokenHash = tokenHash;
+        CreatedAt = createdAt;
+        ExpiresAt = expiresAt;
+        Status = EmployeeInvitationStatus.Invited;
+        CreatedByUserId = createdByUserId;
+    }
+
+    public string InviteeName { get; private set; } = string.Empty;
+    public string InviteeMobile { get; private set; } = string.Empty;
+    public string? InviteeEmail { get; private set; }
+    public string RoleCode { get; private set; } = string.Empty;
+    public long? BranchId { get; private set; }
+    public string TokenHash { get; private set; } = string.Empty;
+    public EmployeeInvitationStatus Status { get; private set; }
+    public new DateTime CreatedAt { get; private set; }
+    public DateTime ExpiresAt { get; private set; }
+    public DateTime? RegisteredAt { get; private set; }
+    public long? RegisteredByUserId { get; private set; }
+    public DateTime? CancelledAt { get; private set; }
+    public long? CancelledByUserId { get; private set; }
+    public DateTime? LastResentAt { get; private set; }
+    public long? LastResentByUserId { get; private set; }
+    public long CreatedByUserId { get; private set; }
+
+    public bool IsUsable(DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        return Status == EmployeeInvitationStatus.Invited && ExpiresAt > indiaLocalNow;
+    }
+
+    public void MarkRegistered(long registeredByUserId, DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        if (Status != EmployeeInvitationStatus.Invited)
+            throw new InvalidOperationException("Only an invited employee invitation can be registered.");
+        RegisteredByUserId = registeredByUserId;
+        RegisteredAt = indiaLocalNow;
+        Status = EmployeeInvitationStatus.Registered;
+    }
+
+    public void Cancel(long cancelledByUserId, DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        if (Status != EmployeeInvitationStatus.Invited)
+            throw new InvalidOperationException("Only an invited employee invitation can be cancelled.");
+        CancelledByUserId = cancelledByUserId;
+        CancelledAt = indiaLocalNow;
+        Status = EmployeeInvitationStatus.Cancelled;
+    }
+
+    public void RecordResend(long resentByUserId, DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        if (Status != EmployeeInvitationStatus.Invited)
+            throw new InvalidOperationException("Only an invited employee invitation can be resent.");
+        LastResentByUserId = resentByUserId;
+        LastResentAt = indiaLocalNow;
+    }
+
+    public void ChangeRoleAndBranch(string roleCode, long? branchId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(roleCode);
+        RoleCode = roleCode;
+        BranchId = branchId;
+    }
+
+    public void MarkExpired(DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        if (Status == EmployeeInvitationStatus.Invited && ExpiresAt <= indiaLocalNow)
+            Status = EmployeeInvitationStatus.Expired;
     }
 
     private static void EnsureIndiaLocal(DateTime value, string parameterName)

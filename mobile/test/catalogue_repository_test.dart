@@ -94,6 +94,53 @@ void main() {
     },
   );
 
+  test(
+    'gets active branches from the shared Branch Management endpoint',
+    () async {
+      final client = MockClient((request) async {
+        expect(request.method, 'GET');
+        expect(
+          request.url.toString(),
+          'https://api.example.test/api/v1/admin/branches',
+        );
+        expect(request.headers['Authorization'], 'Bearer admin-token');
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'data': [
+              {
+                'publicId': 'branch-1',
+                'code': 'MAIN',
+                'name': 'Main Branch',
+                'city': 'Pune',
+                'state': 'Maharashtra',
+                'isActive': true,
+              },
+              {
+                'publicId': 'branch-2',
+                'code': 'CLOSED',
+                'name': 'Closed Branch',
+                'city': 'Pune',
+                'state': 'Maharashtra',
+                'isActive': false,
+              },
+            ],
+            'errors': [],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      });
+      final repository = CatalogueRepository(
+        api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
+      );
+
+      final branches = await repository.getBranches('admin-token');
+
+      expect(branches.map((branch) => branch.code), ['MAIN']);
+    },
+  );
+
   test('creates product with normalized draft body', () async {
     final client = MockClient((request) async {
       expect(request.method, 'POST');

@@ -97,7 +97,7 @@ Registration creates a customer identity, assigns the `CUSTOMER` role, creates a
 }
 ```
 
-`purpose` is the `OtpPurpose` enum value: `0` for login and `1` for registration. Requests are limited to 3 per mobile/purpose in 15 minutes by default. The configured default delivery service currently throws because no SMS provider is configured.
+`purpose` is the `OtpPurpose` enum value: `0` for login, `1` for registration, `2` for password reset, and `3` for employee invitation (used only by the invitation onboarding flow, never by public registration). Requests are limited to 3 per mobile/purpose in 15 minutes by default. The configured default delivery service currently throws because no SMS provider is configured.
 
 ### `POST /auth/verify-otp` (anonymous)
 
@@ -250,17 +250,37 @@ The following routes use `CUSTOMERS.PROFILES.READ` for reads and `CUSTOMERS.PROF
 
 `GET /branches/public`
 
-Admin:
+### Branch Management APIs
 
-`GET /admin/branches`
+Root: `GET/POST /api/v1/admin/branches`, `GET/PUT /api/v1/admin/branches/{branchId}`, `POST /api/v1/admin/branches/{branchId}/activate|deactivate`. All routes require JWT authentication.
 
-`POST /admin/branches`
+Permission model:
+- `GET` (list and single) require `BRANCHES.READ`.
+- `POST`, `PUT`, and activate/deactivate require `BRANCHES.MANAGE`.
+- `BRANCHES.READ` and `BRANCHES.MANAGE` are seeded for `OWNER` and `SYSTEM_ADMIN` only. Branch management is a global administration surface; the actor must hold the permission and there is no per-branch claim scoping (unlike branch-scoped operational modules).
 
-`PATCH /admin/branches/{id}`
+List `GET /api/v1/admin/branches`:
+- Returns the branch list ordered by Name then Code. Each row carries `publicId` (GUID), `code`, `name`, address fields, `city`, `state`, `pinCode`, `latitude`, `longitude`, `serviceRadiusKm`, `isActive`, `branchNumber`, `createdAt`, and `updatedAt`.
+- `branchNumber` is allocated server-side from the centralized `BRANCH` numbering series and is always read-only for the client.
 
-`POST /admin/branches/{id}/activate`
+Create `POST /api/v1/admin/branches`:
+- Request body `UpsertBranchRequest`: `code` (required, ≤50, normalized to uppercase and trimmed), `name` (required, ≤200), `addressLine1`/`addressLine2` (≤300), `locality` (≤150), `city` (required, ≤100), `state` (required, ≤100), `pinCode` (≤10), `latitude`/`longitude` (required, validated range), `serviceRadiusKm` (optional).
+- The server allocates the `BRANCH` series number in the same transaction, persists the branch, and ensures a scoped `ORDER` number series exists for the new branch code (so order creation for this branch always has a series to consume).
+- Duplicate `code` (case-insensitive) and out-of-range latitude/longitude are rejected with `422`.
+- Audit event `BRANCH.CREATED` records the real authenticated actor.
 
-`POST /admin/branches/{id}/deactivate`
+Update `PUT /api/v1/admin/branches/{branchId}`:
+- Replaces editable attributes. `branchNumber` is never accepted from the client.
+- Changing `code` is **blocked with `409 Conflict`** when the branch is referenced by any order, any product availability row, or an existing scoped `ORDER` number series (the series is keyed by the old code). Legacy branches without a scoped `ORDER` series may be renamed.
+- Renaming to a code already used by another branch is rejected with `409 Conflict`.
+- Audit event `BRANCH.UPDATED` records a before/after snapshot with the real authenticated actor.
+
+Activate/deactivate `POST /api/v1/admin/branches/{branchId}/activate|deactivate`:
+- Toggle only the active flag; idempotent (activating an active branch or deactivating an inactive branch is a no-op success).
+- Audit events `BRANCH.ACTIVATED` and `BRANCH.DEACTIVATED` record the real authenticated actor.
+
+Concurrency:
+- The `BRANCH` allocation is concurrency-safe (same transaction as the row insert); concurrent creates allocate distinct sequential branch numbers, and concurrent creates with the same code allow exactly one to succeed.
 
 ---
 
@@ -827,7 +847,7 @@ The JSON request body contains a nested `filter` with the report filter fields a
 
 ## 17. Setup Number Series APIs
 
-All setup endpoints are authenticated and rooted at `/admin/setup/number-series`. The class-level read permission `SETUP.NUMBER_SERIES.READ` covers the list, single-get, and preview endpoints; every mutating endpoint additionally requires `SETUP.NUMBER_SERIES.MANAGE`. A series `Code` is the stable lookup key used by business services to allocate numbers; it is immutable after creation and unique across all series.
+All setup endpoints are authenticated and rooted at `/admin/setup/number-series`. The class-level read permission `SETUP.NUMBER_SERIES.READ` covers the list, single-get, and preview endpoints; every mutating endpoint additionally requires `SETUP.NUMBER_SERIES.MANAGE`. A series `Code` is the stable lookup key used by business services to allocate numbers; it is immutable after creation. A series is uniquely identified by the pair `(Code, ScopeKey)`; `ScopeKey` is optional and an empty value is the legacy global series. The same `Code` can exist once per scope with an independent counter.
 
 | Route | Permission |
 |---|---|
@@ -839,9 +859,9 @@ All setup endpoints are authenticated and rooted at `/admin/setup/number-series`
 | `POST /admin/setup/number-series/{code}/activate` | `SETUP.NUMBER_SERIES.MANAGE` |
 | `POST /admin/setup/number-series/{code}/deactivate` | `SETUP.NUMBER_SERIES.MANAGE` |
 
-The list returns `NumberSeriesResult` objects in a stable order. `NumberSeriesResult` carries `code`, `description`, `template`, `startingNumber`, `lastUsedNumber`, `incrementBy`, `resetPolicy`, `isActive`, `nextNumber` (the number that would be allocated next without consuming it), `lastUsedAt`, `createdByUserId`, and `updatedByUserId`. `CreateNumberSeriesRequest` requires `code`, `description`, `template`, `startingNumber`, `incrementBy`, and `resetPolicy`; `UpdateNumberSeriesRequest` carries the same fields except `code`, which is fixed by the route.
+The list returns `NumberSeriesResult` objects in a stable order. `NumberSeriesResult` carries `code`, `description`, `template`, `startingNumber`, `lastUsedNumber`, `incrementBy`, `resetPolicy`, `isActive`, `nextNumber` (the number that would be allocated next without consuming it), `lastUsedAt`, `createdByUserId`, `updatedByUserId`, and optional `scopeKey` (empty = global). `CreateNumberSeriesRequest` requires `code`, `description`, `template`, `startingNumber`, `incrementBy`, and `resetPolicy`, with optional `scopeKey`; `UpdateNumberSeriesRequest` carries the same fields except `code` (fixed by the route) and `scopeKey` (fixed by the query parameter). `GET`, `PUT`, `activate`, and `deactivate` accept an optional `scope` query parameter that selects the scoped series; the default is the global (empty scope) series.
 
-`POST /admin/setup/number-series/preview` renders a candidate `template` for `code` without touching any series row. The optional `nextNumber` overrides the counter value; when omitted the server computes the next number as it would be allocated, again without consuming it. The response is `NumberSeriesPreviewResult` with `code`, `template`, `nextNumber`, and `formattedNumber`.
+`POST /admin/setup/number-series/preview` renders a candidate `template` for `code` without touching any series row. The optional `nextNumber` overrides the counter value and the optional `scope` selects a scoped series; when omitted the server computes the next number as it would be allocated, again without consuming it. The response is `NumberSeriesPreviewResult` with `code`, `template`, `nextNumber`, `formattedNumber`, and optional `scopeKey` (empty = global).
 
 ### Template engine
 
@@ -849,6 +869,7 @@ Templates are literal text with `{TOKEN}` placeholders:
 
 - `{NUMBER:0000}` — the zero-padded counter to the given width (for example, counter `1` renders `0001`).
 - `{PREFIX}` — a short, code-derived uppercase prefix suitable for single-token prefixes.
+- `{SCOPE}` — the scope key (for example the branch code), so scoped numbers stay unique across branches (for example `ORD/DLH-01/{NUMBER:000000}`). For the global (empty) scope the token renders as an empty string.
 - `{FY}` — the India financial year as `YYYY-YY` (for example, `2026-27` for dates from 1 April 2026 through 31 March 2027).
 - `{YEAR}` — the four-digit calendar year.
 - `{YY}` — the two-digit calendar year.
@@ -876,13 +897,109 @@ The following series are seeded at startup when no `NumberSeries` rows exist:
 | Code | Template | Start | Increment |
 |---|---|---|---|
 | `CUSTOMER` | `CUST/{NUMBER:0000}` | 1 | 1 |
-| `ORDER` | `ORD/{NUMBER:000000}` | 1 | 1 |
+| `ORDER` (scoped per branch) | `ORD/{SCOPE}/{FY}/{NUMBER:000000}` | 1 | 1 |
 | `BRANCH` | `BR/{NUMBER:000}` | 1 | 1 |
 | `DELIVERY` | `DEL/{NUMBER:000000}` | 1 | 1 |
 
-All seeded series use `ResetPolicy.Never`. All create, update, activate, and deactivate operations are audited as `NUMBER_SERIES.CREATED`, `NUMBER_SERIES.UPDATED`, `NUMBER_SERIES.ACTIVATED`, and `NUMBER_SERIES.DEACTIVATED` with the acting user recorded.
+The `CUSTOMER`, `BRANCH`, and `DELIVERY` series use `ResetPolicy.Never`. The `ORDER` series is scoped per branch with `ResetPolicy.FinancialYear` and restarts its counter each Indian financial year (1 April). Creating a branch atomically allocates its `BRANCH` number and creates the branch-scoped `ORDER` series (`scopeKey` = branch code) inside the same serializable transaction, so order creation for the new branch always has a series to consume; the seed service also back-fills a scoped `ORDER` series for every existing active branch, deactivates the legacy global `ORDER` series, and upgrades legacy scoped `ORDER` templates that never issued a number to `ORD/{SCOPE}/{FY}/{NUMBER:000000}`. A branch whose `code` is changed is rejected with `409 Conflict` once a scoped `ORDER` series exists for the old code, because the series is keyed by the old code. All create, update, activate, and deactivate operations are audited as `NUMBER_SERIES.CREATED`, `NUMBER_SERIES.UPDATED`, `NUMBER_SERIES.ACTIVATED`, and `NUMBER_SERIES.DEACTIVATED` with the acting user recorded.
 
-## 18. Common HTTP Status Codes
+## 18. Employee Management APIs
+
+Employee management is a permission-protected administration surface. Reads require `EMPLOYEES.READ`; all mutations require `EMPLOYEES.MANAGE`. Assigning the `SYSTEM_ADMIN` role to an employee additionally requires `IDENTITY.ADMINISTRATORS.MANAGE`, which only the Owner holds. The `OWNER` role itself is never assignable to an employee through this surface.
+
+### `GET /api/v1/admin/employees` (`EMPLOYEES.READ`)
+
+Lists all employees with Name, Mobile, Email, Role, Branch, Status, and invitation state (`InvitationId`, `InvitationStatus`, `InvitationExpiresAt`, `RegisteredAt`).
+
+### `GET /api/v1/admin/employees/branches` (`EMPLOYEES.READ`)
+
+Returns the assignable branch options (`EmployeeBranchOption`) for the Create/Edit Employee forms.
+
+### `GET /api/v1/admin/employees/{employeeId}` (`EMPLOYEES.READ`)
+
+Returns one employee (`EmployeeResult`).
+
+### `POST /api/v1/admin/employees` (`EMPLOYEES.MANAGE`)
+
+Creates an employee record and, when `SendInvitation` is true, generates a secure invitation:
+
+```json
+{
+  "name": "Ramesh Kumar",
+  "mobile": "919876543211",
+  "email": "ramesh@doodhdirect.in",
+  "roleCode": "DELIVERY_STAFF",
+  "branchId": 3,
+  "sendInvitation": true,
+  "invitationExpiresAt": null
+}
+```
+
+- Role codes: `DELIVERY_STAFF`, `DELIVERY_MANAGER`, `ACCOUNTANT`, `DAIRY_MANAGER`, `SYSTEM_ADMIN`. `OWNER` is rejected. `SYSTEM_ADMIN` additionally requires the actor to hold `IDENTITY.ADMINISTRATORS.MANAGE` (Owner-only).
+- `branchId` is required for all assignable roles; the branch must exist.
+- Mobile must be unique among users; the invitation is bound to the invited employee.
+- The response is `CreateEmployeeResult` = `{ employee, invitation? }`. When an invitation is created the raw token is returned **exactly once** inside `invitation.token`; it is never retrievable again.
+- Default invitation lifetime is 7 days unless `invitationExpiresAt` (a future India-local timestamp) is supplied.
+- Audited as `EMPLOYEE.CREATED` and `EMPLOYEE.INVITED` with the real actor's user id.
+
+### `PUT /api/v1/admin/employees/{employeeId}` (`EMPLOYEES.MANAGE`)
+
+Updates permitted attributes and, when `roleCode`/`branchId` change, moves the pending invitation (if any) to the new role/branch. Role/branch changes are audited as `EMPLOYEE.ROLE_CHANGED` and `EMPLOYEE.BRANCH_CHANGED`. The same role-assignability rules as create apply.
+
+### `POST /api/v1/admin/employees/{employeeId}/invitations/{invitationId}/resend` (`EMPLOYEES.MANAGE`)
+
+Creates a fresh single-use token, invalidates the previous link, extends the expiry, and returns the new raw token exactly once. Audited as `EMPLOYEE.INVITATION_RESENT`. The previous invitation is replaced; the old link no longer verifies.
+
+### `POST /api/v1/admin/employees/{employeeId}/invitations/{invitationId}/cancel` (`EMPLOYEES.MANAGE`)
+
+Cancels a usable invitation, invalidating its token. Audited as `EMPLOYEE.INVITATION_CANCELLED`.
+
+### `GET /api/v1/employee-invitations/{token}/verify` (anonymous)
+
+Public verification used by the invitation link. The token is the bearer credential. Returns `EmployeeInvitationVerificationResult`:
+
+```json
+{
+  "isValid": true,
+  "displayName": "Ramesh Kumar",
+  "mobile": "919876543211",
+  "email": "ramesh@doodhdirect.in",
+  "roleCode": "DELIVERY_STAFF",
+  "branchId": 3,
+  "reason": null
+}
+```
+
+- `isValid: false` (with a `reason`) is returned for unknown, expired, cancelled, or already-registered tokens; the API still returns HTTP 200 so the client can render a friendly state.
+- The invited employee's role and branch come from the invitation and cannot be altered by the client.
+
+### `POST /api/v1/employee-invitations/complete` (anonymous)
+
+```json
+{
+  "token": "the-one-time-token",
+  "mobile": "919876543211",
+  "otpCode": "123456",
+  "name": "Ramesh Kumar",
+  "password": "Secret123!",
+  "device": {
+    "deviceIdentifier": "device-1",
+    "deviceName": "DoodhDirect Flutter",
+    "platform": "android"
+  }
+}
+```
+
+Completes onboarding: the mobile is verified with an OTP sent for `OtpPurpose.EmployeeInvitation` (`purpose: 3`), then the employee account is registered, the role and branch from the invitation are assigned, the account is activated, and the invitation is marked registered. Audited as `EMPLOYEE.REGISTERED` and `EMPLOYEE.ACTIVATED` with the newly registered employee as the actor. The token is single-use and invalidated by successful completion. After completion the employee signs in normally and lands in their role workspace.
+
+Invitation security summary:
+
+- Tokens are generated by `SecureTokenGenerator` (cryptographically random); only the SHA-256 hash is stored, and the raw token is returned to the caller exactly once.
+- Tokens are single-use, expire (default 7 days), and are bound to the invited employee's mobile/email.
+- Role and branch always come from the backend invitation; the client cannot escalate or change them.
+- Every lifecycle transition is audited with the real authenticated actor (`user_id`), never a generic system actor.
+
+## 19. Common HTTP Status Codes
 
 200 — success
 201 — created
@@ -899,7 +1016,7 @@ All seeded series use `ResetPolicy.Never`. All create, update, activate, and dea
 
 ---
 
-## 19. API Authorization Rule
+## 20. API Authorization Rule
 
 Every endpoint must have one of:
 

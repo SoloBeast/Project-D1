@@ -1,11 +1,9 @@
+import 'package:doodh_direct_mobile/core/config/app_config.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-const _developmentToolsEnabled = bool.fromEnvironment(
-  'DOOHDIRECT_ENABLE_DEV_TOOLS',
-);
 const _developmentCustomerEmail = 'customer@doodhdirect.local';
 const _developmentCustomerPassword = 'DoodhDirect@123';
 
@@ -136,7 +134,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           : const Icon(Icons.login),
                       label: const Text('Sign in'),
                     ),
-                    if (_developmentToolsEnabled) ...[
+                    if (devToolsEnabled) ...[
                       const SizedBox(height: 12),
                       OutlinedButton.icon(
                         onPressed: busy ? null : _signInAsDevelopmentCustomer,

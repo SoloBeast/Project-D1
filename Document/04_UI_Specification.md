@@ -22,7 +22,16 @@ Dashboard | Live Deliveries | Assignments | Staff | Reports
 Dashboard | Complaints | Replacements | Customers | Reports
 
 ### Owner/Admin navigation
-Dashboard | Customers | Orders | Subscriptions | Delivery | Dairy | Products | Payments | Complaints | Branches | Cameras | Employees | Reports | Settings | Audit
+Dashboard | Customers | Orders | Subscriptions | Delivery | Dairy | Products | Payments | Complaints | Cameras | Reports | Settings | Audit
+
+Administration is a single grouped home (`Administration` section on the Owner/Admin role home) that renders only the groups the actor is permitted to see:
+
+- **User & Access** — Employees (visible with `EMPLOYEES.READ`/`EMPLOYEES.MANAGE`).
+- **Master Data** — Branches (visible with `BRANCHES.READ`) and Catalogue (visible with `CATALOGUE.READ`).
+- **System Setup** — Number Series (visible with `SETUP.NUMBER_SERIES.READ`).
+- **Monitoring & Operations** — Cameras (visible with `CAMERAS.READ`).
+
+Each tile opens its dedicated management flow; there are no duplicate per-role administration screens.
 
 ---
 
@@ -473,6 +482,27 @@ Actions:
 - Refund where permitted
 
 ### Branches
+
+The Branches entry is rendered only for users holding `BRANCHES.READ` or `BRANCHES.MANAGE` (Owner and System Administrator). It is a single shared management screen — there is no duplicate branch system per role.
+
+Branch Management list:
+- Each row/card shows Branch Number, Name, Code, City/State, and Status (Active/Inactive).
+- Branches are sorted by Name then Code.
+- `+ Add Branch` button is shown only with `BRANCHES.MANAGE`.
+- Selecting a branch opens the Branch Detail screen; without `BRANCHES.READ` the list is not reachable.
+- Loading, empty, and error-with-retry states are shown for every network operation.
+
+Add/Edit Branch screen:
+- Fields: Code, Name, Address Line 1/2, Locality, City, State, Pin Code, Latitude, Longitude, and Service Radius (km).
+- Branch Number is **read-only and never editable** — it is allocated by the backend from the centralized `BRANCH` numbering series on create and displayed from the server response. The client never generates or submits a branch number.
+- Code is normalized to uppercase and trimmed by the server; duplicate codes (case-insensitive) and out-of-range latitude are rejected with inline server validation messages.
+- On edit, the Code field is locked for branches referenced by orders, product availability, or an existing scoped `ORDER` number series.
+
+Branch Detail screen:
+- Shows the full record including the system-allocated Branch Number, address, coordinates, service radius, status, and created/updated timestamps.
+- `Deactivate`/`Activate` actions are shown only with `BRANCHES.MANAGE` and require confirmation.
+- State changes refresh from the server; audit events record the real authenticated actor.
+
 Actions:
 - Create
 - Edit
@@ -494,11 +524,25 @@ Actions:
 - Override expiry with audit reason
 
 ### Employees
-Actions:
-- Create
-- Assign role
-- Assign branch scope
-- Deactivate
+
+The Employees entry is rendered only for users holding `EMPLOYEES.READ` or `EMPLOYEES.MANAGE` (Owner and System Administrator). It is a single shared management screen — there is no duplicate employee system per role.
+
+Employee Management list:
+- Each row shows Name, Mobile, Email, Role, Branch, Status (Active/Suspended), and Invitation state (Invited, Registered, Cancelled, Expired, or none).
+- Row actions: resend invitation (when an invitation is usable), cancel invitation, edit, deactivate, and reactivate — each is shown/hidden by `EMPLOYEES.MANAGE` and rendered only for an employee's invitation when it is in a state that allows the action.
+- `+ Create Employee` button opens the Create Employee screen.
+
+Create Employee screen:
+- Fields: Name, Mobile, Email, Role, Branch.
+- Role selector offers only assignable roles: Delivery Manager, Delivery Boy/Delivery Staff, Accountant, Dairy Manager, System Administrator. The Owner role is never offered.
+- The System Administrator option is only selectable when the actor holds `IDENTITY.ADMINISTRATORS.MANAGE` (Owner-only); otherwise the backend returns a forbidden result and the UI surfaces the reason.
+- Branch selector is populated from `GET /admin/employees/branches`.
+- When "Send invitation" is enabled, the screen submits with `SendInvitation: true`; after create the returned invitation link (the one-time token) is surfaced in a dedicated dialog with a copy action and the expiry date, and the employee appears in the list with Invitation status "Invited".
+
+Invitation flow screens (reached from the shared invitation link, no login required):
+- Invitation verification screen calls `GET /api/v1/employee-invitations/{token}/verify` and renders a friendly state for invalid, expired, cancelled, or already-registered tokens.
+- On a valid invitation it shows the invited employee's Name, Mobile, Email, Role, and Branch — all read-only; the invited user cannot edit the assigned role or branch.
+- Mobile OTP verification screen (purpose `3`, employee invitation) then registration (name/password/device) and completion. On success the account is active and the user signs in and lands in their role workspace (Delivery Boy → delivery ops, Delivery Manager → delivery management, Dairy Manager → dairy + delivery management, Accountant → accounting, System Administrator → administration, Owner → owner workspace).
 
 ### Reports
 
@@ -544,6 +588,7 @@ The Setup → Number Series workspace is available only when the authenticated u
 #### Number Series List
 
 - Shows every series as a card: `Code` (for example `CUSTOMER`), `Description`, `Template`, `StartingNumber`, `LastUsedNumber`, `IncrementBy`, `ResetPolicy`, and an Active/Inactive badge.
+- Scoped series display a Scope badge (for example `Branch: DLH-01`) so branch-scoped counters are distinguishable from the legacy global series with the same `Code`.
 - Shows the next number to be allocated (`nextNumber`) without consuming it.
 - `MANAGE` holders see `Configure`, `Activate`, and `Deactivate` actions; read-only users see only the `Configure` icon, which opens the read-only config screen.
 - A `New series` action creates a series; on success the list refreshes and a `Series <code> created.` confirmation banner appears.

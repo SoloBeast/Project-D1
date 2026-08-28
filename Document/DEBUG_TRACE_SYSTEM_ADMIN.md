@@ -10,7 +10,7 @@ Important mismatch: global access does not create a branch ID in the Flutter ses
 
 - `/admin` -> report module discovery from local permission mapping -> dashboard GET -> branch-aware/global [ReportService](../Backend/src/DoodhDirect.Infrastructure/Reports/ReportService.cs:22).
 - Report module -> filters/search/date/status/page -> module GET -> page state; export -> byte endpoint -> report saver.
-- `/admin/catalogue` -> admin products/categories/branches -> dialogs create/update/activate/availability -> catalogue service and catalogue tables.
+- `/admin/catalogue` -> admin products/categories -> dialogs create/update/activate/availability -> catalogue service and catalogue tables; branch list is served by the Branch Management module (`BRANCHES.READ`), with branch availability maintained here.
 - `/admin/cameras` -> managed list/create/update -> actor/global branch checks -> `Camera`, `CameraStream`, audit.
 - `/dairy/dashboard` and delivery management are visible only with a session branch ID, despite API global access.
 

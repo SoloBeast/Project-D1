@@ -4,7 +4,7 @@
 |---|---|
 | [AuthRepository](../mobile/lib/features/auth/auth_repository.dart:136) | POST `/auth/login`, `/register`, `/send-otp`, `/verify-otp`, `/refresh`, `/logout`; GET `/auth/me` |
 | CustomerRepository | GET/PATCH `/customers/me/profile`; GET/POST `/customers/me/addresses`; PATCH/DELETE address; GET `/customers/me/address-lookup/reverse` with internal map coordinates |
-| CatalogueRepository | GET public products/categories/detail; admin product/category CRUD, activation, branch availability, branches |
+| CatalogueRepository | GET public products/categories/detail; admin product/category CRUD, activation, branch availability (branch list via Branch Management `/admin/branches`) |
 | OrderRepository | POST `/orders/checkout-preview`, `/orders`; GET own list/detail; POST cancel; admin list/detail |
 | PaymentRepository | POST create/verify/cancel; GET detail |
 | WalletRepository | GET wallet/transactions; POST development top-up |

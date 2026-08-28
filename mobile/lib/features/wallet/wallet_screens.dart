@@ -1,13 +1,15 @@
+import 'package:doodh_direct_mobile/core/config/app_config.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'wallet_controller.dart';
 import 'wallet_models.dart';
 
-const developmentWalletTopUpEnabled = kDebugMode;
+/// Backwards-compatible alias so tests and call sites can keep referencing the
+/// development top-up toggle; in release builds it is always false.
+const developmentWalletTopUpEnabled = devToolsEnabled;
 
 class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});

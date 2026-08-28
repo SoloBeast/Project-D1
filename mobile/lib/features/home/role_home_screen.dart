@@ -1,4 +1,4 @@
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+  import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_controller.dart';
@@ -501,6 +501,14 @@ class _AdminHomeActions extends ConsumerWidget {
       permissions.contains('SETUP.NUMBER_SERIES.READ') ||
       permissions.contains('SETUP.NUMBER_SERIES.MANAGE');
 
+  bool get _canManageEmployees =>
+      permissions.contains('EMPLOYEES.READ') ||
+      permissions.contains('EMPLOYEES.MANAGE');
+
+  bool get _canReadBranches =>
+      permissions.contains('BRANCHES.READ') ||
+      permissions.contains('BRANCHES.MANAGE');
+
   bool get _canReadReports => permissions.any(
     const {
       'REPORTS.ADMINISTRATION.READ',
@@ -523,93 +531,234 @@ class _AdminHomeActions extends ConsumerWidget {
           ),
           const SizedBox(height: 8),
           const Text('Review operational metrics and authorized reports.'),
-          const SizedBox(height: 16),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.dashboard_outlined),
-              title: const Text('Dashboard and reports'),
-              subtitle: const Text(
-                'Open administration metrics, filters, and exports',
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/admin'),
-            ),
-          ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 8),
         ],
-        Text('Catalogue', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 8),
-        const Text('Maintain products, categories, and branch availability.'),
-        const SizedBox(height: 16),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.inventory_2_outlined),
-            title: const Text('Manage catalogue'),
-            subtitle: const Text(
-              'Create, update, activate, and assign products',
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push('/admin/catalogue'),
-          ),
-        ),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.local_drink_outlined),
-            title: const Text('Preview customer catalogue'),
-            subtitle: const Text('View the active public product list'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push('/catalogue'),
-          ),
-        ),
-        if (_canReadCameras)
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.video_settings_outlined),
-              title: const Text('Manage cameras'),
-              subtitle: const Text(
-                'Review visibility, status, ordering, and stream metadata',
+        if (_canManageEmployees) ...[
+          const _AdminSectionHeader('User & Access'),
+          _AdminTileGrid(
+            items: [
+              _AdminTileData(
+                icon: Icons.group_outlined,
+                label: 'Employees',
+                subtitle: 'Staff accounts & roles',
+                onTap: () => context.push('/admin/employees'),
               ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/admin/cameras'),
-            ),
+            ],
           ),
-        if (_canReadNumberSeries)
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.numbers_outlined),
-              title: const Text('Number series'),
-              subtitle: const Text(
-                'Configure document number templates and reset policies',
+        ],
+        if (_canReadBranches) ...[
+          const _AdminSectionHeader('Master Data'),
+          _AdminTileGrid(
+            items: [
+              _AdminTileData(
+                icon: Icons.storefront_outlined,
+                label: 'Branches',
+                subtitle: 'Add, edit, activate, deactivate',
+                onTap: () => context.push('/admin/branches'),
               ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/admin/setup/number-series'),
-            ),
-          ),
-        if (branchIds.isNotEmpty)
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.agriculture_outlined),
-              title: const Text('Manage dairy operations'),
-              subtitle: Text(
-                'Record and review branch ${branchIds.first} dairy activity',
+              _AdminTileData(
+                icon: Icons.inventory_2_outlined,
+                label: 'Catalogue',
+                subtitle: 'Products & availability',
+                onTap: () => context.push('/admin/catalogue'),
               ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/dairy/dashboard'),
-            ),
-          ),
-        if (branchIds.isNotEmpty)
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.local_shipping_outlined),
-              title: const Text('Manage deliveries'),
-              subtitle: Text('Assign and monitor branch ${branchIds.first}'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push(
-                '/delivery-management/branch/${branchIds.first}',
+              _AdminTileData(
+                icon: Icons.local_drink_outlined,
+                label: 'Preview catalogue',
+                subtitle: 'Customer view',
+                onTap: () => context.push('/catalogue'),
               ),
-            ),
+            ],
           ),
+        ],
+        if (_canReadNumberSeries) ...[
+          const _AdminSectionHeader('System Setup'),
+          _AdminTileGrid(
+            items: [
+              _AdminTileData(
+                icon: Icons.numbers_outlined,
+                label: 'Number Series',
+                subtitle: 'Templates & reset policies',
+                onTap: () => context.push('/admin/setup/number-series'),
+              ),
+            ],
+          ),
+        ],
+        if (_canReadCameras || _canReadReports || branchIds.isNotEmpty) ...[
+          const _AdminSectionHeader('Monitoring & Operations'),
+          _AdminTileGrid(
+            items: [
+              if (_canReadReports)
+                _AdminTileData(
+                  icon: Icons.dashboard_outlined,
+                  label: 'Dashboard & Reports',
+                  subtitle: 'Metrics, filters, exports',
+                  onTap: () => context.push('/admin'),
+                ),
+              if (_canReadCameras)
+                _AdminTileData(
+                  icon: Icons.video_settings_outlined,
+                  label: 'Cameras',
+                  subtitle: 'Visibility & stream status',
+                  onTap: () => context.push('/admin/cameras'),
+                ),
+              if (branchIds.isNotEmpty)
+                _AdminTileData(
+                  icon: Icons.agriculture_outlined,
+                  label: 'Dairy operations',
+                  subtitle: 'Branch ${branchIds.first} activity',
+                  onTap: () => context.push('/dairy/dashboard'),
+                ),
+              if (branchIds.isNotEmpty)
+                _AdminTileData(
+                  icon: Icons.local_shipping_outlined,
+                  label: 'Deliveries',
+                  subtitle: 'Assign & monitor branch ${branchIds.first}',
+                  onTap: () => context.push(
+                    '/delivery-management/branch/${branchIds.first}',
+                  ),
+                ),
+            ],
+          ),
+        ],
       ],
     );
   }
+}
+
+/// Compact section heading with a small accent bar.
+class _AdminSectionHeader extends StatelessWidget {
+  const _AdminSectionHeader(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 22, bottom: 12),
+    child: Row(
+      children: [
+        Container(
+          width: 4,
+          height: 18,
+          decoration: BoxDecoration(
+            color: DoodhColors.teal,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Responsive icon-tile grid: 2 columns on phones, 3 on tablets, 4 on wide
+/// screens. Tiles use the shared DoodhDirect Card theme and icon wells.
+class _AdminTileGrid extends StatelessWidget {
+  const _AdminTileGrid({required this.items});
+
+  final List<_AdminTileData> items;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final columns = width >= 900 ? 4 : (width >= 600 ? 3 : 2);
+        final tileHeight = width >= 600 ? 140.0 : 136.0;
+        return GridView(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            mainAxisExtent: tileHeight,
+          ),
+          children: [for (final item in items) _AdminTile(data: item)],
+        );
+      },
+    );
+  }
+}
+
+/// Compact tappable tile: icon well, short title, optional short subtitle.
+class _AdminTile extends StatelessWidget {
+  const _AdminTile({required this.data});
+
+  final _AdminTileData data;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: InkWell(
+      borderRadius: DoodhRadii.md,
+      onTap: data.onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: DoodhColors.mint.withValues(alpha: .8),
+                borderRadius: DoodhRadii.sm,
+              ),
+              child: Icon(data.icon, color: DoodhColors.tealDark, size: 22),
+            ),
+            const SizedBox(height: 6),
+            Flexible(
+              child: Text(
+                data.label,
+                maxLines: 2,
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontSize: 13, height: 1.2),
+              ),
+            ),
+            if (data.subtitle != null) ...[
+              const SizedBox(height: 2),
+              Flexible(
+                child: Text(
+                  data.subtitle!,
+                  maxLines: 1,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(fontSize: 11, height: 1.2),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _AdminTileData {
+  const _AdminTileData({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.subtitle,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? subtitle;
+  final VoidCallback onTap;
 }
