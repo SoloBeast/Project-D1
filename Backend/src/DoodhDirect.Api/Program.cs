@@ -31,6 +31,8 @@ LocalDotEnvLoader.Load(
     builder.Environment.IsDevelopment());
 const string corsPolicyName = "DoodhDirectWeb";
 
+const string CloudflareCorsPolicy = "AllowCloudflareTunnels";
+
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
     .ReadFrom.Services(services)
@@ -77,22 +79,25 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy(corsPolicyName, policy =>
     {
-        if (builder.Environment.IsDevelopment())
-        {
+        // if (builder.Environment.IsDevelopment())
+        // {
             policy.SetIsOriginAllowed(origin =>
                 Uri.TryCreate(origin, UriKind.Absolute, out var uri)
                 && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-                && uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
-        }
-        else if (configuredCorsOrigins.Length > 0)
-        {
-            policy.WithOrigins(configuredCorsOrigins);
-        }
+                && (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                    || uri.Host.EndsWith("trycloudflare.com", StringComparison.OrdinalIgnoreCase)
+                ));
+        // }
+        // else if (configuredCorsOrigins.Length > 0)
+        // {
+        //     policy.WithOrigins(configuredCorsOrigins);
+        // }
 
         policy.AllowAnyMethod();
         policy.AllowAnyHeader();
     });
 });
+
 
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 builder.Services.AddProblemDetails();
