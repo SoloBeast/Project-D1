@@ -141,7 +141,7 @@ void main() {
     },
   );
 
-  test('creates product with normalized draft body', () async {
+  test('creates product with normalized draft body including branch ids', () async {
     final client = MockClient((request) async {
       expect(request.method, 'POST');
       expect(
@@ -156,6 +156,7 @@ void main() {
         'categoryId': 'category-1',
         'unitOfMeasure': 'litre',
         'price': 80.25,
+        'branchIds': ['branch-1', 'branch-2'],
       });
       return http.Response(
         jsonEncode({'success': true, 'data': productJson(), 'errors': []}),
@@ -175,6 +176,7 @@ void main() {
         categoryId: 'category-1',
         unitOfMeasure: 'litre',
         price: 80.25,
+        branchIds: ['branch-1', 'branch-2'],
       ),
       'admin-token',
     );

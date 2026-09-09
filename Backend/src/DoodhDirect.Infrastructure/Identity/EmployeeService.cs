@@ -1,10 +1,13 @@
 using System.Data;
+using System.Globalization;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Integrations;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Catalogue;
@@ -12,6 +15,8 @@ using DoodhDirect.Domain.Identity;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace DoodhDirect.Infrastructure.Identity;
 
@@ -30,8 +35,14 @@ public sealed class EmployeeService(
     ITokenService tokenService,
     IIndiaTimeProvider timeProvider,
     INotificationEventWriter notificationEventWriter,
-    SecureTokenGenerator tokenGenerator) : IEmployeeService
+    SecureTokenGenerator tokenGenerator,
+    IMsg91OtpProvider otpProvider,
+    IOptions<IdentityOptions> options,
+    IEmailSender? emailSender = null,
+    IIntegrationSettingsProvider? integrationSettings = null,
+    ILogger<EmployeeService>? logger = null) : IEmployeeService
 {
+    private readonly IdentityOptions _identityOptions = options.Value;
     public const string ActionCreated = "EMPLOYEE.CREATED";
     public const string ActionInvited = "EMPLOYEE.INVITED";
     public const string ActionRegistered = "EMPLOYEE.REGISTERED";
@@ -42,6 +53,11 @@ public sealed class EmployeeService(
     public const string ActionReactivated = "EMPLOYEE.REACTIVATED";
     public const string ActionInvitationResent = "EMPLOYEE.INVITATION_RESENT";
     public const string ActionInvitationCancelled = "EMPLOYEE.INVITATION_CANCELLED";
+    public const string ActionInvitationEmailSent = "EMPLOYEE.INVITATION_EMAIL_SENT";
+    public const string ActionInvitationEmailSkipped = "EMPLOYEE.INVITATION_EMAIL_SKIPPED";
+    public const string ActionInvitationEmailFailed = "EMPLOYEE.INVITATION_EMAIL_FAILED";
+    public const string ActionDeleted = "EMPLOYEE.DELETED";
+    public const string ActionArchived = "EMPLOYEE.ARCHIVED";
 
     private static readonly TimeSpan DefaultInvitationLifetime = TimeSpan.FromDays(7);
 
@@ -58,7 +74,7 @@ public sealed class EmployeeService(
     {
         var users = await dbContext.Users
             .Include(x => x.UserRoles).ThenInclude(x => x.Role)
-            .Where(x => x.UserType == UserType.Employee || x.UserType == UserType.SystemAdministrator)
+            .Where(x => (x.UserType == UserType.Employee || x.UserType == UserType.SystemAdministrator) && !x.IsArchived)
             .OrderBy(x => x.DisplayName)
             .ToListAsync(cancellationToken);
 
@@ -122,7 +138,7 @@ public sealed class EmployeeService(
         var displayName = Require(request.DisplayName, "Display name is required.", nameof(request.DisplayName));
         var mobile = NormalizeMobile(request.Mobile)
             ?? throw new ValidationAppException("Mobile number is required.", nameof(request.Mobile));
-        var email = NormalizeEmail(request.Email);
+        var email = RequireEmail(request.Email);
         var roleCode = Require(request.RoleCode, "Role is required.", nameof(request.RoleCode));
         EnsureEmployeeRole(roleCode);
         await EnsureRoleAssignableAsync(roleCode, actorUserId, cancellationToken);
@@ -151,9 +167,10 @@ public sealed class EmployeeService(
 
         EmployeeInvitation? invitation = null;
         string? token = null;
+        InvitationEmailDelivery? emailDelivery = null;
         if (request.SendInvitation)
         {
-            (invitation, token) = await CreateInvitationAsync(user, roleCode, branchId, request.InvitationExpiresAt, actorUserId, now, cancellationToken);
+            (invitation, token, emailDelivery) = await CreateInvitationAsync(user, roleCode, branchId, request.InvitationExpiresAt, actorUserId, now, cancellationToken);
         }
 
         dbContext.AddAuditLog(new AuditLog(
@@ -171,9 +188,9 @@ public sealed class EmployeeService(
 
         var branchNames = await LoadBranchNamesAsync(branchId is null ? Array.Empty<long>() : new[] { branchId.Value }, cancellationToken);
         var employee = ToEmployeeResult(user, invitation, branchNames);
-        var invitationResult = invitation is null || token is null
+        var invitationResult = invitation is null || token is null || emailDelivery is null
             ? null
-            : new EmployeeInvitationResult(invitation.Id, invitation.PublicId, user.Id, token, invitation.ExpiresAt);
+            : ToInvitationResult(invitation, user.Id, token, emailDelivery);
         return new CreateEmployeeResult(employee, invitationResult);
     }
 
@@ -188,6 +205,8 @@ public sealed class EmployeeService(
             .SingleOrDefaultAsync(x => x.Id == employeeId, cancellationToken)
             ?? throw new NotFoundException("The employee was not found.");
         EnsureEmployeeUser(user);
+        if (user.IsArchived)
+            throw new BusinessRuleException("An archived employee cannot be updated or reactivated.");
 
         var displayName = Require(request.DisplayName, "Display name is required.", nameof(request.DisplayName));
         var email = NormalizeEmail(request.Email);
@@ -196,6 +215,7 @@ public sealed class EmployeeService(
         var currentBranchId = currentAssignment?.BranchId;
         var newRoleCode = string.IsNullOrWhiteSpace(request.RoleCode) ? currentRoleCode : request.RoleCode.Trim();
         var newBranchId = request.BranchId ?? currentBranchId;
+        var wasActive = user.IsActive;
 
         EnsureEmployeeRole(newRoleCode);
         await EnsureRoleAssignableAsync(newRoleCode, actorUserId, cancellationToken);
@@ -207,14 +227,23 @@ public sealed class EmployeeService(
         {
             if (newBranchId is null)
                 throw new ValidationAppException("A branch is required for this role.", nameof(request.BranchId));
-            await EnsureBranchAsync(newBranchId.Value, cancellationToken);
+
+            // Deactivating an employee must remain possible after their branch has
+            // been deactivated. The branch is still a valid historical assignment.
+            // A branch must be active when the employee is being activated or when
+            // the administrator explicitly changes the assignment/role.
+            var assignmentChanged = currentBranchId != newBranchId;
+            var assignmentRoleChanged = !string.Equals(currentRoleCode, newRoleCode, StringComparison.Ordinal);
+            var assignedBranch = await GetBranchAsync(newBranchId.Value, cancellationToken);
+            if (!assignedBranch.IsActive &&
+                (assignmentChanged || assignmentRoleChanged || request.IsActive))
+                throw new ValidationAppException("The selected branch is inactive.", nameof(request.BranchId));
         }
 
         var now = timeProvider.Now;
         var oldSnapshot = EmployeeSnapshot(user);
         var roleChanged = !string.Equals(currentRoleCode, newRoleCode, StringComparison.Ordinal);
         var branchChanged = currentBranchId != newBranchId;
-        var wasActive = user.IsActive;
 
         if (roleChanged || branchChanged)
         {
@@ -233,6 +262,8 @@ public sealed class EmployeeService(
 
         user.SetProfile(displayName);
         user.SetContact(user.Mobile, email);
+        if (request.IsActive && !wasActive && newRoleCode != AuthorizationCodes.SystemAdmin)
+            await EnsureBranchAsync(newBranchId!.Value, cancellationToken);
         if (wasActive && !request.IsActive)
             user.Deactivate();
         if (!wasActive && request.IsActive)
@@ -281,7 +312,7 @@ public sealed class EmployeeService(
             throw new BusinessRuleException("Only an active invitation can be resent.");
 
         invitation.Cancel(actorUserId, now);
-        var (fresh, token) = await CreateInvitationAsync(
+        var (fresh, token, emailDelivery) = await CreateInvitationAsync(
             user,
             invitation.RoleCode,
             invitation.BranchId,
@@ -303,7 +334,7 @@ public sealed class EmployeeService(
             now));
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        return new EmployeeInvitationResult(fresh.Id, fresh.PublicId, user.Id, token, fresh.ExpiresAt);
+        return ToInvitationResult(fresh, user.Id, token, emailDelivery);
     }
 
     public async Task CancelInvitationAsync(
@@ -333,6 +364,165 @@ public sealed class EmployeeService(
             "Invitation cancelled.",
             now));
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Deletes or archives a deactivated employee. The employee's owned identity rows (role
+    /// assignments, sessions, refresh tokens, devices, notification preferences and the
+    /// employee's own notification events/inbox) are removed and any pending invitation is
+    /// cancelled, but shared operational history — deliveries, orders and records where the
+    /// employee was the acting user — is never cascaded. If such records exist the database
+    /// blocks the delete and the employee is archived instead so historical records continue
+    /// to identify the account.
+    /// </summary>
+    public async Task<EmployeeDeleteResult> DeleteAsync(
+        long employeeId,
+        long actorUserId,
+        CancellationToken cancellationToken)
+    {
+        if (employeeId == actorUserId)
+            throw new BusinessRuleException("You cannot delete your own employee account.");
+
+        var user = await GetEmployeeUserAsync(employeeId, cancellationToken);
+        if (user.IsArchived)
+            return new EmployeeDeleteResult(false, true, await ToEmployeeResultAsync(user, cancellationToken));
+
+        if (user.IsActive)
+            throw new BusinessRuleException("Only a deactivated employee can be deleted or archived. Deactivate the employee first.");
+
+        var roleCode = user.UserRoles.FirstOrDefault(x => x.Role is not null)?.Role.Code ?? string.Empty;
+        await EnsureRoleAssignableAsync(roleCode, actorUserId, cancellationToken);
+
+        var now = timeProvider.Now;
+        var oldSnapshot = EmployeeSnapshot(user);
+        EmployeeDeleteResult? result = null;
+
+        await ExecuteAtomicAsync(async () =>
+        {
+            var sessions = await dbContext.UserSessions
+                .Where(x => x.UserId == employeeId)
+                .ToListAsync(cancellationToken);
+            var sessionIds = sessions.Select(x => x.Id).ToArray();
+
+            var refreshTokens = await dbContext.RefreshTokens
+                .Where(x => x.UserId == employeeId || (x.SessionId.HasValue && sessionIds.Contains(x.SessionId.Value)))
+                .ToListAsync(cancellationToken);
+            dbContext.RefreshTokens.RemoveRange(refreshTokens);
+            dbContext.UserSessions.RemoveRange(sessions);
+
+            var roleAssignments = await dbContext.UserRoles
+                .Where(x => x.UserId == employeeId)
+                .ToListAsync(cancellationToken);
+            dbContext.UserRoles.RemoveRange(roleAssignments);
+
+            var preferences = await dbContext.NotificationPreferences
+                .Where(x => x.UserId == employeeId)
+                .ToListAsync(cancellationToken);
+            dbContext.NotificationPreferences.RemoveRange(preferences);
+
+            // The employee's own notification graph (events, inbox, deliveries and attempts)
+            // is removed with the account. Notifications are created for the employee on
+            // onboarding and activity, so they belong to the account rather than to shared
+            // operational history. Child rows are removed before parents (attempts ->
+            // deliveries -> notifications -> events) and before user devices, because
+            // deliveries can reference a device. Shared records (deliveries, orders, milk
+            // production and similar) still block deletion at SaveChanges below.
+            var notificationEvents = await dbContext.NotificationEvents
+                .Where(x => x.UserId == employeeId)
+                .ToListAsync(cancellationToken);
+            var notificationEventIds = notificationEvents.Select(x => x.Id).ToArray();
+
+            var inboxNotifications = await dbContext.Notifications
+                .Where(x => x.UserId == employeeId || notificationEventIds.Contains(x.NotificationEventId))
+                .ToListAsync(cancellationToken);
+            var notificationIds = inboxNotifications.Select(x => x.Id).ToArray();
+
+            var notificationDeliveries = await dbContext.NotificationDeliveries
+                .Where(x => notificationIds.Contains(x.NotificationId))
+                .ToListAsync(cancellationToken);
+            var notificationDeliveryIds = notificationDeliveries.Select(x => x.Id).ToArray();
+
+            var notificationAttempts = await dbContext.NotificationAttempts
+                .Where(x => notificationDeliveryIds.Contains(x.NotificationDeliveryId))
+                .ToListAsync(cancellationToken);
+            dbContext.NotificationAttempts.RemoveRange(notificationAttempts);
+            dbContext.NotificationDeliveries.RemoveRange(notificationDeliveries);
+            dbContext.Notifications.RemoveRange(inboxNotifications);
+            dbContext.NotificationEvents.RemoveRange(notificationEvents);
+
+            var devices = await dbContext.UserDevices
+                .Where(x => x.UserId == employeeId)
+                .ToListAsync(cancellationToken);
+            dbContext.UserDevices.RemoveRange(devices);
+
+            if (user.Mobile is not null)
+            {
+                var pendingInvitations = await dbContext.EmployeeInvitations
+                    .Where(x => x.InviteeMobile == user.Mobile && x.Status == EmployeeInvitationStatus.Invited)
+                    .ToListAsync(cancellationToken);
+                foreach (var invitation in pendingInvitations)
+                {
+                    invitation.Cancel(actorUserId, now);
+                    dbContext.AddAuditLog(new AuditLog(
+                        actorUserId,
+                        ActionInvitationCancelled,
+                        "EmployeeInvitation",
+                        invitation.PublicId.ToString(),
+                        InvitationSnapshot(invitation),
+                        null,
+                        null,
+                        null,
+                        "Invitation cancelled because the employee account was deleted.",
+                        now));
+                }
+            }
+
+            dbContext.Users.Remove(user);
+            dbContext.AddAuditLog(new AuditLog(
+                actorUserId,
+                ActionDeleted,
+                "Employee",
+                user.PublicId.ToString(),
+                oldSnapshot,
+                null,
+                null,
+                null,
+                "Employee deleted.",
+                now));
+
+            try
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                // The database is the authority: the delete is blocked because operational
+                // history (deliveries, orders, milk records and similar) still references the
+                // employee. Archive instead of erroring so those records keep a stable identity.
+                dbContext.ChangeTracker.Clear();
+                var archived = await GetEmployeeUserAsync(employeeId, cancellationToken);
+                var archivedAt = timeProvider.Now;
+                archived.Archive(archivedAt);
+                dbContext.AddAuditLog(new AuditLog(
+                    actorUserId,
+                    ActionArchived,
+                    "Employee",
+                    archived.PublicId.ToString(),
+                    oldSnapshot,
+                    EmployeeSnapshot(archived),
+                    null,
+                    null,
+                    "Employee archived because operational records reference the account.",
+                    archivedAt));
+                await dbContext.SaveChangesAsync(cancellationToken);
+                result = new EmployeeDeleteResult(false, true, await ToEmployeeResultAsync(archived, cancellationToken));
+                return;
+            }
+
+            result = new EmployeeDeleteResult(true, false, null);
+        }, cancellationToken);
+
+        return result!;
     }
 
     public async Task<EmployeeInvitationVerificationResult> VerifyInvitationAsync(
@@ -368,6 +558,33 @@ public sealed class EmployeeService(
                 invitation.RoleCode, invitation.BranchId, reason);
         }
 
+        if (invitation.BranchId.HasValue)
+        {
+            var branch = await dbContext.Branches
+                .AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == invitation.BranchId.Value, cancellationToken);
+            if (branch is null)
+            {
+                return new EmployeeInvitationVerificationResult(
+                    false, invitation.InviteeName, invitation.InviteeMobile, invitation.InviteeEmail,
+                    invitation.RoleCode, invitation.BranchId,
+                    "The branch for this invitation is no longer available. Ask your administrator to create a new invitation.");
+            }
+
+            if (!branch.IsActive)
+            {
+                return new EmployeeInvitationVerificationResult(
+                    false, invitation.InviteeName, invitation.InviteeMobile, invitation.InviteeEmail,
+                    invitation.RoleCode, invitation.BranchId,
+                    "The branch for this invitation is inactive. Ask your administrator to create a new invitation.");
+            }
+
+            return new EmployeeInvitationVerificationResult(
+                true, invitation.InviteeName, invitation.InviteeMobile, invitation.InviteeEmail,
+                invitation.RoleCode, invitation.BranchId, null, branch.Code, branch.Name);
+        }
+
+        // Invitations without a branch (e.g. SYSTEM_ADMIN) remain valid with no branch metadata.
         return new EmployeeInvitationVerificationResult(
             true, invitation.InviteeName, invitation.InviteeMobile, invitation.InviteeEmail,
             invitation.RoleCode, invitation.BranchId, null);
@@ -383,7 +600,8 @@ public sealed class EmployeeService(
         var displayName = Require(request.DisplayName, "Display name is required.", nameof(request.DisplayName));
         var password = Require(request.Password, "Password is required.", nameof(request.Password));
         var email = NormalizeEmail(request.Email);
-        var mobile = NormalizeMobile(request.Mobile);
+        var requestedMobile = NormalizeMobile(request.Mobile)
+            ?? throw new ValidationAppException("Mobile number is required.", nameof(request.Mobile));
         var tokenHash = tokenGenerator.Hash(token);
         var now = timeProvider.Now;
 
@@ -396,24 +614,63 @@ public sealed class EmployeeService(
             if (!invitation.IsUsable(now))
                 throw new BusinessRuleException("This invitation is no longer valid. Ask your administrator to resend it.");
 
+            // The invitation's branch is authoritative: it must still exist and be active at
+            // registration time. Assigning an orphaned or inactive branch would silently
+            // mis-route the employee, so the registration stops here (inside the atomic
+            // operation) with a clear business error and the OTP challenge is never consumed.
+            if (invitation.BranchId.HasValue)
+                await EnsureBranchAsync(invitation.BranchId.Value, cancellationToken);
+
+            // The invitation is the authoritative identity. The form mobile is accepted only
+            // as a representation of that identity and can never replace it.
+            var invitationMobile = IndiaMobileNumber.Canonicalize(invitation.InviteeMobile)
+                ?? throw new BusinessRuleException("The invitation mobile number is invalid. Ask your administrator to create a new invitation.");
+            var submittedMobile = IndiaMobileNumber.Canonicalize(requestedMobile)
+                ?? throw new ValidationAppException("Enter a valid Indian mobile number.", nameof(request.Mobile));
+            if (!string.Equals(submittedMobile, invitationMobile, StringComparison.Ordinal))
+                throw new UnauthorizedAppException("The invitation mobile number does not match this registration.");
+
+            var challengeDestinations = MobileLookupValues(invitationMobile);
             var challenge = await dbContext.OtpChallenges
-                .Where(x => x.Destination == invitation.InviteeMobile && x.Purpose == OtpPurpose.EmployeeInvitation)
+                .Where(x => challengeDestinations.Contains(x.Destination) && x.Purpose == OtpPurpose.EmployeeInvitation)
                 .OrderByDescending(x => x.CreatedAt)
                 .FirstOrDefaultAsync(cancellationToken);
             if (challenge is null || !challenge.CanAttempt(now))
                 throw new UnauthorizedAppException("The OTP is invalid or has expired.");
-            if (!passwordHasher.Verify(challenge.CodeHash, otpCode))
+
+            // Verify and validate with MSG91 using the canonical invitation identity. The
+            // persisted request id and EmployeeInvitation purpose remain mandatory bindings.
+            if (challenge.ReqId is null)
+                throw new UnauthorizedAppException("The OTP is invalid or has expired.");
+            Msg91OtpVerifyResult verifyResult;
+            Msg91OtpValidationResult validationResult;
+            try
+            {
+                verifyResult = await otpProvider.VerifyAsync(
+                    new Msg91OtpVerifyRequest(challenge.ReqId, invitationMobile, otpCode, OtpPurpose.EmployeeInvitation.ToString()),
+                    cancellationToken);
+                validationResult = await otpProvider.ValidateAccessTokenAsync(
+                    new Msg91OtpAccessTokenRequest(verifyResult.AccessToken, invitationMobile, OtpPurpose.EmployeeInvitation.ToString()),
+                    cancellationToken);
+            }
+            catch (OtpProviderRejectedException)
             {
                 challenge.RecordFailedAttempt();
                 await dbContext.SaveChangesAsync(cancellationToken);
-                throw new UnauthorizedAppException("The OTP is invalid or has expired.");
+                throw;
             }
 
-            challenge.Consume(now);
+            // Compare provider-attested identity with the invitation, not with client input
+            // or a legacy storage representation.
+            var attestedIdentifier = IndiaMobileNumber.Canonicalize(validationResult.VerifiedIdentifier);
+            if (!string.Equals(attestedIdentifier, invitationMobile, StringComparison.Ordinal))
+                throw new OtpProviderRejectedException("The OTP verification could not be confirmed.");
 
+            challenge.Consume(now);
+            var userLookupValues = MobileLookupValues(invitationMobile);
             var user = await dbContext.Users
                 .Include(x => x.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x.RolePermissions).ThenInclude(x => x.Permission)
-                .SingleOrDefaultAsync(x => x.Mobile == invitation.InviteeMobile, cancellationToken)
+                .SingleOrDefaultAsync(x => userLookupValues.Contains(x.Mobile!), cancellationToken)
                 ?? throw new BusinessRuleException("The invited employee account no longer exists. Ask your administrator to create a new invitation.");
 
             var role = await GetRoleAsync(invitation.RoleCode, cancellationToken);
@@ -424,7 +681,7 @@ public sealed class EmployeeService(
             user.UserRoles.Clear();
             user.AssignRole(role, invitation.BranchId);
             user.SetProfile(displayName);
-            user.SetContact(mobile, email);
+            user.SetContact(invitationMobile, email);
             user.SetPasswordHash(passwordHasher.Hash(password));
             user.Activate();
 
@@ -442,7 +699,7 @@ public sealed class EmployeeService(
             user.RecordLogin(now);
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            var authUser = user.ToAuthUserResult();
+            var authUser = await user.ToAuthUserResultAsync(dbContext, cancellationToken);
             var tokens = tokenService.Create(
                 user,
                 session,
@@ -558,7 +815,7 @@ public sealed class EmployeeService(
             throw new ForbiddenAppException("Only the owner can create or manage system administrators.");
     }
 
-    private async Task<(EmployeeInvitation Invitation, string Token)> CreateInvitationAsync(
+    private async Task<(EmployeeInvitation Invitation, string Token, InvitationEmailDelivery EmailDelivery)> CreateInvitationAsync(
         User user,
         string roleCode,
         long? branchId,
@@ -586,8 +843,150 @@ public sealed class EmployeeService(
             actorUserId);
         dbContext.EmployeeInvitations.Add(invitation);
         await dbContext.SaveChangesAsync(cancellationToken);
-        return (invitation, token);
+
+        // The invitee requests the registration OTP on demand after opening the invitation link.
+        // Do not send an SMS while the administrator creates or resends the invitation.
+
+        // Email the single-use invitation link to the invitee when SMTP delivery is configured.
+        // The outcome is audited and returned so the UI cannot confuse link generation with SMTP delivery.
+        var emailDelivery = await SendInvitationEmailAsync(
+            user, invitation, token, expiresAt, actorUserId, now, cancellationToken);
+
+        return (invitation, token, emailDelivery);
     }
+
+    private async Task<InvitationEmailDelivery> SendInvitationEmailAsync(
+        User user,
+        EmployeeInvitation invitation,
+        string token,
+        DateTime expiresAt,
+        long actorUserId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var inviteeEmail = user.Email;
+        string action;
+        string reason;
+        var status = InvitationEmailDeliveryStatus.Skipped;
+        if (emailSender is null || integrationSettings is null)
+        {
+            action = ActionInvitationEmailSkipped;
+            reason = "SMTP invitation delivery services are not available.";
+        }
+        else if (string.IsNullOrWhiteSpace(inviteeEmail))
+        {
+            action = ActionInvitationEmailSkipped;
+            reason = "The invitee has no email address, so the invitation link email was skipped.";
+        }
+        else
+        {
+            var inviteUrlBase = (await integrationSettings.GetInviteUrlBaseAsync(cancellationToken))?.Trim();
+            if (string.IsNullOrWhiteSpace(inviteUrlBase))
+            {
+                action = ActionInvitationEmailSkipped;
+                reason = "No invitation base URL is configured, so the invitation link email was skipped.";
+            }
+            else
+            {
+                var link = $"{inviteUrlBase.TrimEnd('/')}/invite/{token}";
+                var expiresText = expiresAt.ToString("d MMM yyyy, h:mm tt", CultureInfo.InvariantCulture);
+                var displayName = string.IsNullOrWhiteSpace(user.DisplayName)
+                    ? "there"
+                    : user.DisplayName.Trim();
+                var displayNameHtml = WebUtility.HtmlEncode(displayName);
+                var linkHtml = WebUtility.HtmlEncode(link);
+
+                var message = new EmailMessage(
+                    inviteeEmail,
+                    "Your DoodhDirect onboarding invitation",
+                    string.Join(
+                        "\n\n",
+                        $"Hello {displayName},",
+                        "You have been invited to join DoodhDirect. Complete your onboarding by opening this secure single-use invitation link before it expires:",
+                        $"{expiresText}",
+                        link,
+                        "The link can be used only once. If you did not expect this invitation, you can safely ignore this email."),
+                    string.Join(
+                        "\n",
+                        $"<p>Hello {displayNameHtml},</p>",
+                        "<p>You have been invited to join <strong>DoodhDirect</strong>. Complete your onboarding by opening this secure single-use invitation link before it expires:</p>",
+                        $"<p><em>{expiresText}</em></p>",
+                        $"<p><a href=\"{link}\">{linkHtml}</a></p>",
+                        "<p>The link can be used only once. If you did not expect this invitation, you can safely ignore this email.</p>"));
+
+                try
+                {
+                    var result = await emailSender.SendAsync(message, cancellationToken);
+                    if (result.Sent)
+                    {
+                        status = InvitationEmailDeliveryStatus.Sent;
+                        action = ActionInvitationEmailSent;
+                        reason = $"Invitation email accepted by the SMTP relay for {inviteeEmail}.";
+                    }
+                    else
+                    {
+                        action = ActionInvitationEmailSkipped;
+                        reason = $"Invitation email to {inviteeEmail} was skipped: {result.Reason ?? "SMTP delivery is not configured."}";
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    status = InvitationEmailDeliveryStatus.Failed;
+                    action = ActionInvitationEmailFailed;
+                    reason = $"Invitation email to {inviteeEmail} failed: {exception.Message}";
+                    logger?.LogError(
+                        exception,
+                        "Invitation email delivery failed for invitation {InvitationPublicId} to {ToAddress}.",
+                        invitation.PublicId,
+                        inviteeEmail);
+                }
+            }
+        }
+
+        logger?.LogInformation(
+            "Invitation {InvitationPublicId} email outcome: {EmailDeliveryStatus}. Recipient: {ToAddress}. Reason: {Reason}",
+            invitation.PublicId,
+            status,
+            inviteeEmail,
+            reason);
+
+        dbContext.AddAuditLog(new AuditLog(
+            actorUserId,
+            action,
+            "EmployeeInvitation",
+            invitation.PublicId.ToString(),
+            null,
+            null,
+            null,
+            null,
+            reason,
+            now));
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return new InvitationEmailDelivery(status, reason, inviteeEmail);
+    }
+
+    private static EmployeeInvitationResult ToInvitationResult(
+        EmployeeInvitation invitation,
+        long employeeId,
+        string token,
+        InvitationEmailDelivery emailDelivery) => new(
+            invitation.Id,
+            invitation.PublicId,
+            employeeId,
+            token,
+            invitation.ExpiresAt,
+            emailDelivery.Status,
+            emailDelivery.Reason,
+            emailDelivery.Recipient);
+
+    private sealed record InvitationEmailDelivery(
+        InvitationEmailDeliveryStatus Status,
+        string Reason,
+        string? Recipient);
 
     private async Task<Role> GetRoleAsync(string roleCode, CancellationToken cancellationToken) =>
         await dbContext.Roles
@@ -596,11 +995,14 @@ public sealed class EmployeeService(
             .SingleOrDefaultAsync(x => x.Code == roleCode && x.IsActive, cancellationToken)
         ?? throw new ValidationAppException("The selected role is not available.", nameof(roleCode));
 
-    private async Task EnsureBranchAsync(long branchId, CancellationToken cancellationToken)
-    {
-        var branch = await dbContext.Branches
+    private async Task<Branch> GetBranchAsync(long branchId, CancellationToken cancellationToken) =>
+        await dbContext.Branches
             .SingleOrDefaultAsync(x => x.Id == branchId, cancellationToken)
             ?? throw new ValidationAppException("The selected branch was not found.", nameof(branchId));
+
+    private async Task EnsureBranchAsync(long branchId, CancellationToken cancellationToken)
+    {
+        var branch = await GetBranchAsync(branchId, cancellationToken);
         if (!branch.IsActive)
             throw new ValidationAppException("The selected branch is inactive.", nameof(branchId));
     }
@@ -613,14 +1015,24 @@ public sealed class EmployeeService(
     {
         if (email is not null && await dbContext.Users.AnyAsync(x => x.Email == email && x.Id != excludeUserId, cancellationToken))
             throw new ConflictException("An account already exists for this email.");
-        if (mobile is not null && await dbContext.Users.AnyAsync(x => x.Mobile == mobile && x.Id != excludeUserId, cancellationToken))
-            throw new ConflictException("An account already exists for this mobile number.");
+        if (mobile is not null)
+        {
+            // Match both the canonical E.164 form (+91XXXXXXXXXX) and the 10-digit national
+            // form so a duplicate is detected regardless of how the existing account stores
+            // its mobile (customers and registered employees are canonical, administrator-created
+            // employees before registration are stored as entered).
+            var mobileLookup = MobileLookupValues(mobile);
+            if (mobileLookup.Count > 0 &&
+                await dbContext.Users.AnyAsync(x => mobileLookup.Contains(x.Mobile!) && x.Id != excludeUserId, cancellationToken))
+                throw new ConflictException("An account already exists for this mobile number.");
+        }
     }
 
     public async Task<IReadOnlyList<EmployeeBranchOption>> GetBranchOptionsAsync(
         CancellationToken cancellationToken)
     {
         var branches = await dbContext.Branches
+            .Where(x => !x.IsArchived)
             .OrderBy(x => x.Name)
             .Select(x => new EmployeeBranchOption(
                 x.Id,
@@ -648,6 +1060,16 @@ public sealed class EmployeeService(
         return branches.ToDictionary(x => x.Id, x => x.Name);
     }
 
+    private async Task<EmployeeResult> ToEmployeeResultAsync(User user, CancellationToken cancellationToken)
+    {
+        var assignment = user.UserRoles.FirstOrDefault(x => x.Role is not null);
+        var branchId = assignment?.BranchId;
+        var branchNames = await LoadBranchNamesAsync(
+            branchId is null ? Array.Empty<long>() : new[] { branchId.Value },
+            cancellationToken);
+        return ToEmployeeResult(user, null, branchNames);
+    }
+
     private static EmployeeResult ToEmployeeResult(
         User user,
         EmployeeInvitation? invitation,
@@ -668,6 +1090,8 @@ public sealed class EmployeeService(
             branchId,
             branchId.HasValue && branchNames.TryGetValue(branchId.Value, out var branchName) ? branchName : null,
             user.IsActive,
+            user.IsArchived,
+            user.ArchivedAt,
             invitation?.Status,
             invitation?.ExpiresAt,
             invitation?.RegisteredAt,
@@ -682,6 +1106,8 @@ public sealed class EmployeeService(
         user.Mobile,
         user.Email,
         user.IsActive,
+        user.IsArchived,
+        user.ArchivedAt,
         Assignments = user.UserRoles.Select(x => new
         {
             Role = x.Role?.Code,
@@ -731,6 +1157,14 @@ public sealed class EmployeeService(
     private static string Require(string? value, string message, string field) =>
         string.IsNullOrWhiteSpace(value) ? throw new ValidationAppException(message, field) : value.Trim();
 
+    private static string RequireEmail(string? value)
+    {
+        var email = NormalizeEmail(value);
+        return email is null
+            ? throw new ValidationAppException("A valid email address is required.", nameof(CreateEmployeeRequest.Email))
+            : email;
+    }
+
     private static string? NormalizeEmail(string? value) => string.IsNullOrWhiteSpace(value) || !value.Contains('@') ? null : value.Trim().ToLowerInvariant();
 
     private static string? NormalizeMobile(string? value)
@@ -738,6 +1172,16 @@ public sealed class EmployeeService(
         if (string.IsNullOrWhiteSpace(value)) return null;
         var normalized = value.Trim();
         return normalized.Any(char.IsDigit) ? normalized : null;
+    }
+
+    private static IReadOnlyList<string> MobileLookupValues(string destination)
+    {
+        var canonical = IndiaMobileNumber.Canonicalize(destination);
+        if (canonical is null) return Array.Empty<string>();
+        var national = IndiaMobileNumber.ToNational(canonical);
+        return national is null || national == canonical
+            ? new[] { canonical }
+            : new[] { canonical, national };
     }
 
     private static string HashDevice(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

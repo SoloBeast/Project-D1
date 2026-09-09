@@ -46,7 +46,7 @@ public sealed class BranchServiceTests
         Assert.Equal(2, result.Count);
         Assert.Equal("Bengaluru Central", result[0].Name);
         Assert.Equal("Mumbai West", result[1].Name);
-        Assert.All(result, branch => Assert.False(string.IsNullOrWhiteSpace(branch.BranchNumber)));
+        Assert.All(result, branch => Assert.False(string.IsNullOrWhiteSpace(branch.Code)));
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public sealed class BranchServiceTests
     // ---------------------------------------------------------------- create
 
     [Fact]
-    public async Task CreateAsync_AllocatesBranchNumberAndScopedOrderSeries()
+    public async Task CreateAsync_UsesManualCodeAndCreatesScopedOrderSeries()
     {
         await using var harness = await BranchHarness.CreateAsync();
 
@@ -83,8 +83,7 @@ public sealed class BranchServiceTests
         Assert.Equal("BLR-01", result.Code);
         Assert.Equal("Bengaluru Central", result.Name);
         Assert.True(result.IsActive);
-        // Branch number is allocated server-side from the BRANCH series.
-        Assert.Equal("BRN-000001", result.BranchNumber);
+        Assert.Equal("BLR-01", result.Code);
         // The branch-scoped ORDER series must exist the moment the branch does.
         var orderSeries = await harness.Db.NumberSeries
             .SingleAsync(item => item.Code == "ORDER" && item.ScopeKey == "BLR-01");
@@ -107,7 +106,6 @@ public sealed class BranchServiceTests
         Assert.Null(audit.OldValueJson);
         Assert.NotNull(audit.NewValueJson);
         Assert.Contains("\"BLR-01\"", audit.NewValueJson);
-        Assert.Contains("\"BRN-000001\"", audit.NewValueJson);
     }
 
     [Fact]
@@ -182,9 +180,7 @@ public sealed class BranchServiceTests
         Assert.Equal("2 MG Road", result.AddressLine1);
         Assert.Equal("560002", result.PinCode);
         Assert.Equal(12m, result.ServiceRadiusKm);
-        // Branch number and code are stable across edits.
         Assert.Equal("BLR-01", result.Code);
-        Assert.Equal("BRN-000001", result.BranchNumber);
     }
 
     [Fact]
@@ -271,7 +267,6 @@ public sealed class BranchServiceTests
         // Seed a legacy branch directly (pre-dates the scoped ORDER series) so no
         // order series exists under its code; the code-change guard must permit it.
         var legacy = new Branch("LEG-01", "Legacy Branch", "Bengaluru", "Karnataka", 12.9716m, 77.5946m);
-        legacy.AssignBranchNumber("BRN-009999");
         harness.Db.Branches.Add(legacy);
         await harness.Db.SaveChangesAsync();
 
@@ -281,7 +276,6 @@ public sealed class BranchServiceTests
             1, legacy.PublicId, requestWithNewCode, CancellationToken.None);
 
         Assert.Equal("LEG-02", result.Code);
-        Assert.Equal("BRN-009999", result.BranchNumber);
         Assert.Equal("Bengaluru Central", result.Name);
         // No ORDER series was created under either the old or the new code.
         Assert.False(await harness.Db.NumberSeries.AnyAsync(
@@ -329,28 +323,185 @@ public sealed class BranchServiceTests
             harness.Service.SetActiveAsync(1, Guid.NewGuid(), false, CancellationToken.None));
     }
 
-    // ---------------------------------------------------------------- concurrency (shared-cache SQLite)
+    // ---------------------------------------------------------------- delete-or-archive lifecycle
 
     [Fact]
-    public async Task ConcurrentCreates_AllocateDistinctSequentialBranchNumbers()
+    public async Task DeleteAsync_ThrowsBusinessRuleForActiveBranch()
     {
         await using var harness = await BranchHarness.CreateAsync();
-        var requests = Enumerable.Range(1, 5)
-            .Select(i => BengaluruBranch with { Code = $"BR-{i:D2}" })
-            .ToArray();
+        var created = await harness.Service.CreateAsync(1, BengaluruBranch, CancellationToken.None);
 
-        var results = await Task.WhenAll(requests.Select(async request =>
-        {
-            await using var context = harness.CreateContext();
-            return await harness.CreateService(context)
-                .CreateAsync(1, request, CancellationToken.None);
-        }));
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.Service.DeleteAsync(5, created.PublicId, CancellationToken.None));
+        Assert.Contains("deactivate", exception.Message, StringComparison.OrdinalIgnoreCase);
 
-        var numbers = results.Select(branch => branch.BranchNumber).Order().ToArray();
-        Assert.Equal(5, numbers.Distinct().Count());
-        Assert.Equal("BRN-000001", numbers[0]);
-        Assert.Equal("BRN-000005", numbers[^1]);
+        // The active branch is untouched: not deleted, not archived.
+        var stored = await harness.Db.Branches.SingleAsync();
+        Assert.False(stored.IsArchived);
+        Assert.True(stored.IsActive);
     }
+
+    [Fact]
+    public async Task DeleteAsync_PermanentlyDeletesInactiveBranchWithoutDependencies()
+    {
+        await using var harness = await BranchHarness.CreateAsync();
+        var created = await harness.Service.CreateAsync(1, BengaluruBranch, CancellationToken.None);
+        await harness.Service.SetActiveAsync(1, created.PublicId, false, CancellationToken.None);
+
+        var result = await harness.Service.DeleteAsync(5, created.PublicId, CancellationToken.None);
+
+        Assert.True(result.IsDeleted);
+        Assert.False(result.IsArchived);
+        Assert.Null(result.Branch);
+        Assert.Equal(0, await harness.Db.Branches.CountAsync());
+
+        var audit = await harness.Db.AuditLogs
+            .SingleAsync(item => item.Action == BranchService.ActionDeleted
+                                 && item.EntityId == created.PublicId.ToString());
+        Assert.Equal(BranchService.ActionDeleted, audit.Action);
+        Assert.Equal("Branch", audit.EntityType);
+        Assert.Equal(5, audit.UserId);
+        Assert.NotNull(audit.OldValueJson);
+        Assert.Null(audit.NewValueJson);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_ArchivesInactiveBranchWithOrderDependency()
+    {
+        await using var harness = await BranchHarness.CreateAsync();
+        var created = await harness.Service.CreateAsync(1, BengaluruBranch, CancellationToken.None);
+        await harness.AddOrderAsync(created);
+        await harness.Service.SetActiveAsync(1, created.PublicId, false, CancellationToken.None);
+
+        var result = await harness.Service.DeleteAsync(5, created.PublicId, CancellationToken.None);
+
+        Assert.False(result.IsDeleted);
+        Assert.True(result.IsArchived);
+        Assert.NotNull(result.Branch);
+        Assert.True(result.Branch!.IsArchived);
+        Assert.False(result.Branch.IsActive);
+        Assert.NotNull(result.Branch.ArchivedAt);
+
+        // The branch is retained in the database so the order keeps identifying it.
+        var stored = await harness.Db.Branches.SingleAsync(item => item.PublicId == created.PublicId);
+        Assert.True(stored.IsArchived);
+
+        var audit = await harness.Db.AuditLogs
+            .SingleAsync(item => item.Action == BranchService.ActionArchived
+                                 && item.EntityId == created.PublicId.ToString());
+        Assert.Equal(5, audit.UserId);
+        Assert.NotNull(audit.OldValueJson);
+        Assert.NotNull(audit.NewValueJson);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_IsIdempotentForArchivedBranch()
+    {
+        await using var harness = await BranchHarness.CreateAsync();
+        var created = await harness.Service.CreateAsync(1, BengaluruBranch, CancellationToken.None);
+        await harness.AddOrderAsync(created);
+        await harness.Service.SetActiveAsync(1, created.PublicId, false, CancellationToken.None);
+
+        var first = await harness.Service.DeleteAsync(5, created.PublicId, CancellationToken.None);
+        var again = await harness.Service.DeleteAsync(5, created.PublicId, CancellationToken.None);
+
+        Assert.True(first.IsArchived);
+        Assert.False(first.IsDeleted);
+        Assert.NotNull(first.Branch);
+        // The second call observes the archive without rewriting the archive timestamp.
+        Assert.True(again.IsArchived);
+        Assert.False(again.IsDeleted);
+        Assert.Equal(first.Branch!.ArchivedAt, again.Branch!.ArchivedAt);
+
+        // Only one BRANCH.ARCHIVED audit entry is written.
+        var archivedAudits = await harness.Db.AuditLogs
+            .CountAsync(item => item.Action == BranchService.ActionArchived
+                                && item.EntityId == created.PublicId.ToString());
+        Assert.Equal(1, archivedAudits);
+    }
+
+    [Fact]
+    public async Task ListAsync_ExcludesArchivedBranches()
+    {
+        await using var harness = await BranchHarness.CreateAsync();
+        var active = await harness.Service.CreateAsync(1, BengaluruBranch, CancellationToken.None);
+        var doomed = await harness.Service.CreateAsync(1, MumbaiBranch, CancellationToken.None);
+        await harness.AddOrderAsync(doomed);
+        await harness.Service.SetActiveAsync(1, doomed.PublicId, false, CancellationToken.None);
+        await harness.Service.DeleteAsync(1, doomed.PublicId, CancellationToken.None);
+
+        var result = await harness.Service.ListAsync(CancellationToken.None);
+
+        var branch = Assert.Single(result);
+        Assert.Equal(active.PublicId, branch.PublicId);
+        Assert.Equal("Bengaluru Central", branch.Name);
+        Assert.False(branch.IsArchived);
+    }
+
+    [Fact]
+    public async Task GetAsync_StillReturnsArchivedBranchForHistory()
+    {
+        await using var harness = await BranchHarness.CreateAsync();
+        var created = await harness.Service.CreateAsync(1, BengaluruBranch, CancellationToken.None);
+        await harness.AddOrderAsync(created);
+        await harness.Service.SetActiveAsync(1, created.PublicId, false, CancellationToken.None);
+        await harness.Service.DeleteAsync(1, created.PublicId, CancellationToken.None);
+
+        // Archived branches remain retrievable (read-only view) and stay in the database.
+        var result = await harness.Service.GetAsync(created.PublicId, CancellationToken.None);
+
+        Assert.Equal(created.PublicId, result.PublicId);
+        Assert.True(result.IsArchived);
+        Assert.NotNull(result.ArchivedAt);
+        Assert.Equal(1, await harness.Db.Branches.CountAsync());
+    }
+
+    [Fact]
+    public async Task SetActiveAsync_ThrowsWhenReactivatingArchivedBranch()
+    {
+        await using var harness = await BranchHarness.CreateAsync();
+        var created = await harness.Service.CreateAsync(1, BengaluruBranch, CancellationToken.None);
+        await harness.AddOrderAsync(created);
+        await harness.Service.SetActiveAsync(1, created.PublicId, false, CancellationToken.None);
+        await harness.Service.DeleteAsync(1, created.PublicId, CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.Service.SetActiveAsync(1, created.PublicId, true, CancellationToken.None));
+        Assert.Contains("cannot be reactivated", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_ArchivesInactiveBranchWithEmployeeAssignment()
+    {
+        await using var harness = await BranchHarness.CreateAsync();
+        var created = await harness.Service.CreateAsync(1, BengaluruBranch, CancellationToken.None);
+        await harness.Service.SetActiveAsync(1, created.PublicId, false, CancellationToken.None);
+
+        // A logical (non-FK) reference: an employee assigned to the branch. The permanent
+        // delete must still be prevented even though no physical FK restrict exists.
+        var employee = new User(UserType.Employee);
+        employee.SetProfile("Branch Staff");
+        harness.Db.Users.Add(employee);
+        await harness.Db.SaveChangesAsync();
+
+        var role = new Role("DELIVERY_STAFF", "Delivery Staff");
+        harness.Db.Roles.Add(role);
+        await harness.Db.SaveChangesAsync();
+
+        var branchEntity = await harness.Db.Branches.SingleAsync(item => item.PublicId == created.PublicId);
+        var userRole = new UserRole(employee.Id, role.Id, branchEntity.Id);
+        harness.Db.UserRoles.Add(userRole);
+        await harness.Db.SaveChangesAsync();
+
+        var result = await harness.Service.DeleteAsync(5, created.PublicId, CancellationToken.None);
+
+        Assert.False(result.IsDeleted);
+        Assert.True(result.IsArchived);
+        Assert.NotNull(result.Branch);
+        Assert.Equal(1, await harness.Db.Branches.CountAsync());
+    }
+
+    // ---------------------------------------------------------------- concurrency (shared-cache SQLite)
 
     [Fact]
     public async Task ConcurrentCreates_WithSameCodeOnlyOneSucceeds()
@@ -383,7 +534,8 @@ public sealed class BranchServiceTests
         { nameof(BranchController.Create), "permission:" + AuthorizationCodes.BranchesManage },
         { nameof(BranchController.Update), "permission:" + AuthorizationCodes.BranchesManage },
         { nameof(BranchController.Activate), "permission:" + AuthorizationCodes.BranchesManage },
-        { nameof(BranchController.Deactivate), "permission:" + AuthorizationCodes.BranchesManage }
+        { nameof(BranchController.Deactivate), "permission:" + AuthorizationCodes.BranchesManage },
+        { nameof(BranchController.Delete), "permission:" + AuthorizationCodes.BranchesManage }
     };
 
     public static TheoryData<string, string> ReadActions => new()
@@ -443,6 +595,7 @@ public sealed class BranchServiceTests
     [InlineData(nameof(BranchController.Update), typeof(HttpPutAttribute), "{branchId:guid}")]
     [InlineData(nameof(BranchController.Activate), typeof(HttpPostAttribute), "{branchId:guid}/activate")]
     [InlineData(nameof(BranchController.Deactivate), typeof(HttpPostAttribute), "{branchId:guid}/deactivate")]
+    [InlineData(nameof(BranchController.Delete), typeof(HttpDeleteAttribute), "{branchId:guid}")]
     public void Action_UsesExpectedHttpVerbAndRoute(string methodName, Type verbType, string? template)
     {
         var method = RequireMethod(methodName);
@@ -457,7 +610,6 @@ public sealed class BranchServiceTests
 
     private sealed class BranchHarness : IAsyncDisposable
     {
-        private const string BranchSeriesCode = "BRANCH";
 
         private readonly string _connectionString;
         private readonly SqliteConnection _connection;
@@ -502,15 +654,11 @@ public sealed class BranchServiceTests
             var db = new DoodhDirectDbContext(options);
             await db.Database.EnsureCreatedAsync();
 
-            // Seed the global BRANCH numbering series that allocation consumes.
-            db.NumberSeries.Add(new NumberSeries(
-                BranchSeriesCode, "Branch Number", "BRN-{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never));
             await db.SaveChangesAsync();
             db.ChangeTracker.Clear();
 
-            var numberSeriesService = new NumberSeriesService(db, timeProvider);
             var seedService = new NumberSeriesSeedService(db);
-            var service = new BranchService(db, numberSeriesService, seedService, timeProvider);
+            var service = new BranchService(db, seedService, timeProvider);
             return new BranchHarness(connectionString, connection, db, clock, timeProvider, service);
         }
 
@@ -525,7 +673,6 @@ public sealed class BranchServiceTests
 
         public BranchService CreateService(DoodhDirectDbContext db) => new(
             db,
-            new NumberSeriesService(db, _timeProvider),
             new NumberSeriesSeedService(db),
             _timeProvider);
 

@@ -1,9 +1,7 @@
 using System.Text.Json;
 using DoodhDirect.Api.Middleware;
 using DoodhDirect.Application.Common;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DoodhDirect.Api.IntegrationTests;
@@ -17,8 +15,7 @@ public sealed class ExceptionHandlingMiddlewareTests
             "Insufficient wallet balance. Please add ₹460 to your wallet or choose another payment method.";
         var middleware = new ExceptionHandlingMiddleware(
             _ => throw new InsufficientWalletBalanceException(340m, 800m, 460m, "INR"),
-            NullLogger<ExceptionHandlingMiddleware>.Instance,
-            new TestWebHostEnvironment());
+            NullLogger<ExceptionHandlingMiddleware>.Instance);
         var context = new DefaultHttpContext();
         context.Response.Body = new MemoryStream();
 
@@ -41,15 +38,5 @@ public sealed class ExceptionHandlingMiddlewareTests
         Assert.DoesNotContain("INTERNAL_ERROR", serializedResponse);
         Assert.DoesNotContain("Internal Server Error", serializedResponse);
         Assert.DoesNotContain("500", serializedResponse);
-    }
-
-    private sealed class TestWebHostEnvironment : IWebHostEnvironment
-    {
-        public string ApplicationName { get; set; } = "DoodhDirect.Api.IntegrationTests";
-        public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
-        public string WebRootPath { get; set; } = string.Empty;
-        public string EnvironmentName { get; set; } = "Production";
-        public string ContentRootPath { get; set; } = string.Empty;
-        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

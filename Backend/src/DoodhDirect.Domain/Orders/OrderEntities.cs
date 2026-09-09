@@ -29,7 +29,7 @@ public sealed class Order : AuditableEntity
 
     public Order(
         long customerId,
-        long customerAddressId,
+        long? customerAddressId,
         long branchId,
         string idempotencyKey,
         string orderNumber,
@@ -52,7 +52,7 @@ public sealed class Order : AuditableEntity
         decimal longitude)
     {
         if (customerId <= 0) throw new ArgumentOutOfRangeException(nameof(customerId));
-        if (customerAddressId <= 0) throw new ArgumentOutOfRangeException(nameof(customerAddressId));
+        if (customerAddressId is <= 0) throw new ArgumentOutOfRangeException(nameof(customerAddressId));
         if (branchId <= 0) throw new ArgumentOutOfRangeException(nameof(branchId));
         if (subtotal < 0) throw new ArgumentOutOfRangeException(nameof(subtotal));
         if (discountAmount < 0 || discountAmount > subtotal) throw new ArgumentOutOfRangeException(nameof(discountAmount));
@@ -85,7 +85,7 @@ public sealed class Order : AuditableEntity
     }
 
     public long CustomerId { get; private set; }
-    public long CustomerAddressId { get; private set; }
+    public long? CustomerAddressId { get; private set; }
     public long BranchId { get; private set; }
     public string IdempotencyKey { get; private set; } = string.Empty;
     public string OrderNumber { get; private set; } = string.Empty;
@@ -112,7 +112,7 @@ public sealed class Order : AuditableEntity
     public DateTime? CancelledAt { get; private set; }
 
     public User Customer { get; private set; } = null!;
-    public CustomerAddress CustomerAddress { get; private set; } = null!;
+    public CustomerAddress? CustomerAddress { get; private set; }
     public Branch Branch { get; private set; } = null!;
     public ICollection<OrderItem> Items { get; private set; } = [];
 

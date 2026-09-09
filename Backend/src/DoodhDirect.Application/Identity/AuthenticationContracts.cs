@@ -3,14 +3,21 @@ using DoodhDirect.Domain.Identity;
 
 namespace DoodhDirect.Application.Identity;
 
+public sealed record AuthUserBranchResult(long Id, string Code, string Name);
+
 public sealed record AuthUserResult(
     Guid PublicUserId,
     string? DisplayName,
     string? Email,
     string? Mobile,
+    bool EmailVerified,
+    bool HasPassword,
+    string? PendingEmail,
+    string? PendingMobile,
     IReadOnlyCollection<string> Roles,
     IReadOnlyCollection<string> Permissions,
-    IReadOnlyCollection<long> BranchIds);
+    IReadOnlyCollection<long> BranchIds,
+    IReadOnlyCollection<AuthUserBranchResult>? BranchDetails = null);
 
 public sealed record TokenPair(
     string AccessToken,
@@ -25,7 +32,64 @@ public sealed record DeviceInfo(string DeviceIdentifier, string? DeviceName, str
 public sealed record RegisterRequest(string DisplayName, string? Email, string? Mobile, string Password, DeviceInfo Device);
 public sealed record PasswordLoginRequest(string Login, string Password, DeviceInfo Device);
 public sealed record SendOtpRequest(string Mobile, OtpPurpose Purpose, string? IpAddress);
-public sealed record VerifyOtpRequest(string Mobile, string Code, OtpPurpose Purpose, DeviceInfo Device);
+public sealed record VerifyOtpRequest(string Mobile, string Code, OtpPurpose Purpose, string ReqId, DeviceInfo Device);
+
+/// <summary>
+/// Discriminated result of a mobile OTP verification.
+/// <list type="bullet">
+/// <item><see cref="RequiresOnboarding"/> is <c>false</c> when the verified mobile belongs to an
+/// existing active user — <see cref="Session"/> then carries the authenticated session.</item>
+/// <item>For a Registration purpose on a mobile with no account, the challenge has been consumed
+/// and <see cref="RequiresOnboarding"/> is <c>true</c> with the provider-verified
+/// <see cref="VerifiedMobile"/> and <see cref="ReqId"/> that the client must present to the
+/// onboarding completion operation. No account is created by verification alone.</item>
+/// </list>
+/// </summary>
+public sealed record OtpVerificationResult(
+    bool RequiresOnboarding,
+    AuthSessionResult? Session,
+    string? VerifiedMobile,
+    string? ReqId);
+
+/// <summary>
+/// Completes OTP-driven customer onboarding after a Registration-purpose OTP for an unknown
+/// mobile has been verified. The mobile and reqId must match the consumed challenge; the server
+/// creates the Customer account (server-chosen role, verified mobile) and starts the session.
+/// </summary>
+public sealed record CompleteOtpRegistrationRequest(
+    string Mobile,
+    string ReqId,
+    string NewPassword,
+    DeviceInfo Device);
+
+/// <summary>Sets a password on an account that currently has none (e.g. created via OTP login).</summary>
+public sealed record SetPasswordRequest(string NewPassword);
+
+/// <summary>Changes the current password after verifying the existing one.</summary>
+public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
+/// <summary>Requests a password-reset OTP for the account's canonical mobile number.</summary>
+public sealed record ForgotPasswordRequest(string Mobile, string? IpAddress);
+
+/// <summary>Sets a new password after the server has consumed a PasswordReset OTP challenge.</summary>
+public sealed record ResetPasswordRequest(string Mobile, string ReqId, string NewPassword, DeviceInfo Device);
+
+/// <summary>Stages a new (or first) email for confirmation and sends an EmailVerification OTP to it.</summary>
+public sealed record RequestEmailChangeRequest(string NewEmail, string? IpAddress);
+
+/// <summary>Stages a new mobile for confirmation and sends a mobile OTP to it.</summary>
+public sealed record RequestMobileChangeRequest(string NewMobile, string? IpAddress);
+
+/// <summary>Verifies the EmailVerification OTP and commits the staged pending email.</summary>
+public sealed record VerifyEmailChangeRequest(string Code, string ReqId, DeviceInfo Device);
+
+public sealed record EmailChangeRequestedResult(string ReqId, string PendingEmail);
+public sealed record MobileChangeRequestedResult(string ReqId, string PendingMobile);
+
+public sealed record EmailVerificationResult(string Email, bool EmailVerified);
+
+/// <summary>Verifies a password-reset OTP without creating a session.</summary>
+public sealed record VerifyResetOtpRequest(string Destination, string Code, string ReqId, DeviceInfo Device);
 
 public interface IPasswordHasher
 {
@@ -46,15 +110,32 @@ public interface ITokenService
     string HashRefreshToken(string token);
 }
 
-public interface IOtpDeliveryService
-{
-    Task SendAsync(string destination, string code, CancellationToken cancellationToken);
-}
-
 public interface IOtpService
 {
-    Task SendAsync(SendOtpRequest request, CancellationToken cancellationToken);
-    Task<AuthSessionResult> VerifyAsync(VerifyOtpRequest request, CancellationToken cancellationToken);
+    Task<SendOtpResult> SendAsync(SendOtpRequest request, CancellationToken cancellationToken);
+    Task<SendOtpResult> RetryAsync(RetryOtpRequest request, CancellationToken cancellationToken);
+    /// <summary>
+    /// Verifies a mobile OTP. Login and other non-Registration purposes return an authenticated
+    /// session for an existing active user. A Registration-purpose verification on a mobile that
+    /// belongs to no user consumes the challenge and returns an onboarding-required outcome — the
+    /// client must continue through the dedicated onboarding completion operation.
+    /// </summary>
+    Task<OtpVerificationResult> VerifyAsync(VerifyOtpRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Sends an EmailVerification OTP to an email destination.</summary>
+    Task<SendOtpResult> SendEmailOtpAsync(string email, string? ipAddress, CancellationToken cancellationToken);
+
+    /// <summary>Resends the EmailVerification OTP for an email destination.</summary>
+    Task<SendOtpResult> RetryEmailOtpAsync(string email, string? ipAddress, CancellationToken cancellationToken);
+
+    /// <summary>Verifies the EmailVerification OTP and commits the user's staged pending email.</summary>
+    Task<AuthUserResult> VerifyEmailOtpAsync(VerifyEmailChangeRequest request, long userId, CancellationToken cancellationToken);
+
+    /// <summary>Verifies a mobile change OTP and commits the staged mobile number.</summary>
+    Task<AuthUserResult> VerifyMobileChangeOtpAsync(VerifyOtpRequest request, long userId, CancellationToken cancellationToken);
+
+    /// <summary>Verifies a PasswordReset OTP without creating a session.</summary>
+    Task VerifyResetOtpAsync(VerifyResetOtpRequest request, CancellationToken cancellationToken);
 }
 
 public interface IAuthenticationService
@@ -64,6 +145,28 @@ public interface IAuthenticationService
     Task<AuthSessionResult> RefreshAsync(string refreshToken, DeviceInfo device, CancellationToken cancellationToken);
     Task LogoutAsync(Guid sessionPublicId, long userId, CancellationToken cancellationToken);
     Task<AuthUserResult> GetCurrentUserAsync(long userId, CancellationToken cancellationToken);
+
+    /// <summary>Sets a password on an account that currently has none.</summary>
+    Task SetPasswordAsync(long userId, SetPasswordRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Completes OTP-driven customer onboarding for a provider-verified mobile with no existing
+    /// account, then starts a session for the new Customer.
+    /// </summary>
+    Task<AuthSessionResult> CompleteOtpRegistrationAsync(CompleteOtpRegistrationRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Verifies the current password, sets a new one, and revokes all other sessions.</summary>
+    Task ChangePasswordAsync(long userId, Guid currentSessionPublicId, ChangePasswordRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Resolves the account and sends a password-reset OTP to its verified contact.</summary>
+    Task<SendOtpResult> ForgotPasswordAsync(ForgotPasswordRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Verifies the password-reset OTP, sets a new password, and starts a fresh session.</summary>
+    Task<AuthSessionResult> ResetPasswordAsync(ResetPasswordRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Stages a new email and sends an EmailVerification OTP to it.</summary>
+    Task<EmailChangeRequestedResult> RequestEmailChangeAsync(long userId, RequestEmailChangeRequest request, CancellationToken cancellationToken);
+    Task<MobileChangeRequestedResult> RequestMobileChangeAsync(long userId, RequestMobileChangeRequest request, CancellationToken cancellationToken);
 }
 
 public static class AuthorizationCodes
@@ -133,6 +236,10 @@ public static class AuthorizationCodes
     public const string SetupNumberSeriesManage = "SETUP.NUMBER_SERIES.MANAGE";
     public const string BranchesRead = "BRANCHES.READ";
     public const string BranchesManage = "BRANCHES.MANAGE";
+    public const string SetupOtpProviderRead = "SETUP.OTP_PROVIDER.READ";
+    public const string SetupOtpProviderManage = "SETUP.OTP_PROVIDER.MANAGE";
+    public const string SetupIntegrationsRead = "SETUP.INTEGRATIONS.READ";
+    public const string SetupIntegrationsManage = "SETUP.INTEGRATIONS.MANAGE";
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -187,7 +294,7 @@ public static class AuthorizationCodes
         [MilkTestsDecideOwn] = "Confirm or reject an own completed doorstep milk test",
         [MilkTestsOperateAssigned] = "Upload evidence and complete doorstep tests for assigned deliveries",
         [WalletReadOwn] = "Read own wallet and ledger",
-        [WalletTopUpOwn] = "Top up own wallet through an approved development flow",
+        [WalletTopUpOwn] = "Top up own wallet through a verified payment",
         [WalletAdjust] = "Adjust customer wallets",
         [DairyRead] = "Read branch dairy operations",
         [DairyManage] = "Record branch dairy production and usage",
@@ -206,6 +313,10 @@ public static class AuthorizationCodes
         [SetupNumberSeriesRead] = "View numbering series configuration and live previews",
         [SetupNumberSeriesManage] = "Create and manage numbering series configuration",
         [BranchesRead] = "Read branch records and branch metadata",
-        [BranchesManage] = "Create, update, activate, and deactivate branch records"
+        [BranchesManage] = "Create, update, activate, and deactivate branch records",
+        [SetupOtpProviderRead] = "View OTP provider configuration and status",
+        [SetupOtpProviderManage] = "Configure and test the OTP provider",
+        [SetupIntegrationsRead] = "View integration configuration and status",
+        [SetupIntegrationsManage] = "Configure and test integrations"
     };
 }

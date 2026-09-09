@@ -1,4 +1,3 @@
-import 'package:doodh_direct_mobile/core/config/app_config.dart';
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
@@ -406,16 +405,6 @@ class _PaymentResultBody extends ConsumerWidget {
                           .openRazorpayAndVerify(),
                 icon: const Icon(Icons.open_in_new),
                 label: const Text('Continue Razorpay payment'),
-              ),
-            if (devToolsEnabled && payment.usesDevelopmentMock)
-              OutlinedButton.icon(
-                onPressed: isLoading
-                    ? null
-                    : () => ref
-                          .read(paymentControllerProvider.notifier)
-                          .completeDevelopment(),
-                icon: const Icon(Icons.developer_mode_outlined),
-                label: const Text('Complete development payment'),
               ),
           ],
           if (status.isTerminalFailure) ...[

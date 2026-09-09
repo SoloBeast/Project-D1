@@ -221,6 +221,25 @@ void main() {
       });
     });
 
+    test('update request serializes a scope key when provided', () {
+      const scoped = UpdateNumberSeriesRequest(
+        description: 'Main branch order numbers',
+        template: 'ORD/{SCOPE}/{FY}/{NUMBER:000000}',
+        startingNumber: 1,
+        incrementBy: 1,
+        resetPolicy: NumberSeriesResetPolicy.financialYear,
+        scopeKey: 'NIT',
+      );
+      expect(scoped.toJson(), {
+        'description': 'Main branch order numbers',
+        'template': 'ORD/{SCOPE}/{FY}/{NUMBER:000000}',
+        'startingNumber': 1,
+        'incrementBy': 1,
+        'resetPolicy': 'FinancialYear',
+        'scopeKey': 'NIT',
+      });
+    });
+
     test('preview request omits optional fields when null', () {
       const withoutNext = NumberSeriesPreviewRequest(
         code: 'CUST',
@@ -484,6 +503,33 @@ void main() {
       });
 
       await repository.setActive('number-token', 'ORD', true, scope: 'MAIN');
+    });
+
+    test('deletes a series with a DELETE request', () async {
+      final repository = _repository((request) async {
+        _expectRequest(
+          request,
+          method: 'DELETE',
+          path: '/api/v1/admin/setup/number-series/CUST',
+        );
+        return _response(<String, dynamic>{});
+      });
+
+      await repository.delete('number-token', 'CUST');
+    });
+
+    test('deletes a scoped series with a scope query parameter', () async {
+      final repository = _repository((request) async {
+        _expectRequest(
+          request,
+          method: 'DELETE',
+          path: '/api/v1/admin/setup/number-series/ORD',
+        );
+        expect(request.url.queryParameters, {'scope': 'MAIN'});
+        return _response(<String, dynamic>{});
+      });
+
+      await repository.delete('number-token', 'ORD', scope: 'MAIN');
     });
 
     test('surfaces validation field errors from the error envelope', () async {

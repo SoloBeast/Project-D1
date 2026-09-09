@@ -1,3 +1,4 @@
+using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using DoodhDirect.Application.Abstractions;
@@ -8,6 +9,7 @@ using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace DoodhDirect.Infrastructure.Identity;
 
@@ -16,7 +18,8 @@ public sealed class AuthenticationService(
     IPasswordHasher passwordHasher,
     ITokenService tokenService,
     IIndiaTimeProvider timeProvider,
-    INotificationEventWriter notificationEventWriter) : IAuthenticationService
+    INotificationEventWriter notificationEventWriter,
+    IOtpService otpService) : IAuthenticationService
 {
     public async Task<AuthSessionResult> RegisterAsync(
         RegisterRequest request,
@@ -50,10 +53,10 @@ public sealed class AuthenticationService(
     {
         var login = Require(request.Login, "Login is required.", nameof(request.Login));
         var normalizedEmail = NormalizeEmail(login);
-        var normalizedMobile = NormalizeMobile(login);
+        var mobileLookup = MobileLookupValues(login);
         var user = await dbContext.Users
             .Include(x => x.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x.RolePermissions).ThenInclude(x => x.Permission)
-            .SingleOrDefaultAsync(x => (normalizedEmail != null && x.Email == normalizedEmail) || (normalizedMobile != null && x.Mobile == normalizedMobile), cancellationToken);
+            .SingleOrDefaultAsync(x => (normalizedEmail != null && x.Email == normalizedEmail) || (mobileLookup.Count > 0 && mobileLookup.Contains(x.Mobile)), cancellationToken);
 
         if (user is null || string.IsNullOrWhiteSpace(user.PasswordHash) || !passwordHasher.Verify(user.PasswordHash, request.Password))
         {
@@ -109,7 +112,7 @@ public sealed class AuthenticationService(
             throw new UnauthorizedAppException();
         }
 
-        var authUser = storedToken.User.ToAuthUserResult();
+        var authUser = await storedToken.User.ToAuthUserResultAsync(dbContext, cancellationToken);
         var tokens = tokenService.Create(
             storedToken.User,
             session,
@@ -144,7 +147,198 @@ public sealed class AuthenticationService(
             .SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
         if (user is null || !user.IsActive)
             throw new UnauthorizedAppException();
-        return user.ToAuthUserResult();
+        return await user.ToAuthUserResultAsync(dbContext, cancellationToken);
+    }
+
+    public async Task SetPasswordAsync(long userId, SetPasswordRequest request, CancellationToken cancellationToken)
+    {
+        var password = Require(request.NewPassword, "Password is required.", nameof(request.NewPassword));
+        var user = await dbContext.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new UnauthorizedAppException();
+        if (!user.IsActive)
+            throw new UnauthorizedAppException();
+        if (user.HasPassword)
+            throw new BusinessRuleException("This account already has a password set.");
+
+        user.SetPasswordHash(passwordHasher.Hash(password));
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task ChangePasswordAsync(long userId, Guid currentSessionPublicId, ChangePasswordRequest request, CancellationToken cancellationToken)
+    {
+        var newPassword = Require(request.NewPassword, "New password is required.", nameof(request.NewPassword));
+        var user = await dbContext.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new UnauthorizedAppException();
+        if (!user.IsActive)
+            throw new UnauthorizedAppException();
+        if (string.IsNullOrWhiteSpace(user.PasswordHash) || !passwordHasher.Verify(user.PasswordHash, request.CurrentPassword))
+            throw new UnauthorizedAppException("The current password is incorrect.");
+
+        user.SetPasswordHash(passwordHasher.Hash(newPassword));
+        var now = timeProvider.Now;
+        var otherSessions = await dbContext.UserSessions
+            .Where(x => x.UserId == userId && x.PublicId != currentSessionPublicId && x.RevokedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var session in otherSessions)
+            session.Revoke(now, "PASSWORD_CHANGED");
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await WriteAuditAsync(userId, "AUTH_PASSWORD_CHANGED", "User", user.PublicId.ToString(), null, null, "Password changed by user", cancellationToken);
+    }
+
+    public async Task<SendOtpResult> ForgotPasswordAsync(ForgotPasswordRequest request, CancellationToken cancellationToken)
+    {
+        var mobile = NormalizeMobile(Require(request.Mobile, "Mobile number is required.", nameof(request.Mobile)))
+            ?? throw new ValidationAppException("A valid mobile number is required.", nameof(request.Mobile));
+        var mobileLookup = MobileLookupValues(mobile);
+        var user = await dbContext.Users
+            .SingleOrDefaultAsync(x => mobileLookup.Contains(x.Mobile), cancellationToken)
+            ?? throw new UnauthorizedAppException();
+        if (!user.IsActive || string.IsNullOrWhiteSpace(user.Mobile))
+            throw new UnauthorizedAppException();
+
+        // Password reset is deliberately mobile-only. This explicit purpose routes through
+        // the real MSG91 widget provider; SMTP is reserved for email transactions.
+        return await otpService.SendAsync(
+            new SendOtpRequest(mobile, OtpPurpose.PasswordReset, request.IpAddress),
+            cancellationToken);
+    }
+
+    public async Task<AuthSessionResult> ResetPasswordAsync(ResetPasswordRequest request, CancellationToken cancellationToken)
+    {
+        var mobile = NormalizeMobile(Require(request.Mobile, "Mobile number is required.", nameof(request.Mobile)))
+            ?? throw new ValidationAppException("A valid mobile number is required.", nameof(request.Mobile));
+        var reqId = Require(request.ReqId, "The OTP request id is required.", nameof(request.ReqId));
+        ValidateDevice(request.Device);
+
+        var mobileLookup = MobileLookupValues(mobile);
+        var user = await dbContext.Users
+            .Include(x => x.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x.RolePermissions).ThenInclude(x => x.Permission)
+            .SingleOrDefaultAsync(x => mobileLookup.Contains(x.Mobile), cancellationToken)
+            ?? throw new UnauthorizedAppException();
+        if (!user.IsActive)
+            throw new UnauthorizedAppException();
+
+        // The client can submit only the reqId. The server authorizes the reset from the
+        // consumed PasswordReset challenge created for this canonical mobile.
+        var now = timeProvider.Now;
+        var challenge = await dbContext.OtpChallenges
+            .Where(x => x.Destination == mobile && x.Purpose == OtpPurpose.PasswordReset)
+            .OrderByDescending(x => x.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (challenge is null ||
+            !challenge.CanConsumePasswordReset(now) ||
+            !string.Equals(challenge.ReqId, reqId, StringComparison.Ordinal))
+            throw new UnauthorizedAppException("The OTP has not been verified or has expired.");
+
+        // Consume the verified reset authorization before changing the password. The
+        // tracked entity and transaction make the ReqId one-time for password reset.
+        challenge.ConsumePasswordReset(now);
+        user.SetPasswordHash(passwordHasher.Hash(request.NewPassword));
+
+        var otherSessions = await dbContext.UserSessions
+            .Where(x => x.UserId == user.Id && x.RevokedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var session in otherSessions)
+            session.Revoke(now, "PASSWORD_RESET");
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await WriteAuditAsync(user.Id, "AUTH_PASSWORD_RESET", "User", user.PublicId.ToString(), request.Device.IpAddress, request.Device.UserAgent, "Password reset via OTP", cancellationToken);
+        return await CreateSessionAsync(user, request.Device, now, "PASSWORD_RESET_LOGIN", cancellationToken);
+    }
+
+    public async Task<AuthSessionResult> CompleteOtpRegistrationAsync(
+        CompleteOtpRegistrationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var reqId = Require(request.ReqId, "The OTP request id is required.", nameof(request.ReqId));
+        var password = Require(request.NewPassword, "Password is required.", nameof(request.NewPassword));
+        ValidateDevice(request.Device);
+
+        var destination = NormalizeMobile(Require(request.Mobile, "Mobile number is required.", nameof(request.Mobile)))
+            ?? throw new ValidationAppException("A valid mobile number is required.", nameof(request.Mobile));
+        var mobileLookup = MobileLookupValues(destination);
+
+        var now = timeProvider.Now;
+        AuthSessionResult result = null!;
+
+        await ExecuteAtomicAsync(async () =>
+        {
+            // The client must have verified the Registration OTP first (generic verify-otp with
+            // Registration purpose), which consumed the challenge and returned the onboarding
+            // outcome. Matching the reqId against the consumed challenge proves that prior
+            // provider verification without re-calling MSG91 — an OTP code is single-use, so a
+            // consumed challenge can never be replayed to authorize a second account.
+            var challenge = await dbContext.OtpChallenges
+                .Where(x => x.Destination == destination && x.Purpose == OtpPurpose.Registration)
+                .OrderByDescending(x => x.CreatedAt)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (challenge is null || challenge.ConsumedAt is null || !string.Equals(challenge.ReqId, reqId, StringComparison.Ordinal))
+                throw new UnauthorizedAppException("The OTP has not been verified or has expired.");
+
+            // Race-condition guard: an account may have been created after the OTP was verified
+            // (e.g. a second completion). The unique filtered User.Mobile index is the backstop
+            // if two completions slip past this check on SQL Server.
+            var existing = await dbContext.Users
+                .SingleOrDefaultAsync(x => mobileLookup.Contains(x.Mobile), cancellationToken);
+            if (existing is not null)
+                throw new ConflictException("An account already exists for this mobile number. Please sign in instead.");
+
+            // The server decides the account type and role; the client can never supply them.
+            var customerRole = await GetCustomerRoleAsync(cancellationToken);
+            var user = new User(UserType.Customer);
+            user.SetContact(destination, null);
+            user.SetPasswordHash(passwordHasher.Hash(password));
+            user.AssignRole(customerRole);
+            dbContext.Users.Add(user);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            await WriteAuditAsync(user.Id, "AUTH_OTP_ONBOARDED", "User", user.PublicId.ToString(), request.Device.IpAddress, request.Device.UserAgent, "Customer created via verified mobile OTP", cancellationToken);
+            result = await CreateSessionAsync(user, request.Device, now, "REGISTRATION", cancellationToken);
+        }, cancellationToken);
+
+        return result;
+    }
+
+    public async Task<EmailChangeRequestedResult> RequestEmailChangeAsync(long userId, RequestEmailChangeRequest request, CancellationToken cancellationToken)
+    {
+        var newEmail = NormalizeEmail(request.NewEmail)
+            ?? throw new ValidationAppException("A valid email address is required.", nameof(request.NewEmail));
+        var user = await dbContext.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new UnauthorizedAppException();
+        if (!user.IsActive)
+            throw new UnauthorizedAppException();
+        if (string.Equals(user.Email, newEmail, StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException("The new email is the same as the current email.");
+        if (await dbContext.Users.AnyAsync(x => x.Id != userId && x.Email == newEmail, cancellationToken))
+            throw new ConflictException("An account already exists for this email.");
+
+        user.RequestPendingEmailChange(newEmail);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var sendResult = await otpService.SendEmailOtpAsync(newEmail, request.IpAddress, cancellationToken);
+        await WriteAuditAsync(userId, "AUTH_EMAIL_CHANGE_REQUESTED", "User", user.PublicId.ToString(), request.IpAddress, null, $"Pending email staged: {newEmail}", cancellationToken);
+        return new EmailChangeRequestedResult(sendResult.ReqId, newEmail);
+    }
+
+    public async Task<MobileChangeRequestedResult> RequestMobileChangeAsync(long userId, RequestMobileChangeRequest request, CancellationToken cancellationToken)
+    {
+        var newMobile = NormalizeMobile(request.NewMobile)
+            ?? throw new ValidationAppException("A valid mobile number is required.", nameof(request.NewMobile));
+        var user = await dbContext.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken)
+            ?? throw new UnauthorizedAppException();
+        if (!user.IsActive) throw new UnauthorizedAppException();
+        if (string.Equals(user.Mobile, newMobile, StringComparison.OrdinalIgnoreCase))
+            throw new BusinessRuleException("The new mobile number is the same as the current mobile number.");
+        var lookup = MobileLookupValues(newMobile);
+        if (await dbContext.Users.AnyAsync(x => x.Id != userId && lookup.Contains(x.Mobile), cancellationToken))
+            throw new ConflictException("An account already exists for this mobile number.");
+
+        user.RequestPendingMobileChange(newMobile);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        var sendResult = await otpService.SendAsync(new SendOtpRequest(newMobile, OtpPurpose.EmailVerification, request.IpAddress), cancellationToken);
+        await WriteAuditAsync(userId, "AUTH_MOBILE_CHANGE_REQUESTED", "User", user.PublicId.ToString(), request.IpAddress, null, $"Pending mobile staged: {newMobile}", cancellationToken);
+        return new MobileChangeRequestedResult(sendResult.ReqId, newMobile);
     }
 
     private async Task<AuthSessionResult> CreateSessionAsync(User user, DeviceInfo device, DateTime now, string action, CancellationToken cancellationToken)
@@ -155,7 +349,7 @@ public sealed class AuthenticationService(
         user.RecordLogin(now);
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        var authUser = user.ToAuthUserResult();
+        var authUser = await user.ToAuthUserResultAsync(dbContext, cancellationToken);
         var tokens = tokenService.Create(
             user,
             session,
@@ -201,6 +395,25 @@ public sealed class AuthenticationService(
         return new AuthSessionResult(authUser, tokens);
     }
 
+    private async Task ExecuteAtomicAsync(Func<Task> operation, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            await operation();
+            return;
+        }
+
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using IDbContextTransaction transaction = await dbContext.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable,
+                cancellationToken);
+            await operation();
+            await transaction.CommitAsync(cancellationToken);
+        });
+    }
+
     private async Task RevokeSessionAsync(UserSession session, DateTime now, string reason, CancellationToken cancellationToken)
     {
         session.Revoke(now, reason);
@@ -223,8 +436,12 @@ public sealed class AuthenticationService(
     {
         if (email is not null && await dbContext.Users.AnyAsync(x => x.Email == email, cancellationToken))
             throw new ConflictException("An account already exists for this email.");
-        if (mobile is not null && await dbContext.Users.AnyAsync(x => x.Mobile == mobile, cancellationToken))
-            throw new ConflictException("An account already exists for this mobile number.");
+        if (mobile is not null)
+        {
+            var mobileLookup = MobileLookupValues(mobile);
+            if (mobileLookup.Count > 0 && await dbContext.Users.AnyAsync(x => mobileLookup.Contains(x.Mobile), cancellationToken))
+                throw new ConflictException("An account already exists for this mobile number.");
+        }
     }
 
     private async Task WriteAuditAsync(long? userId, string action, string entityType, string entityId, string? ipAddress, string? userAgent, string? reason, CancellationToken cancellationToken)
@@ -244,11 +461,27 @@ public sealed class AuthenticationService(
 
     private static string? NormalizeEmail(string? value) => string.IsNullOrWhiteSpace(value) || !value.Contains('@') ? null : value.Trim().ToLowerInvariant();
 
-    private static string? NormalizeMobile(string? value)
+    /// <summary>
+    /// Canonicalizes a mobile number to the shared E.164 form <c>+91XXXXXXXXXX</c>.
+    /// Email addresses are not mobile numbers and return <c>null</c>.
+    /// </summary>
+    private static string? NormalizeMobile(string? value) =>
+        IndiaMobileNumber.Canonicalize(value);
+
+    /// <summary>
+    /// Candidate mobile identities for a login value: the canonical E.164 form and
+    /// the 10-digit national form. Both are matched against <c>User.Mobile</c> so
+    /// legacy rows stored without a country code continue to resolve while new
+    /// rows are stored canonically.
+    /// </summary>
+    private static IReadOnlyList<string> MobileLookupValues(string? value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var normalized = value.Trim();
-        return normalized.Any(char.IsDigit) ? normalized : null;
+        var canonical = IndiaMobileNumber.Canonicalize(value);
+        if (canonical is null) return Array.Empty<string>();
+        var national = IndiaMobileNumber.ToNational(canonical);
+        return national is null || national == canonical
+            ? new[] { canonical }
+            : new[] { canonical, national };
     }
 
     private static string HashDevice(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();

@@ -69,3 +69,11 @@ public sealed class ConflictException(string message)
 public sealed class CameraStreamUnavailableException(
     string message = "The live camera stream is currently unavailable.")
     : AppException(message, "CAMERA_STREAM_UNAVAILABLE", 503);
+
+public sealed class OtpProviderUnavailableException(
+    string message = "The OTP service is temporarily unavailable. Please try again in a few moments.")
+    : AppException(message, "OTP_PROVIDER_UNAVAILABLE", 503);
+
+public sealed class OtpProviderRejectedException(
+    string message = "The OTP service rejected the request.")
+    : AppException(message, "OTP_PROVIDER_REJECTED", 422);

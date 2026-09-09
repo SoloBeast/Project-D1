@@ -133,10 +133,7 @@ void main() {
 
     test('employee role labels match the administrator role selector', () {
       expect(EmployeeRole.deliveryManager.label, 'Delivery Manager');
-      expect(
-        EmployeeRole.deliveryStaff.label,
-        'Delivery Boy / Delivery Staff',
-      );
+      expect(EmployeeRole.deliveryStaff.label, 'Delivery Boy / Delivery Staff');
       expect(EmployeeRole.accountant.label, 'Accountant');
       expect(EmployeeRole.dairyManager.label, 'Dairy Manager');
       expect(EmployeeRole.systemAdmin.label, 'System Administrator');
@@ -187,6 +184,7 @@ void main() {
       const noExtras = CreateEmployeeRequest(
         displayName: 'Suresh',
         mobile: '9876500000',
+        email: 'suresh@example.com',
         roleCode: 'SYSTEM_ADMIN',
         branchId: null,
         sendInvitation: false,
@@ -194,6 +192,7 @@ void main() {
       expect(noExtras.toJson(), {
         'displayName': 'Suresh',
         'mobile': '9876500000',
+        'email': 'suresh@example.com',
         'roleCode': 'SYSTEM_ADMIN',
         'sendInvitation': false,
       });
@@ -234,6 +233,15 @@ void main() {
         withInvitation.invitation!.expiresAt,
         DateTime.parse('2026-09-01T10:00:00Z'),
       );
+      expect(
+        withInvitation.invitation!.emailDeliveryStatus,
+        InvitationEmailDeliveryStatus.sent,
+      );
+      expect(
+        withInvitation.invitation!.emailDeliveryReason,
+        'Invitation email accepted by the SMTP relay.',
+      );
+      expect(withInvitation.invitation!.emailRecipient, 'ramesh@example.com');
 
       final withoutInvitation = CreateEmployeeResult.fromJson({
         'employee': _employeeJson(),
@@ -243,7 +251,8 @@ void main() {
     });
 
     test('parses invitation verification with and without a branch', () {
-      final verification = EmployeeInvitationVerification.fromJson({
+      // Legacy payload: branch id only, no name/code metadata.
+      final legacy = EmployeeInvitationVerification.fromJson({
         'isValid': true,
         'displayName': 'Ramesh Kumar',
         'mobile': '9876543210',
@@ -252,11 +261,13 @@ void main() {
         'branchId': 7,
         'reason': null,
       });
-      expect(verification.isValid, isTrue);
-      expect(verification.displayName, 'Ramesh Kumar');
-      expect(verification.mobile, '9876543210');
-      expect(verification.roleCode, 'DELIVERY_STAFF');
-      expect(verification.branchId, 7);
+      expect(legacy.isValid, isTrue);
+      expect(legacy.displayName, 'Ramesh Kumar');
+      expect(legacy.mobile, '9876543210');
+      expect(legacy.roleCode, 'DELIVERY_STAFF');
+      expect(legacy.branchId, 7);
+      expect(legacy.branchCode, isNull);
+      expect(legacy.branchName, isNull);
 
       final unbound = EmployeeInvitationVerification.fromJson({
         'isValid': true,
@@ -268,7 +279,45 @@ void main() {
         'reason': null,
       });
       expect(unbound.branchId, isNull);
+      expect(unbound.branchCode, isNull);
+      expect(unbound.branchName, isNull);
     });
+
+    test(
+      'parses server-enriched branch metadata on invitation verification',
+      () {
+        final dabua = EmployeeInvitationVerification.fromJson({
+          'isValid': true,
+          'displayName': 'Ramesh Kumar',
+          'mobile': '9876543210',
+          'email': 'ramesh@example.test',
+          'roleCode': 'DAIRY_MANAGER',
+          'branchId': 7,
+          'branchCode': 'DABUA',
+          'branchName': 'Dabua',
+          'reason': null,
+        });
+        expect(dabua.branchId, 7);
+        expect(dabua.branchCode, 'DABUA');
+        expect(dabua.branchName, 'Dabua');
+
+        // Some servers may omit the display name but keep the branch metadata.
+        final nit3 = EmployeeInvitationVerification.fromJson({
+          'isValid': true,
+          'displayName': null,
+          'mobile': '9876543211',
+          'email': null,
+          'roleCode': 'DELIVERY_STAFF',
+          'branchId': 9,
+          'branchCode': 'NIT3',
+          'branchName': null,
+          'reason': null,
+        });
+        expect(nit3.branchId, 9);
+        expect(nit3.branchCode, 'NIT3');
+        expect(nit3.branchName, isNull);
+      },
+    );
 
     test('serializes complete registration requests', () {
       final request = CompleteEmployeeRegistrationRequest(
@@ -428,6 +477,15 @@ void main() {
 
       expect(invitation.token, 'inv-token-42');
       expect(invitation.invitationId, 9);
+      expect(
+        invitation.emailDeliveryStatus,
+        InvitationEmailDeliveryStatus.sent,
+      );
+      expect(
+        invitation.emailDeliveryReason,
+        'Invitation email accepted by the SMTP relay.',
+      );
+      expect(invitation.emailRecipient, 'ramesh@example.com');
     });
 
     test('cancels an invitation', () async {
@@ -477,7 +535,10 @@ void main() {
           path: '/api/v1/auth/send-otp',
           authorization: null,
         );
-        expect(jsonDecode(request.body), {'mobile': '9876543210', 'purpose': 3});
+        expect(jsonDecode(request.body), {
+          'mobile': '9876543210',
+          'purpose': 3,
+        });
         return _response(<String, dynamic>{});
       });
 
@@ -490,7 +551,8 @@ void main() {
         _expectRequest(
           request,
           method: 'GET',
-          path: '/api/v1/employee-invitations/${Uri.encodeComponent(token)}/verify',
+          path:
+              '/api/v1/employee-invitations/${Uri.encodeComponent(token)}/verify',
           authorization: null,
         );
         return _response({
@@ -511,43 +573,46 @@ void main() {
       expect(verification.branchId, 7);
     });
 
-    test('completes registration with device payload and no auth token', () async {
-      final repository = _repository((request) async {
-        _expectRequest(
-          request,
-          method: 'POST',
-          path: '/api/v1/employee-invitations/complete',
-          authorization: null,
+    test(
+      'completes registration with device payload and no auth token',
+      () async {
+        final repository = _repository((request) async {
+          _expectRequest(
+            request,
+            method: 'POST',
+            path: '/api/v1/employee-invitations/complete',
+            authorization: null,
+          );
+          expect(jsonDecode(request.body), {
+            'token': 'invitation-token-42',
+            'displayName': 'Ramesh Kumar',
+            'mobile': '9876543210',
+            'password': 'secret123',
+            'otpCode': '123456',
+            'device': {'deviceId': 'dev-1'},
+          });
+          return _response({
+            'session': _sessionJson(),
+            'invitationStatus': 'Registered',
+          });
+        });
+
+        final result = await repository.completeRegistration(
+          CompleteEmployeeRegistrationRequest(
+            token: 'invitation-token-42',
+            displayName: 'Ramesh Kumar',
+            mobile: '9876543210',
+            password: 'secret123',
+            otpCode: '123456',
+            device: {'deviceId': 'dev-1'},
+          ),
         );
-        expect(jsonDecode(request.body), {
-          'token': 'invitation-token-42',
-          'displayName': 'Ramesh Kumar',
-          'mobile': '9876543210',
-          'password': 'secret123',
-          'otpCode': '123456',
-          'device': {'deviceId': 'dev-1'},
-        });
-        return _response({
-          'session': _sessionJson(),
-          'invitationStatus': 'Registered',
-        });
-      });
 
-      final result = await repository.completeRegistration(
-        CompleteEmployeeRegistrationRequest(
-          token: 'invitation-token-42',
-          displayName: 'Ramesh Kumar',
-          mobile: '9876543210',
-          password: 'secret123',
-          otpCode: '123456',
-          device: {'deviceId': 'dev-1'},
-        ),
-      );
-
-      expect(result.invitationStatus, EmployeeInvitationStatus.registered);
-      final session = AuthSession.fromJson(result.sessionJson);
-      expect(session.accessToken, 'employee-token');
-    });
+        expect(result.invitationStatus, EmployeeInvitationStatus.registered);
+        final session = AuthSession.fromJson(result.sessionJson);
+        expect(session.accessToken, 'employee-token');
+      },
+    );
   });
 }
 
@@ -607,6 +672,9 @@ Map<String, dynamic> _invitationJson() => {
   'employeeId': 42,
   'token': 'inv-token-42',
   'expiresAt': '2026-09-01T10:00:00Z',
+  'emailDeliveryStatus': 'Sent',
+  'emailDeliveryReason': 'Invitation email accepted by the SMTP relay.',
+  'emailRecipient': 'ramesh@example.com',
 };
 
 Map<String, dynamic> _sessionJson() => {

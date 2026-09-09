@@ -1,11 +1,6 @@
 import 'package:doodh_direct_mobile/features/customer/current_location_provider.dart';
-import 'package:doodh_direct_mobile/features/customer/maps_script_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-
-const _googleMapsApiKey = String.fromEnvironment(
-  'DOOHDIRECT_GOOGLE_MAPS_API_KEY',
-);
 
 const addressSelectionFallback = LatLng(28.367, 77.317);
 const addressSelectionZoom = 15.0;
@@ -21,15 +16,22 @@ class GoogleMapCoordinatePicker extends StatefulWidget {
     super.key,
     this.initialLocation,
     required this.onLocationSelected,
+    required this.mapsLoader,
     this.currentLocationProvider = getCurrentLocation,
-    this.mapsLoader,
     this.mapBuilder,
   });
 
   final LatLng? initialLocation;
   final ValueChanged<LatLng> onLocationSelected;
+
+  /// Loads the Google Maps JavaScript API (or resolves the platform default).
+  ///
+  /// The map is no longer bound to a compile-time `--dart-define` key. The
+  /// owner supplies the runtime loader (see [maps_script_loader]) so the web
+  /// client key can be fetched from the server at runtime and changed without
+  /// rebuilding the app.
+  final Future<void> Function() mapsLoader;
   final CurrentLocationProvider currentLocationProvider;
-  final Future<void> Function()? mapsLoader;
   final CoordinateMapBuilder? mapBuilder;
 
   @override
@@ -54,16 +56,7 @@ class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker> {
   void initState() {
     super.initState();
     _selectedLocation = widget.initialLocation ?? addressSelectionFallback;
-
-    final mapsLoader = widget.mapsLoader;
-    if (mapsLoader != null) {
-      _mapsReady = mapsLoader();
-    } else {
-      _diagnostic(
-        'maps key present=${_googleMapsApiKey.trim().isNotEmpty}',
-      );
-      _mapsReady = loadGoogleMapsScript(_googleMapsApiKey);
-    }
+    _mapsReady = widget.mapsLoader();
   }
 
   @override

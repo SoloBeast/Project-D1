@@ -206,6 +206,93 @@ class DeliveryOrderSummary {
   final List<String> items;
 }
 
+class DeliveryBatchAllocation {
+  const DeliveryBatchAllocation({
+    required this.batchId,
+    required this.batchNumber,
+    required this.quantityAllocated,
+    required this.allocatedAt,
+    required this.updatedAt,
+  });
+
+  factory DeliveryBatchAllocation.fromJson(Map<String, dynamic> json) =>
+      DeliveryBatchAllocation(
+        batchId: (json['batchId'] as num).toInt(),
+        batchNumber: json['batchNumber'] as String,
+        quantityAllocated: (json['quantityAllocated'] as num).toDouble(),
+        allocatedAt: DateTime.parse(json['allocatedAt'] as String),
+        updatedAt: DateTime.parse(json['updatedAt'] as String),
+      );
+
+  final int batchId;
+  final String batchNumber;
+  final double quantityAllocated;
+  final DateTime allocatedAt;
+  final DateTime updatedAt;
+
+  Map<String, dynamic> toSaveJson() => {
+    'batchId': batchId,
+    'quantityAllocated': quantityAllocated,
+  };
+}
+
+class EligibleDeliveryBatch {
+  const EligibleDeliveryBatch({
+    required this.batchId,
+    required this.batchNumber,
+    required this.productionAt,
+    required this.quantityProduced,
+    required this.quantityAvailable,
+    required this.unit,
+    required this.status,
+  });
+
+  factory EligibleDeliveryBatch.fromJson(Map<String, dynamic> json) =>
+      EligibleDeliveryBatch(
+        batchId: (json['batchId'] as num).toInt(),
+        batchNumber: json['batchNumber'] as String,
+        productionAt: DateTime.parse(json['productionAt'] as String),
+        quantityProduced: (json['quantityProduced'] as num).toDouble(),
+        quantityAvailable: (json['quantityAvailable'] as num).toDouble(),
+        unit: json['unit'] as String? ?? 'L',
+        status: json['status'] as String? ?? 'available',
+      );
+
+  final int batchId;
+  final String batchNumber;
+  final DateTime productionAt;
+  final double quantityProduced;
+  final double quantityAvailable;
+  final String unit;
+  final String status;
+}
+
+class DeliveryBatchAllocationsInfo {
+  const DeliveryBatchAllocationsInfo({
+    required this.eligibleBatches,
+    required this.allocations,
+    required this.totalRequiredQuantity,
+  });
+
+  factory DeliveryBatchAllocationsInfo.fromJson(Map<String, dynamic> json) =>
+      DeliveryBatchAllocationsInfo(
+        eligibleBatches: (json['eligibleBatches'] as List<dynamic>? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(EligibleDeliveryBatch.fromJson)
+            .toList(growable: false),
+        allocations: (json['allocations'] as List<dynamic>? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(DeliveryBatchAllocation.fromJson)
+            .toList(growable: false),
+        totalRequiredQuantity: (json['totalRequiredQuantity'] as num)
+            .toDouble(),
+      );
+
+  final List<EligibleDeliveryBatch> eligibleBatches;
+  final List<DeliveryBatchAllocation> allocations;
+  final double totalRequiredQuantity;
+}
+
 class DeliveryDetails {
   const DeliveryDetails({
     required this.deliveryId,
@@ -239,6 +326,7 @@ class DeliveryDetails {
     required this.isTrackingActive,
     required this.latestLocation,
     required this.assignments,
+    required this.batchAllocations,
   });
   factory DeliveryDetails.fromJson(Map<String, dynamic> json) =>
       DeliveryDetails(
@@ -284,6 +372,11 @@ class DeliveryDetails {
             .cast<Map<String, dynamic>>()
             .map(DeliveryAssignment.fromJson)
             .toList(growable: false),
+        batchAllocations:
+            (json['batchAllocations'] as List<dynamic>? ?? const [])
+                .cast<Map<String, dynamic>>()
+                .map(DeliveryBatchAllocation.fromJson)
+                .toList(growable: false),
       );
   final String deliveryId;
   final DeliverySourceType sourceType;
@@ -316,6 +409,7 @@ class DeliveryDetails {
   final bool isTrackingActive;
   final DeliveryLocation? latestLocation;
   final List<DeliveryAssignment> assignments;
+  final List<DeliveryBatchAllocation> batchAllocations;
 }
 
 class DeliveryEmployee {

@@ -454,3 +454,35 @@ Use an idempotency key/reference unique within the operation scope.
 - Create, update, activate, and deactivate are audited as `NUMBER_SERIES.CREATED`, `NUMBER_SERIES.UPDATED`, `NUMBER_SERIES.ACTIVATED`, and `NUMBER_SERIES.DEACTIVATED` with the acting user recorded.
 - Reads require `SETUP.NUMBER_SERIES.READ`; create, update, activate, and deactivate require `SETUP.NUMBER_SERIES.MANAGE`.
 - `Code` (for example `CUSTOMER`, `ORDER`, `BRANCH`, `DELIVERY`) is the stable lookup key used by business services; it is independent of any display prefix.
+
+---
+
+## 22. Guest Session / Deferred Login Rules
+
+### Session state
+
+The client session state machine is `loading -> guest | unauthenticated | authenticated`:
+
+- `loading` — restoring the persisted session; no UI decisions are made yet.
+- `guest` — browsing-only mode entered without credentials. The guest holds no session, no refresh token, and no JWT; there is no token refresh and no protected API call.
+- `unauthenticated` — no active session, awaiting login/registration.
+- `authenticated` — a valid customer (or employee) session is active.
+
+`enterAsGuest()` starts guest browsing from the public storefront without disturbing an already-authenticated session; `exitGuest()` leaves the guest cart in place (it survives until a successful payment or an explicit logout).
+
+### Deferred-login boundaries
+
+- The guest may use the public storefront: launch/home, catalogue, product details, add/update/remove cart, view cart, and checkout review.
+- The guest must sign in before: checkout submission, addresses, payments, orders, subscriptions, wallet, delivery tracking, doorstep milk testing, profile, notifications, and cameras.
+- Checkout review is reachable as a guest, but the final "place order" step presents a login/register prompt. The in-memory cart is preserved across this boundary and re-scoped to the signed-in user after authentication.
+
+### Guest cart persistence
+
+- The guest cart lives only on the current device under the storage key `identity.guest.cart.v1` and is identity-scoped: while browsing as a guest it is stored with a null user id; after sign-in it is re-persisted scoped to the customer's public user id.
+- The guest cart survives app/browser restarts and survives the login transition, so a customer who adds items as a guest keeps them after signing in.
+- The cart is cleared from storage only on successful payment or explicit logout; simply exiting guest mode does not discard it.
+- Corrupt or older-version payloads are discarded safely rather than crashing the client.
+
+### Backend contract
+
+- Backend authorization is unchanged: every endpoint without `[AllowAnonymous]` requires an authenticated user, so guests receive `401 Unauthorized` from protected APIs and the anonymous surface remains limited to catalogue reads, authentication entry points, the Razorpay webhook, employee-invitation verify/complete, and `/health/live`.

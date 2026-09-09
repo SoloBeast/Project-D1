@@ -97,7 +97,33 @@ Registration creates a customer identity, assigns the `CUSTOMER` role, creates a
 }
 ```
 
-`purpose` is the `OtpPurpose` enum value: `0` for login, `1` for registration, `2` for password reset, and `3` for employee invitation (used only by the invitation onboarding flow, never by public registration). Requests are limited to 3 per mobile/purpose in 15 minutes by default. The configured default delivery service currently throws because no SMS provider is configured.
+`purpose` is the `OtpPurpose` enum value: `0` for login, `1` for registration, `2` for password reset, and `3` for employee invitation (used only by the invitation onboarding flow, never by public registration). Requests are limited to 3 per mobile/purpose in 15 minutes by default.
+
+The identity OTP is delivered through the configured MSG91 provider. The backend stores the provider request id on the challenge and returns it as `data.reqId`. The client holds `reqId` only in memory and must supply it to `POST /auth/retry-otp` and `POST /auth/verify-otp`. The response envelope is:
+
+```json
+{
+  "success": true,
+  "data": {
+    "reqId": "provider-request-id"
+  },
+  "message": null,
+  "errors": []
+}
+```
+
+If the provider is not configured or unreachable the request fails closed with `503 OTP_PROVIDER_UNAVAILABLE`. If the provider rejects the request the failure is `422 OTP_PROVIDER_REJECTED`.
+
+### `POST /auth/retry-otp` (anonymous)
+
+```json
+{
+  "mobile": "919876543210",
+  "purpose": 0
+}
+```
+
+Re-issues the OTP for the active challenge identified by `mobile` and `purpose`. The provider is asked to resend using the persisted `reqId`; the new `reqId` returned by the provider replaces the previous one on the challenge and is returned as `data.reqId`. If there is no active challenge (none was sent, the challenge expired, or all attempts were consumed) the request fails with `404 NOT_FOUND`; a provider failure fails closed with `503 OTP_PROVIDER_UNAVAILABLE`.
 
 ### `POST /auth/verify-otp` (anonymous)
 
@@ -106,6 +132,7 @@ Registration creates a customer identity, assigns the `CUSTOMER` role, creates a
   "mobile": "919876543210",
   "code": "123456",
   "purpose": 0,
+  "reqId": "provider-request-id",
   "device": {
     "deviceIdentifier": "device-1",
     "deviceName": "DoodhDirect Flutter",
@@ -114,7 +141,7 @@ Registration creates a customer identity, assigns the `CUSTOMER` role, creates a
 }
 ```
 
-Codes expire after 5 minutes and permit 5 failed attempts by default. Successful verification returns a new authenticated session.
+`reqId` must be the provider request id returned by `send-otp` or `retry-otp` for this challenge; the backend compares it with the persisted challenge `ReqId` and rejects a mismatch with `401 Unauthorized`, so a code can never be replayed against another user's OTP request. The backend verifies the entered code with the MSG91 provider using the persisted `reqId`, then validates the returned provider access token server-side before issuing the authenticated session. Codes expire after 5 minutes and permit 5 failed attempts by default. Successful verification returns a new authenticated session.
 
 ### `POST /auth/refresh` (anonymous)
 
@@ -385,7 +412,9 @@ Wallet transaction results expose `occurredAt` as an India-local wall-clock time
 
 `GET /wallet/transactions`
 
-`POST /wallet/topup`
+`POST /wallet/top-up` (authenticated, own wallet)
+
+Starts a customer wallet top-up. Requires the `Idempotency-Key` header. The request body carries only the customer-entered `amount` (INR decimal). The server records the authoritative amount, creates a pending `WalletTopUp` Razorpay payment and gateway order, and returns `201` with `ApiResponse<PaymentResult>` containing the checkout details (key ID, gateway order ID, amount, expiry). The wallet is **not** credited at creation. The client then opens Razorpay Checkout and passes the checkout callback to `POST /payments/verify`; the wallet is credited exactly once only after the backend verifies the signature, order ID, payment ID, amount, currency, capture state, target (wallet top-up), and ownership. One Razorpay payment yields exactly one `TopUp` wallet transaction referencing the payment public ID. Failed, cancelled, or expired payments never credit the wallet.
 
 Wallet debit operations are normally server-generated from order/subscription actions.
 
@@ -393,7 +422,7 @@ Admin:
 
 `POST /admin/customers/{customerId}/wallet/adjust`
 
-Requires audit reason.
+Requires audit reason. Admin adjustments remain separate from customer top-ups and stay permission-protected and audited.
 
 ---
 
@@ -453,7 +482,7 @@ Delivery status values are `ReadyForAssignment`, `Assigned`, `PickedUp`, `OutFor
 - `POST /delivery/{deliveryId}/pickup` accepts `{ "remarks": "optional operational notes" }`.
 - `POST /delivery/{deliveryId}/start` transitions a picked-up delivery to `OutForDelivery`.
 - `POST /delivery/{deliveryId}/arrive` transitions an out-for-delivery delivery to `Arrived`.
-- `POST /delivery/{deliveryId}/issue-otp` issues a short-lived delivery OTP through the configured server provider.
+- `POST /delivery/{deliveryId}/issue-otp` issues a short-lived **Delivery OTP that is generated in-app** (never sent via MSG91 or any SMS provider). The code is surfaced inside the customer's DoodhDirect app for the delivery staff to verify; see section 18 for the Identity OTP vs Delivery OTP scope separation.
 - `POST /delivery/{deliveryId}/verify-otp` accepts `{ "code": "123456" }` and records OTP verification for an arrived delivery without changing its `Arrived` status.
 - `POST /delivery/{deliveryId}/complete` accepts `{ "remarks": "optional completion remarks" }` and requires prior OTP verification.
 - `POST /delivery/{deliveryId}/fail` accepts `{ "reason": "CUSTOMER_UNAVAILABLE", "remarks": "optional", "latitude": 12.9716, "longitude": 77.5946 }`. Coordinates are optional as a pair.
@@ -903,7 +932,44 @@ The following series are seeded at startup when no `NumberSeries` rows exist:
 
 The `CUSTOMER`, `BRANCH`, and `DELIVERY` series use `ResetPolicy.Never`. The `ORDER` series is scoped per branch with `ResetPolicy.FinancialYear` and restarts its counter each Indian financial year (1 April). Creating a branch atomically allocates its `BRANCH` number and creates the branch-scoped `ORDER` series (`scopeKey` = branch code) inside the same serializable transaction, so order creation for the new branch always has a series to consume; the seed service also back-fills a scoped `ORDER` series for every existing active branch, deactivates the legacy global `ORDER` series, and upgrades legacy scoped `ORDER` templates that never issued a number to `ORD/{SCOPE}/{FY}/{NUMBER:000000}`. A branch whose `code` is changed is rejected with `409 Conflict` once a scoped `ORDER` series exists for the old code, because the series is keyed by the old code. All create, update, activate, and deactivate operations are audited as `NUMBER_SERIES.CREATED`, `NUMBER_SERIES.UPDATED`, `NUMBER_SERIES.ACTIVATED`, and `NUMBER_SERIES.DEACTIVATED` with the acting user recorded.
 
-## 18. Employee Management APIs
+## 18. OTP Provider Setup APIs
+
+This surface configures the **Identity / Onboarding OTP provider**. It is the only OTP surface that may deliver codes through an external SMS provider. The supported provider is MSG91, using the official OTP Widget API v5 (`widget/send`, `widget/retry`, `widget/verifyOtp`, `widget/validateAccessToken`). The provider is an integration-layer abstraction only: the backend always remains the final authentication authority and only issues a session after the provider confirms the entered code and the returned provider access token is validated server-side.
+
+### Scope: Identity OTP vs Delivery OTP
+
+The product has **two independent OTP mechanisms** with strictly separated responsibilities:
+
+| OTP mechanism | Used by | Delivery channel | Provider abstraction |
+|---|---|---|---|
+| **Identity / Onboarding OTP** | Customer login, customer registration, password reset, employee invitation / registration, employee login | External **MSG91 SMS** via `IMsg91OtpProvider` to `Msg91ApiClient` | `IMsg91OtpProvider` (`DoodhDirect.Application.Identity`) |
+| **Delivery OTP** | Delivery verification for a customer's order | **In-app only** — generated in-app and surfaced inside the DoodhDirect customer app; no SMS/email delivery | `IOtpDeliveryService` (`DoodhDirect.Application.Deliveries`) |
+
+**Identity / Onboarding OTP** (this section) flows through `OtpService` to `IMsg91OtpProvider` to `Msg91ApiClient` to MSG91. The MSG91 provider configuration (`AuthKey`, `WidgetId`, enabled flag) is consumed **only** by identity OTP services.
+
+**Delivery OTP** is generated and managed entirely by `DeliveryService` (`DoodhDirect.Infrastructure.Deliveries`) using the existing in-app mechanism: `DeliveryOtp`, `DeliveryOtpSendGate`, `DeliveryOtpHandoffProtector`, one-time consumption, max-attempt enforcement, and invalidation on cancellation/completion. **There is no code path where `DeliveryService` sends a Delivery OTP through `Msg91ApiClient`** — `DeliveryService` does not depend on `IMsg91OtpProvider` or `Msg91ApiClient` at all. SMS/email for Delivery OTP is intentionally out of scope unless a separate future business requirement is approved. The admin screen therefore labels this provider **"Identity / Onboarding OTP Provider"** (not "All OTP Provider").
+
+Configuration is restricted to `OWNER` and `SYSTEM_ADMIN` through `SETUP.OTP_PROVIDER.READ` (view) and `SETUP.OTP_PROVIDER.MANAGE` (configure and test). The `AuthKey` is write-only: it is never returned by any read operation and is encrypted at rest with the ASP.NET Core Data Protection API (`IDataProtector`). The `WidgetId` is returned masked for display. Configuration changes, enabling, disabling, and test runs are audited as `OTP_PROVIDER.CONFIG_UPDATED`, `OTP_PROVIDER.ENABLED`, `OTP_PROVIDER.DISABLED`, and `OTP_PROVIDER.TESTED` with the acting user recorded.
+
+| Route | Permission |
+|---|---|
+| `GET /admin/setup/otp-provider` | `SETUP.OTP_PROVIDER.READ` |
+| `PUT /admin/setup/otp-provider` | `SETUP.OTP_PROVIDER.MANAGE` |
+| `POST /admin/setup/otp-provider/test` | `SETUP.OTP_PROVIDER.MANAGE` |
+
+### `GET /admin/setup/otp-provider` (`SETUP.OTP_PROVIDER.READ`)
+
+Returns the current OTP provider configuration: `provider` (`MSG91`), `widgetId` (masked), `isConfigured` (AuthKey and WidgetId present), `isEnabled`, and `isActive` (configured and enabled). The `AuthKey` is never returned. When the provider is not configured the endpoint still returns the configuration shape with `isConfigured: false`, so the admin screen can always render.
+
+### `PUT /admin/setup/otp-provider` (`SETUP.OTP_PROVIDER.MANAGE`)
+
+Updates the OTP provider configuration. The request carries `widgetId`, an optional `authKey` (omitted or empty to keep the existing encrypted value), and `isEnabled`. Setting `isEnabled: false` disables identity OTP delivery and the auth services then fail closed with `503 OTP_PROVIDER_UNAVAILABLE` rather than silently skipping OTP. A non-empty `authKey` replaces the stored secret and is encrypted at rest; it is never echoed back. The response is the same result shape as the GET endpoint. Every update is audited, and enabling/disabling transitions produce the dedicated audit actions above.
+
+### `POST /admin/setup/otp-provider/test` (`SETUP.OTP_PROVIDER.MANAGE`)
+
+Performs a live provider probe against the currently saved configuration (requires the provider to be configured and enabled) and reports success or a safe, non-secret diagnostic message. Used by the admin screen to validate the AuthKey and WidgetId before enabling. Provider failures surface as `503 OTP_PROVIDER_UNAVAILABLE`; a rejected probe (invalid credentials) surfaces as `422 OTP_PROVIDER_REJECTED`. The probe never logs or returns the AuthKey. Audited as `OTP_PROVIDER.TESTED`.
+
+## 19. Employee Management APIs
 
 Employee management is a permission-protected administration surface. Reads require `EMPLOYEES.READ`; all mutations require `EMPLOYEES.MANAGE`. Assigning the `SYSTEM_ADMIN` role to an employee additionally requires `IDENTITY.ADMINISTRATORS.MANAGE`, which only the Owner holds. The `OWNER` role itself is never assignable to an employee through this surface.
 
@@ -999,7 +1065,7 @@ Invitation security summary:
 - Role and branch always come from the backend invitation; the client cannot escalate or change them.
 - Every lifecycle transition is audited with the real authenticated actor (`user_id`), never a generic system actor.
 
-## 19. Common HTTP Status Codes
+## 20. Common HTTP Status Codes
 
 200 — success
 201 — created
@@ -1016,7 +1082,7 @@ Invitation security summary:
 
 ---
 
-## 20. API Authorization Rule
+## 21. API Authorization Rule
 
 Every endpoint must have one of:
 
@@ -1027,3 +1093,10 @@ Every endpoint must have one of:
 - Owner/global admin
 
 Never infer authorization from client UI visibility.
+
+### Guest customer / deferred login
+
+- A guest has no session and no token, so every protected endpoint returns `401 Unauthorized` to a guest through the fallback authenticated policy. Guests must never be able to reach checkout submission, addresses, payments, orders, subscriptions, wallet, delivery tracking, doorstep milk testing, profile, notifications, or camera administration.
+- The complete anonymous surface is limited to: catalogue reads (`GET /catalogue/products`, `GET /catalogue/products/{productId}`, `GET /catalogue/product-categories`), authentication entry points (`POST /auth/register`, `POST /auth/login`, `POST /auth/send-otp`, `POST /auth/retry-otp`, `POST /auth/verify-otp`, `POST /auth/refresh`), the Razorpay webhook, employee-invitation verify/complete, and `/health/live`.
+- The client-side guest cart is device-local and never submitted to the server while a user remains a guest; it is submitted only after the user signs in and the checkout flow runs as an authenticated customer.
+- Backend authorization is not weakened for guests; negative authorization coverage asserts `401 Unauthorized` on protected endpoints and reachability of the anonymous surface (`Backend/tests/DoodhDirect.Api.IntegrationTests/GuestAuthorizationTests.cs`).

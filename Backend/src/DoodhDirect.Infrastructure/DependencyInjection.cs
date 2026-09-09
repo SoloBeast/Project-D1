@@ -6,6 +6,7 @@ using DoodhDirect.Application.Customer;
 using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Dairy;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Integrations;
 using DoodhDirect.Application.MilkTesting;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
@@ -21,9 +22,11 @@ using DoodhDirect.Infrastructure.Customer;
 using DoodhDirect.Infrastructure.Deliveries;
 using DoodhDirect.Infrastructure.Dairy;
 using DoodhDirect.Infrastructure.Identity;
+using DoodhDirect.Infrastructure.Integrations;
 using DoodhDirect.Infrastructure.MilkTesting;
 using DoodhDirect.Infrastructure.Notifications;
 using DoodhDirect.Infrastructure.Orders;
+using DoodhDirect.Infrastructure.OtpProvider;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
 using DoodhDirect.Infrastructure.Reports;
@@ -70,12 +73,10 @@ public static class DependencyInjection
         services.AddOptions<PaymentOptions>()
             .Bind(configuration.GetSection(PaymentOptions.SectionName))
             .ValidateDataAnnotations()
-            .Validate(
-                options => options.IsValidForEnvironment(environment.IsDevelopment()),
-                environment.IsDevelopment()
-                    ? "Development payment configuration must use Mock or Razorpay with both credentials configured."
-                    : "Production payment configuration must use Razorpay with both credentials configured.")
             .ValidateOnStart();
+        // NOTE: Razorpay credentials are not validated at boot. They may be configured at
+        // runtime through the Integration settings store (Integration.Razorpay.*), which
+        // overrides static appsettings values per call.
         services.AddOptions<DeliveryOptions>()
             .Bind(configuration.GetSection(DeliveryOptions.SectionName))
             .ValidateDataAnnotations()
@@ -90,9 +91,6 @@ public static class DependencyInjection
         services.AddOptions<CameraStreamOptions>()
             .Bind(configuration.GetSection(CameraStreamOptions.SectionName))
             .ValidateDataAnnotations()
-            .Validate(
-                options => environment.IsDevelopment() || !options.IsDevelopmentMock,
-                "CameraStreams:Provider DevelopmentMock is prohibited outside Development.")
             .Validate(
                 options => !options.IsDevelopmentMock
                     || Uri.TryCreate(options.DevelopmentHlsPlaybackUrl, UriKind.Absolute, out var uri)
@@ -110,9 +108,6 @@ public static class DependencyInjection
                 options => Enum.GetValues<DoodhDirect.Domain.Notifications.NotificationChannel>()
                     .All(channel => IsSupportedNotificationProvider(options.ProviderFor(channel))),
                 "Notifications providers must be 'Unconfigured' or 'DevelopmentMock'.")
-            .Validate(
-                options => environment.IsDevelopment() || !options.UsesDevelopmentMock,
-                "Notifications DevelopmentMock providers are prohibited outside Development.")
             .ValidateOnStart();
 
         var timeZoneId = configuration["TimeZone"]
@@ -164,7 +159,6 @@ public static class DependencyInjection
         services.AddSingleton<IDeliveryRealtimePublisher, NullDeliveryRealtimePublisher>();
         services.AddSingleton<IMilkTestImageValidator, MilkTestImageValidator>();
         services.AddSingleton<IMediaStorage, LocalMediaStorage>();
-        services.AddSingleton<MockPaymentGateway>();
         services.AddHttpClient<RazorpayPaymentGateway>(client =>
         {
             client.BaseAddress = new Uri("https://api.razorpay.com/v1/");
@@ -184,6 +178,7 @@ public static class DependencyInjection
         services.AddScoped<DevelopmentDeliveryStaffSeedService>();
         services.AddScoped<DevelopmentDairyManagerSeedService>();
         services.AddScoped<DevelopmentUatUserSeedService>();
+        services.AddScoped<UatBootstrapSeedService>();
         services.AddScoped<CatalogueSeedService>();
         services.AddScoped<NotificationTemplateSeedService>();
         services.AddScoped<NumberSeriesSeedService>();
@@ -191,14 +186,36 @@ public static class DependencyInjection
         {
             services.AddScoped<IDevelopmentNotificationService, DevelopmentNotificationService>();
         }
+        // Delivery OTP transport selection is configuration-driven. There is no default
+        // Development logging fake; the Unconfigured transport keeps delivery OTPs
+        // pending (fail closed) until a real configured provider is available.
         services.AddSingleton<IOtpDeliveryService>(provider =>
-            environment.IsDevelopment()
-                ? ActivatorUtilities.CreateInstance<DevelopmentOtpDeliveryService>(provider)
-                : new UnconfiguredOtpDeliveryService(provider.GetRequiredService<ILogger<UnconfiguredOtpDeliveryService>>()));
+            new UnconfiguredOtpDeliveryService(provider.GetRequiredService<ILogger<UnconfiguredOtpDeliveryService>>()));
+        services.AddSingleton<OtpProviderSecretProtector>();
+        services.AddScoped<IMsg91ProviderSettingsProvider, Msg91ProviderSettingsProvider>();
+        services.AddScoped<IOtpProviderConfigurationService, OtpProviderConfigurationService>();
+        // Integration (SMTP / Razorpay runtime / Google Maps runtime) configuration is
+        // stored as SystemConfiguration rows. Secrets are protected with DataProtection
+        // and DB values override environment/appsettings at runtime.
+        services.AddSingleton<IntegrationSecretProtector>();
+        services.AddScoped<IIntegrationSettingsProvider, IntegrationSettingsProvider>();
+        services.AddScoped<IIntegrationConfigurationService, IntegrationConfigurationService>();
+        services.AddScoped<IClientConfigurationService, ClientConfigurationService>();
+        services.AddScoped<IEmailSender, SmtpEmailSender>();
+        services.AddHttpClient<Msg91ApiClient>(client =>
+        {
+            client.BaseAddress = new Uri("https://api.msg91.com/api/v5/");
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+        // MSG91 provider selection is configuration-driven: the real MSG91 client is
+        // always used and fails closed (503 OTP_PROVIDER_UNAVAILABLE) when the provider
+        // is not configured. There is no silent fallback to a Development logging fake.
+        services.AddScoped<IMsg91OtpProvider>(provider =>
+            provider.GetRequiredService<Msg91ApiClient>());
         services.AddSingleton<ICameraStreamGateway>(provider =>
         {
             var options = provider.GetRequiredService<IOptions<CameraStreamOptions>>().Value;
-            return environment.IsDevelopment() && options.IsDevelopmentMock
+            return options.IsDevelopmentMock
                 ? ActivatorUtilities.CreateInstance<DevelopmentCameraStreamGateway>(provider)
                 : new UnconfiguredCameraStreamGateway();
         });
@@ -207,8 +224,7 @@ public static class DependencyInjection
             services.AddSingleton<INotificationChannelGateway>(provider =>
             {
                 var options = provider.GetRequiredService<IOptions<NotificationOptions>>().Value;
-                return environment.IsDevelopment()
-                    && NotificationOptions.IsDevelopmentMock(options.ProviderFor(channel))
+                return NotificationOptions.IsDevelopmentMock(options.ProviderFor(channel))
                     ? new DevelopmentNotificationGateway(channel)
                     : new UnconfiguredNotificationGateway(channel);
             });

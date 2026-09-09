@@ -1,12 +1,20 @@
+import 'dart:async';
+
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/customer/client_configuration_repository.dart';
+import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
+import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
+import 'package:doodh_direct_mobile/features/customer/google_map_coordinate_picker.dart';
+import 'package:doodh_direct_mobile/features/customer/maps_script_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'branch_controller.dart';
 import 'branch_models.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 const String kBranchesReadPermission = 'BRANCHES.READ';
 const String kBranchesManagePermission = 'BRANCHES.MANAGE';
@@ -151,7 +159,10 @@ class _BranchCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            _StatusChip(isActive: branch.isActive),
+            _StatusChip(
+              isActive: branch.isActive,
+              isArchived: branch.isArchived,
+            ),
           ],
         ),
         subtitle: Padding(
@@ -170,8 +181,6 @@ class _BranchCard extends StatelessWidget {
 
   String _subtitle(Branch branch) {
     final parts = <String>[
-      if (branch.branchNumber?.trim().isNotEmpty ?? false)
-        'No. ${branch.branchNumber}',
       'Code ${branch.code}',
       branch.city.trim(),
     ];
@@ -180,23 +189,40 @@ class _BranchCard extends StatelessWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.isActive});
+  const _StatusChip({required this.isActive, this.isArchived = false});
 
   final bool isActive;
+  final bool isArchived;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final Color background;
+    final Color foreground;
+    final String label;
+    if (isArchived) {
+      background = theme.colorScheme.surfaceContainerHighest;
+      foreground = theme.colorScheme.onSurfaceVariant;
+      label = 'Archived';
+    } else if (isActive) {
+      background = DoodhColors.mint;
+      foreground = DoodhColors.tealDark;
+      label = 'Active';
+    } else {
+      background = theme.colorScheme.surfaceContainerHighest;
+      foreground = theme.colorScheme.onSurfaceVariant;
+      label = 'Inactive';
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: isActive ? DoodhColors.mint : theme.colorScheme.surfaceContainerHighest,
+        color: background,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
-        isActive ? 'Active' : 'Inactive',
+        label,
         style: theme.textTheme.labelSmall?.copyWith(
-          color: isActive ? DoodhColors.tealDark : theme.colorScheme.onSurfaceVariant,
+          color: foreground,
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -225,9 +251,12 @@ class _BranchFormScreenState extends ConsumerState<BranchFormScreen> {
   late final TextEditingController _city;
   late final TextEditingController _state;
   late final TextEditingController _pinCode;
-  late final TextEditingController _latitude;
-  late final TextEditingController _longitude;
   late final TextEditingController _serviceRadius;
+  double? _latitude;
+  double? _longitude;
+  late bool _hasExplicitLocationSelection;
+  bool _isLookingUpAddress = false;
+  int _addressLookupSequence = 0;
 
   @override
   void initState() {
@@ -241,16 +270,14 @@ class _BranchFormScreenState extends ConsumerState<BranchFormScreen> {
     _city = TextEditingController(text: branch?.city ?? '');
     _state = TextEditingController(text: branch?.state ?? '');
     _pinCode = TextEditingController(text: branch?.pinCode ?? '');
-    _latitude = TextEditingController(
-      text: branch == null ? '' : _formatDecimal(branch.latitude),
-    );
-    _longitude = TextEditingController(
-      text: branch == null ? '' : _formatDecimal(branch.longitude),
-    );
+    _latitude = branch?.latitude;
+    _longitude = branch?.longitude;
+    _hasExplicitLocationSelection = branch?.latitude != null &&
+        branch?.longitude != null;
     _serviceRadius = TextEditingController(
       text: branch == null || branch.serviceRadiusKm == null
           ? ''
-          : _formatDecimal(branch.serviceRadiusKm!),
+          : branch.serviceRadiusKm!.toString(),
     );
   }
 
@@ -264,24 +291,103 @@ class _BranchFormScreenState extends ConsumerState<BranchFormScreen> {
     _city.dispose();
     _state.dispose();
     _pinCode.dispose();
-    _latitude.dispose();
-    _longitude.dispose();
     _serviceRadius.dispose();
     super.dispose();
   }
 
-  String _formatDecimal(double value) =>
-      value == value.roundToDouble() ? value.toStringAsFixed(0) : value.toString();
+  Future<void> _loadGoogleMaps() async {
+    final token = ref.read(sessionControllerProvider).session?.accessToken;
+    String? key;
+    if (token != null) {
+      try {
+        key = (await ref.read(clientConfigurationRepositoryProvider).get(token))
+            .googleMapsWebClientKey;
+      } on Object {
+        key = null;
+      }
+    }
+    return loadGoogleMapsScript(key ?? '');
+  }
 
-  Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
-    final latitude = double.tryParse(_latitude.text.trim());
-    final longitude = double.tryParse(_longitude.text.trim());
-    if (latitude == null || longitude == null) {
+  LatLng _initialMapLocation() => LatLng(
+        _latitude ?? 12.9716,
+        _longitude ?? 77.5946,
+      );
+
+  void _setMapLocation(LatLng location) {
+    setState(() {
+      _latitude = location.latitude;
+      _longitude = location.longitude;
+      _hasExplicitLocationSelection = true;
+      _isLookingUpAddress = true;
+    });
+    unawaited(_reverseGeocodeAddress(location.latitude, location.longitude));
+  }
+
+  Future<void> _reverseGeocodeAddress(double latitude, double longitude) async {
+    final sequence = ++_addressLookupSequence;
+    AddressLookup? lookup;
+    try {
+      lookup = await ref
+          .read(customerControllerProvider.notifier)
+          .reverseLookup(latitude, longitude);
+    } on Object {
+      lookup = null;
+    }
+    if (!mounted) return;
+    // Ignore stale responses that belong to an earlier map selection.
+    if (sequence != _addressLookupSequence) return;
+    setState(() {
+      _isLookingUpAddress = false;
+    });
+    if (lookup == null) {
+      // Coordinates are kept. Never silently clear an address the user already
+      // entered (e.g. when the geocoding provider is unavailable).
+      final hasExistingAddress =
+          _addressLine1.text.trim().isNotEmpty ||
+          _locality.text.trim().isNotEmpty;
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(content: Text('Enter valid latitude and longitude.')),
+          SnackBar(
+            content: Text(
+              hasExistingAddress
+                  ? 'Address lookup is unavailable right now. The map location '
+                      'was updated and your existing address was preserved.'
+                  : 'The selected location could not be converted to an address. '
+                      'The map location is saved - enter the address manually.',
+            ),
+          ),
+        );
+      return;
+    }
+    _applyAddressLookup(lookup);
+  }
+
+  void _applyAddressLookup(AddressLookup lookup) {
+    void fill(TextEditingController controller, String? value) {
+      final normalized = value?.trim();
+      if (normalized != null && normalized.isNotEmpty) {
+        controller.text = normalized;
+      }
+    }
+
+    fill(_addressLine1, lookup.addressLine1);
+    fill(_locality, lookup.locality);
+    fill(_city, lookup.city);
+    fill(_state, lookup.state);
+    fill(_pinCode, lookup.pinCode);
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    final latitude = _latitude;
+    final longitude = _longitude;
+    if (!_hasExplicitLocationSelection || latitude == null || longitude == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('Select a valid location on the map.')),
         );
       return;
     }
@@ -347,20 +453,6 @@ class _BranchFormScreenState extends ConsumerState<BranchFormScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          if (widget.isEditing && (widget.branch?.branchNumber?.trim().isNotEmpty ?? false)) ...[
-            Card(
-              color: DoodhColors.mint,
-              child: ListTile(
-                leading: const Icon(Icons.numbers_outlined, color: DoodhColors.tealDark),
-                title: const Text('Branch number'),
-                subtitle: Text(
-                  '${widget.branch!.branchNumber} — allocated from the BRANCH '
-                  'numbering series. It is assigned by the system and cannot be edited.',
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
           Form(
             key: _formKey,
             child: Column(
@@ -382,8 +474,7 @@ class _BranchFormScreenState extends ConsumerState<BranchFormScreen> {
                           hintText: 'e.g. MAIN',
                           helperText:
                               'Stable business key used for order allocation and '
-                              'scoped numbering series. Cannot change once orders '
-                              'are allocated.',
+                              'scoped numbering series.',
                         ),
                         validator: (value) {
                           final trimmed = value?.trim() ?? '';
@@ -488,72 +579,54 @@ class _BranchFormScreenState extends ConsumerState<BranchFormScreen> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: _latitude,
-                        enabled: !state.isSaving,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                          signed: true,
-                        ),
-                        decoration: const InputDecoration(labelText: 'Latitude *'),
-                        validator: (value) {
-                          final parsed = double.tryParse(value?.trim() ?? '');
-                          if (parsed == null) return 'Required';
-                          if (parsed < -90 || parsed > 90) {
-                            return 'Between -90 and 90';
-                          }
-                          return null;
-                        },
-                      ),
+                if (!_hasExplicitLocationSelection)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      'Select a branch location on the map before saving.',
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _longitude,
-                        enabled: !state.isSaving,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                          signed: true,
+                  ),
+                GoogleMapCoordinatePicker(
+                  initialLocation: _initialMapLocation(),
+                  onLocationSelected: _setMapLocation,
+                  mapsLoader: _loadGoogleMaps,
+                ),
+                if (_isLookingUpAddress)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(
+                      children: [
+                        const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                        decoration: const InputDecoration(labelText: 'Longitude *'),
-                        validator: (value) {
-                          final parsed = double.tryParse(value?.trim() ?? '');
-                          if (parsed == null) return 'Required';
-                          if (parsed < -180 || parsed > 180) {
-                            return 'Between -180 and 180';
-                          }
-                          return null;
-                        },
-                      ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Determining the address for the selected location...',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _serviceRadius,
-                        enabled: !state.isSaving,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'Service radius (km)',
-                          helperText: 'Optional',
-                        ),
-                        validator: (value) {
-                          final trimmed = value?.trim() ?? '';
-                          if (trimmed.isEmpty) return null;
-                          final parsed = double.tryParse(trimmed);
-                          if (parsed == null || parsed < 0) {
-                            return 'Enter a valid distance';
-                          }
-                          return null;
-                        },
-                      ),
-                    ),
-                  ],
+                  ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _serviceRadius,
+                  enabled: !state.isSaving,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Service radius (km)',
+                    helperText: 'Optional',
+                  ),
+                  validator: (value) {
+                    final trimmed = value?.trim() ?? '';
+                    if (trimmed.isEmpty) return null;
+                    final parsed = double.tryParse(trimmed);
+                    if (parsed == null || parsed < 0) return 'Enter a valid distance';
+                    return null;
+                  },
                 ),
                 if (state.fieldErrors.isNotEmpty)
                   ...state.fieldErrors.entries.map(
@@ -598,6 +671,7 @@ class BranchDetailScreen extends ConsumerStatefulWidget {
 
 class _BranchDetailScreenState extends ConsumerState<BranchDetailScreen> {
   bool _deactivateConfirming = false;
+  bool _deleteConfirming = false;
 
   @override
   void initState() {
@@ -666,6 +740,60 @@ class _BranchDetailScreenState extends ConsumerState<BranchDetailScreen> {
     }
   }
 
+  Future<void> _delete(Branch branch) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete branch?'),
+        content: Text(
+          '"${branch.name}" is inactive. If no orders or other records '
+          'reference it, the branch will be permanently deleted. If it still '
+          'carries historical records, it will be archived instead and kept '
+          'for history. This cannot be undone for a permanent delete.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() => _deleteConfirming = true);
+    final success = await ref
+        .read(branchControllerProvider.notifier)
+        .delete(branch.publicId);
+    if (!mounted) return;
+    setState(() => _deleteConfirming = false);
+    if (success) {
+      final message =
+          ref.read(branchControllerProvider).savedMessage ?? 'Branch updated.';
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(message)));
+      // A permanent delete removes the branch from state, so leave the detail
+      // screen; an archive keeps the branch open in its view-only state.
+      final stillSelected =
+          ref.read(branchControllerProvider).selectedBranch?.publicId ==
+              branch.publicId;
+      if (!stillSelected && mounted) {
+        context.pop();
+      }
+    } else {
+      final error = ref.read(branchControllerProvider).errorMessage;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(error ?? 'Unable to delete the branch.')),
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(branchControllerProvider);
@@ -680,7 +808,7 @@ class _BranchDetailScreenState extends ConsumerState<BranchDetailScreen> {
       appBar: AppBar(
         title: const Text('Branch details'),
         actions: [
-          if (branch != null && canManage)
+          if (branch != null && canManage && !branch.isArchived)
             IconButton(
               tooltip: 'Edit branch',
               onPressed: state.isSaving
@@ -697,10 +825,11 @@ class _BranchDetailScreenState extends ConsumerState<BranchDetailScreen> {
         state: state,
         branch: branch,
         canManage: canManage,
-        busy: _deactivateConfirming || state.isSaving,
+        busy: _deactivateConfirming || _deleteConfirming || state.isSaving,
         onRetry: () =>
             ref.read(branchControllerProvider.notifier).loadById(widget.branchId),
         onToggleActive: branch == null ? null : () => _toggleActive(branch),
+        onDelete: branch == null ? null : () => _delete(branch),
       ),
     );
   }
@@ -714,6 +843,7 @@ class _BranchDetailBody extends StatelessWidget {
     required this.busy,
     required this.onRetry,
     required this.onToggleActive,
+    required this.onDelete,
   });
 
   final BranchState state;
@@ -722,6 +852,7 @@ class _BranchDetailBody extends StatelessWidget {
   final bool busy;
   final Future<void> Function() onRetry;
   final VoidCallback? onToggleActive;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -755,7 +886,10 @@ class _BranchDetailBody extends StatelessWidget {
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                     ),
-                    _StatusChip(isActive: branch.isActive),
+                    _StatusChip(
+                      isActive: branch.isActive,
+                      isArchived: branch.isArchived,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -765,53 +899,6 @@ class _BranchDetailBody extends StatelessWidget {
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                 ),
-                if (branch.branchNumber?.trim().isNotEmpty ?? false) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: DoodhColors.mint,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.numbers_outlined,
-                          color: DoodhColors.tealDark,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Branch number',
-                                style: Theme.of(context).textTheme.labelMedium,
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                branch.branchNumber!,
-                                style: Theme.of(context).textTheme.titleMedium
-                                    ?.copyWith(
-                                      color: DoodhColors.tealDark,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Allocated from the BRANCH numbering series by the system. '
-                    'It cannot be edited or generated on the client.',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                  ),
-                ],
                 const SizedBox(height: 12),
                 Text(
                   branch.addressSummary,
@@ -830,15 +917,33 @@ class _BranchDetailBody extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-        if (canManage)
-          FilledButton.tonalIcon(
-            onPressed: busy ? null : onToggleActive,
-            icon: Icon(
-              branch.isActive
-                  ? Icons.pause_circle_outline
-                  : Icons.play_circle_outline,
-            ),
-            label: Text(branch.isActive ? 'Deactivate branch' : 'Activate branch'),
+        if (canManage && !branch.isArchived)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: busy ? null : onToggleActive,
+                icon: Icon(
+                  branch.isActive
+                      ? Icons.pause_circle_outline
+                      : Icons.play_circle_outline,
+                ),
+                label: Text(
+                  branch.isActive ? 'Deactivate branch' : 'Activate branch',
+                ),
+              ),
+              if (!branch.isActive) ...[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: busy ? null : onDelete,
+                  icon: const Icon(Icons.delete_outline),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.error,
+                  ),
+                  label: const Text('Delete branch'),
+                ),
+              ],
+            ],
           ),
       ],
     );

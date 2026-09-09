@@ -162,10 +162,11 @@ public sealed record UpsertProductApiRequest(
     [MaxLength(1000)] string? Description,
     Guid CategoryId,
     [Required, MaxLength(20)] string UnitOfMeasure,
-    decimal Price)
+    decimal Price,
+    [Required, MinLength(1)] IReadOnlyList<Guid> BranchIds)
 {
     public UpsertProductRequest ToApplicationRequest() =>
-        new(Sku, Name, Description, CategoryId, UnitOfMeasure, Price);
+        new(Sku, Name, Description, CategoryId, UnitOfMeasure, Price, BranchIds);
 }
 
 public sealed record UpsertProductCategoryApiRequest(

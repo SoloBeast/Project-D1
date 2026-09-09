@@ -1,4 +1,8 @@
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/utils/country_codes.dart';
+import 'package:doodh_direct_mobile/core/utils/india_mobile.dart';
+import 'package:doodh_direct_mobile/core/utils/mobile_number.dart';
+import 'package:doodh_direct_mobile/core/widgets/country_code_mobile_field.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
@@ -23,8 +27,7 @@ class EmployeeListScreen extends ConsumerStatefulWidget {
   const EmployeeListScreen({super.key});
 
   @override
-  ConsumerState<EmployeeListScreen> createState() =>
-      _EmployeeListScreenState();
+  ConsumerState<EmployeeListScreen> createState() => _EmployeeListScreenState();
 }
 
 class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
@@ -40,10 +43,13 @@ class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(employeeControllerProvider);
     final canManage =
-        ref.watch(sessionControllerProvider).session?.user.permissions.contains(
-              kEmployeesManagePermission,
-            ) ??
-            false;
+        ref
+            .watch(sessionControllerProvider)
+            .session
+            ?.user
+            .permissions
+            .contains(kEmployeesManagePermission) ??
+        false;
 
     return Scaffold(
       appBar: AppBar(
@@ -53,9 +59,7 @@ class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
             tooltip: 'Refresh',
             onPressed: state.isLoading
                 ? null
-                : () => ref
-                      .read(employeeControllerProvider.notifier)
-                      .load(),
+                : () => ref.read(employeeControllerProvider.notifier).load(),
             icon: const Icon(Icons.refresh),
           ),
           if (canManage)
@@ -79,8 +83,7 @@ class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
     if (state.errorMessage != null && state.employees.isEmpty) {
       return ErrorStatePanel(
         message: state.errorMessage!,
-        onRetry: () =>
-            ref.read(employeeControllerProvider.notifier).load(),
+        onRetry: () => ref.read(employeeControllerProvider.notifier).load(),
       );
     }
     if (state.employees.isEmpty) {
@@ -100,11 +103,11 @@ class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
       );
     }
 
-    final items = [...state.employees]..sort(
-      (a, b) => a.displayName.toLowerCase().compareTo(
-        b.displayName.toLowerCase(),
-      ),
-    );
+    final items = [...state.employees]
+      ..sort(
+        (a, b) =>
+            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+      );
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -162,10 +165,7 @@ class _ErrorBanner extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       child: Row(
         children: [
-          Icon(
-            Icons.error_outline,
-            color: Theme.of(context).colorScheme.error,
-          ),
+          Icon(Icons.error_outline, color: Theme.of(context).colorScheme.error),
           const SizedBox(width: 8),
           Expanded(child: Text(message)),
         ],
@@ -190,6 +190,9 @@ class _EmployeeCard extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     final role = employee.assignableRole;
     final status = employee.invitationStatus;
+    final isSelf =
+        ref.watch(sessionControllerProvider).session?.user.publicUserId ==
+        employee.publicId;
 
     return Card(
       child: Padding(
@@ -205,7 +208,10 @@ class _EmployeeCard extends ConsumerWidget {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
-                _ActiveBadge(isActive: employee.isActive),
+                _ActiveBadge(
+                  isActive: employee.isActive,
+                  isArchived: employee.isArchived,
+                ),
               ],
             ),
             const SizedBox(height: 4),
@@ -241,7 +247,7 @@ class _EmployeeCard extends ConsumerWidget {
                   style: TextStyle(color: scheme.onSurfaceVariant),
                 ),
               ),
-            if (canManage) ...[
+            if (canManage && !employee.isArchived) ...[
               const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
@@ -266,16 +272,32 @@ class _EmployeeCard extends ConsumerWidget {
                   ],
                   if (employee.isActive)
                     TextButton.icon(
-                      onPressed: isBusy ? null : () => _setActive(context, ref, false),
+                      onPressed: isBusy
+                          ? null
+                          : () => _setActive(context, ref, false),
                       icon: const Icon(Icons.block_outlined, size: 18),
                       label: const Text('Deactivate'),
                     )
-                  else
+                  else ...[
                     FilledButton.tonalIcon(
-                      onPressed: isBusy ? null : () => _setActive(context, ref, true),
+                      onPressed: isBusy
+                          ? null
+                          : () => _setActive(context, ref, true),
                       icon: const Icon(Icons.play_arrow_outlined, size: 18),
                       label: const Text('Activate'),
                     ),
+                    if (!isSelf) ...[
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        onPressed: isBusy ? null : () => _delete(context, ref),
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        label: const Text('Delete'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: scheme.error,
+                        ),
+                      ),
+                    ],
+                  ],
                   const SizedBox(width: 8),
                   IconButton(
                     tooltip: 'Edit ${employee.displayName}',
@@ -335,17 +357,59 @@ class _EmployeeCard extends ConsumerWidget {
         .cancelInvitation(employee.id, invitationId);
   }
 
-  Future<void> _setActive(BuildContext context, WidgetRef ref, bool active) async {
-    await ref.read(employeeControllerProvider.notifier).update(
-      employee.id,
-      UpdateEmployeeRequest(
-        displayName: employee.displayName,
-        email: employee.email,
-        roleCode: employee.roleCode,
-        branchId: employee.branchId,
-        isActive: active,
-      ),
+  Future<void> _setActive(
+    BuildContext context,
+    WidgetRef ref,
+    bool active,
+  ) async {
+    await ref
+        .read(employeeControllerProvider.notifier)
+        .update(
+          employee.id,
+          UpdateEmployeeRequest(
+            displayName: employee.displayName,
+            email: employee.email,
+            roleCode: employee.roleCode,
+            branchId: employee.branchId,
+            isActive: active,
+          ),
+        );
+  }
+
+  Future<void> _delete(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final scheme = Theme.of(context).colorScheme;
+        return AlertDialog(
+          title: const Text('Delete employee?'),
+          content: Text(
+            '${employee.displayName} is inactive. If no orders, deliveries '
+            'or other records reference this account it will be permanently '
+            'deleted; otherwise it will be archived and kept for history. A '
+            'permanent delete cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Keep'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: scheme.error,
+                foregroundColor: scheme.onError,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
     );
+    if (confirmed != true) return;
+    await ref
+        .read(employeeControllerProvider.notifier)
+        .deleteEmployee(employee.id);
   }
 
   int? get _invitationId => employee.invitationId;
@@ -361,10 +425,7 @@ class _InvitationRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final (label, color) = switch (status) {
-      EmployeeInvitationStatus.invited => (
-        'Invitation sent',
-        scheme.primary,
-      ),
+      EmployeeInvitationStatus.invited => ('Invitation sent', scheme.primary),
       EmployeeInvitationStatus.registered => (
         'Registered',
         DoodhColors.tealDark,
@@ -396,9 +457,10 @@ class _InvitationRow extends StatelessWidget {
 }
 
 class _ActiveBadge extends StatelessWidget {
-  const _ActiveBadge({required this.isActive});
+  const _ActiveBadge({required this.isActive, this.isArchived = false});
 
   final bool isActive;
+  final bool isArchived;
 
   @override
   Widget build(BuildContext context) {
@@ -406,13 +468,17 @@ class _ActiveBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: isActive ? DoodhColors.mint : scheme.surfaceContainerHighest,
+        color: isArchived || !isActive
+            ? scheme.surfaceContainerHighest
+            : DoodhColors.mint,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
-        isActive ? 'Active' : 'Inactive',
+        isArchived ? 'Archived' : (isActive ? 'Active' : 'Inactive'),
         style: TextStyle(
-          color: isActive ? DoodhColors.tealDark : scheme.onSurfaceVariant,
+          color: isActive && !isArchived
+              ? DoodhColors.tealDark
+              : scheme.onSurfaceVariant,
           fontSize: 12,
           fontWeight: FontWeight.w600,
         ),
@@ -433,6 +499,7 @@ class CreateEmployeeScreen extends ConsumerStatefulWidget {
 
 class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _countryKey = GlobalKey<CountryCodeMobileFieldState>();
   late final TextEditingController _displayName;
   late final TextEditingController _mobile;
   late final TextEditingController _email;
@@ -463,10 +530,13 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(employeeControllerProvider);
     final canManage =
-        ref.watch(sessionControllerProvider).session?.user.permissions.contains(
-              kEmployeesManagePermission,
-            ) ??
-            false;
+        ref
+            .watch(sessionControllerProvider)
+            .session
+            ?.user
+            .permissions
+            .contains(kEmployeesManagePermission) ??
+        false;
     if (!canManage) {
       return Scaffold(
         appBar: AppBar(title: const Text('Create employee')),
@@ -499,29 +569,18 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
                     hintText: 'e.g. Ramesh Kumar',
                     errorText: fieldErrors['displayName'],
                   ),
-                  validator: (value) =>
-                      value == null || value.trim().isEmpty
+                  validator: (value) => value == null || value.trim().isEmpty
                       ? 'Enter the employee name.'
                       : null,
                 ),
                 const SizedBox(height: 12),
-                TextFormField(
+                CountryCodeMobileField(
+                  key: _countryKey,
                   controller: _mobile,
                   enabled: !state.isSaving,
-                  keyboardType: TextInputType.phone,
-                  decoration: InputDecoration(
-                    labelText: 'Mobile number *',
-                    hintText: '10-digit mobile number',
-                    errorText: fieldErrors['mobile'],
-                  ),
-                  validator: (value) {
-                    final mobile = value?.trim() ?? '';
-                    if (mobile.isEmpty) return 'Enter the mobile number.';
-                    if (!RegExp(r'^[0-9]{10}$').hasMatch(mobile)) {
-                      return 'Enter a valid 10-digit mobile number.';
-                    }
-                    return null;
-                  },
+                  label: 'Mobile number *',
+                  hintText: '10-digit mobile number',
+                  errorText: fieldErrors['mobile'],
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -529,10 +588,21 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
                   enabled: !state.isSaving,
                   keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
-                    labelText: 'Email (optional)',
+                    labelText: 'Email *',
                     hintText: 'e.g. ramesh@example.com',
+                    helperText:
+                        'The secure invitation link is sent to this email.',
                     errorText: fieldErrors['email'],
                   ),
+                  validator: (value) {
+                    final email = value?.trim() ?? '';
+                    if (email.isEmpty) return 'Enter the employee email.';
+                    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+                        .hasMatch(email)) {
+                      return 'Enter a valid email address.';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<EmployeeRole>(
@@ -555,9 +625,8 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
                   onChanged: state.isSaving
                       ? null
                       : (value) => setState(() => _role = value),
-                  validator: (value) => value == null
-                      ? 'Select a role for this employee.'
-                      : null,
+                  validator: (value) =>
+                      value == null ? 'Select a role for this employee.' : null,
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<EmployeeBranchOption>(
@@ -569,18 +638,18 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
                         : 'Assign the branch this employee works in.',
                     errorText: fieldErrors['branchId'],
                   ),
-                  items: (state.branchOptions.isEmpty
-                          ? const <EmployeeBranchOption>[]
-                          : state.branchOptions)
-                      .map(
-                        (branch) => DropdownMenuItem(
-                          value: branch,
-                          child: Text(branch.displayName),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: state.isSaving ||
-                          _role == EmployeeRole.systemAdmin
+                  items:
+                      (state.branchOptions.isEmpty
+                              ? const <EmployeeBranchOption>[]
+                              : state.branchOptions)
+                          .map(
+                            (branch) => DropdownMenuItem(
+                              value: branch,
+                              child: Text(branch.displayName),
+                            ),
+                          )
+                          .toList(),
+                  onChanged: state.isSaving || _role == EmployeeRole.systemAdmin
                       ? null
                       : (value) => setState(() => _branch = value),
                   validator: (value) =>
@@ -622,20 +691,20 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
     final role = _role;
     if (role == null) return;
 
-    final branchId = role == EmployeeRole.systemAdmin
-        ? null
-        : _branch?.id;
+    final branchId = role == EmployeeRole.systemAdmin ? null : _branch?.id;
 
-    final employee = await ref.read(employeeControllerProvider.notifier).create(
-      CreateEmployeeRequest(
-        displayName: _displayName.text.trim(),
-        mobile: _mobile.text.trim(),
-        email: _email.text.trim().isEmpty ? null : _email.text.trim(),
-        roleCode: role.apiCode,
-        branchId: branchId,
-        sendInvitation: _sendInvitation,
-      ),
-    );
+    final employee = await ref
+        .read(employeeControllerProvider.notifier)
+        .create(
+          CreateEmployeeRequest(
+            displayName: _displayName.text.trim(),
+            mobile: _countryKey.currentState?.canonicalValue ?? '',
+            email: _email.text.trim(),
+            roleCode: role.apiCode,
+            branchId: branchId,
+            sendInvitation: _sendInvitation,
+          ),
+        );
     if (!mounted) return;
     if (employee == null) return;
 
@@ -653,7 +722,11 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
 /// Edit → displayName, email, role, branch, active state. Role and branch
 /// changes are audited on the backend. Requires `EMPLOYEES.MANAGE`.
 class EmployeeEditScreen extends ConsumerStatefulWidget {
-  const EmployeeEditScreen({super.key, required this.employeeId, this.employee});
+  const EmployeeEditScreen({
+    super.key,
+    required this.employeeId,
+    this.employee,
+  });
 
   final int employeeId;
   final Employee? employee;
@@ -684,9 +757,7 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
       }
       final options = ref.read(employeeControllerProvider).branchOptions;
       if (mounted && _branch == null && _employee?.branchId != null) {
-        final matches = options.where(
-          (b) => b.id == _employee!.branchId,
-        );
+        final matches = options.where((b) => b.id == _employee!.branchId);
         if (matches.isNotEmpty) {
           setState(() => _branch = matches.first);
         }
@@ -705,10 +776,13 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(employeeControllerProvider);
     final canManage =
-        ref.watch(sessionControllerProvider).session?.user.permissions.contains(
-              kEmployeesManagePermission,
-            ) ??
-            false;
+        ref
+            .watch(sessionControllerProvider)
+            .session
+            ?.user
+            .permissions
+            .contains(kEmployeesManagePermission) ??
+        false;
     final employee = _employee;
     if (!canManage) {
       return Scaffold(
@@ -738,8 +812,8 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
             const SizedBox(height: 12),
           ],
           _InvitationRow(
-            status: employee.invitationStatus ??
-                EmployeeInvitationStatus.invited,
+            status:
+                employee.invitationStatus ?? EmployeeInvitationStatus.invited,
             expiresAt: employee.invitationExpiresAt,
           ),
           const SizedBox(height: 16),
@@ -756,8 +830,7 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
                     labelText: 'Full name',
                     errorText: fieldErrors['displayName'],
                   ),
-                  validator: (value) =>
-                      value == null || value.trim().isEmpty
+                  validator: (value) => value == null || value.trim().isEmpty
                       ? 'Enter the employee name.'
                       : null,
                 ),
@@ -837,16 +910,18 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
     if (role == null) return;
     final branchId = role == EmployeeRole.systemAdmin ? null : _branch?.id;
 
-    final updated = await ref.read(employeeControllerProvider.notifier).update(
-      employee.id,
-      UpdateEmployeeRequest(
-        displayName: _displayName.text.trim(),
-        email: _email.text.trim().isEmpty ? null : _email.text.trim(),
-        roleCode: role.apiCode,
-        branchId: branchId,
-        isActive: employee.isActive,
-      ),
-    );
+    final updated = await ref
+        .read(employeeControllerProvider.notifier)
+        .update(
+          employee.id,
+          UpdateEmployeeRequest(
+            displayName: _displayName.text.trim(),
+            email: _email.text.trim().isEmpty ? null : _email.text.trim(),
+            roleCode: role.apiCode,
+            branchId: branchId,
+            isActive: employee.isActive,
+          ),
+        );
     if (!mounted) return;
     if (updated != null) {
       setState(() => _employee = updated);
@@ -871,17 +946,29 @@ class EmployeeInvitationScreen extends ConsumerStatefulWidget {
 class _EmployeeInvitationScreenState
     extends ConsumerState<EmployeeInvitationScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _countryKey = GlobalKey<CountryCodeMobileFieldState>();
   late final TextEditingController _displayName;
   late final TextEditingController _mobile;
   late final TextEditingController _password;
+  late final TextEditingController _confirmPassword;
   late final TextEditingController _otp;
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+  String? _otpChallengeMobile;
+  String? _mobileValidationError;
+
+  /// Country resolved from the invitation's stored mobile number before the
+  /// field is first built. The backend is India-only today, but this keeps the
+  /// prefill consistent with the shared parser for any `+`/`00` values.
+  CountryCode? _prefillCountry;
 
   @override
   void initState() {
     super.initState();
     _displayName = TextEditingController();
-    _mobile = TextEditingController();
+    _mobile = TextEditingController()..addListener(_handleMobileChanged);
     _password = TextEditingController();
+    _confirmPassword = TextEditingController();
     _otp = TextEditingController();
     Future.microtask(
       () => ref
@@ -893,10 +980,24 @@ class _EmployeeInvitationScreenState
   @override
   void dispose() {
     _displayName.dispose();
-    _mobile.dispose();
+    _mobile
+      ..removeListener(_handleMobileChanged)
+      ..dispose();
     _password.dispose();
+    _confirmPassword.dispose();
     _otp.dispose();
     super.dispose();
+  }
+
+  void _handleMobileChanged() {
+    final canonical = _countryKey.currentState?.canonicalValue;
+    if (_otpChallengeMobile != null && canonical != _otpChallengeMobile) {
+      _otpChallengeMobile = null;
+      _otp.clear();
+    }
+    if (_mobileValidationError != null && mounted) {
+      setState(() => _mobileValidationError = null);
+    }
   }
 
   @override
@@ -920,8 +1021,7 @@ class _EmployeeInvitationScreenState
     }
     if (verification == null) {
       return ErrorStatePanel(
-        message: state.errorMessage ??
-            'This invitation could not be verified.',
+        message: state.errorMessage ?? 'This invitation could not be verified.',
         onRetry: () => ref
             .read(employeeControllerProvider.notifier)
             .verifyInvitation(widget.token),
@@ -931,7 +1031,8 @@ class _EmployeeInvitationScreenState
       return StatePanel(
         icon: Icons.link_off_outlined,
         title: 'Invitation unavailable',
-        message: verification.reason ??
+        message:
+            verification.reason ??
             'This invitation is no longer valid. Contact your administrator '
                 'to request a new one.',
         action: FilledButton(
@@ -943,13 +1044,37 @@ class _EmployeeInvitationScreenState
 
     final scheme = Theme.of(context).colorScheme;
     final role = EmployeeRole.fromApiCode(verification.roleCode);
-    final branchName = _branchName(verification.branchId, state);
+    // The branch shown to the invitee comes from the server, resolved from the
+    // invitation's persisted BranchId (branchName/branchCode). The invitee is
+    // anonymous so state.branchOptions is empty and cannot resolve the name;
+    // it is only used as a last-resort fallback for legacy verification
+    // payloads that predate the enriched metadata.
+    final branchName = verification.branchName ??
+        verification.branchCode ??
+        _branchName(verification.branchId, state);
     final fieldErrors = state.fieldErrors;
 
     // Prefill invitee details from the invitation (editable name/mobile; role
     // and branch are fixed by the administrator and never editable).
     if (_mobile.text.isEmpty && verification.mobile != null) {
-      _mobile.text = verification.mobile!;
+      final stored = verification.mobile!;
+      final trimmed = stored.trim();
+      if (trimmed.isEmpty) {
+        _mobile.text = stored;
+      } else if (trimmed.startsWith('+') || trimmed.startsWith('00')) {
+        final parsed = parseMobileCountry(trimmed);
+        _prefillCountry = parsed?.$1;
+        _mobile.text = parsed?.$2 ?? stored;
+      } else {
+        final canonical = canonicalizeIndianMobile(trimmed);
+        if (canonical != null && canonical.length == 13) {
+          _prefillCountry = CountryCodes.india;
+          _mobile.text = canonical.substring(3);
+        } else {
+          _prefillCountry = CountryCodes.india;
+          _mobile.text = stored;
+        }
+      }
     }
     if (_displayName.text.isEmpty &&
         verification.displayName != null &&
@@ -995,7 +1120,10 @@ class _EmployeeInvitationScreenState
                 Text(
                   'Your role and branch were assigned by your administrator. '
                   'They cannot be changed here.',
-                  style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ),
@@ -1015,45 +1143,75 @@ class _EmployeeInvitationScreenState
                   labelText: 'Full name',
                   errorText: fieldErrors['displayName'],
                 ),
-                validator: (value) =>
-                    value == null || value.trim().isEmpty
+                validator: (value) => value == null || value.trim().isEmpty
                     ? 'Enter your name.'
                     : null,
               ),
               const SizedBox(height: 12),
-              TextFormField(
+              CountryCodeMobileField(
+                key: _countryKey,
                 controller: _mobile,
                 enabled: !state.isSaving && !state.isSendingOtp,
-                keyboardType: TextInputType.phone,
-                decoration: InputDecoration(
-                  labelText: 'Mobile number',
-                  helperText: 'We send a one-time code to verify this number.',
-                  errorText: fieldErrors['mobile'],
-                ),
-                validator: (value) {
-                  final mobile = value?.trim() ?? '';
-                  if (mobile.isEmpty) return 'Enter your mobile number.';
-                  if (!RegExp(r'^[0-9]{10}$').hasMatch(mobile)) {
-                    return 'Enter a valid 10-digit mobile number.';
-                  }
-                  return null;
-                },
+                initialCountry: _prefillCountry ?? CountryCodes.india,
+                helperText:
+                    'We send a one-time code to verify this number.',
+                errorText: _mobileValidationError ?? fieldErrors['mobile'],
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _password,
                 enabled: !state.isSaving && !state.isCompleting,
-                obscureText: true,
+                obscureText: _obscurePassword,
                 decoration: InputDecoration(
                   labelText: 'Create password',
                   helperText: 'Minimum 8 characters.',
                   errorText: fieldErrors['password'],
+                  suffixIcon: IconButton(
+                    tooltip: _obscurePassword
+                        ? 'Show password'
+                        : 'Hide password',
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                    onPressed: () =>
+                        setState(() => _obscurePassword = !_obscurePassword),
+                  ),
                 ),
                 validator: (value) {
                   final password = value ?? '';
                   if (password.length < 8) {
                     return 'Password must be at least 8 characters.';
                   }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _confirmPassword,
+                enabled: !state.isSaving && !state.isCompleting,
+                obscureText: _obscureConfirmPassword,
+                decoration: InputDecoration(
+                  labelText: 'Confirm password',
+                  errorText: fieldErrors['confirmPassword'],
+                  suffixIcon: IconButton(
+                    tooltip: _obscureConfirmPassword
+                        ? 'Show password'
+                        : 'Hide password',
+                    icon: Icon(
+                      _obscureConfirmPassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                    onPressed: () => setState(
+                      () => _obscureConfirmPassword = !_obscureConfirmPassword,
+                    ),
+                  ),
+                ),
+                validator: (value) {
+                  if ((value ?? '').isEmpty) return 'Confirm your password.';
+                  if (value != _password.text) return 'Passwords do not match.';
                   return null;
                 },
               ),
@@ -1118,10 +1276,32 @@ class _EmployeeInvitationScreenState
   }
 
   Future<void> _sendOtp() async {
-    if (!_formKey.currentState!.validate()) return;
-    await ref
+    final verification = ref
+        .read(employeeControllerProvider)
+        .invitationVerification;
+    final raw = _mobile.text.trim();
+    final canonical = _countryKey.currentState?.canonicalValue;
+    final country =
+        _countryKey.currentState?.currentCountry ?? CountryCodes.india;
+    String? error;
+    if (verification == null || !verification.isValid) {
+      error = 'This invitation is no longer valid.';
+    } else if (raw.isEmpty) {
+      error = 'Enter your mobile number.';
+    } else if (canonical == null) {
+      error = mobileNumberErrorMessage(country);
+    }
+    if (error != null) {
+      setState(() => _mobileValidationError = error);
+      return;
+    }
+
+    final sent = await ref
         .read(employeeControllerProvider.notifier)
-        .sendInvitationOtp(_mobile.text.trim());
+        .sendInvitationOtp(canonical!);
+    if (sent && mounted) {
+      setState(() => _otpChallengeMobile = canonical);
+    }
   }
 
   Future<void> _complete() async {
@@ -1131,7 +1311,7 @@ class _EmployeeInvitationScreenState
         .completeRegistration(
           token: widget.token,
           displayName: _displayName.text.trim(),
-          mobile: _mobile.text.trim(),
+          mobile: _countryKey.currentState?.canonicalValue ?? '',
           password: _password.text,
           otpCode: _otp.text.trim(),
         );

@@ -16,6 +16,72 @@ void main() {
     });
   });
 
+  test('manual checkout request serializes the complete one-time address', () {
+    const address = CheckoutAddressDraft(
+      label: 'Work',
+      addressLine1: '2 Office Road',
+      addressLine2: 'Floor 3',
+      locality: 'Indiranagar',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      pinCode: '560038',
+      landmark: 'Near Metro',
+      deliveryInstructions: 'Call on arrival',
+      contactName: 'Customer',
+      contactMobile: '9999999999',
+      latitude: 12.9784,
+      longitude: 77.6408,
+    );
+    const request = CheckoutRequest(
+      manualAddress: address,
+      items: [OrderItemInput(productId: 'product-1', quantity: 1)],
+    );
+
+    expect(request.toJson(), {
+      'manualAddress': {
+        'label': 'Work',
+        'addressLine1': '2 Office Road',
+        'addressLine2': 'Floor 3',
+        'locality': 'Indiranagar',
+        'city': 'Bengaluru',
+        'state': 'Karnataka',
+        'pinCode': '560038',
+        'landmark': 'Near Metro',
+        'deliveryInstructions': 'Call on arrival',
+        'contactName': 'Customer',
+        'contactMobile': '9999999999',
+        'latitude': 12.9784,
+        'longitude': 77.6408,
+      },
+      'items': [
+        {'productId': 'product-1', 'quantity': 1.0},
+      ],
+    });
+  });
+
+  test('manual checkout selection is valid and saved selection has no manual payload', () {
+    const address = CheckoutAddressDraft(
+      addressLine1: '1 Main Road',
+      addressLine2: null,
+      locality: 'Central',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      pinCode: '560001',
+      contactName: 'Customer',
+      contactMobile: '9999999999',
+      latitude: 12.9716,
+      longitude: 77.5946,
+    );
+
+    const manual = CheckoutAddressSelection.manual(address);
+    const saved = CheckoutAddressSelection.saved('address-1');
+
+    expect(manual.isValid, isTrue);
+    expect(manual.addressId, isNull);
+    expect(saved.isValid, isTrue);
+    expect(saved.manualAddress, isNull);
+  });
+
   test('checkout preview parses backend authoritative quote', () {
     final preview = CheckoutPreview.fromJson({
       'addressId': 'address-1',

@@ -6,12 +6,13 @@ public sealed class SystemConfiguration : AuditableEntity
 {
     private SystemConfiguration() { }
 
-    public SystemConfiguration(string key, string value, string valueType, string? description = null)
+    public SystemConfiguration(string key, string value, string valueType, string? description = null, bool isSensitive = false)
     {
         Key = key;
         Value = value;
         ValueType = valueType;
         Description = description;
+        IsSensitive = isSensitive;
     }
 
     public string Key { get; private set; } = string.Empty;

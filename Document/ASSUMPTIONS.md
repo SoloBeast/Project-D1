@@ -17,3 +17,7 @@
 - Phase 9 readings are entered manually from a physical device or lactometer. Bluetooth and vendor SDK integration remain future adapter implementations.
 - A doorstep result is an indicative check and is not laboratory certification.
 - SQL Server-specific check constraints and physical column/index properties require SQL Server verification because the SQLite integration harness cannot prove provider-specific DDL behavior.
+- The guest cart is a device-only client-side artifact stored under `identity.guest.cart.v1`; it is never transmitted to the server while the user remains a guest, and no server-side records are created for guest browsing.
+- A guest holds no session or token and cannot access protected APIs; the backend keeps protected endpoints returning `401 Unauthorized` to guests.
+- The guest cart is identity-scoped: stored with a null user id while browsing as a guest, re-scoped to the customer's public user id after sign-in, and cleared from storage only on successful payment or explicit logout.
+- Guest carts are not synchronized across devices or browsers; a signed-out customer's cart is confined to the device on which it was created.

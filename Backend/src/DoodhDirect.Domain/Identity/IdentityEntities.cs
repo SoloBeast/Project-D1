@@ -22,9 +22,14 @@ public sealed class User : AuditableEntity
     public UserType UserType { get; private set; }
     public string? DisplayName { get; private set; }
     public string? Mobile { get; private set; }
+    public string? PendingMobile { get; private set; }
     public string? Email { get; private set; }
+    public string? PendingEmail { get; private set; }
+    public DateTime? EmailVerifiedAt { get; private set; }
     public string? PasswordHash { get; private set; }
     public bool IsActive { get; private set; } = true;
+    public bool IsArchived { get; private set; }
+    public DateTime? ArchivedAt { get; private set; }
     public DateTime? LastLoginAt { get; private set; }
 
     public ICollection<UserRole> UserRoles { get; } = new List<UserRole>();
@@ -49,9 +54,97 @@ public sealed class User : AuditableEntity
         PasswordHash = passwordHash;
     }
 
+    /// <summary>
+    /// Sets the verified primary email. Overwrites the pending email (if any) and
+    /// records verification at the given India-local timestamp. Null clears both.
+    /// </summary>
+    public void SetEmail(string? email, DateTime? verifiedAt = null)
+    {
+        Email = string.IsNullOrWhiteSpace(email) ? null : email.Trim().ToLowerInvariant();
+        if (Email is null)
+        {
+            PendingEmail = null;
+            EmailVerifiedAt = null;
+            return;
+        }
+
+        if (string.Equals(PendingEmail, Email, StringComparison.OrdinalIgnoreCase))
+            PendingEmail = null;
+        if (verifiedAt is not null)
+        {
+            EnsureIndiaLocal(verifiedAt.Value, nameof(verifiedAt));
+            EmailVerifiedAt = verifiedAt;
+        }
+    }
+
+    /// <summary>
+    /// Stages a new email for confirmation. The current email stays primary until
+    /// <see cref="ConfirmPendingEmailChange"/> commits the staged value.
+    /// </summary>
+    public void RequestPendingEmailChange(string pendingEmail)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pendingEmail);
+        PendingEmail = pendingEmail.Trim().ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Commits a previously staged pending email as the verified primary email.
+    /// </summary>
+    public void ConfirmPendingEmailChange(DateTime indiaLocalNow)
+    {
+        if (string.IsNullOrWhiteSpace(PendingEmail))
+            throw new InvalidOperationException("There is no pending email to confirm.");
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        Email = PendingEmail;
+        EmailVerifiedAt = indiaLocalNow;
+        PendingEmail = null;
+    }
+
+    public void ClearPendingEmailChange() => PendingEmail = null;
+
+    public void RequestPendingMobileChange(string pendingMobile)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pendingMobile);
+        PendingMobile = pendingMobile.Trim();
+    }
+
+    public void ConfirmPendingMobileChange()
+    {
+        if (string.IsNullOrWhiteSpace(PendingMobile))
+            throw new InvalidOperationException("There is no pending mobile number to confirm.");
+        Mobile = PendingMobile;
+        PendingMobile = null;
+    }
+
+    public void ClearPendingMobileChange() => PendingMobile = null;
+
+    public void MarkEmailVerified(DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        EmailVerifiedAt = indiaLocalNow;
+    }
+
+    public bool HasVerifiedEmail => Email is not null && EmailVerifiedAt is not null;
+
+    public bool HasPassword => !string.IsNullOrWhiteSpace(PasswordHash);
+
     public void Activate() => IsActive = true;
 
     public void Deactivate() => IsActive = false;
+
+    /// <summary>
+    /// Archives the employee account. An archived employee is retained for historical and
+    /// reporting data but is excluded from normal employee lists/selectors, cannot receive
+    /// new assignments, and cannot operate or log in unless explicitly restored. Archiving
+    /// always leaves the account deactivated.
+    /// </summary>
+    public void Archive(DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        IsActive = false;
+        IsArchived = true;
+        ArchivedAt = indiaLocalNow;
+    }
 
     public void AssignRole(Role role, long? branchId = null)
     {
@@ -159,7 +252,8 @@ public enum OtpPurpose
     Login,
     Registration,
     PasswordReset,
-    EmployeeInvitation
+    EmployeeInvitation,
+    EmailVerification
 }
 
 public sealed class OtpChallenge : PublicEntity
@@ -169,14 +263,12 @@ public sealed class OtpChallenge : PublicEntity
     public OtpChallenge(
         string destination,
         OtpPurpose purpose,
-        string codeHash,
         DateTime createdAt,
         DateTime expiresAt,
         int maxAttempts,
         string? requestedFromIp)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
-        ArgumentException.ThrowIfNullOrWhiteSpace(codeHash);
         EnsureIndiaLocal(createdAt, nameof(createdAt));
         EnsureIndiaLocal(expiresAt, nameof(expiresAt));
         if (expiresAt <= createdAt) throw new ArgumentOutOfRangeException(nameof(expiresAt));
@@ -184,7 +276,6 @@ public sealed class OtpChallenge : PublicEntity
 
         Destination = destination.Trim();
         Purpose = purpose;
-        CodeHash = codeHash;
         CreatedAt = createdAt;
         ExpiresAt = expiresAt;
         MaxAttempts = maxAttempts;
@@ -193,13 +284,21 @@ public sealed class OtpChallenge : PublicEntity
 
     public string Destination { get; private set; } = string.Empty;
     public OtpPurpose Purpose { get; private set; }
-    public string CodeHash { get; private set; } = string.Empty;
     public DateTime CreatedAt { get; private set; }
     public DateTime ExpiresAt { get; private set; }
     public int FailedAttempts { get; private set; }
     public int MaxAttempts { get; private set; }
     public DateTime? ConsumedAt { get; private set; }
+    public DateTime? PasswordResetConsumedAt { get; private set; }
     public string? RequestedFromIp { get; private set; }
+    public string? ReqId { get; private set; }
+
+    public void AttachProviderRequestId(string reqId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reqId);
+        if (ReqId is not null) throw new InvalidOperationException("The OTP challenge already has a provider request id.");
+        ReqId = reqId.Trim();
+    }
 
     public bool CanAttempt(DateTime indiaLocalNow)
     {
@@ -213,6 +312,20 @@ public sealed class OtpChallenge : PublicEntity
     {
         if (!CanAttempt(indiaLocalNow)) throw new InvalidOperationException("OTP challenge cannot be consumed.");
         ConsumedAt = indiaLocalNow;
+    }
+
+    public bool CanConsumePasswordReset(DateTime indiaLocalNow) =>
+        Purpose == OtpPurpose.PasswordReset &&
+        ConsumedAt is not null &&
+        PasswordResetConsumedAt is null &&
+        ExpiresAt > indiaLocalNow;
+
+    public void ConsumePasswordReset(DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        if (!CanConsumePasswordReset(indiaLocalNow))
+            throw new InvalidOperationException("The password-reset authorization cannot be consumed.");
+        PasswordResetConsumedAt = indiaLocalNow;
     }
 
     private static void EnsureIndiaLocal(DateTime value, string parameterName)

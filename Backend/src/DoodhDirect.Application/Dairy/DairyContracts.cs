@@ -48,8 +48,8 @@ public sealed record MilkBatchResult(
 
 public sealed record MilkUsageResult(
     Guid PublicId,
-    Guid BatchPublicId,
-    string BatchNumber,
+    Guid? BatchPublicId,
+    string? BatchNumber,
     long BranchId,
     DateTime UsedAt,
     decimal QuantityUsed,
@@ -57,7 +57,11 @@ public sealed record MilkUsageResult(
     string Purpose,
     long RecordedByUserId,
     string? Remarks,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    MilkUsageSource Source = MilkUsageSource.Manual,
+    string? OrderNumber = null,
+    string? DeliveryNumber = null,
+    string? ProductName = null);
 
 public sealed record MilkAvailabilityResult(
     long BranchId,

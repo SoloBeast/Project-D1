@@ -42,7 +42,7 @@ void main() {
         to: DateTime(2026, 8, 17, 23, 59),
         page: 3,
         pageSize: 50,
-        sortBy: 'createdAtUtc',
+        sortBy: 'createdAt',
         descending: false,
       );
 
@@ -53,7 +53,7 @@ void main() {
         'dateRange.to': '2026-08-17T23:59:00.000',
         'page': '3',
         'pageSize': '50',
-        'sortBy': 'createdAtUtc',
+        'sortBy': 'createdAt',
         'sortDirection': 'Ascending',
       });
       expect(filter.toJson(), {
@@ -65,7 +65,7 @@ void main() {
         },
         'page': 3,
         'pageSize': 50,
-        'sortBy': 'createdAtUtc',
+        'sortBy': 'createdAt',
         'sortDirection': 'Ascending',
       });
     });
@@ -294,7 +294,7 @@ void main() {
           'dateRange.to': ['2026-08-17T00:00:00.000'],
           'page': ['2'],
           'pageSize': ['50'],
-          'sortBy': ['createdAtUtc'],
+          'sortBy': ['createdAt'],
           'sortDirection': ['Ascending'],
         });
         return _response({
@@ -318,7 +318,7 @@ void main() {
           to: DateTime(2026, 8, 17),
           page: 2,
           pageSize: 50,
-          sortBy: 'createdAtUtc',
+          sortBy: 'createdAt',
           descending: false,
         ),
       );

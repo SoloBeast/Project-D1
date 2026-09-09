@@ -1,0 +1,9 @@
+[01:25:25 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[01:25:25 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[01:25:25 INF] Now listening on: http://localhost:5209
+[01:25:25 INF] Application started. Press Ctrl+C to shut down.
+[01:25:25 INF] Hosting environment: UAT 
+[01:25:25 INF] Content root path: c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api
+[01:28:29 WRN] Failed to determine the https port for redirect.
+[01:28:29 INF] HTTP GET /health/live responded 200 in 56.4305 ms
+[01:28:29 INF] HTTP GET /health/ready responded 200 in 27.7820 ms

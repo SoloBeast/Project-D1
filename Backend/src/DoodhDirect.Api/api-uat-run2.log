@@ -1,0 +1,367 @@
+Using launch settings from c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Properties\launchSettings.json...
+Building...
+[00:50:11 INF] Now listening on: http://localhost:5209
+[00:50:11 INF] Application started. Press Ctrl+C to shut down.
+[00:50:11 INF] Hosting environment: Development
+[00:50:11 INF] Content root path: c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api
+[00:51:23 WRN] Failed to determine the https port for redirect.
+[00:51:23 INF] HTTP GET /health responded 401 in 268.4343 ms
+[00:53:01 WRN] Compiling a query which loads related collections for more than one collection navigation, either via 'Include' or through projection, but no 'QuerySplittingBehavior' has been configured. By default, Entity Framework will use 'QuerySplittingBehavior.SingleQuery', which can potentially result in slow query performance. See https://go.microsoft.com/fwlink/?linkid=2134277 for more information. To identify the query that's triggering this warning call 'ConfigureWarnings(w => w.Throw(RelationalEventId.MultipleCollectionIncludeWarning))'.
+[00:53:01 WRN] Request failed with status 401. CorrelationId: b1c1a717-191e-4b8c-ab30-4774234de4f4
+DoodhDirect.Application.Common.UnauthorizedAppException: Authentication failed.
+   at DoodhDirect.Infrastructure.Identity.AuthenticationService.LoginAsync(PasswordLoginRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Identity\AuthenticationService.cs:line 64
+   at DoodhDirect.Api.Controllers.AuthController.Login(PasswordLoginApiRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Controllers\AuthController.cs:line 48
+   at lambda_method128(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at DoodhDirect.Api.Middleware.ExceptionHandlingMiddleware.InvokeAsync(HttpContext context) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Middleware\ExceptionHandlingMiddleware.cs:line 16
+[00:53:01 INF] HTTP POST /api/v1/auth/login responded 401 in 255.2505 ms
+[00:54:00 WRN] Request failed with status 401. CorrelationId: 604370cc-1a40-480d-8918-9dea7685f7d1
+DoodhDirect.Application.Common.UnauthorizedAppException: Authentication failed.
+   at DoodhDirect.Infrastructure.Identity.AuthenticationService.LoginAsync(PasswordLoginRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Identity\AuthenticationService.cs:line 64
+   at DoodhDirect.Api.Controllers.AuthController.Login(PasswordLoginApiRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Controllers\AuthController.cs:line 48
+   at lambda_method128(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at DoodhDirect.Api.Middleware.ExceptionHandlingMiddleware.InvokeAsync(HttpContext context) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Middleware\ExceptionHandlingMiddleware.cs:line 16
+[00:54:00 INF] HTTP POST /api/v1/auth/login responded 401 in 30.2704 ms
+[00:58:51 WRN] Compiling a query which loads related collections for more than one collection navigation, either via 'Include' or through projection, but no 'QuerySplittingBehavior' has been configured. By default, Entity Framework will use 'QuerySplittingBehavior.SingleQuery', which can potentially result in slow query performance. See https://go.microsoft.com/fwlink/?linkid=2134277 for more information. To identify the query that's triggering this warning call 'ConfigureWarnings(w => w.Throw(RelationalEventId.MultipleCollectionIncludeWarning))'.
+[00:58:51 WRN] Request failed with status 401. CorrelationId: 276e9906-85be-4f07-8799-0f2f6c414fbd
+DoodhDirect.Application.Common.UnauthorizedAppException: Authentication failed.
+   at DoodhDirect.Infrastructure.Identity.AuthenticationService.LoginAsync(PasswordLoginRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Identity\AuthenticationService.cs:line 64
+   at DoodhDirect.Api.Controllers.AuthController.Login(PasswordLoginApiRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Controllers\AuthController.cs:line 48
+   at lambda_method128(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at DoodhDirect.Api.Middleware.ExceptionHandlingMiddleware.InvokeAsync(HttpContext context) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Middleware\ExceptionHandlingMiddleware.cs:line 16
+[00:58:51 INF] HTTP POST /api/v1/auth/login responded 401 in 294.7825 ms
+[00:59:36 WRN] Request failed with status 401. CorrelationId: 9524a508-6fb9-4f18-bbd2-20bb63fe4f73
+DoodhDirect.Application.Common.UnauthorizedAppException: Authentication failed.
+   at DoodhDirect.Infrastructure.Identity.AuthenticationService.LoginAsync(PasswordLoginRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Identity\AuthenticationService.cs:line 64
+   at DoodhDirect.Api.Controllers.AuthController.Login(PasswordLoginApiRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Controllers\AuthController.cs:line 48
+   at lambda_method128(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at DoodhDirect.Api.Middleware.ExceptionHandlingMiddleware.InvokeAsync(HttpContext context) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Middleware\ExceptionHandlingMiddleware.cs:line 16
+[00:59:36 INF] HTTP POST /api/v1/auth/login responded 401 in 87.9678 ms
+[00:59:39 WRN] Request failed with status 401. CorrelationId: 6d2bcd0b-bfda-4453-9571-fd2b8b105af0
+DoodhDirect.Application.Common.UnauthorizedAppException: Authentication failed.
+   at DoodhDirect.Infrastructure.Identity.AuthenticationService.LoginAsync(PasswordLoginRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Identity\AuthenticationService.cs:line 64
+   at DoodhDirect.Api.Controllers.AuthController.Login(PasswordLoginApiRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Controllers\AuthController.cs:line 48
+   at lambda_method128(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at DoodhDirect.Api.Middleware.ExceptionHandlingMiddleware.InvokeAsync(HttpContext context) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Middleware\ExceptionHandlingMiddleware.cs:line 16
+[00:59:39 INF] HTTP POST /api/v1/auth/login responded 401 in 70.2153 ms
+[01:13:28 INF] HTTP POST /api/v1/auth/login responded 200 in 281.4066 ms
+[01:13:29 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[01:13:29 INF] Notification cycle processed 1 events and 0 deliveries.
+[01:13:52 INF] HTTP GET /api/v1/dairy/branches/6/availability responded 401 in 26.3463 ms
+[01:13:54 INF] HTTP GET /api/v1/dairy/branches/6/dashboard responded 401 in 4.9544 ms
+[01:14:13 INF] HTTP POST /api/v1/auth/login responded 200 in 94.4292 ms
+[01:14:13 ERR] Failed executing DbCommand (4ms) [Parameters=[@branchId='?' (DbType = Int64)], CommandType='Text', CommandTimeout='30']
+SELECT [m].[Id], [m].[BatchNumber], [m].[BranchId], [m].[CreatedAtUtc], [m].[ProductionAtUtc], [m].[ProductionId], [m].[PublicId], [m].[QuantityProduced], [m].[Status], [m].[Unit], [m].[UpdatedAtUtc], [m0].[Id], [m0].[BatchId], [m0].[BranchId], [m0].[CreatedAtUtc], [m0].[DeliveryId], [m0].[DeliveryNumber], [m0].[OrderId], [m0].[OrderItemId], [m0].[OrderNumber], [m0].[ProductName], [m0].[PublicId], [m0].[Purpose], [m0].[QuantityUsed], [m0].[RecordedByUserId], [m0].[Remarks], [m0].[Source], [m0].[SubscriptionDeliveryId], [m0].[Unit], [m0].[UpdatedAtUtc], [m0].[UsedAtUtc]
+FROM [dbo].[MilkBatch] AS [m]
+LEFT JOIN [dbo].[MilkUsage] AS [m0] ON [m].[Id] = [m0].[BatchId]
+WHERE [m].[BranchId] = @branchId
+ORDER BY [m].[Id]
+[01:14:13 ERR] An exception occurred while iterating over the results of a query for context type 'DoodhDirect.Infrastructure.Persistence.DoodhDirectDbContext'.
+Microsoft.Data.SqlClient.SqlException (0x80131904): Invalid column name 'DeliveryId'.
+Invalid column name 'DeliveryNumber'.
+Invalid column name 'OrderId'.
+Invalid column name 'OrderItemId'.
+Invalid column name 'OrderNumber'.
+Invalid column name 'ProductName'.
+Invalid column name 'Source'.
+Invalid column name 'SubscriptionDeliveryId'.
+Invalid column name 'Unit'.
+   at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+--- End of stack trace from previous location ---
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.<>c__DisplayClass30_0`2.<<ExecuteAsync>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+ClientConnectionId:5fc3e3f5-48e3-4d40-be93-687af2ff0117
+Error Number:207,State:1,Class:16
+Microsoft.Data.SqlClient.SqlException (0x80131904): Invalid column name 'DeliveryId'.
+Invalid column name 'DeliveryNumber'.
+Invalid column name 'OrderId'.
+Invalid column name 'OrderItemId'.
+Invalid column name 'OrderNumber'.
+Invalid column name 'ProductName'.
+Invalid column name 'Source'.
+Invalid column name 'SubscriptionDeliveryId'.
+Invalid column name 'Unit'.
+   at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+--- End of stack trace from previous location ---
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.<>c__DisplayClass30_0`2.<<ExecuteAsync>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+ClientConnectionId:5fc3e3f5-48e3-4d40-be93-687af2ff0117
+Error Number:207,State:1,Class:16
+[01:14:13 ERR] Unhandled exception. CorrelationId: bc95a27c-8120-4836-abda-ca6f29975070
+Microsoft.Data.SqlClient.SqlException (0x80131904): Invalid column name 'DeliveryId'.
+Invalid column name 'DeliveryNumber'.
+Invalid column name 'OrderId'.
+Invalid column name 'OrderItemId'.
+Invalid column name 'OrderNumber'.
+Invalid column name 'ProductName'.
+Invalid column name 'Source'.
+Invalid column name 'SubscriptionDeliveryId'.
+Invalid column name 'Unit'.
+   at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+--- End of stack trace from previous location ---
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.<>c__DisplayClass30_0`2.<<ExecuteAsync>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+   at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+   at DoodhDirect.Infrastructure.Dairy.DairyService.CalculateAvailabilityAsync(Int64 branchId, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Dairy\DairyService.cs:line 249
+   at DoodhDirect.Infrastructure.Dairy.DairyService.GetAvailabilityAsync(DairyActor actor, Int64 branchId, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Dairy\DairyService.cs:line 169
+   at DoodhDirect.Api.Controllers.DairyController.GetAvailability(Int64 branchId, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Controllers\DairyController.cs:line 72
+   at lambda_method1465(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at DoodhDirect.Api.Authorization.AuditingAuthorizationMiddlewareResultHandler.HandleAsync(RequestDelegate next, HttpContext context, AuthorizationPolicy policy, PolicyAuthorizationResult authorizeResult) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Authorization\AuditingAuthorizationMiddlewareResultHandler.cs:line 46
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at DoodhDirect.Api.Middleware.ExceptionHandlingMiddleware.InvokeAsync(HttpContext context) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Middleware\ExceptionHandlingMiddleware.cs:line 16
+ClientConnectionId:5fc3e3f5-48e3-4d40-be93-687af2ff0117
+Error Number:207,State:1,Class:16
+[01:14:13 ERR] HTTP GET /api/v1/dairy/branches/6/availability responded 500 in 101.2686 ms
+[01:14:13 ERR] Failed executing DbCommand (2ms) [Parameters=[@branchId='?' (DbType = Int64)], CommandType='Text', CommandTimeout='30']
+SELECT [m].[Id], [m].[BatchNumber], [m].[BranchId], [m].[CreatedAtUtc], [m].[ProductionAtUtc], [m].[ProductionId], [m].[PublicId], [m].[QuantityProduced], [m].[Status], [m].[Unit], [m].[UpdatedAtUtc], [m0].[Id], [m0].[BatchId], [m0].[BranchId], [m0].[CreatedAtUtc], [m0].[DeliveryId], [m0].[DeliveryNumber], [m0].[OrderId], [m0].[OrderItemId], [m0].[OrderNumber], [m0].[ProductName], [m0].[PublicId], [m0].[Purpose], [m0].[QuantityUsed], [m0].[RecordedByUserId], [m0].[Remarks], [m0].[Source], [m0].[SubscriptionDeliveryId], [m0].[Unit], [m0].[UpdatedAtUtc], [m0].[UsedAtUtc]
+FROM [dbo].[MilkBatch] AS [m]
+LEFT JOIN [dbo].[MilkUsage] AS [m0] ON [m].[Id] = [m0].[BatchId]
+WHERE [m].[BranchId] = @branchId
+ORDER BY [m].[Id]
+[01:14:13 ERR] An exception occurred while iterating over the results of a query for context type 'DoodhDirect.Infrastructure.Persistence.DoodhDirectDbContext'.
+Microsoft.Data.SqlClient.SqlException (0x80131904): Invalid column name 'DeliveryId'.
+Invalid column name 'DeliveryNumber'.
+Invalid column name 'OrderId'.
+Invalid column name 'OrderItemId'.
+Invalid column name 'OrderNumber'.
+Invalid column name 'ProductName'.
+Invalid column name 'Source'.
+Invalid column name 'SubscriptionDeliveryId'.
+Invalid column name 'Unit'.
+   at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+--- End of stack trace from previous location ---
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.<>c__DisplayClass30_0`2.<<ExecuteAsync>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+ClientConnectionId:5fc3e3f5-48e3-4d40-be93-687af2ff0117
+Error Number:207,State:1,Class:16
+Microsoft.Data.SqlClient.SqlException (0x80131904): Invalid column name 'DeliveryId'.
+Invalid column name 'DeliveryNumber'.
+Invalid column name 'OrderId'.
+Invalid column name 'OrderItemId'.
+Invalid column name 'OrderNumber'.
+Invalid column name 'ProductName'.
+Invalid column name 'Source'.
+Invalid column name 'SubscriptionDeliveryId'.
+Invalid column name 'Unit'.
+   at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+--- End of stack trace from previous location ---
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.<>c__DisplayClass30_0`2.<<ExecuteAsync>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+ClientConnectionId:5fc3e3f5-48e3-4d40-be93-687af2ff0117
+Error Number:207,State:1,Class:16
+[01:14:13 ERR] Unhandled exception. CorrelationId: ff52bf4f-6351-40e0-9bff-443de5fb5960
+Microsoft.Data.SqlClient.SqlException (0x80131904): Invalid column name 'DeliveryId'.
+Invalid column name 'DeliveryNumber'.
+Invalid column name 'OrderId'.
+Invalid column name 'OrderItemId'.
+Invalid column name 'OrderNumber'.
+Invalid column name 'ProductName'.
+Invalid column name 'Source'.
+Invalid column name 'SubscriptionDeliveryId'.
+Invalid column name 'Unit'.
+   at System.Threading.Tasks.ContinuationResultTaskFromResultTask`2.InnerInvoke()
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+--- End of stack trace from previous location ---
+   at System.Threading.ExecutionContext.RunInternal(ExecutionContext executionContext, ContextCallback callback, Object state)
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.RelationalCommand.ExecuteReaderAsync(RelationalCommandParameterObject parameterObject, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.InitializeReaderAsync(AsyncEnumerator enumerator, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.<>c__DisplayClass30_0`2.<<ExecuteAsync>b__0>d.MoveNext()
+--- End of stack trace from previous location ---
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteImplementationAsync[TState,TResult](Func`4 operation, Func`4 verifySucceeded, TState state, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Storage.ExecutionStrategy.ExecuteAsync[TState,TResult](TState state, Func`4 operation, Func`4 verifySucceeded, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.Query.Internal.SingleQueryingEnumerable`1.AsyncEnumerator.MoveNextAsync()
+   at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+   at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+   at DoodhDirect.Infrastructure.Dairy.DairyService.CalculateAvailabilityAsync(Int64 branchId, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Dairy\DairyService.cs:line 249
+   at DoodhDirect.Infrastructure.Dairy.DairyService.GetDashboardAsync(DairyActor actor, Int64 branchId, Nullable`1 productionDate, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Dairy\DairyService.cs:line 31
+   at DoodhDirect.Api.Controllers.DairyController.GetDashboard(Int64 branchId, Nullable`1 productionDate, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Controllers\DairyController.cs:line 25
+   at lambda_method1591(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at DoodhDirect.Api.Authorization.AuditingAuthorizationMiddlewareResultHandler.HandleAsync(RequestDelegate next, HttpContext context, AuthorizationPolicy policy, PolicyAuthorizationResult authorizeResult) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Authorization\AuditingAuthorizationMiddlewareResultHandler.cs:line 46
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at DoodhDirect.Api.Middleware.ExceptionHandlingMiddleware.InvokeAsync(HttpContext context) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Middleware\ExceptionHandlingMiddleware.cs:line 16
+ClientConnectionId:5fc3e3f5-48e3-4d40-be93-687af2ff0117
+Error Number:207,State:1,Class:16
+[01:14:13 ERR] HTTP GET /api/v1/dairy/branches/6/dashboard responded 500 in 32.7277 ms
+[01:14:13 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[01:14:13 INF] Notification cycle processed 1 events and 0 deliveries.
+[01:16:16 INF] HTTP GET /health responded 401 in 3.1009 ms
+[01:17:35 INF] HTTP POST /api/v1/auth/login responded 200 in 95.6146 ms
+[01:17:36 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[01:17:36 INF] Notification cycle processed 1 events and 0 deliveries.
+[01:17:59 INF] HTTP POST /api/v1/auth/login responded 200 in 66.5088 ms
+[01:18:01 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[01:18:01 INF] Notification cycle processed 1 events and 0 deliveries.
+[01:18:35 INF] HTTP POST /api/v1/auth/login responded 200 in 94.4488 ms
+[01:18:35 INF] HTTP GET /api/v1/dairy/branches/6/availability responded 401 in 3.9689 ms
+[01:18:35 INF] HTTP GET /api/v1/dairy/branches/6/dashboard responded 401 in 2.1594 ms
+[01:18:35 INF] HTTP GET /api/v1/dairy/branches/5/availability responded 401 in 1.2397 ms
+[01:18:37 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[01:18:37 INF] Notification cycle processed 1 events and 0 deliveries.
+[01:19:18 INF] HTTP POST /api/v1/auth/login responded 200 in 88.0597 ms
+[01:19:18 INF] HTTP GET /api/v1/dairy/branches/6/availability responded 200 in 45.0374 ms
+[01:19:18 INF] HTTP GET /api/v1/dairy/branches/6/dashboard responded 200 in 12.1715 ms
+[01:19:18 WRN] Request failed with status 403. CorrelationId: 8b69dba2-559c-44d0-83d1-42c23cd3c9fa
+DoodhDirect.Application.Common.ForbiddenAppException: You are not authorized for this branch.
+   at DoodhDirect.Infrastructure.Dairy.DairyService.RequireBranch(DairyActor actor, Int64 branchId) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Dairy\DairyService.cs:line 286
+   at DoodhDirect.Infrastructure.Dairy.DairyService.RequireBranchAsync(DairyActor actor, Int64 branchId, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Dairy\DairyService.cs:line 275
+   at DoodhDirect.Infrastructure.Dairy.DairyService.GetAvailabilityAsync(DairyActor actor, Int64 branchId, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Dairy\DairyService.cs:line 168
+   at DoodhDirect.Api.Controllers.DairyController.GetAvailability(Int64 branchId, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Controllers\DairyController.cs:line 72
+   at lambda_method1465(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.InvokeInnerFilterAsync()
+--- End of stack trace from previous location ---
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at DoodhDirect.Api.Authorization.AuditingAuthorizationMiddlewareResultHandler.HandleAsync(RequestDelegate next, HttpContext context, AuthorizationPolicy policy, PolicyAuthorizationResult authorizeResult) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Authorization\AuditingAuthorizationMiddlewareResultHandler.cs:line 46
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at DoodhDirect.Api.Middleware.ExceptionHandlingMiddleware.InvokeAsync(HttpContext context) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Middleware\ExceptionHandlingMiddleware.cs:line 16
+[01:19:18 INF] HTTP GET /api/v1/dairy/branches/5/availability responded 403 in 1.8105 ms
+[01:19:19 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[01:19:19 INF] Notification cycle processed 1 events and 0 deliveries.
+[01:21:08 INF] HTTP POST /api/v1/auth/login responded 200 in 85.9841 ms
+[01:21:08 INF] HTTP GET /api/v1/dairy/branches/6/availability responded 200 in 7.8373 ms
+[01:21:08 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[01:21:08 INF] HTTP POST /api/v1/dairy/batches/DEA1FF04-3DDE-4E70-A6D6-741F9ACFB2F9/usage responded 201 in 146.5128 ms
+[01:21:08 INF] HTTP GET /api/v1/dairy/branches/6/availability responded 200 in 15.1903 ms
+[01:21:10 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[01:21:10 INF] Notification cycle processed 1 events and 0 deliveries.

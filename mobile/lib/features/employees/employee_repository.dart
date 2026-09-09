@@ -90,6 +90,22 @@ class EmployeeRepository {
     );
   }
 
+  /// Deletes a deactivated employee (admin/owner). The backend refuses active
+  /// accounts and decides between a permanent delete and an archive: an
+  /// employee with no dependent records is removed, while one referenced by
+  /// retained operational history (deliveries, notifications, orders and
+  /// similar) is archived and returned in [EmployeeDeleteResult.employee].
+  Future<EmployeeDeleteResult> delete(
+    String accessToken,
+    int employeeId,
+  ) async => EmployeeDeleteResult.fromJson(
+    (await _api.delete(
+          '$_basePath/$employeeId',
+          accessToken: accessToken,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+
   /// Branch options for the Create Employee screen. Unlike the public catalogue
   /// endpoint, these carry the internal numeric id required by
   /// [CreateEmployeeRequest.branchId].

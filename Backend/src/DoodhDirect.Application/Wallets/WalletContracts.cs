@@ -22,10 +22,6 @@ public sealed record WalletTransactionResult(
     Guid? OrderId,
     Guid? SubscriptionId = null);
 
-public sealed record WalletTopUpRequest(
-    decimal Amount,
-    string IdempotencyKey);
-
 public sealed record WalletAdjustmentRequest(
     decimal Amount,
     string Reason,
@@ -43,9 +39,11 @@ public interface IWalletService
         long customerId,
         CancellationToken cancellationToken);
 
-    Task<WalletTransactionResult> TopUpAsync(
+    Task<WalletTransactionResult> CreditWalletTopUpAsync(
         long customerId,
-        WalletTopUpRequest request,
+        long paymentId,
+        decimal amount,
+        string idempotencyKey,
         CancellationToken cancellationToken);
 
     Task<WalletTransactionResult> AdjustAsync(

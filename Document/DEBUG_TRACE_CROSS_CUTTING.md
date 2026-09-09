@@ -10,7 +10,7 @@ Login/register/OTP call the repository, decode `data` into user plus token pair,
 
 [ApiClient](../mobile/lib/core/network/api_client.dart:1) sends `Accept: application/json`; JSON requests send `Content-Type: application/json`; authenticated requests send `Authorization: Bearer <accessToken>`. It supports JSON, multipart, and byte responses. Non-2xx JSON errors read the first `errors[]` item and expose `ApiException(statusCode, code, message)`.
 
-Backend controllers return `ApiResponse<T>`. [ExceptionHandlingMiddleware](../Backend/src/DoodhDirect.Api/Middleware/ExceptionHandlingMiddleware.cs:13) maps `AppException` to its status/code/field/message, unknown exceptions to `500 INTERNAL_ERROR`, and logs a correlation identifier. Development 500 responses may include `DEVELOPMENT_DETAIL`.
+Backend controllers return `ApiResponse<T>`. [ExceptionHandlingMiddleware](../Backend/src/DoodhDirect.Api/Middleware/ExceptionHandlingMiddleware.cs:13) maps `AppException` to its status/code/field/message, unknown exceptions to `500 INTERNAL_ERROR`, and logs a correlation identifier. Responses use the same safe, standardized error envelope in every environment; detailed diagnostics are written to the logs only.
 
 ## Authorization
 

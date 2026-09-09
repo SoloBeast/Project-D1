@@ -98,24 +98,10 @@ public sealed class Branch : AuditableEntity
     public decimal Longitude { get; private set; }
     public decimal? ServiceRadiusKm { get; private set; }
     public bool IsActive { get; private set; } = true;
-    public string? BranchNumber { get; private set; }
+    public bool IsArchived { get; private set; }
+    public DateTime? ArchivedAt { get; private set; }
 
     public ICollection<ProductBranch> ProductBranches { get; private set; } = [];
-
-    public void AssignBranchNumber(string branchNumber)
-    {
-        if (string.IsNullOrWhiteSpace(branchNumber))
-        {
-            throw new ArgumentException("A branch number is required.", nameof(branchNumber));
-        }
-
-        if (BranchNumber is not null)
-        {
-            throw new InvalidOperationException("The branch number has already been assigned.");
-        }
-
-        BranchNumber = branchNumber.Trim();
-    }
 
     public void Update(
         string name,
@@ -153,6 +139,29 @@ public sealed class Branch : AuditableEntity
 
     public void Activate() => IsActive = true;
     public void Deactivate() => IsActive = false;
+
+    /// <summary>
+    /// Archives the branch. An archived branch is retained for historical and reporting
+    /// data but is excluded from normal branch lists/selectors and cannot receive new
+    /// business activity. Archiving always leaves the branch deactivated.
+    /// </summary>
+    public void Archive(DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        IsActive = false;
+        IsArchived = true;
+        ArchivedAt = indiaLocalNow;
+    }
+
+    private static void EnsureIndiaLocal(DateTime value, string parameterName)
+    {
+        if (value.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "Catalogue timestamps must be India-local DateTime values with an unspecified kind.",
+                parameterName);
+        }
+    }
 
     private static string? Normalize(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

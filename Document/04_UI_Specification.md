@@ -115,6 +115,16 @@ Push permission:
 - A dedicated user action requests permission and explains denied/unavailable state through normal UI status.
 - Device token registration and refresh synchronization occur only for authorized or provisional permission.
 
+### 3.4.2 Guest Mode (Deferred Login)
+
+A visitor can browse the public storefront without an account:
+
+- **Guest home:** the browsing-only home exposes public storefront actions (home, catalogue, product details, cart, checkout review) and a sign-in button. Account-dependent quick actions (orders, subscriptions, wallet, deliveries, notifications, profile, cameras, dairy) route to sign-in with a `redirectTo` return-intent and are never shown fabricated account state.
+- **Guest cart:** the cart lives on the device under storage key `identity.guest.cart.v1`, scoped to the owning user so items built by one identity never leak into another identity or into guest mode. It survives guest navigation, guest → login, and app/browser restarts.
+- **Checkout boundary:** a guest reviewing checkout sees a login/register prompt ("Login required to continue to checkout") that keeps the in-memory cart intact. After sign-in the cart is re-scoped to the account and the user is returned to checkout via the return-intent.
+- **Cameras:** the public cameras section remains login-required; a guest tapping it is routed to sign-in with a return-intent.
+- Guests hold no session and no token, make no protected API calls, and are never pushed into payment/order/address flows.
+
 ### 3.5 Product List
 Initial product: loose buffalo milk.
 

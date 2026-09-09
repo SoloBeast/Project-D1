@@ -52,17 +52,6 @@ class PaymentRepository {
     return PaymentDetails.fromJson(response['data'] as Map<String, dynamic>);
   }
 
-  Future<PaymentDetails> completeDevelopment({
-    required String token,
-    required String paymentId,
-  }) async {
-    final response = await api.post(
-      '/api/v1/payments/$paymentId/complete-development',
-      accessToken: token,
-    );
-    return PaymentDetails.fromJson(response['data'] as Map<String, dynamic>);
-  }
-
   Future<PaymentDetails> get(String token, String paymentId) async {
     final response = await api.get(
       '/api/v1/payments/$paymentId',

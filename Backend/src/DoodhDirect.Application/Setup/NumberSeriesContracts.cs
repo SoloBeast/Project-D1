@@ -36,7 +36,8 @@ public sealed record UpdateNumberSeriesRequest(
     string Template,
     long StartingNumber,
     int IncrementBy,
-    NumberSeriesResetPolicy ResetPolicy);
+    NumberSeriesResetPolicy ResetPolicy,
+    string? ScopeKey = null);
 
 /// <summary>
 /// A template preview computed WITHOUT consuming or advancing the live sequence.
@@ -116,6 +117,17 @@ public interface INumberSeriesService
     Task<NumberSeriesResult> SetActiveAsync(
         string code,
         bool isActive,
+        long actorUserId,
+        CancellationToken cancellationToken,
+        string? scopeKey = null);
+
+    /// <summary>
+    /// Permanently deletes a number series (any scope, active or inactive). A series has no
+    /// foreign-key dependents — historical documents keep the formatted number strings that were
+    /// already issued — so the row is removed directly and the event is written to the audit log.
+    /// </summary>
+    Task DeleteAsync(
+        string code,
         long actorUserId,
         CancellationToken cancellationToken,
         string? scopeKey = null);

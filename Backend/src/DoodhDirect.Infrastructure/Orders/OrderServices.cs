@@ -271,7 +271,15 @@ public sealed class OrderService(
     private async Task<Calculation> CalculateAsync(long customerId, CheckoutRequest request, CancellationToken cancellationToken)
     {
         if (customerId <= 0) throw new UnauthorizedAppException();
-        if (request.AddressId == Guid.Empty) throw new ValidationAppException("A delivery address is required.", "AddressId");
+        if (request is null) throw new ValidationAppException("Checkout details are required.");
+        if ((request.AddressId.HasValue && request.AddressId.Value == Guid.Empty) ||
+            (request.AddressId.HasValue == request.ManualAddress is not null))
+        {
+            throw new ValidationAppException(
+                "Provide exactly one saved address or manual address.",
+                "AddressId");
+        }
+
         try
         {
             OrderValidation.ValidateItems(request.Items);
@@ -281,9 +289,28 @@ public sealed class OrderService(
             throw new ValidationAppException(exception.Message, exception.ParamName);
         }
 
-        var address = await dbContext.CustomerAddresses
-            .AsNoTracking()
-            .SingleOrDefaultAsync(item => item.PublicId == request.AddressId && item.UserId == customerId && item.IsActive, cancellationToken)
+        var address = request.ManualAddress is not null
+            ? DeliveryAddress.FromManual(request.ManualAddress)
+            : await dbContext.CustomerAddresses
+                .AsNoTracking()
+                .Where(item => item.PublicId == request.AddressId && item.UserId == customerId && item.IsActive)
+                .Select(item => new DeliveryAddress(
+                    item.Id,
+                    item.PublicId,
+                    item.Label,
+                    item.AddressLine1,
+                    item.AddressLine2,
+                    item.Locality,
+                    item.City,
+                    item.State,
+                    item.PinCode,
+                    item.Landmark,
+                    item.DeliveryInstructions,
+                    item.ContactName,
+                    item.ContactMobile,
+                    item.Latitude,
+                    item.Longitude))
+                .SingleOrDefaultAsync(cancellationToken)
             ?? throw new NotFoundException("The selected active address was not found for this customer.");
 
         var productIds = request.Items.Select(item => item.ProductId).ToArray();
@@ -318,7 +345,10 @@ public sealed class OrderService(
     private async Task LoadNavigationAsync(Order order, CancellationToken cancellationToken)
     {
         await dbContext.Entry(order).Reference(item => item.Branch).LoadAsync(cancellationToken);
-        await dbContext.Entry(order).Reference(item => item.CustomerAddress).LoadAsync(cancellationToken);
+        if (order.CustomerAddressId.HasValue)
+        {
+            await dbContext.Entry(order).Reference(item => item.CustomerAddress).LoadAsync(cancellationToken);
+        }
         await dbContext.Entry(order).Collection(item => item.Items).LoadAsync(cancellationToken);
         foreach (var item in order.Items)
         {
@@ -386,7 +416,7 @@ public sealed class OrderService(
     }
 
     private sealed record Calculation(
-        CustomerAddress Address,
+        DeliveryAddress Address,
         BranchAllocationResult Allocation,
         IReadOnlyCollection<CalculationLine> Lines,
         decimal Subtotal,
@@ -421,5 +451,70 @@ public sealed class OrderService(
     }
 
     private sealed record CalculationLine(Product Product, decimal Quantity);
+
+    private sealed record DeliveryAddress(
+        long? Id,
+        Guid? PublicId,
+        string Label,
+        string AddressLine1,
+        string? AddressLine2,
+        string Locality,
+        string City,
+        string State,
+        string PinCode,
+        string? Landmark,
+        string? DeliveryInstructions,
+        string ContactName,
+        string ContactMobile,
+        decimal Latitude,
+        decimal Longitude)
+    {
+        public static DeliveryAddress FromManual(CheckoutAddressRequest request)
+        {
+            static string Required(string? value, string field, int maxLength)
+            {
+                var trimmed = value?.Trim() ?? string.Empty;
+                if (trimmed.Length == 0 || trimmed.Length > maxLength)
+                {
+                    throw new ValidationAppException($"{field} is required and must be at most {maxLength} characters.", field);
+                }
+                return trimmed;
+            }
+
+            static string? Optional(string? value, string field, int maxLength)
+            {
+                var trimmed = value?.Trim();
+                if (string.IsNullOrEmpty(trimmed)) return null;
+                if (trimmed.Length > maxLength)
+                {
+                    throw new ValidationAppException($"{field} must be at most {maxLength} characters.", field);
+                }
+                return trimmed;
+            }
+
+            if (request.Latitude is < -90 or > 90) throw new ValidationAppException("Latitude must be between -90 and 90.", "Latitude");
+            if (request.Longitude is < -180 or > 180) throw new ValidationAppException("Longitude must be between -180 and 180.", "Longitude");
+
+            var pin = Required(request.PinCode, "PinCode", 10);
+            if (pin.Length != 6 || !pin.All(char.IsDigit)) throw new ValidationAppException("PIN code must contain exactly 6 digits.", "PinCode");
+
+            return new DeliveryAddress(
+                null,
+                null,
+                Optional(request.Label, "Label", 80) ?? "Manual",
+                Required(request.AddressLine1, "AddressLine1", 200),
+                Optional(request.AddressLine2, "AddressLine2", 200),
+                Required(request.Locality, "Locality", 120),
+                Required(request.City, "City", 100),
+                Required(request.State, "State", 100),
+                pin,
+                Optional(request.Landmark, "Landmark", 160),
+                Optional(request.DeliveryInstructions, "DeliveryInstructions", 500),
+                Required(request.ContactName, "ContactName", 160),
+                Required(request.ContactMobile, "ContactMobile", 20),
+                request.Latitude,
+                request.Longitude);
+        }
+    }
 }
 

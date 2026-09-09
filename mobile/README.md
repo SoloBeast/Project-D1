@@ -8,7 +8,8 @@ The `mobile` project is the DoodhDirect client for Android, iOS, and web. It imp
 - OTP request and verification flows
 - Secure session persistence and refresh-based restoration
 - Customer catalogue, address, checkout, and one-time order flows
-- Wallet balance, transaction history, and Development-only top-up
+- Guest (deferred login) browsing: public storefront home, catalogue, product details, cart, and checkout review without an account; the device-local cart is persisted under `identity.guest.cart.v1` and survives sign-in and app/browser restarts
+- Wallet balance and transaction history
 - Wallet and Razorpay payment initiation with server verification
 - Payment result refresh, failure handling, and terminal-payment retry
 - Customer delivery status and active-location tracking
@@ -17,11 +18,22 @@ The `mobile` project is the DoodhDirect client for Android, iOS, and web. It imp
 - Role-aware navigation based on server role codes
 - Standard API success/error envelope handling
 
+## Guest customer / deferred login
+
+A browsing-only guest state lets a visitor open the public storefront without an account:
+
+- **Allowed while a guest:** home, catalogue, product details, cart, checkout review.
+- **Login required before:** checkout submission, delivery addresses, payment, orders, subscriptions, wallet, delivery tracking, milk tests, profile, notifications, and cameras.
+- The cart lives **only on this device** under storage key `identity.guest.cart.v1` (see [`lib/features/orders/guest_cart_storage.dart`](lib/features/orders/guest_cart_storage.dart)). It is scoped to the owning user so a cart built by one identity never leaks into another identity or into guest mode.
+- The guest home (`GuestHomeScreen`) exposes only public storefront actions; every account-dependent quick action routes to sign-in with a `redirectTo` return-intent.
+- At the checkout boundary a guest sees a login/register prompt that preserves the in-memory cart; after sign-in the cart is re-scoped to the account and the user is returned straight to checkout.
+- Guests hold **no session and no token**; the app makes no protected API calls in guest mode, and the backend keeps every protected endpoint 401 for unauthenticated requests (covered by `Backend/tests/DoodhDirect.Api.IntegrationTests/GuestAuthorizationTests.cs`).
+
 ## Configuration
 
 The centralized Development web API base URL defaults to `http://localhost:5209`. The `DOOHDIRECT_API_URL` Dart define can override it for Production and other deployment-specific endpoints.
 
-Development-only controls — the quick customer login, wallet top-up, mock/development payment, and the "Development payment" subscription payment method — are gated by a single `devToolsEnabled` flag in [`lib/core/config/app_config.dart`](../mobile/lib/core/config/app_config.dart). It defaults to `true` in debug builds only, so `flutter run` (debug) shows them while `flutter build web --release` compiles them out unless the define below is explicitly set. For a UAT build that targets the Development backend and still needs the mock payment shortcuts, pass:
+Development tools are not part of the normal application UI. The quick customer login, wallet top-up, mock/development payment, and the "Development payment" subscription payment method were removed from the client, and the backend endpoints they called (`POST /payments/{paymentId}/complete-development` and `POST /wallet/topup`) are removed too. A documented `devToolsEnabled` flag in [`lib/core/config/app_config.dart`](../mobile/lib/core/config/app_config.dart) remains purely as a deliberate opt-in switch (`DOOHDIRECT_ENABLE_DEV_TOOLS=true`) for tooling. No normal application screen consumes it, it is never auto-enabled by `kDebugMode`, and it is hard-disabled in release builds:
 
 ```powershell
 --dart-define=DOOHDIRECT_ENABLE_DEV_TOOLS=true
@@ -80,23 +92,23 @@ For an Android emulator connecting to the Development HTTP profile, use an API h
    dotnet ef database update --project Backend/src/DoodhDirect.Infrastructure --startup-project Backend/src/DoodhDirect.Api
    ```
 
-2. Start the API with its Development HTTP profile at `http://localhost:5209`. `appsettings.Development.json` selects the Mock payment provider, and startup creates the checkout-ready development customer, default address, branch, and product:
+2. Start the API with its Development HTTP profile at `http://localhost:5209`. `appsettings.Development.json` configures the same real provider implementations as UAT/Production — Razorpay payments (sandbox/test credentials) — and, when `SeedOptions:EnableDevelopmentSeeds` is `true`, startup creates the checkout-ready development customer, default address, branch, and product:
 
    ```powershell
    dotnet run --project Backend/src/DoodhDirect.Api --launch-profile http
    ```
 
-3. Run Flutter with development tools enabled using the command above, then choose **Sign in as development customer**. Manual credentials are `customer@doodhdirect.local` and `DoodhDirect@123`.
+3. Run Flutter and sign in as the development customer (`customer@doodhdirect.local` / `DoodhDirect@123`, created when `SeedOptions:EnableDevelopmentSeeds` is enabled). There is no one-click development login in the app.
 4. Open the catalogue, select Fresh Buffalo Milk, use the seeded Home address, review checkout, and create the order.
-5. For Razorpay, select Razorpay and choose **Complete development payment** on the result screen. The client sends the Mock provider callback to the backend, and only the server-confirmed success state confirms the order.
-6. For Wallet, open Wallet and add a Development top-up large enough for the order, then create another order and select Wallet. The backend debits the ledger and confirms the order atomically.
+5. For Razorpay, select Razorpay and complete the payment through the configured gateway (sandbox/test credentials in Development). There is no "Complete development payment" shortcut.
+6. For Wallet, fund the wallet through the permission-protected admin wallet adjustment endpoint (no free development top-up exists in the normal runtime), then create another order and select Wallet. The backend debits the ledger and confirms the order atomically.
 7. Open Orders and the order detail. Verify the final status is Confirmed and that Wallet shows the matching debit for wallet-paid orders.
 
-The backend fixture is activated only by the ASP.NET Development environment. The visual shortcuts are compiled out of release builds unless `DOOHDIRECT_ENABLE_DEV_TOOLS=true` is explicitly passed.
+Development seed users are created only when `SeedOptions:EnableDevelopmentSeeds` is explicitly enabled (default `false`); seeds are never activated merely because the ASP.NET environment is Development. Development uses the same normal application/provider implementations as UAT/Production.
 
 ## Development UAT accounts
 
-Development startup creates these local-only accounts with the normal password hasher and JWT authentication flow. Every account uses the password `DoodhDirect@123` and is never seeded outside the ASP.NET Development environment.
+When `SeedOptions:EnableDevelopmentSeeds` is enabled, Development startup creates these local-only accounts with the normal password hasher and JWT authentication flow. Every account uses the password `DoodhDirect@123` and is never seeded unless the seed option is explicitly enabled.
 
 | Role | Email | Scope |
 | --- | --- | --- |
@@ -108,11 +120,11 @@ Development startup creates these local-only accounts with the normal password h
 
 ## Local dairy operations workflow
 
-Development startup creates a dairy manager scoped only to the `MAIN` branch: `dairy.manager@doodhdirect.local` / `DoodhDirect@123`. Sign in with this account to record production, inspect the automatically-created batch, review operational availability, and append batch usage. The fixture uses the normal password hasher and JWT authentication flow and is never seeded outside the ASP.NET Development environment.
+When `SeedOptions:EnableDevelopmentSeeds` is enabled, Development startup creates a dairy manager scoped only to the `MAIN` branch: `dairy.manager@doodhdirect.local` / `DoodhDirect@123`. Sign in with this account to record production, inspect the automatically-created batch, review operational availability, and append batch usage. The fixture uses the normal password hasher and JWT authentication flow and is never seeded unless the seed option is explicitly enabled.
 
 ## Local delivery workflow
 
-1. Complete the local payment and wallet workflow through a confirmed customer order. Development startup also creates a branch-scoped delivery staff account for `MAIN`: `delivery@doodhdirect.local` / `DoodhDirect@123`.
+1. Complete the local payment and wallet workflow through a confirmed customer order. With `SeedOptions:EnableDevelopmentSeeds` enabled, Development startup also creates a branch-scoped delivery staff account for `MAIN`: `delivery@doodhdirect.local` / `DoodhDirect@123`.
 2. Sign in as `delivery.manager@doodhdirect.local` to open the manager workspace for the `MAIN` branch. The `OWNER` and `SYSTEM_ADMIN` accounts have global access for workflows that require it.
 3. In the manager workspace, materialize eligible deliveries through the order's scheduled date, open the `MAIN` branch queue, and assign the order's delivery to Development Delivery Staff.
 4. Sign out and sign in as `delivery@doodhdirect.local`. The staff workspace shows assigned deliveries for the selected date. Open the assigned delivery and perform Pickup, Start delivery, and Arrive in that order.

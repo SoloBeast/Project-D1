@@ -1,8 +1,10 @@
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
+import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -21,8 +23,21 @@ class CheckoutScreen extends ConsumerStatefulWidget {
 }
 
 class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
-  String? _addressId;
   bool _initializedCart = false;
+
+  CheckoutAddressSelection? _selection(OrderState state, List<CustomerAddress> addresses) {
+    final current = state.checkoutAddress;
+    if (current?.manualAddress != null) return current;
+    if (current?.addressId != null &&
+        addresses.any((address) => address.publicId == current!.addressId)) {
+      return current;
+    }
+    final address = addresses
+        .where((item) => item.isDefault)
+        .firstOrNull ?? addresses.firstOrNull;
+    if (address == null) return null;
+    return CheckoutAddressSelection.saved(address.publicId);
+  }
 
   @override
   void initState() {
@@ -44,17 +59,19 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
   Widget build(BuildContext context) {
     final orderState = ref.watch(orderControllerProvider);
     final customerState = ref.watch(customerControllerProvider);
+    final session = ref.watch(sessionControllerProvider);
+    final isAuthenticated = session.isAuthenticated;
     final addresses = customerState.addresses
         .where((address) => address.isActive)
         .toList();
-    final selectedId =
-        _addressId ??
-        (addresses
-                .where((address) => address.isDefault)
-                .firstOrNull
-                ?.publicId ??
-            addresses.firstOrNull?.publicId);
+    final selection = _selection(orderState, addresses);
+    final selectedId = selection?.addressId;
     final preview = orderState.preview;
+    if (selection != null && orderState.checkoutAddress == null) {
+      Future.microtask(() => ref
+          .read(orderControllerProvider.notifier)
+          .selectSavedAddress(selection.addressId!));
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Checkout')),
@@ -150,100 +167,306 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                     subtitle: 'Where should we deliver your order?',
                   ),
                   const SizedBox(height: 10),
-                  if (customerState.isLoading && addresses.isEmpty)
+                  if (!isAuthenticated)
+                    const _CheckoutLoginRequiredCard()
+                  else if (customerState.isLoading && addresses.isEmpty)
                     const LinearProgressIndicator()
-                  else if (addresses.isEmpty)
-                    Card(
-                      child: ListTile(
-                        leading: const Icon(Icons.location_off_outlined),
-                        title: const Text('Add a delivery address'),
-                        subtitle: const Text(
-                          'An active address is required to preview your order.',
+                  else ...[
+                    if (addresses.isNotEmpty)
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedId,
+                        decoration: const InputDecoration(
+                          labelText: 'Saved address',
+                          border: OutlineInputBorder(),
                         ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => context.push('/customer/addresses/new'),
-                      ),
-                    )
-                  else
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedId,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                      ),
-                      items: addresses
-                          .map(
-                            (address) => DropdownMenuItem(
-                              value: address.publicId,
-                              child: Text('${address.label} — ${address.city}'),
-                            ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (value) {
-                        setState(() => _addressId = value);
-                        ref
-                            .read(orderControllerProvider.notifier)
-                            .clearPreview();
-                      },
-                    ),
-                  if (orderState.errorMessage != null)
-                    Text(
-                      orderState.errorMessage!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  if (preview != null) ...[
-                    _CheckoutSectionLabel(
-                      step: '3',
-                      title: 'Order summary',
-                      subtitle: 'Your final total is calculated securely',
-                    ),
-                    const SizedBox(height: 10),
-                    _PreviewCard(preview: preview),
-                  ],
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: selectedId == null || orderState.isSaving
-                        ? null
-                        : () async {
-                            final success = await ref
+                        items: addresses
+                            .map(
+                              (address) => DropdownMenuItem(
+                                value: address.publicId,
+                                child: Text('${address.label} — ${address.city}'),
+                              ),
+                            )
+                            .toList(growable: false),
+                        onChanged: (value) {
+                          if (value != null) {
+                            ref
                                 .read(orderControllerProvider.notifier)
-                                .previewFor(selectedId);
-                            if (!context.mounted || !success) return;
-                          },
-                    icon: orderState.isSaving && preview == null
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.calculate_outlined),
-                    label: const Text('Preview order'),
-                  ),
-                  if (preview != null) ...[
-                    const SizedBox(height: 8),
-                    FilledButton(
-                      onPressed: orderState.isSaving
+                                .selectSavedAddress(value);
+                          }
+                        },
+                      ),
+                    const SizedBox(height: 10),
+                    if (orderState.checkoutAddress?.manualAddress != null)
+                      _ManualAddressCard(
+                        address: orderState.checkoutAddress!.manualAddress!,
+                        onEdit: _enterNewAddress,
+                      ),
+                    OutlinedButton.icon(
+                      onPressed: _enterNewAddress,
+                      icon: const Icon(Icons.add_location_alt_outlined),
+                      label: const Text('Enter New Address'),
+                    ),
+                  ],
+                  if (isAuthenticated) ...[
+                    if (orderState.errorMessage != null)
+                      Text(
+                        orderState.errorMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    if (preview != null) ...[
+                      _CheckoutSectionLabel(
+                        step: '3',
+                        title: 'Order summary',
+                        subtitle: 'Your final total is calculated securely',
+                      ),
+                      const SizedBox(height: 10),
+                      _PreviewCard(preview: preview),
+                    ],
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: selection == null || orderState.isSaving
                           ? null
                           : () async {
-                              final order = await ref
+                              final success = await ref
                                   .read(orderControllerProvider.notifier)
-                                  .create(preview.addressId);
-                              if (context.mounted && order != null) {
-                                context.go(
-                                  '/orders/${order.publicId}/payment',
-                                  extra: order,
-                                );
-                              }
+                                  .previewFor(selection);
+                              if (!context.mounted || !success) return;
                             },
-                      child: Text(
-                        'Place order · ₹${preview.payableAmount.toStringAsFixed(2)}',
-                      ),
+                      icon: orderState.isSaving && preview == null
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.calculate_outlined),
+                      label: const Text('Preview order'),
                     ),
+                    if (preview != null) ...[
+                      const SizedBox(height: 8),
+                      FilledButton(
+                        onPressed: orderState.isSaving
+                            ? null
+                            : () async {
+                                final order = await ref
+                                    .read(orderControllerProvider.notifier)
+                                    .create(selection ?? orderState.checkoutAddress!);
+                                if (context.mounted && order != null) {
+                                  context.go(
+                                    '/orders/${order.publicId}/payment',
+                                    extra: order,
+                                  );
+                                }
+                              },
+                        child: Text(
+                          'Place order · ₹${preview.payableAmount.toStringAsFixed(2)}',
+                        ),
+                      ),
+                    ],
                   ],
                 ],
               ),
             ),
+    );
+  }
+  Future<void> _enterNewAddress() async {
+    final draft = await context.push<AddressDraft>('/checkout/address/new');
+    if (!mounted || draft == null) return;
+
+    final checkoutDraft = CheckoutAddressDraft.fromCustomerDraft(draft);
+    final save = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Save this address to your profile?'),
+        content: const Text(
+          'You can use this address just for this order, or save it for future deliveries.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text("Don't Save"),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Save Address'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+
+    if (save != true) {
+      ref.read(orderControllerProvider.notifier).selectManualAddress(checkoutDraft);
+      return;
+    }
+
+    final label = await _askForAddressLabel();
+    if (!mounted || label == null) return;
+    final previousAddressIds = ref
+        .read(customerControllerProvider)
+        .addresses
+        .map((address) => address.publicId)
+        .toSet();
+    final profileDraft = AddressDraft(
+      label: label,
+      addressLine1: checkoutDraft.addressLine1,
+      addressLine2: checkoutDraft.addressLine2,
+      locality: checkoutDraft.locality,
+      city: checkoutDraft.city,
+      state: checkoutDraft.state,
+      pinCode: checkoutDraft.pinCode,
+      landmark: checkoutDraft.landmark,
+      deliveryInstructions: checkoutDraft.deliveryInstructions,
+      contactName: checkoutDraft.contactName,
+      contactMobile: checkoutDraft.contactMobile,
+      latitude: checkoutDraft.latitude,
+      longitude: checkoutDraft.longitude,
+      isDefault: false,
+    );
+    final saved = await ref
+        .read(customerControllerProvider.notifier)
+        .saveAddress(profileDraft);
+    if (!mounted || !saved) return;
+
+    final savedAddress = ref
+        .read(customerControllerProvider)
+        .addresses
+        .where((address) => !previousAddressIds.contains(address.publicId))
+        .firstOrNull;
+    if (savedAddress != null) {
+      ref
+          .read(orderControllerProvider.notifier)
+          .selectSavedAddress(savedAddress.publicId);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The saved address could not be selected. Try again.'),
+        ),
+      );
+    }
+  }
+
+  Future<String?> _askForAddressLabel() async {
+    final controller = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    final label = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Name this address'),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Label'),
+            textCapitalization: TextCapitalization.words,
+            validator: (value) => value == null || value.trim().isEmpty
+                ? 'Enter a label'
+                : null,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.pop(dialogContext, controller.text.trim());
+              }
+            },
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return label;
+  }
+}
+
+class _ManualAddressCard extends StatelessWidget {
+  const _ManualAddressCard({required this.address, required this.onEdit});
+
+  final CheckoutAddressDraft address;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    child: ListTile(
+      leading: const Icon(Icons.location_on_outlined),
+      title: Text(address.label?.trim().isNotEmpty == true
+          ? address.label!.trim()
+          : 'One-time address'),
+      subtitle: Text(
+        '${address.addressLine1}, ${address.locality}, ${address.city}\n'
+        '${address.state} - ${address.pinCode}\n'
+        'Contact: ${address.contactName} · ${address.contactMobile}',
+      ),
+      isThreeLine: true,
+      trailing: IconButton(
+        tooltip: 'Edit address',
+        onPressed: onEdit,
+        icon: const Icon(Icons.edit_outlined),
+      ),
+    ),
+  );
+}
+
+/// Shown to guests (and unauthenticated users) at the account-dependent
+/// checkout boundary. The in-memory cart is left untouched so the exact items
+/// carry over after sign in, and the [redirectTo] return-intent brings the
+/// user straight back to this screen once authenticated.
+class _CheckoutLoginRequiredCard extends StatelessWidget {
+  const _CheckoutLoginRequiredCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      color: theme.colorScheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.lock_outline, color: theme.colorScheme.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Login required to continue to checkout.',
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Sign in to choose a delivery address, preview your order and pay. '
+              'Your cart is saved on this device and will still be here after you '
+              'sign in.',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                FilledButton(
+                  onPressed: () =>
+                      context.go('/login?redirectTo=/checkout'),
+                  child: const Text('Login'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

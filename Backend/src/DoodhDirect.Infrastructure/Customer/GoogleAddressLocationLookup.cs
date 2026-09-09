@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using DoodhDirect.Application.Customer;
+using DoodhDirect.Application.Integrations;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -9,7 +10,8 @@ namespace DoodhDirect.Infrastructure.Customer;
 public sealed class GoogleAddressLocationLookup(
     HttpClient httpClient,
     IOptions<AddressGeocodingOptions> options,
-    ILogger<GoogleAddressLocationLookup> logger) : IAddressLocationLookup
+    ILogger<GoogleAddressLocationLookup> logger,
+    IIntegrationSettingsProvider? integrationSettings = null) : IAddressLocationLookup
 {
     private readonly AddressGeocodingOptions options = options.Value;
 
@@ -18,9 +20,15 @@ public sealed class GoogleAddressLocationLookup(
         decimal longitude,
         CancellationToken cancellationToken)
     {
+        var runtime = integrationSettings is null
+            ? new GoogleMapsRuntimeSettings(null, null, false)
+            : await integrationSettings.GetGoogleMapsAsync(cancellationToken);
+        var apiKey = string.IsNullOrWhiteSpace(runtime.ApiKey) ? this.options.ApiKey : runtime.ApiKey;
+        var baseUrl = string.IsNullOrWhiteSpace(runtime.BaseUrl) ? this.options.BaseUrl : runtime.BaseUrl;
+
         if (!this.options.IsGoogle
-            || string.IsNullOrWhiteSpace(this.options.ApiKey)
-            || !Uri.TryCreate(this.options.BaseUrl, UriKind.Absolute, out var baseUri))
+            || string.IsNullOrWhiteSpace(apiKey)
+            || !Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri))
         {
             logger.LogWarning("Address geocoding is unavailable because the provider configuration is incomplete.");
             return null;
@@ -32,7 +40,7 @@ public sealed class GoogleAddressLocationLookup(
             ? []
             : query.Split('&', StringSplitOptions.RemoveEmptyEntries).ToList();
         parameters.Add($"latlng={Uri.EscapeDataString(string.Format(CultureInfo.InvariantCulture, "{0},{1}", latitude, longitude))}");
-        parameters.Add($"key={Uri.EscapeDataString(this.options.ApiKey)}");
+        parameters.Add($"key={Uri.EscapeDataString(apiKey)}");
         builder.Query = string.Join('&', parameters);
 
         try

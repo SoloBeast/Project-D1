@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using DoodhDirect.Application.Integrations;
 using DoodhDirect.Application.Payments;
 using Microsoft.Extensions.Options;
 
@@ -17,7 +18,8 @@ public sealed class MockPaymentGateway(IOptions<PaymentOptions> options) : IPaym
     private readonly ConcurrentDictionary<string, GatewayOrderRequest> _orders = new(StringComparer.Ordinal);
 
     public string ProviderName => "Mock";
-    public string? PublicKeyId => "mock_development_key";
+    public Task<string?> GetPublicKeyIdAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<string?>("mock_development_key");
     public bool IsLive => false;
 
     public Task<GatewayOrderResult> CreateOrderAsync(
@@ -33,13 +35,15 @@ public sealed class MockPaymentGateway(IOptions<PaymentOptions> options) : IPaym
             request.Currency));
     }
 
-    public bool VerifyPaymentSignature(
+    public Task<bool> VerifyPaymentSignatureAsync(
         string gatewayOrderId,
         string gatewayPaymentId,
-        string signature) =>
-        gatewayOrderId.StartsWith("order_mock_", StringComparison.Ordinal) &&
-        gatewayPaymentId.StartsWith("pay_mock_", StringComparison.Ordinal) &&
-        FixedTimeEquals(signature, "mock_verified");
+        string signature,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(
+            gatewayOrderId.StartsWith("order_mock_", StringComparison.Ordinal) &&
+            gatewayPaymentId.StartsWith("pay_mock_", StringComparison.Ordinal) &&
+            FixedTimeEquals(signature, "mock_verified"));
 
     public Task<GatewayPaymentStatusResult> GetPaymentStatusAsync(
         string gatewayPaymentId,
@@ -80,8 +84,11 @@ public sealed class MockPaymentGateway(IOptions<PaymentOptions> options) : IPaym
         return Task.FromResult(new GatewayOrderPaymentsResult(gatewayOrderId, payments));
     }
 
-    public bool VerifyWebhookSignature(ReadOnlySpan<byte> payload, string signature) =>
-        VerifyHmac(payload, signature, _options.MockSigningSecret);
+    public Task<bool> VerifyWebhookSignatureAsync(
+        ReadOnlySpan<byte> payload,
+        string signature,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(VerifyHmac(payload, signature, _options.MockSigningSecret));
 
     public GatewayWebhookEvent ParseWebhook(ReadOnlySpan<byte> payload) =>
         ParseWebhookPayload(payload);
@@ -176,19 +183,26 @@ public sealed class MockPaymentGateway(IOptions<PaymentOptions> options) : IPaym
 
 public sealed class RazorpayPaymentGateway(
     HttpClient httpClient,
-    IOptions<PaymentOptions> options) : IPaymentGateway
+    IOptions<PaymentOptions> options,
+    IIntegrationSettingsProvider? integrationSettings = null) : IPaymentGateway
 {
     private readonly PaymentOptions _options = options.Value;
 
     public string ProviderName => "Razorpay";
-    public string? PublicKeyId => _options.RazorpayKeyId;
     public bool IsLive => true;
+
+    public async Task<string?> GetPublicKeyIdAsync(CancellationToken cancellationToken)
+    {
+        var (keyId, _, _) = await ResolveCredentialsAsync(cancellationToken);
+        return keyId;
+    }
 
     public async Task<GatewayOrderResult> CreateOrderAsync(
         GatewayOrderRequest request,
         CancellationToken cancellationToken)
     {
-        using var message = CreateRequest(HttpMethod.Post, "orders");
+        var (keyId, keySecret, _) = await ResolveCredentialsAsync(cancellationToken);
+        using var message = CreateRequest(HttpMethod.Post, "orders", keyId, keySecret);
         message.Content = JsonContent.Create(new
         {
             amount = request.AmountMinor,
@@ -210,24 +224,29 @@ public sealed class RazorpayPaymentGateway(
             RequiredString(root, "currency"));
     }
 
-    public bool VerifyPaymentSignature(
+    public async Task<bool> VerifyPaymentSignatureAsync(
         string gatewayOrderId,
         string gatewayPaymentId,
-        string signature)
+        string signature,
+        CancellationToken cancellationToken)
     {
+        var (_, keySecret, _) = await ResolveCredentialsAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(keySecret))
+        {
+            return false;
+        }
+
         var payload = Encoding.UTF8.GetBytes($"{gatewayOrderId}|{gatewayPaymentId}");
-        return MockPaymentGateway.VerifyHmac(
-            payload,
-            signature,
-            _options.RazorpayKeySecret!);
+        return MockPaymentGateway.VerifyHmac(payload, signature, keySecret);
     }
 
     public async Task<GatewayPaymentStatusResult> GetPaymentStatusAsync(
         string gatewayPaymentId,
         CancellationToken cancellationToken)
     {
+        var (keyId, keySecret, _) = await ResolveCredentialsAsync(cancellationToken);
         using var response = await httpClient.SendAsync(
-            CreateRequest(HttpMethod.Get, $"payments/{Uri.EscapeDataString(gatewayPaymentId)}"),
+            CreateRequest(HttpMethod.Get, $"payments/{Uri.EscapeDataString(gatewayPaymentId)}", keyId, keySecret),
             cancellationToken);
         using var document = await ReadSuccessAsync(response, cancellationToken);
         return ParsePayment(document.RootElement);
@@ -237,10 +256,13 @@ public sealed class RazorpayPaymentGateway(
         string gatewayOrderId,
         CancellationToken cancellationToken)
     {
+        var (keyId, keySecret, _) = await ResolveCredentialsAsync(cancellationToken);
         using var response = await httpClient.SendAsync(
             CreateRequest(
                 HttpMethod.Get,
-                $"orders/{Uri.EscapeDataString(gatewayOrderId)}/payments"),
+                $"orders/{Uri.EscapeDataString(gatewayOrderId)}/payments",
+                keyId,
+                keySecret),
             cancellationToken);
         using var document = await ReadSuccessAsync(response, cancellationToken);
         var root = document.RootElement;
@@ -259,9 +281,21 @@ public sealed class RazorpayPaymentGateway(
         return new GatewayOrderPaymentsResult(gatewayOrderId, payments);
     }
 
-    public bool VerifyWebhookSignature(ReadOnlySpan<byte> payload, string signature) =>
-        !string.IsNullOrWhiteSpace(_options.RazorpayWebhookSecret) &&
-        MockPaymentGateway.VerifyHmac(payload, signature, _options.RazorpayWebhookSecret);
+    public Task<bool> VerifyWebhookSignatureAsync(
+        ReadOnlySpan<byte> payload,
+        string signature,
+        CancellationToken cancellationToken) =>
+        VerifyWebhookSignatureCoreAsync(payload.ToArray(), signature, cancellationToken);
+
+    private async Task<bool> VerifyWebhookSignatureCoreAsync(
+        byte[] payload,
+        string signature,
+        CancellationToken cancellationToken)
+    {
+        var (_, _, webhookSecret) = await ResolveCredentialsAsync(cancellationToken);
+        return !string.IsNullOrWhiteSpace(webhookSecret) &&
+            MockPaymentGateway.VerifyHmac(payload, signature, webhookSecret);
+    }
 
     public GatewayWebhookEvent ParseWebhook(ReadOnlySpan<byte> payload) =>
         MockPaymentGateway.ParseWebhookPayload(payload);
@@ -272,9 +306,12 @@ public sealed class RazorpayPaymentGateway(
         string idempotencyKey,
         CancellationToken cancellationToken)
     {
+        var (keyId, keySecret, _) = await ResolveCredentialsAsync(cancellationToken);
         using var message = CreateRequest(
             HttpMethod.Post,
-            $"payments/{Uri.EscapeDataString(gatewayPaymentId)}/refund");
+            $"payments/{Uri.EscapeDataString(gatewayPaymentId)}/refund",
+            keyId,
+            keySecret);
         message.Headers.TryAddWithoutValidation("X-Razorpay-Idempotency-Key", idempotencyKey);
         message.Content = JsonContent.Create(new
         {
@@ -295,13 +332,36 @@ public sealed class RazorpayPaymentGateway(
             null);
     }
 
-    private HttpRequestMessage CreateRequest(HttpMethod method, string relativePath)
+    private HttpRequestMessage CreateRequest(
+        HttpMethod method,
+        string relativePath,
+        string? keyId,
+        string? keySecret)
     {
         var credentials = Convert.ToBase64String(
-            Encoding.UTF8.GetBytes($"{_options.RazorpayKeyId}:{_options.RazorpayKeySecret}"));
+            Encoding.UTF8.GetBytes($"{keyId}:{keySecret}"));
         var request = new HttpRequestMessage(method, relativePath);
         request.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
         return request;
+    }
+
+    private async Task<(string? KeyId, string? KeySecret, string? WebhookSecret)> ResolveCredentialsAsync(
+        CancellationToken cancellationToken)
+    {
+        RazorpayRuntimeSettings runtime;
+        if (integrationSettings is null)
+        {
+            runtime = new RazorpayRuntimeSettings(null, null, null, false);
+        }
+        else
+        {
+            runtime = await integrationSettings.GetRazorpayAsync(cancellationToken);
+        }
+
+        return (
+            string.IsNullOrWhiteSpace(runtime.KeyId) ? _options.RazorpayKeyId : runtime.KeyId,
+            string.IsNullOrWhiteSpace(runtime.KeySecret) ? _options.RazorpayKeySecret : runtime.KeySecret,
+            string.IsNullOrWhiteSpace(runtime.WebhookSecret) ? _options.RazorpayWebhookSecret : runtime.WebhookSecret);
     }
 
     private static async Task<JsonDocument> ReadSuccessAsync(

@@ -28,6 +28,7 @@ class DeliveryState {
     this.isSaving = false,
     this.isOffline = false,
     this.errorMessage,
+    this.batchAllocations,
   });
 
   final List<CustomerDelivery> customerDeliveries;
@@ -42,6 +43,7 @@ class DeliveryState {
   final bool isSaving;
   final bool isOffline;
   final String? errorMessage;
+  final DeliveryBatchAllocationsInfo? batchAllocations;
 
   DeliveryState copyWith({
     List<CustomerDelivery>? customerDeliveries,
@@ -60,6 +62,8 @@ class DeliveryState {
     bool? isOffline,
     String? errorMessage,
     bool clearError = false,
+    DeliveryBatchAllocationsInfo? batchAllocations,
+    bool clearBatchAllocations = false,
   }) => DeliveryState(
     customerDeliveries: customerDeliveries ?? this.customerDeliveries,
     staffDeliveries: staffDeliveries ?? this.staffDeliveries,
@@ -78,6 +82,9 @@ class DeliveryState {
     isSaving: isSaving ?? this.isSaving,
     isOffline: isOffline ?? this.isOffline,
     errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
+    batchAllocations: clearBatchAllocations
+        ? null
+        : batchAllocations ?? this.batchAllocations,
   );
 }
 
@@ -163,6 +170,34 @@ class DeliveryController extends Notifier<DeliveryState> {
       selectedDelivery: delivery,
     );
   });
+
+  Future<bool> loadBatchAllocations(String id) async {
+    if (_token == null) return false;
+    state = state.copyWith(
+      isLoading: true,
+      isOffline: false,
+      clearError: true,
+    );
+    try {
+      final info = await _repository.getBatchAllocations(_token!, id);
+      state = state.copyWith(batchAllocations: info, isLoading: false);
+      return true;
+    } on Object catch (error) {
+      _setFailure(error);
+      return false;
+    }
+  }
+
+  Future<bool> saveBatchAllocations(
+    String id,
+    List<DeliveryBatchAllocation> allocations,
+  ) => _save(
+    () => _repository.saveBatchAllocations(
+      token: _token!,
+      deliveryId: id,
+      allocations: allocations,
+    ),
+  );
 
   Future<DeliveryMaterialization?> materialize(DateTime throughDate) async {
     final token = _token;

@@ -38,7 +38,8 @@ public sealed record UpsertProductRequest(
     string? Description,
     Guid CategoryId,
     string UnitOfMeasure,
-    decimal Price);
+    decimal Price,
+    IReadOnlyList<Guid> BranchIds);
 
 public sealed record SetProductBranchAvailabilityRequest(
     Guid BranchId,

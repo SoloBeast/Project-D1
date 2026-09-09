@@ -280,6 +280,119 @@ public sealed class NumberSeriesServiceTests
         Assert.Contains("inactive", exception.Message);
     }
 
+    // ---------------------------------------------- with/without-scope fallback
+
+    [Fact]
+    public async Task GetNextNumber_ScopedRequest_FallsBackToGlobalSeries()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        // Only a legacy global DELIVERY series exists (no scope). A scoped request
+        // from the delivery service must still allocate from it.
+        db.NumberSeries.Add(new NumberSeries(
+            "DELIVERY", "Delivery Number", "DEL/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never));
+        await db.SaveChangesAsync();
+        var service = new NumberSeriesService(db, time);
+
+        var number = await service.GetNextNumberAsync("DELIVERY", 11, CancellationToken.None, "MAIN");
+
+        Assert.Equal("DEL/000001", number);
+
+        var global = await db.NumberSeries.SingleAsync(item => item.Code == "DELIVERY" && item.ScopeKey == "");
+        Assert.Equal(1, global.LastUsedNumber);
+    }
+
+    [Fact]
+    public async Task GetNextNumber_ScopedRequest_ExactScopedSeriesWinsOverGlobal()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        db.NumberSeries.Add(new NumberSeries(
+            "DELIVERY", "Delivery Number", "DEL/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never));
+        db.NumberSeries.Add(new NumberSeries(
+            "DELIVERY", "Delivery Number", "DEL/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "MAIN"));
+        await db.SaveChangesAsync();
+        var service = new NumberSeriesService(db, time);
+
+        var number = await service.GetNextNumberAsync("DELIVERY", 11, CancellationToken.None, "MAIN");
+
+        // The scoped series matches exactly so the global series is not consumed.
+        Assert.Equal("DEL/MAIN/000001", number);
+        var global = await db.NumberSeries.SingleAsync(item => item.Code == "DELIVERY" && item.ScopeKey == "");
+        Assert.Equal(0, global.LastUsedNumber);
+    }
+
+    [Fact]
+    public async Task GetNextNumber_ScopedRequest_FallsBackToScopeSuffixedCode()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        // Mirrors a series created manually from the Setup screen where the
+        // description produced a code with the branch embedded ("Order DB0001"
+        // => code "ORDER_DB0001" under scope "DB0001"). The business request
+        // "ORDER" for scope "DB0001" must resolve to it.
+        db.NumberSeries.Add(new NumberSeries(
+            "ORDER_DB0001", "Order DB0001", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "DB0001"));
+        await db.SaveChangesAsync();
+        var service = new NumberSeriesService(db, time);
+
+        var number = await service.GetNextNumberAsync("ORDER", 11, CancellationToken.None, "DB0001");
+
+        // Rendered with the resolved series' own code/scope/template.
+        Assert.Equal("ORD/DB0001/000001", number);
+
+        var resolved = await db.NumberSeries.SingleAsync(item => item.Code == "ORDER_DB0001" && item.ScopeKey == "DB0001");
+        Assert.Equal(1, resolved.LastUsedNumber);
+    }
+
+    [Fact]
+    public async Task GetNextNumber_UnscopedRequest_DoesNotMatchScopedSeries()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        // Only a scoped series exists. An unscoped request must stay missing
+        // rather than silently consume a scoped counter.
+        db.NumberSeries.Add(new NumberSeries(
+            "ORDER", "Order Number", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "MAIN"));
+        await db.SaveChangesAsync();
+        var service = new NumberSeriesService(db, time);
+
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => service.GetNextNumberAsync("ORDER", 11, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetNextNumber_ScopedRequest_MissingAllFallbacks_ThrowsNotFound()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        var service = new NumberSeriesService(db, time);
+
+        var exception = await Assert.ThrowsAsync<NotFoundException>(
+            () => service.GetNextNumberAsync("DELIVERY", 11, CancellationToken.None, "MAIN"));
+
+        Assert.Contains("MAIN", exception.Message);
+    }
+
+    [Fact]
+    public async Task PreviewNextNumber_ScopedRequest_FallsBackToScopeSuffixedCode()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        db.NumberSeries.Add(new NumberSeries(
+            "ORDER_DB0001", "Order DB0001", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "DB0001"));
+        await db.SaveChangesAsync();
+        var service = new NumberSeriesService(db, time);
+
+        var preview = await service.PreviewNextNumberAsync("ORDER", CancellationToken.None, "DB0001");
+
+        Assert.Equal("ORDER_DB0001", preview.Code);
+        Assert.Equal("DB0001", preview.ScopeKey);
+        Assert.Equal(1, preview.NextNumber);
+        Assert.Equal("ORD/DB0001/000001", preview.FormattedNumber);
+        Assert.Equal(0, (await db.NumberSeries.SingleAsync()).LastUsedNumber);
+    }
+
     // ---------------------------------------------------------------- rollback
 
     [Fact]
@@ -642,6 +755,147 @@ public sealed class NumberSeriesServiceTests
         Assert.Contains("\"Description\":\"Updated description\"", audit.NewValueJson);
     }
 
+    [Fact]
+    public async Task Update_BeforeFirstUse_CanChangeScopeAndRevalidatesTemplate()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        var service = new NumberSeriesService(db, time);
+        await service.CreateAsync(
+            new CreateNumberSeriesRequest(
+                "ORDER", "Main order numbers", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "MAIN"),
+            7,
+            CancellationToken.None);
+
+        // Move the never-used series from MAIN to NIT; the template is revalidated
+        // against the NEW scope, and only the target scope may exist.
+        var updated = await service.UpdateAsync(
+            "ORDER",
+            new UpdateNumberSeriesRequest(
+                "NIT order numbers", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "NIT"),
+            9,
+            CancellationToken.None,
+            "MAIN");
+
+        Assert.Equal("NIT", updated.ScopeKey);
+        Assert.Equal("NIT order numbers", updated.Description);
+        Assert.False(await db.NumberSeries.AnyAsync(item => item.Code == "ORDER" && item.ScopeKey == "MAIN"));
+        Assert.True(await db.NumberSeries.AnyAsync(item => item.Code == "ORDER" && item.ScopeKey == "NIT"));
+
+        var audit = await db.AuditLogs.SingleAsync(item => item.Action == NumberSeriesService.ActionUpdated);
+        Assert.Equal("ORDER@NIT", audit.EntityId); // audit id tracks the new scope
+    }
+
+    [Fact]
+    public async Task Update_ScopeChange_ConflictWhenTargetScopeExists()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        db.NumberSeries.Add(new NumberSeries(
+            "ORDER", "Main order numbers", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "MAIN"));
+        db.NumberSeries.Add(new NumberSeries(
+            "ORDER", "NIT order numbers", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "NIT"));
+        await db.SaveChangesAsync();
+        var service = new NumberSeriesService(db, time);
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() => service.UpdateAsync(
+            "ORDER",
+            new UpdateNumberSeriesRequest(
+                "Main order numbers", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "NIT"),
+            9,
+            CancellationToken.None,
+            "MAIN"));
+
+        Assert.Contains("NIT", exception.Message);
+        // The source row is untouched.
+        var main = await db.NumberSeries.SingleAsync(item => item.Code == "ORDER" && item.ScopeKey == "MAIN");
+        Assert.Equal("MAIN", main.ScopeKey);
+    }
+
+    [Fact]
+    public async Task Update_AfterUse_RejectsScopeChange()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        db.NumberSeries.Add(new NumberSeries(
+            "ORDER", "Main order numbers", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "MAIN"));
+        await db.SaveChangesAsync();
+        var service = new NumberSeriesService(db, time);
+        await service.GetNextNumberAsync("ORDER", 11, CancellationToken.None, "MAIN"); // first use
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() => service.UpdateAsync(
+            "ORDER",
+            new UpdateNumberSeriesRequest(
+                "Main order numbers", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "NIT"),
+            9,
+            CancellationToken.None,
+            "MAIN"));
+
+        Assert.Contains("scope", exception.Message);
+        var main = await db.NumberSeries.SingleAsync(item => item.Code == "ORDER" && item.ScopeKey == "MAIN");
+        Assert.Equal("MAIN", main.ScopeKey); // unchanged
+    }
+
+    // ---------------------------------------------------------------- delete
+
+    [Fact]
+    public async Task Delete_ActiveSeries_RemovesRowAndWritesDeletedAudit()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        var service = new NumberSeriesService(db, time);
+        await service.CreateAsync(
+            new CreateNumberSeriesRequest("CUST", "Customer", "CUST/{NUMBER:0000}", 1, 1, NumberSeriesResetPolicy.Never),
+            7, CancellationToken.None);
+
+        // Active series can be deleted — the user-facing bug. Historical documents
+        // keep their already-formatted number strings, so the row is removed directly.
+        await service.DeleteAsync("CUST", 13, CancellationToken.None);
+
+        Assert.False(await db.NumberSeries.AnyAsync(item => item.Code == "CUST"));
+
+        var audit = await db.AuditLogs.SingleAsync(item => item.Action == NumberSeriesService.ActionDeleted);
+        Assert.Equal(NumberSeriesService.ActionDeleted, audit.Action);
+        Assert.Equal("NumberSeries", audit.EntityType);
+        Assert.Equal("CUST", audit.EntityId);
+        Assert.Equal(13, audit.UserId);
+        Assert.Contains("\"Code\":\"CUST\"", audit.OldValueJson);
+        Assert.Null(audit.NewValueJson);
+        Assert.Equal("Number series deleted.", audit.Reason);
+    }
+
+    [Fact]
+    public async Task Delete_ScopedSeries_RemovesOnlyThatScope()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        db.NumberSeries.Add(new NumberSeries(
+            "ORDER", "Main order numbers", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "MAIN"));
+        db.NumberSeries.Add(new NumberSeries(
+            "ORDER", "NIT order numbers", "ORD/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "NIT"));
+        await db.SaveChangesAsync();
+        var service = new NumberSeriesService(db, time);
+
+        await service.DeleteAsync("ORDER", 13, CancellationToken.None, "MAIN");
+
+        Assert.False(await db.NumberSeries.AnyAsync(item => item.Code == "ORDER" && item.ScopeKey == "MAIN"));
+        Assert.True(await db.NumberSeries.AnyAsync(item => item.Code == "ORDER" && item.ScopeKey == "NIT"));
+
+        var audit = await db.AuditLogs.SingleAsync();
+        Assert.Equal("ORDER@MAIN", audit.EntityId);
+    }
+
+    [Fact]
+    public async Task Delete_MissingSeries_ThrowsNotFound()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        var service = new NumberSeriesService(db, time);
+
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => service.DeleteAsync("CUST", 13, CancellationToken.None));
+    }
+
     // ---------------------------------------------------------------- activate / deactivate
 
     [Fact]
@@ -730,12 +984,11 @@ public sealed class NumberSeriesServiceTests
         await seed.SeedAsync(CancellationToken.None);
         await seed.SeedAsync(CancellationToken.None);
 
-        // CUSTOMER, ORDER@MAIN, BRANCH, DELIVERY — the global ORDER series is no
-        // longer seeded; order numbers are scoped per active branch.
-        Assert.Equal(4, await db.NumberSeries.CountAsync());
+        // CUSTOMER, ORDER@MAIN, and DELIVERY — order numbers are scoped per active branch.
+        Assert.Equal(3, await db.NumberSeries.CountAsync());
         Assert.Contains(await db.NumberSeries.Select(x => x.Code).ToListAsync(), code => code == "CUSTOMER");
         Assert.Contains(await db.NumberSeries.Select(x => x.Code).ToListAsync(), code => code == "ORDER");
-        Assert.Contains(await db.NumberSeries.Select(x => x.Code).ToListAsync(), code => code == "BRANCH");
+        Assert.DoesNotContain("BRANCH", await db.NumberSeries.Select(x => x.Code).ToListAsync());
         Assert.Contains(await db.NumberSeries.Select(x => x.Code).ToListAsync(), code => code == "DELIVERY");
     }
 
@@ -757,10 +1010,8 @@ public sealed class NumberSeriesServiceTests
         Assert.Equal("ORD/MAIN/{FY}/{NUMBER:000000}", order.Template);
         Assert.Equal("MAIN", order.ScopeKey);
         Assert.Equal(NumberSeriesResetPolicy.FinancialYear, order.ResetPolicy);
-        Assert.Equal("BR/{NUMBER:000}", series["BRANCH"].Template);
         Assert.Equal("DEL/{NUMBER:000000}", series["DELIVERY"].Template);
         Assert.Equal(NumberSeriesResetPolicy.Never, series["CUSTOMER"].ResetPolicy);
-        Assert.Equal(NumberSeriesResetPolicy.Never, series["BRANCH"].ResetPolicy);
         Assert.Equal(NumberSeriesResetPolicy.Never, series["DELIVERY"].ResetPolicy);
         Assert.All(series.Values, item => Assert.True(item.IsActive));
     }

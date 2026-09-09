@@ -43,7 +43,9 @@ void main() {
       expect(find.byTooltip('Create employee'), findsOneWidget);
     });
 
-    testWidgets('hides create action without manage permission', (tester) async {
+    testWidgets('hides create action without manage permission', (
+      tester,
+    ) async {
       await _pumpConfig(
         tester,
         const EmployeeListScreen(),
@@ -100,7 +102,9 @@ void main() {
       expect(find.byTooltip('Edit Ramesh Kumar'), findsOneWidget);
     });
 
-    testWidgets('hides manage actions without manage permission', (tester) async {
+    testWidgets('hides manage actions without manage permission', (
+      tester,
+    ) async {
       await _pumpConfig(
         tester,
         const EmployeeListScreen(),
@@ -124,9 +128,7 @@ void main() {
         _SeededEmployeeController(
           EmployeeState(
             employees: [
-              _employee(
-                invitationStatus: EmployeeInvitationStatus.registered,
-              ),
+              _employee(invitationStatus: EmployeeInvitationStatus.registered),
             ],
           ),
         ),
@@ -183,7 +185,9 @@ void main() {
   });
 
   group('employee create screen', () {
-    testWidgets('shows access denied without manage permission', (tester) async {
+    testWidgets('shows access denied without manage permission', (
+      tester,
+    ) async {
       await _pumpConfig(
         tester,
         const CreateEmployeeScreen(),
@@ -194,7 +198,9 @@ void main() {
 
       expect(find.text('Access denied'), findsOneWidget);
       expect(
-        find.text('Your account does not have permission to view this content.'),
+        find.text(
+          'Your account does not have permission to view this content.',
+        ),
         findsOneWidget,
       );
     });
@@ -222,7 +228,9 @@ void main() {
       expect(find.text('Owner'), findsNothing);
     });
 
-    testWidgets('system administrator is not bound to a branch', (tester) async {
+    testWidgets('system administrator is not bound to a branch', (
+      tester,
+    ) async {
       final controller = _SeededEmployeeController(
         EmployeeState(branchOptions: [_branchOption()]),
       );
@@ -240,6 +248,10 @@ void main() {
       await tester.enterText(
         find.widgetWithText(TextFormField, 'Mobile number *'),
         '9876543211',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Email *'),
+        'suresh@example.com',
       );
 
       await tester.tap(find.byType(DropdownButtonFormField<EmployeeRole>));
@@ -261,7 +273,9 @@ void main() {
       expect(controller.lastCreateRequest?.displayName, 'Suresh Kumar');
     });
 
-    testWidgets('create sends role and branch for delivery staff', (tester) async {
+    testWidgets('create sends role and branch for delivery staff', (
+      tester,
+    ) async {
       final controller = _SeededEmployeeController(
         EmployeeState(branchOptions: [_branchOption()]),
       );
@@ -280,13 +294,19 @@ void main() {
         find.widgetWithText(TextFormField, 'Mobile number *'),
         '9876543211',
       );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Email *'),
+        'suresh@example.com',
+      );
 
       await tester.tap(find.byType(DropdownButtonFormField<EmployeeRole>));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delivery Boy / Delivery Staff').last);
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byType(DropdownButtonFormField<EmployeeBranchOption>));
+      await tester.tap(
+        find.byType(DropdownButtonFormField<EmployeeBranchOption>),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Main Branch (MAIN)').last);
       await tester.pumpAndSettle();
@@ -299,7 +319,8 @@ void main() {
       expect(request?.roleCode, 'DELIVERY_STAFF');
       expect(request?.branchId, 7);
       expect(request?.sendInvitation, isTrue);
-      expect(request?.mobile, '9876543211');
+      // The shared country-code field sends the canonical +91 form.
+      expect(request?.mobile, '+919876543211');
     });
 
     testWidgets('surfaces the invitation link after creating', (tester) async {
@@ -322,11 +343,17 @@ void main() {
         find.widgetWithText(TextFormField, 'Mobile number *'),
         '9876543211',
       );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Email *'),
+        'suresh@example.com',
+      );
       await tester.tap(find.byType(DropdownButtonFormField<EmployeeRole>));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Dairy Manager').last);
       await tester.pumpAndSettle();
-      await tester.tap(find.byType(DropdownButtonFormField<EmployeeBranchOption>));
+      await tester.tap(
+        find.byType(DropdownButtonFormField<EmployeeBranchOption>),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Main Branch (MAIN)').last);
       await tester.pumpAndSettle();
@@ -345,7 +372,9 @@ void main() {
   });
 
   group('employee edit screen', () {
-    testWidgets('shows access denied without manage permission', (tester) async {
+    testWidgets('shows access denied without manage permission', (
+      tester,
+    ) async {
       await _pumpConfig(
         tester,
         EmployeeEditScreen(employeeId: 42, employee: _employee()),
@@ -357,12 +386,16 @@ void main() {
 
       expect(find.text('Access denied'), findsOneWidget);
       expect(
-        find.text('Your account does not have permission to view this content.'),
+        find.text(
+          'Your account does not have permission to view this content.',
+        ),
         findsOneWidget,
       );
     });
 
-    testWidgets('prefills employee details and saves role changes', (tester) async {
+    testWidgets('prefills employee details and saves role changes', (
+      tester,
+    ) async {
       final controller = _SeededEmployeeController(
         EmployeeState(branchOptions: [_branchOption()]),
       );
@@ -475,6 +508,99 @@ void main() {
       expect(find.text('Complete registration'), findsOneWidget);
     });
 
+    testWidgets('shows the server-assigned branch name (Dabua) read-only', (
+      tester,
+    ) async {
+      await _pumpConfig(
+        tester,
+        const EmployeeInvitationScreen(token: 'inv-token-9'),
+        _SeededEmployeeController(
+          EmployeeState(
+            invitationVerification: _verification(
+              roleCode: 'DAIRY_MANAGER',
+              branchId: 7,
+              branchCode: 'DABUA',
+              branchName: 'Dabua',
+            ),
+            // Anonymous invitees have no privileged branch options, so the
+            // server-provided branch metadata is the ONLY source of the name.
+            branchOptions: const [],
+          ),
+        ),
+        routePath: '/invite/:token',
+        initialPath: '/invite/inv-token-9',
+      );
+
+      expect(find.text('Your assigned profile'), findsOneWidget);
+      expect(find.text('Role: Dairy Manager'), findsOneWidget);
+      expect(find.text('Branch: Dabua'), findsOneWidget);
+      // No fallback to the seeded 'Main Branch (MAIN)' option.
+      expect(find.text('Branch: Main Branch (MAIN)'), findsNothing);
+      expect(find.text('Branch: —'), findsNothing);
+      // Role and branch remain read-only on this screen.
+      expect(find.byType(DropdownButtonFormField<EmployeeRole>), findsNothing);
+      expect(
+        find.byType(DropdownButtonFormField<EmployeeBranchOption>),
+        findsNothing,
+      );
+    });
+
+    testWidgets('shows the branch code when the server omits the branch name', (
+      tester,
+    ) async {
+      await _pumpConfig(
+        tester,
+        const EmployeeInvitationScreen(token: 'inv-token-9'),
+        _SeededEmployeeController(
+          EmployeeState(
+            invitationVerification: _verification(
+              branchId: 9,
+              branchCode: 'NIT3',
+              branchName: null,
+            ),
+            branchOptions: const [],
+          ),
+        ),
+        routePath: '/invite/:token',
+        initialPath: '/invite/inv-token-9',
+      );
+
+      expect(find.text('Branch: NIT3'), findsOneWidget);
+      expect(find.text('Branch: —'), findsNothing);
+      expect(find.text('Branch: Main Branch (MAIN)'), findsNothing);
+    });
+
+    testWidgets('assigned branch name survives the OTP send flow', (
+      tester,
+    ) async {
+      await _pumpConfig(
+        tester,
+        const EmployeeInvitationScreen(token: 'inv-token-9'),
+        _SeededEmployeeController(
+          EmployeeState(
+            invitationVerification: _verification(
+              branchId: 9,
+              branchCode: 'NIT3',
+              branchName: 'NIT3 Branch',
+            ),
+            branchOptions: const [],
+          ),
+        ),
+        routePath: '/invite/:token',
+        initialPath: '/invite/inv-token-9',
+      );
+
+      expect(find.text('Branch: NIT3 Branch'), findsOneWidget);
+
+      await tester.tap(find.text('Send one-time code'));
+      await tester.pumpAndSettle();
+
+      // The OTP challenge state never resets or drops the server-assigned
+      // branch shown on the read-only profile card.
+      expect(find.text('Branch: NIT3 Branch'), findsOneWidget);
+      expect(find.text('Branch: —'), findsNothing);
+    });
+
     testWidgets('shows invitation unavailable for an invalid token', (
       tester,
     ) async {
@@ -530,8 +656,173 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(controller.sendOtpCount, 1);
-      expect(controller.lastOtpMobile, '9876543210');
+      // The shared country-code field sends the canonical +91 form.
+      expect(controller.lastOtpMobile, '+919876543210');
     });
+
+    testWidgets('password fields are obscured and have independent toggles', (
+      tester,
+    ) async {
+      await _pumpInvitation(tester);
+
+      final password = find.widgetWithText(TextFormField, 'Create password');
+      final confirmation = find.widgetWithText(
+        TextFormField,
+        'Confirm password',
+      );
+      expect(password, findsOneWidget);
+      expect(confirmation, findsOneWidget);
+      expect(_obscureText(tester, password), isTrue);
+      expect(_obscureText(tester, confirmation), isTrue);
+      expect(find.byTooltip('Show password'), findsNWidgets(2));
+
+      await tester.tap(find.byTooltip('Show password').first);
+      await tester.pump();
+      expect(_obscureText(tester, password), isFalse);
+      expect(find.byTooltip('Hide password'), findsOneWidget);
+    });
+
+    testWidgets('send OTP ignores empty OTP and completion-only fields', (
+      tester,
+    ) async {
+      final controller = await _pumpInvitation(tester);
+
+      await tester.tap(find.text('Send one-time code'));
+      await tester.pumpAndSettle();
+
+      expect(controller.sendOtpCount, 1);
+      expect(find.text('Enter the one-time code.'), findsNothing);
+    });
+
+    testWidgets('invalid mobile blocks Send OTP', (tester) async {
+      final controller = await _pumpInvitation(tester);
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Mobile number'),
+        '123',
+      );
+      await tester.tap(find.text('Send one-time code'));
+      await tester.pump();
+
+      expect(controller.sendOtpCount, 0);
+      expect(
+        find.text('Enter a valid 10-digit mobile number.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('Complete registration requires OTP and matching passwords', (
+      tester,
+    ) async {
+      final controller = await _pumpInvitation(tester);
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Create password'),
+        'password123',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Confirm password'),
+        'password321',
+      );
+      await tester.tap(find.text('Complete registration'));
+      await tester.pump();
+
+      expect(controller.completeCount, 0);
+      expect(find.text('Passwords do not match.'), findsOneWidget);
+      expect(find.text('Enter the one-time code.'), findsOneWidget);
+    });
+
+    testWidgets('mobile change clears the OTP challenge and code', (
+      tester,
+    ) async {
+      final controller = await _pumpInvitation(tester);
+      final otp = find.widgetWithText(TextFormField, 'One-time code');
+      await tester.tap(find.text('Send one-time code'));
+      await tester.pumpAndSettle();
+      await tester.enterText(otp, '123456');
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Mobile number'),
+        '9123456789',
+      );
+      await tester.pump();
+
+      expect(find.text('123456'), findsNothing);
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Create password'),
+        'password123',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Confirm password'),
+        'password123',
+      );
+      await tester.tap(find.text('Complete registration'));
+      await tester.pump();
+      expect(controller.completeCount, 0);
+      expect(find.text('Enter the one-time code.'), findsOneWidget);
+    });
+
+    testWidgets('complete registration submits valid matching data', (
+      tester,
+    ) async {
+      final controller = await _pumpInvitation(tester);
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Create password'),
+        'password123',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Confirm password'),
+        'password123',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'One-time code'),
+        '123456',
+      );
+      await tester.tap(find.text('Complete registration'));
+      await tester.pumpAndSettle();
+
+      expect(controller.completeCount, 1);
+      expect(find.text('Home'), findsOneWidget);
+    });
+
+    testWidgets('complete registration blocks an empty password', (
+      tester,
+    ) async {
+      final controller = await _pumpInvitation(tester);
+      await tester.tap(find.text('Complete registration'));
+      await tester.pump();
+      expect(controller.completeCount, 0);
+      expect(
+        find.text('Password must be at least 8 characters.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('complete registration blocks an empty confirmation', (
+      tester,
+    ) async {
+      final controller = await _pumpInvitation(tester);
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Create password'),
+        'password123',
+      );
+      await tester.tap(find.text('Complete registration'));
+      await tester.pump();
+      expect(controller.completeCount, 0);
+      expect(find.text('Confirm your password.'), findsOneWidget);
+    });
+
+    testWidgets(
+      'complete registration retains password after Send OTP attempt',
+      (tester) async {
+        await _pumpInvitation(tester);
+        final password = find.widgetWithText(TextFormField, 'Create password');
+        await tester.enterText(password, 'password123');
+        await tester.tap(find.text('Send one-time code'));
+        await tester.pumpAndSettle();
+        expect(
+          (tester.widget(password) as TextFormField).controller!.text,
+          'password123',
+        );
+      },
+    );
 
     testWidgets('complete registration navigates to home', (tester) async {
       final controller = _SeededEmployeeController(
@@ -553,6 +844,10 @@ void main() {
         'password123',
       );
       await tester.enterText(
+        find.widgetWithText(TextFormField, 'Confirm password'),
+        'password123',
+      );
+      await tester.enterText(
         find.widgetWithText(TextFormField, 'One-time code'),
         '123456',
       );
@@ -564,6 +859,29 @@ void main() {
       expect(find.text('Home'), findsOneWidget);
     });
   });
+}
+
+bool _obscureText(WidgetTester tester, Finder field) => tester
+    .widget<EditableText>(
+      find.descendant(of: field, matching: find.byType(EditableText)),
+    )
+    .obscureText;
+
+Future<_SeededEmployeeController> _pumpInvitation(WidgetTester tester) async {
+  final controller = _SeededEmployeeController(
+    EmployeeState(
+      invitationVerification: _verification(),
+      branchOptions: [_branchOption()],
+    ),
+  );
+  await _pumpConfig(
+    tester,
+    const EmployeeInvitationScreen(token: 'inv-token-9'),
+    controller,
+    routePath: '/invite/:token',
+    initialPath: '/invite/inv-token-9',
+  );
+  return controller;
 }
 
 /// Pumps a screen inside a GoRouter shell that also exposes the shared
@@ -668,7 +986,10 @@ Future<void> _pumpConfig(
 }
 
 class _SeededEmployeeController extends EmployeeController {
-  _SeededEmployeeController(this.initialState, {this.surfaceInvitation = false});
+  _SeededEmployeeController(
+    this.initialState, {
+    this.surfaceInvitation = false,
+  });
 
   final EmployeeState initialState;
   final bool surfaceInvitation;
@@ -855,13 +1176,19 @@ EmployeeInvitationResult _invitation({
 
 EmployeeInvitationVerification _verification({
   bool isValid = true,
+  String roleCode = 'DELIVERY_STAFF',
+  int? branchId = 7,
+  String? branchCode,
+  String? branchName,
   String? reason,
 }) => EmployeeInvitationVerification(
   isValid: isValid,
   displayName: 'Ramesh Kumar',
   mobile: '9876543210',
   email: 'ramesh@example.test',
-  roleCode: 'DELIVERY_STAFF',
-  branchId: 7,
+  roleCode: roleCode,
+  branchId: branchId,
+  branchCode: branchCode,
+  branchName: branchName,
   reason: reason,
 );

@@ -6,7 +6,25 @@ namespace DoodhDirect.Application.Orders;
 
 public sealed record OrderItemRequest(Guid ProductId, decimal Quantity);
 
-public sealed record CheckoutRequest(Guid AddressId, IReadOnlyCollection<OrderItemRequest> Items);
+public sealed record CheckoutAddressRequest(
+    string? Label,
+    string AddressLine1,
+    string? AddressLine2,
+    string Locality,
+    string City,
+    string State,
+    string PinCode,
+    string? Landmark,
+    string? DeliveryInstructions,
+    string ContactName,
+    string ContactMobile,
+    decimal Latitude,
+    decimal Longitude);
+
+public sealed record CheckoutRequest(
+    Guid? AddressId,
+    CheckoutAddressRequest? ManualAddress,
+    IReadOnlyCollection<OrderItemRequest> Items);
 
 public sealed record CheckoutLineResult(
     Guid ProductId,
@@ -18,7 +36,7 @@ public sealed record CheckoutLineResult(
     decimal LineTotal);
 
 public sealed record CheckoutResult(
-    Guid AddressId,
+    Guid? AddressId,
     string AddressLabel,
     string AddressLine1,
     string? AddressLine2,
@@ -46,7 +64,7 @@ public sealed record OrderResult(
     Guid BranchId,
     string BranchCode,
     string BranchName,
-    Guid AddressId,
+    Guid? AddressId,
     string AddressLabel,
     string AddressLine1,
     string? AddressLine2,
@@ -134,7 +152,7 @@ public static class OrderMappings
             order.Branch.PublicId,
             order.BranchCodeSnapshot,
             order.BranchNameSnapshot,
-            order.CustomerAddress.PublicId,
+            order.CustomerAddress?.PublicId,
             order.AddressLabelSnapshot,
             order.AddressLine1Snapshot,
             order.AddressLine2Snapshot,

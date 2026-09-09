@@ -151,6 +151,54 @@ void main() {
       expect(controller.lastIsActive, isTrue);
     });
 
+    testWidgets('deletes an active series after confirming the dialog', (
+      tester,
+    ) async {
+      final controller = _SeededNumberSeriesController(
+        NumberSeriesState(series: [_series()]),
+      );
+      await _pump(tester, const NumberSeriesListScreen(), controller);
+
+      await tester.tap(find.byTooltip('Delete CUST'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete series?'), findsOneWidget);
+
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(controller.deleteCount, 1);
+      expect(controller.lastCode, 'CUST');
+      expect(controller.lastScope, isNull);
+      expect(find.text('Series CUST deleted.'), findsOneWidget);
+    });
+
+    testWidgets('cancel keeps the series and forwards the scope for scoped series', (
+      tester,
+    ) async {
+      final controller = _SeededNumberSeriesController(
+        NumberSeriesState(series: [_scopedSeries()]),
+      );
+      await _pump(tester, const NumberSeriesListScreen(), controller);
+
+      await tester.tap(find.byTooltip('Delete ORD'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(controller.deleteCount, 0);
+
+      await tester.tap(find.byTooltip('Delete ORD'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+
+      expect(controller.deleteCount, 1);
+      expect(controller.lastCode, 'ORD');
+      expect(controller.lastScope, 'MAIN');
+      expect(find.text('Series ORD deleted.'), findsOneWidget);
+    });
+
     testWidgets('shows saved banner after a save', (tester) async {
       await _pump(
         tester,
@@ -294,10 +342,12 @@ void main() {
         find.widgetWithText(TextField, 'CUST/{NUMBER:0000}'),
         findsOneWidget,
       );
-      expect(find.textContaining('Fixed for this series'), findsOneWidget);
+      final scopeField = tester.widget<TextField>(find.byType(TextField).at(2));
+      expect(scopeField.enabled, isTrue);
+      expect(scopeField.controller?.text, isEmpty);
     });
 
-    testWidgets('prefills a scoped edit form with a locked scope key', (
+    testWidgets('prefills a scoped edit form with an editable scope key', (
       tester,
     ) async {
       await _pumpConfig(
@@ -309,7 +359,9 @@ void main() {
 
       expect(find.text('Configure ORD'), findsOneWidget);
       expect(find.widgetWithText(TextField, 'MAIN'), findsOneWidget);
-      expect(find.textContaining('Fixed for this series'), findsOneWidget);
+      final scopeField = tester.widget<TextField>(find.byType(TextField).at(2));
+      expect(scopeField.enabled, isTrue);
+      expect(scopeField.controller?.text, 'MAIN');
     });
 
     testWidgets('updates an existing series and pops back', (tester) async {
@@ -429,6 +481,7 @@ class _SeededNumberSeriesController extends NumberSeriesController {
   int createCount = 0;
   int updateCount = 0;
   int setActiveCount = 0;
+  int deleteCount = 0;
   String? lastCode;
   String? lastScope;
   bool? lastIsActive;
@@ -482,6 +535,14 @@ class _SeededNumberSeriesController extends NumberSeriesController {
     lastScope = scope;
     lastIsActive = isActive;
     return _series(code: code, isActive: isActive, scope: scope);
+  }
+
+  @override
+  Future<bool> delete(String code, {String? scope}) async {
+    deleteCount++;
+    lastCode = code;
+    lastScope = scope;
+    return true;
   }
 }
 

@@ -1,10 +1,18 @@
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
+import 'package:doodh_direct_mobile/core/utils/country_codes.dart';
+import 'package:doodh_direct_mobile/core/utils/india_mobile.dart';
+import 'package:doodh_direct_mobile/core/utils/mobile_number.dart';
+import 'package:doodh_direct_mobile/core/widgets/country_code_mobile_field.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/customer/client_configuration_repository.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
 import 'package:doodh_direct_mobile/features/customer/google_map_coordinate_picker.dart';
+import 'package:doodh_direct_mobile/features/customer/maps_script_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -31,6 +39,8 @@ class _CustomerOverviewScreenState
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(customerControllerProvider);
+    final session = ref.watch(sessionControllerProvider);
+    final user = session.session?.user;
     return CustomerShell(
       currentPath: '/customer/account',
       title: 'My account',
@@ -51,7 +61,28 @@ class _CustomerOverviewScreenState
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
                   children: [
-                    _ProfileSection(profile: state.profile!),
+                    _ProfileSection(profile: state.profile!, user: user),
+                    const SizedBox(height: 16),
+                    Card(
+                      child: ListTile(
+                        leading: Icon(
+                          Icons.password_outlined,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        title: const Text('Change Password'),
+                        subtitle: Text(
+                          user?.hasPassword == true
+                              ? 'Update the password you sign in with.'
+                              : 'Set a password to sign in without an OTP.',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => context.push(
+                          user?.hasPassword == true
+                              ? '/change-password'
+                              : '/create-password',
+                        ),
+                      ),
+                    ),
                     const SizedBox(height: 24),
                     _AddressSection(
                       addresses: state.addresses,
@@ -75,9 +106,10 @@ class _CustomerOverviewScreenState
 }
 
 class _ProfileSection extends StatelessWidget {
-  const _ProfileSection({required this.profile});
+  const _ProfileSection({required this.profile, required this.user});
 
   final CustomerProfile profile;
+  final AuthUser? user;
 
   @override
   Widget build(BuildContext context) => Card(
@@ -98,18 +130,101 @@ class _ProfileSection extends StatelessWidget {
               ),
             ],
           ),
-          Text(profile.fullName.isEmpty ? 'Add your name' : profile.fullName),
           if (profile.customerNumber?.isNotEmpty == true)
-            Text('Customer number: ${profile.customerNumber}'),
-          if (profile.dateOfBirth != null)
-            Text('Date of birth: ${_date(profile.dateOfBirth!)}'),
-          if (profile.gender?.isNotEmpty == true) Text(profile.gender!),
-          if (profile.alternateMobile?.isNotEmpty == true)
-            Text(profile.alternateMobile!),
+            Padding(
+              padding: const EdgeInsets.only(top: 4, bottom: 12),
+              child: Text(
+                'Customer number: ${profile.customerNumber}',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: DoodhColors.muted),
+              ),
+            ),
+          _ProfileRow(label: 'Name', value: profile.firstName),
+          _ProfileRow(label: 'Last Name', value: profile.lastName),
+          _ProfileRow(
+            label: 'Alternate Number',
+            value: profile.alternateMobile,
+          ),
+          _ProfileRow(label: 'Gender', value: profile.gender),
+          _ProfileRow(
+            label: 'Date of Birth',
+            value: profile.dateOfBirth == null
+                ? null
+                : _date(profile.dateOfBirth!),
+          ),
+          // Mobile/email rows open the preserved auth change flows (OTP
+          // verification lives there) so no editable duplicate exists here.
+          _ProfileRow(
+            label: 'Mobile Number',
+            value: user?.mobile,
+            onTap: () => context.push('/security/mobile'),
+          ),
+          _ProfileRow(
+            label: 'Email',
+            value: user?.email,
+            onTap: () => context.push('/security/email'),
+          ),
         ],
       ),
     ),
   );
+}
+
+class _ProfileRow extends StatelessWidget {
+  const _ProfileRow({required this.label, required this.value, this.onTap});
+
+  final String label;
+  final String? value;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasValue = value != null && value!.isNotEmpty;
+    final tappable = onTap != null;
+    final row = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 140,
+          child: Text(
+            label,
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: DoodhColors.muted),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            hasValue ? value! : '—',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: hasValue ? DoodhColors.ink : DoodhColors.muted,
+            ),
+          ),
+        ),
+        if (tappable)
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: theme.colorScheme.primary,
+            ),
+          ),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: tappable
+          ? InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: onTap,
+              child: row,
+            )
+          : row,
+    );
+  }
 }
 
 class _AddressSection extends StatelessWidget {
@@ -279,6 +394,8 @@ class _CustomerProfileEditScreenState
   late final TextEditingController _mobile;
   late final TextEditingController _gender;
   final _formKey = GlobalKey<FormState>();
+  final _countryKey = GlobalKey<CountryCodeMobileFieldState>();
+  late CountryCode _initialCountry;
   DateTime? _dateOfBirth;
 
   @override
@@ -287,9 +404,28 @@ class _CustomerProfileEditScreenState
     final profile = ref.read(customerControllerProvider).profile;
     _firstName = TextEditingController(text: profile?.firstName ?? '');
     _lastName = TextEditingController(text: profile?.lastName ?? '');
-    _mobile = TextEditingController(text: profile?.alternateMobile ?? '');
     _gender = TextEditingController(text: profile?.gender ?? '');
     _dateOfBirth = profile?.dateOfBirth;
+
+    // Resolve the country from the stored alternate mobile so a canonical
+    // `+91...`/`+<other>` value is split back into its national part instead of
+    // being typed literally. Plain 10-digit values keep the India default.
+    _initialCountry = CountryCodes.india;
+    final stored = (profile?.alternateMobile ?? '').trim();
+    if (stored.isEmpty) {
+      _mobile = TextEditingController();
+    } else if (stored.startsWith('+') || stored.startsWith('00')) {
+      final parsed = parseMobileCountry(stored);
+      _initialCountry = parsed?.$1 ?? CountryCodes.india;
+      _mobile = TextEditingController(text: parsed?.$2 ?? stored);
+    } else {
+      final canonical = canonicalizeIndianMobile(stored);
+      _mobile = TextEditingController(
+        text: canonical != null && canonical.length == 13
+            ? canonical.substring(3)
+            : stored,
+      );
+    }
   }
 
   @override
@@ -324,14 +460,13 @@ class _CustomerProfileEditScreenState
                 controller: _lastName,
                 decoration: const InputDecoration(labelText: 'Last name'),
               ),
-              TextFormField(
+              CountryCodeMobileField(
+                key: _countryKey,
                 controller: _mobile,
-                decoration: InputDecoration(
-                  labelText: 'Alternate mobile',
-                  errorText: _fieldError('alternateMobile'),
-                ),
-                keyboardType: TextInputType.phone,
-                validator: _mobileValidator,
+                initialCountry: _initialCountry,
+                optional: true,
+                label: 'Alternate mobile',
+                errorText: _fieldError('alternateMobile'),
               ),
               DropdownButtonFormField<String>(
                 initialValue: _gender.text.isEmpty ? null : _gender.text,
@@ -384,14 +519,6 @@ class _CustomerProfileEditScreenState
   String? _fieldError(String field) =>
       ref.read(customerControllerProvider).fieldErrors[field];
 
-  String? _mobileValidator(String? value) {
-    final normalized = value?.trim() ?? '';
-    if (normalized.isEmpty) return null;
-    return RegExp(r'^(?:\+?91)?[6-9][0-9]{9}$').hasMatch(normalized)
-        ? null
-        : 'Enter a valid Indian mobile number';
-  }
-
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     final saved = await ref
@@ -400,7 +527,7 @@ class _CustomerProfileEditScreenState
           UpdateCustomerProfile(
             firstName: _firstName.text,
             lastName: _lastName.text,
-            alternateMobile: _mobile.text,
+            alternateMobile: _countryKey.currentState?.canonicalValue,
             gender: _gender.text,
             dateOfBirth: _dateOfBirth,
           ),
@@ -410,9 +537,14 @@ class _CustomerProfileEditScreenState
 }
 
 class CustomerAddressEditScreen extends ConsumerStatefulWidget {
-  const CustomerAddressEditScreen({super.key, this.addressId});
+  const CustomerAddressEditScreen({
+    super.key,
+    this.addressId,
+    this.checkoutMode = false,
+  });
 
   final String? addressId;
+  final bool checkoutMode;
 
   @override
   ConsumerState<CustomerAddressEditScreen> createState() =>
@@ -423,6 +555,8 @@ class _CustomerAddressEditScreenState
     extends ConsumerState<CustomerAddressEditScreen> {
   final _formKey = GlobalKey<FormState>();
   final _fields = <String, TextEditingController>{};
+  final _contactMobileKey = GlobalKey<CountryCodeMobileFieldState>();
+  late CountryCode _initialContactCountry;
   bool _isDefault = false;
 
   @override
@@ -454,6 +588,23 @@ class _CustomerAddressEditScreenState
     ]) {
       _fields[field] = TextEditingController(text: _value(address, field));
     }
+    // Resolve the country from the stored contact mobile (canonical `+91...`
+    // or plain 10-digit) and split a canonical value back into its national
+    // part so the shared field shows a clean number.
+    _initialContactCountry = CountryCodes.india;
+    final storedMobile = _fields['contactMobile']!.text.trim();
+    if (storedMobile.startsWith('+') || storedMobile.startsWith('00')) {
+      final parsed = parseMobileCountry(storedMobile);
+      if (parsed != null) {
+        _initialContactCountry = parsed.$1;
+        _fields['contactMobile']!.text = parsed.$2;
+      }
+    } else {
+      final canonical = canonicalizeIndianMobile(storedMobile);
+      if (canonical != null && canonical.length == 13) {
+        _fields['contactMobile']!.text = canonical.substring(3);
+      }
+    }
     _isDefault =
         address?.isDefault ??
         ref.read(customerControllerProvider).addresses.isEmpty;
@@ -472,7 +623,13 @@ class _CustomerAddressEditScreenState
     final state = ref.watch(customerControllerProvider);
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.addressId == null ? 'Add address' : 'Edit address'),
+        title: Text(
+          widget.checkoutMode
+              ? 'Enter delivery address'
+              : widget.addressId == null
+              ? 'Add address'
+              : 'Edit address',
+        ),
       ),
       body: DoodhPage(
         child: Form(
@@ -484,7 +641,7 @@ class _CustomerAddressEditScreenState
                 action: const Icon(Icons.home_work_outlined),
               ),
               const SizedBox(height: 12),
-              _text('label', 'Label', required: true),
+              if (!widget.checkoutMode) _text('label', 'Label', required: true),
               _text('addressLine1', 'Address line 1', required: true),
               _text('addressLine2', 'Address line 2'),
               _text('locality', 'Locality', required: true),
@@ -499,12 +656,17 @@ class _CustomerAddressEditScreenState
               _text('landmark', 'Landmark'),
               _text('deliveryInstructions', 'Delivery instructions'),
               _text('contactName', 'Contact name', required: true),
-              _text(
-                'contactMobile',
-                'Contact mobile',
-                required: true,
-                keyboardType: TextInputType.phone,
-                validator: _mobileValidator,
+              CountryCodeMobileField(
+                key: _contactMobileKey,
+                controller: _fields['contactMobile']!,
+                initialCountry: _initialContactCountry,
+                optional: true,
+                label: 'Contact mobile',
+                errorText: state.fieldErrors['contactMobile'],
+                validator: (canonical) => canonical == null &&
+                        _fields['contactMobile']!.text.trim().isEmpty
+                    ? 'Contact mobile is required'
+                    : null,
               ),
               const SizedBox(height: 8),
               Text('Location', style: Theme.of(context).textTheme.titleMedium),
@@ -515,6 +677,7 @@ class _CustomerAddressEditScreenState
               GoogleMapCoordinatePicker(
                 initialLocation: _initialMapLocation(),
                 onLocationSelected: _setMapLocation,
+                mapsLoader: _loadGoogleMaps,
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
@@ -524,14 +687,15 @@ class _CustomerAddressEditScreenState
                 icon: const Icon(Icons.pin_drop_outlined),
                 label: const Text('Retry address lookup'),
               ),
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _isDefault,
-                onChanged: (value) =>
-                    setState(() => _isDefault = value ?? false),
-                title: const Text('Use as default address'),
-                controlAffinity: ListTileControlAffinity.leading,
-              ),
+              if (!widget.checkoutMode)
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _isDefault,
+                  onChanged: (value) =>
+                      setState(() => _isDefault = value ?? false),
+                  title: const Text('Use as default address'),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
               const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed: state.isSaving ? null : _save,
@@ -541,7 +705,7 @@ class _CustomerAddressEditScreenState
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.save_outlined),
-                label: const Text('Save address'),
+                label: Text(widget.checkoutMode ? 'Use this address' : 'Save address'),
               ),
               if (state.errorMessage != null) ...[
                 const SizedBox(height: 12),
@@ -555,6 +719,30 @@ class _CustomerAddressEditScreenState
         ),
       ),
     );
+  }
+
+  /// Loads the Google Maps JavaScript API using the Web Client Key fetched at
+  /// runtime from the backend's client-safe configuration endpoint.
+  ///
+  /// No compile-time `--dart-define`, `index.html` tag or hard-coded key is
+  /// used: the key is resolved from the server when this screen opens and a
+  /// browser refresh reloads the latest value. When the session has no token,
+  /// the fetch fails, or the operator has not configured a key, an empty key
+  /// is passed so [loadGoogleMapsScript] surfaces its canonical
+  /// "not configured" error inside the picker.
+  Future<void> _loadGoogleMaps() async {
+    final token = ref.read(sessionControllerProvider).session?.accessToken;
+    String? key;
+    if (token != null) {
+      try {
+        key =
+            (await ref.read(clientConfigurationRepositoryProvider).get(token))
+                .googleMapsWebClientKey;
+      } on Object {
+        key = null;
+      }
+    }
+    return loadGoogleMapsScript(key ?? '');
   }
 
   LatLng? _initialMapLocation() {
@@ -614,14 +802,6 @@ class _CustomerAddressEditScreenState
             : null),
   );
 
-  String? _mobileValidator(String? value) {
-    final normalized = value?.trim() ?? '';
-    if (normalized.isEmpty) return 'Contact mobile is required';
-    return RegExp(r'^(?:\+?91)?[6-9][0-9]{9}$').hasMatch(normalized)
-        ? null
-        : 'Enter a valid Indian mobile number';
-  }
-
   Future<void> _lookup() async {
     final latitude = double.tryParse(_fields['latitude']!.text);
     final longitude = double.tryParse(_fields['longitude']!.text);
@@ -668,7 +848,7 @@ class _CustomerAddressEditScreenState
     }
 
     final draft = AddressDraft(
-      label: _fields['label']!.text,
+      label: widget.checkoutMode ? '' : _fields['label']!.text,
       addressLine1: _fields['addressLine1']!.text,
       addressLine2: _fields['addressLine2']!.text,
       locality: _fields['locality']!.text,
@@ -678,11 +858,15 @@ class _CustomerAddressEditScreenState
       landmark: _fields['landmark']!.text,
       deliveryInstructions: _fields['deliveryInstructions']!.text,
       contactName: _fields['contactName']!.text,
-      contactMobile: _fields['contactMobile']!.text,
+      contactMobile: _contactMobileKey.currentState?.canonicalValue ?? '',
       latitude: latitude,
       longitude: longitude,
-      isDefault: _isDefault,
+      isDefault: widget.checkoutMode ? false : _isDefault,
     );
+    if (widget.checkoutMode) {
+      if (mounted) context.pop(draft);
+      return;
+    }
     final saved = await ref
         .read(customerControllerProvider.notifier)
         .saveAddress(draft, addressId: widget.addressId);

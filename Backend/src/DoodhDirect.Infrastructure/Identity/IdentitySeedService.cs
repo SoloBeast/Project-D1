@@ -134,7 +134,11 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.SetupNumberSeriesRead,
                 AuthorizationCodes.SetupNumberSeriesManage,
                 AuthorizationCodes.BranchesRead,
-                AuthorizationCodes.BranchesManage
+                AuthorizationCodes.BranchesManage,
+                AuthorizationCodes.SetupOtpProviderRead,
+                AuthorizationCodes.SetupOtpProviderManage,
+                AuthorizationCodes.SetupIntegrationsRead,
+                AuthorizationCodes.SetupIntegrationsManage
             ],
             [AuthorizationCodes.Owner] = AuthorizationCodes.Permissions.Keys.ToArray()
         };

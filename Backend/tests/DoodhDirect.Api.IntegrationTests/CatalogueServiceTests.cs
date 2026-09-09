@@ -23,15 +23,17 @@ public sealed class CatalogueServiceTests
     }
 
     [Fact]
-    public async Task CreateProduct_DefaultsInactiveAndHasNoBranchAssignment()
+    public async Task CreateProduct_DefaultsInactiveAndAssignsSelectedBranches()
     {
         await using var harness = await CatalogueHarness.CreateAsync();
         var product = await harness.Service.CreateProductAsync(
-            ValidProduct(harness.Category.PublicId, "MILK-001"),
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId),
             CancellationToken.None);
 
         Assert.False(product.IsActive);
-        Assert.Empty(product.BranchAvailability);
+        var assignment = Assert.Single(product.BranchAvailability);
+        Assert.Equal("MAIN", assignment.BranchCode);
+        Assert.True(assignment.IsAvailable);
     }
 
     [Fact]
@@ -60,7 +62,8 @@ public sealed class CatalogueServiceTests
                 " Sold by litre ",
                 harness.Category.PublicId,
                 " LITRE ",
-                80.25m),
+                80.25m,
+                [harness.Branch.PublicId]),
             CancellationToken.None);
 
         Assert.Equal("MILK-001", result.Sku);
@@ -75,11 +78,11 @@ public sealed class CatalogueServiceTests
     {
         await using var harness = await CatalogueHarness.CreateAsync();
         await harness.Service.CreateProductAsync(
-            ValidProduct(harness.Category.PublicId, "MILK-001"),
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId),
             CancellationToken.None);
 
         await Assert.ThrowsAsync<ConflictException>(() => harness.Service.CreateProductAsync(
-            ValidProduct(harness.Category.PublicId, " milk-001 "),
+            ValidProduct(harness.Category.PublicId, " milk-001 ", harness.Branch.PublicId),
             CancellationToken.None));
     }
 
@@ -100,7 +103,7 @@ public sealed class CatalogueServiceTests
         await harness.Service.SetCategoryActiveAsync(harness.Category.PublicId, false, CancellationToken.None);
 
         await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.CreateProductAsync(
-            ValidProduct(harness.Category.PublicId, "MILK-002"),
+            ValidProduct(harness.Category.PublicId, "MILK-002", harness.Branch.PublicId),
             CancellationToken.None));
     }
 
@@ -109,10 +112,10 @@ public sealed class CatalogueServiceTests
     {
         await using var harness = await CatalogueHarness.CreateAsync();
         var available = await harness.Service.CreateProductAsync(
-            ValidProduct(harness.Category.PublicId, "MILK-001"),
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId),
             CancellationToken.None);
         var unavailable = await harness.Service.CreateProductAsync(
-            ValidProduct(harness.Category.PublicId, "MILK-002"),
+            ValidProduct(harness.Category.PublicId, "MILK-002", harness.Branch.PublicId),
             CancellationToken.None);
         await harness.Service.SetBranchAvailabilityAsync(
             available.PublicId,
@@ -139,7 +142,7 @@ public sealed class CatalogueServiceTests
     {
         await using var harness = await CatalogueHarness.CreateAsync();
         var product = await harness.Service.CreateProductAsync(
-            ValidProduct(harness.Category.PublicId, "MILK-001"),
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId),
             CancellationToken.None);
         await harness.Service.SetProductActiveAsync(product.PublicId, false, CancellationToken.None);
         await harness.Service.SetCategoryActiveAsync(harness.Category.PublicId, false, CancellationToken.None);
@@ -155,7 +158,7 @@ public sealed class CatalogueServiceTests
     {
         await using var harness = await CatalogueHarness.CreateAsync();
         var product = await harness.Service.CreateProductAsync(
-            ValidProduct(harness.Category.PublicId, "MILK-001"),
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId),
             CancellationToken.None);
 
         await Assert.ThrowsAsync<ValidationAppException>(() => harness.Service.SetBranchAvailabilityAsync(
@@ -169,7 +172,7 @@ public sealed class CatalogueServiceTests
     {
         await using var harness = await CatalogueHarness.CreateAsync();
         var product = await harness.Service.CreateProductAsync(
-            ValidProduct(harness.Category.PublicId, "MILK-001"),
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId),
             CancellationToken.None);
 
         await Assert.ThrowsAsync<ValidationAppException>(() => harness.Service.SetBranchAvailabilityAsync(
@@ -179,16 +182,146 @@ public sealed class CatalogueServiceTests
     }
 
     [Fact]
+    public async Task CreateProduct_AssignsAllSelectedBranchesAsAvailable()
+    {
+        await using var harness = await CatalogueHarness.CreateAsync();
+        var second = new Branch("NIT3", "NIT3 Branch", "Bengaluru", "Karnataka", 13.0m, 77.6m);
+        harness.Db.Branches.Add(second);
+        await harness.Db.SaveChangesAsync();
+
+        var result = await harness.Service.CreateProductAsync(
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId, second.PublicId),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.BranchAvailability.Count);
+        Assert.All(result.BranchAvailability, item => Assert.True(item.IsAvailable));
+        Assert.Contains(result.BranchAvailability, item => item.BranchCode == "MAIN");
+        Assert.Contains(result.BranchAvailability, item => item.BranchCode == "NIT3");
+    }
+
+    [Fact]
+    public async Task CreateProduct_WithNoBranches_IsRejected()
+    {
+        await using var harness = await CatalogueHarness.CreateAsync();
+
+        await Assert.ThrowsAsync<ValidationAppException>(() => harness.Service.CreateProductAsync(
+            ValidProduct(harness.Category.PublicId, "MILK-001"),
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CreateProduct_WithDuplicateBranches_IsRejected()
+    {
+        await using var harness = await CatalogueHarness.CreateAsync();
+
+        await Assert.ThrowsAsync<ValidationAppException>(() => harness.Service.CreateProductAsync(
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId, harness.Branch.PublicId),
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CreateProduct_WithUnknownBranch_IsRejected()
+    {
+        await using var harness = await CatalogueHarness.CreateAsync();
+
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.CreateProductAsync(
+            ValidProduct(harness.Category.PublicId, "MILK-001", Guid.NewGuid()),
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CreateProduct_WithInactiveBranch_IsRejected()
+    {
+        await using var harness = await CatalogueHarness.CreateAsync();
+        harness.Branch.Deactivate();
+        await harness.Db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.CreateProductAsync(
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId),
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CreateProduct_WithArchivedBranch_IsRejected()
+    {
+        await using var harness = await CatalogueHarness.CreateAsync();
+        harness.Branch.Archive(IndiaLocal(2026, 9, 8));
+        await harness.Db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.CreateProductAsync(
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId),
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task UpdateProduct_AddsAndRemovesBranchAssignments()
+    {
+        await using var harness = await CatalogueHarness.CreateAsync();
+        var second = new Branch("NIT3", "NIT3 Branch", "Bengaluru", "Karnataka", 13.0m, 77.6m);
+        harness.Db.Branches.Add(second);
+        await harness.Db.SaveChangesAsync();
+
+        var created = await harness.Service.CreateProductAsync(
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId),
+            CancellationToken.None);
+
+        var withSecond = await harness.Service.UpdateProductAsync(
+            created.PublicId,
+            new UpsertProductRequest(
+                "MILK-001", "Fresh Buffalo Milk", "Fresh milk", harness.Category.PublicId, "litre", 80m,
+                [harness.Branch.PublicId, second.PublicId]),
+            CancellationToken.None);
+
+        Assert.Equal(2, withSecond.BranchAvailability.Count);
+        Assert.Contains(withSecond.BranchAvailability, item => item.BranchCode == "MAIN");
+        Assert.Contains(withSecond.BranchAvailability, item => item.BranchCode == "NIT3");
+
+        var onlySecond = await harness.Service.UpdateProductAsync(
+            created.PublicId,
+            new UpsertProductRequest(
+                "MILK-001", "Fresh Buffalo Milk", "Fresh milk", harness.Category.PublicId, "litre", 80m,
+                [second.PublicId]),
+            CancellationToken.None);
+
+        var remaining = Assert.Single(onlySecond.BranchAvailability);
+        Assert.Equal("NIT3", remaining.BranchCode);
+    }
+
+    [Fact]
+    public async Task UpdateProduct_AfterBranchArchived_PreservesHistoricalLink()
+    {
+        await using var harness = await CatalogueHarness.CreateAsync();
+        var second = new Branch("NIT3", "NIT3 Branch", "Bengaluru", "Karnataka", 13.0m, 77.6m);
+        harness.Db.Branches.Add(second);
+        await harness.Db.SaveChangesAsync();
+
+        var created = await harness.Service.CreateProductAsync(
+            ValidProduct(harness.Category.PublicId, "MILK-001", harness.Branch.PublicId),
+            CancellationToken.None);
+
+        harness.Branch.Archive(IndiaLocal(2026, 9, 8));
+        await harness.Db.SaveChangesAsync();
+
+        var updated = await harness.Service.UpdateProductAsync(
+            created.PublicId,
+            new UpsertProductRequest(
+                "MILK-001", "Fresh Buffalo Milk", "Fresh milk", harness.Category.PublicId, "litre", 80m,
+                [second.PublicId]),
+            CancellationToken.None);
+
+        // The archived MAIN link must survive (historical record), and NIT3 is added.
+        Assert.Equal(2, updated.BranchAvailability.Count);
+        Assert.Contains(updated.BranchAvailability, item => item.BranchCode == "MAIN");
+        Assert.Contains(updated.BranchAvailability, item => item.BranchCode == "NIT3");
+    }
+
+    [Fact]
     public async Task SeedAsync_IsIdempotentAndCreatesAvailableBuffaloMilk()
     {
         await using var db = CreateDb();
-        var timeProvider = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
-        db.NumberSeries.Add(new NumberSeries(
-            "BRANCH", "Branch Number", "BR/{NUMBER:000}", 1, 1, NumberSeriesResetPolicy.Never));
         await db.SaveChangesAsync();
         var seed = new CatalogueSeedService(
             db,
-            new NumberSeriesService(db, timeProvider),
             new NumberSeriesSeedService(db));
 
         await seed.SeedAsync(CancellationToken.None);
@@ -205,15 +338,20 @@ public sealed class CatalogueServiceTests
 
     public static TheoryData<UpsertProductRequest> InvalidProducts => new()
     {
-        new(" ", "Milk", null, Guid.Empty, "litre", 80m),
-        new("MILK-001", " ", null, Guid.Empty, "litre", 80m),
-        new("MILK-001", "Milk", null, Guid.Empty, "litre", 0m),
-        new("MILK-001", "Milk", null, Guid.Empty, "litre", 80.001m),
-        new("MILK-001", "Milk", null, Guid.Empty, "bottle", 80m)
+        // Format-validation cases only. Unknown-branch rejection (NotFoundException) is
+        // covered separately by CreateProduct_WithUnknownBranch_IsRejected.
+        new(" ", "Milk", null, Guid.Empty, "litre", 80m, []),
+        new("MILK-001", " ", null, Guid.Empty, "litre", 80m, []),
+        new("MILK-001", "Milk", null, Guid.Empty, "litre", 0m, []),
+        new("MILK-001", "Milk", null, Guid.Empty, "litre", 80.001m, []),
+        new("MILK-001", "Milk", null, Guid.Empty, "bottle", 80m, [])
     };
 
-    private static UpsertProductRequest ValidProduct(Guid categoryId, string sku) =>
-        new(sku, "Fresh Buffalo Milk", "Fresh milk", categoryId, "litre", 80m);
+    private static UpsertProductRequest ValidProduct(Guid categoryId, string sku, params Guid[] branchIds) =>
+        new(sku, "Fresh Buffalo Milk", "Fresh milk", categoryId, "litre", 80m, branchIds);
+
+    private static DateTime IndiaLocal(int year, int month, int day) =>
+        DateTime.SpecifyKind(new DateTime(year, month, day, 10, 0, 0), DateTimeKind.Unspecified);
 
     private static async Task<CatalogueHarness> CreateHarnessAsync()
     {

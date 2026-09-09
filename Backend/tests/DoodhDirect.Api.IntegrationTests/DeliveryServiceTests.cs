@@ -2,17 +2,20 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
+using DoodhDirect.Application.Dairy;
 using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Identity;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Customer;
+using DoodhDirect.Domain.Dairy;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Domain.Setup;
+using DoodhDirect.Infrastructure.Dairy;
 using DoodhDirect.Infrastructure.Deliveries;
 using DoodhDirect.Infrastructure.Notifications;
 using DoodhDirect.Infrastructure.Persistence;
@@ -641,6 +644,8 @@ public sealed class DeliveryServiceTests
         await using var harness = await DeliveryHarness.CreateAsync();
         var deliveryId = await harness.MaterializeOrderAsync();
         await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var orderWorkflowBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, orderWorkflowBatchId, 2m);
 
         await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.CompleteAsync(
             harness.StaffActor(harness.Staff),
@@ -741,6 +746,8 @@ public sealed class DeliveryServiceTests
         await using var harness = await DeliveryHarness.CreateAsync();
         var deliveryId = await harness.MaterializeSubscriptionAsync();
         await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var subscriptionAllocationBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, subscriptionAllocationBatchId, 1m);
         var code = await harness.GetOtpCodeAsync(deliveryId);
 
         var verified = await harness.Service.VerifyOtpAsync(
@@ -770,6 +777,14 @@ public sealed class DeliveryServiceTests
             .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryCompleted));
         Assert.Equal(1, harness.Realtime.Deliveries.Count(x =>
             x.DeliveryId == deliveryId && x.Status == DeliveryStatus.Delivered));
+        var usage = Assert.Single(await harness.Db.MilkUsages.AsNoTracking().ToListAsync());
+        Assert.Equal(MilkUsageSource.Subscription, usage.Source);
+        Assert.Equal("Automatic Subscription Consumption", usage.Purpose);
+        Assert.Equal(harness.SubscriptionDelivery.Id, usage.SubscriptionDeliveryId);
+        Assert.Equal(1m, usage.QuantityUsed);
+        Assert.Equal(harness.Branch.Id, usage.BranchId);
+        Assert.Equal(subscriptionAllocationBatchId, usage.BatchId);
+        Assert.NotNull(usage.DeliveryBatchAllocationId);
     }
 
     [Fact]
@@ -778,6 +793,8 @@ public sealed class DeliveryServiceTests
         await using var activeHarness = await DeliveryHarness.CreateAsync();
         var activeDeliveryId = await activeHarness.MaterializeOrderAsync();
         await activeHarness.AdvanceToArrivedAsync(activeDeliveryId, activeHarness.Staff);
+        var activeAllocationBatchId = await activeHarness.RecordMilkBatchAsync();
+        await activeHarness.SaveAllocationAsync(activeDeliveryId, activeAllocationBatchId, 2m);
         var activeCode = await activeHarness.GetOtpCodeAsync(activeDeliveryId);
         activeHarness.Clock.Advance(TimeSpan.FromMinutes(11));
 
@@ -848,6 +865,8 @@ public sealed class DeliveryServiceTests
         await using var harness = await DeliveryHarness.CreateAsync();
         var deliveryId = await harness.MaterializeOrderAsync();
         await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var rollbackAllocationBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, rollbackAllocationBatchId, 2m);
         var code = await harness.GetOtpCodeAsync(deliveryId);
         await using var failingDb = harness.CreateContext();
         var failingService = harness.CreateService(
@@ -876,6 +895,7 @@ public sealed class DeliveryServiceTests
         Assert.Equal(0, await harness.Db.NotificationEvents.AsNoTracking()
             .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryCompleted));
         Assert.Equal(0, harness.Realtime.Deliveries.Count(x => x.Status == DeliveryStatus.Delivered));
+        Assert.Equal(0, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
 
         var retried = await harness.Service.VerifyOtpAsync(
             harness.StaffActor(harness.Staff),
@@ -883,6 +903,7 @@ public sealed class DeliveryServiceTests
             new VerifyDeliveryOtpRequest(code),
             CancellationToken.None);
         Assert.Equal(DeliveryStatus.Delivered, retried.Status);
+        Assert.Equal(1, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
     }
 
     [Fact]
@@ -891,6 +912,8 @@ public sealed class DeliveryServiceTests
         await using var harness = await DeliveryHarness.CreateAsync();
         var deliveryId = await harness.MaterializeOrderAsync();
         await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var concurrentAllocationBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, concurrentAllocationBatchId, 2m);
         var code = await harness.GetOtpCodeAsync(deliveryId);
         await using var firstDb = harness.CreateContext();
         await using var secondDb = harness.CreateContext();
@@ -942,6 +965,7 @@ public sealed class DeliveryServiceTests
             .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryCompleted));
         Assert.Equal(1, harness.Realtime.Deliveries.Count(x =>
             x.DeliveryId == deliveryId && x.Status == DeliveryStatus.Delivered));
+        Assert.Equal(1, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
     }
 
     [Fact]
@@ -1004,6 +1028,7 @@ public sealed class DeliveryServiceTests
             .SingleAsync(x => x.Id == harness.Subscription.Id);
         Assert.Equal(SubscriptionDeliveryStatus.Failed, occurrence.Status);
         Assert.Equal(0, subscription.UsedEntitlement);
+        Assert.Equal(0, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
 
         var failedEvent = Assert.Single(
             await harness.Db.NotificationEvents
@@ -1024,6 +1049,1090 @@ public sealed class DeliveryServiceTests
             Payload(failedEvent).GetProperty("DeepLink").GetString());
     }
 
+    [Fact]
+    public async Task AutomaticConsumption_OneTimeOrder_CreatedOnlyAfterDeliveredWithSnapshot()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        Assert.Equal(0, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
+
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 2m);
+        Assert.Equal(0, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
+
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        var delivered = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, delivered.Status);
+
+        var delivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        var usage = Assert.Single(await harness.Db.MilkUsages.AsNoTracking().ToListAsync());
+        Assert.Equal(MilkUsageSource.Order, usage.Source);
+        Assert.Equal("Automatic Order Consumption", usage.Purpose);
+        Assert.Equal(harness.Branch.Id, usage.BranchId);
+        Assert.Equal(2m, usage.QuantityUsed);
+        Assert.Equal("L", usage.Unit);
+        Assert.Equal("Fresh Milk", usage.ProductName);
+        Assert.Equal(harness.Order.Id, usage.OrderId);
+        Assert.Equal(harness.Order.Items.Single().Id, usage.OrderItemId);
+        Assert.Equal("ORD-DEL-001", usage.OrderNumber);
+        Assert.Equal(delivery.DeliveryNumber, usage.DeliveryNumber);
+        Assert.Equal(delivery.Id, usage.DeliveryId);
+        Assert.Null(usage.SubscriptionDeliveryId);
+        Assert.Equal(batchId, usage.BatchId);
+        Assert.NotNull(usage.DeliveryBatchAllocationId);
+        Assert.Equal(harness.TimeProvider.Now, usage.UsedAt);
+        Assert.Equal(harness.Staff.Id, usage.RecordedByUserId);
+    }
+
+    [Fact]
+    public async Task AutomaticConsumption_OneTimeOrder_RetryDoesNotDuplicate()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var retryBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, retryBatchId, 2m);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+
+        var verified = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, verified.Status);
+        Assert.Equal(1, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None));
+
+        var usage = Assert.Single(await harness.Db.MilkUsages.AsNoTracking().ToListAsync());
+        Assert.Equal(2m, usage.QuantityUsed);
+    }
+
+    [Fact]
+    public async Task AutomaticConsumption_FailedOrderDelivery_CreatesNone()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AssignAsync(deliveryId, harness.Staff);
+
+        var failed = await harness.Service.FailAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new FailDeliveryRequest(
+                DeliveryFailureReasons.CustomerNotAvailable,
+                "No response",
+                12.972m,
+                77.595m),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Failed, failed.Status);
+        Assert.Equal(0, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task AutomaticConsumption_Subscription_ActivationNone_SingleDeliveredOccurrenceOne()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeSubscriptionAsync();
+        Assert.Equal(0, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
+
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var subscriptionBatchId = await harness.RecordMilkBatchAsync(1m);
+        await harness.SaveAllocationAsync(deliveryId, subscriptionBatchId, 1m);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        var verified = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, verified.Status);
+
+        var usage = Assert.Single(await harness.Db.MilkUsages.AsNoTracking().ToListAsync());
+        Assert.Equal(MilkUsageSource.Subscription, usage.Source);
+        Assert.Equal("Automatic Subscription Consumption", usage.Purpose);
+        Assert.Equal(harness.Branch.Id, usage.BranchId);
+        Assert.Equal(1m, usage.QuantityUsed);
+        Assert.Equal("L", usage.Unit);
+        Assert.Equal("Fresh Milk", usage.ProductName);
+        Assert.Equal(harness.SubscriptionDelivery.Id, usage.SubscriptionDeliveryId);
+        Assert.Equal(harness.TimeProvider.Now, usage.UsedAt);
+        Assert.Null(usage.OrderId);
+        Assert.Null(usage.OrderItemId);
+        Assert.Null(usage.OrderNumber);
+        Assert.Equal(subscriptionBatchId, usage.BatchId);
+        Assert.NotNull(usage.DeliveryBatchAllocationId);
+    }
+
+    [Fact]
+    public async Task AutomaticConsumption_Subscription_TwoDeliveredOccurrences_CreateTwoRecords()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var subscription = await harness.Db.Subscriptions
+            .Include(x => x.Deliveries)
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        subscription.AddDelivery(harness.Today.AddDays(1));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        _ = await harness.Service.MaterializeEligibleAsync(
+            harness.ManagerActor,
+            harness.Today.AddDays(1),
+            CancellationToken.None);
+
+        var deliveries = await harness.Db.Deliveries.AsNoTracking()
+            .Where(x => x.SubscriptionDeliveryId != null)
+            .ToListAsync();
+        Assert.Equal(2, deliveries.Count);
+        foreach (var delivery in deliveries)
+        {
+            await harness.AdvanceToArrivedAsync(delivery.PublicId, harness.Staff);
+            var occurrenceBatchId = await harness.RecordMilkBatchAsync(1m);
+            await harness.SaveAllocationAsync(delivery.PublicId, occurrenceBatchId, 1m);
+            var code = await harness.GetOtpCodeAsync(delivery.PublicId);
+            await harness.Service.VerifyOtpAsync(
+                harness.StaffActor(harness.Staff),
+                delivery.PublicId,
+                new VerifyDeliveryOtpRequest(code),
+                CancellationToken.None);
+        }
+
+        var usages = await harness.Db.MilkUsages.AsNoTracking()
+            .Where(x => x.Source == MilkUsageSource.Subscription)
+            .ToListAsync();
+        Assert.Equal(2, usages.Count);
+        Assert.Equal(2, usages.Select(x => x.SubscriptionDeliveryId).Distinct().Count());
+        Assert.All(usages, usage =>
+        {
+            Assert.Equal(1m, usage.QuantityUsed);
+            Assert.Equal(harness.Branch.Id, usage.BranchId);
+        });
+    }
+
+    [Fact]
+    public async Task AutomaticConsumption_SameProductTwoBranches_KeepsSeparateBranchTotals()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var product = await harness.Db.Products.AsNoTracking().SingleAsync(x => x.Sku == "MILK-001");
+        var address = await harness.Db.CustomerAddresses.AsNoTracking()
+            .SingleAsync(x => x.UserId == harness.Customer.Id);
+
+        var northOrder = new Order(
+            harness.Customer.Id,
+            address.Id,
+            harness.OtherBranch.Id,
+            "order-delivery-2",
+            "ORD-DEL-002",
+            80m,
+            0m,
+            harness.OtherBranch.Code,
+            harness.OtherBranch.Name,
+            address.Label,
+            address.AddressLine1,
+            address.AddressLine2,
+            address.Locality,
+            address.City,
+            address.State,
+            address.PinCode,
+            address.Landmark,
+            address.DeliveryInstructions,
+            address.ContactName,
+            address.ContactMobile,
+            address.Latitude,
+            address.Longitude);
+        northOrder.ConfirmPayment();
+        northOrder.AddItem(new OrderItem(product.Id, 3m, 40m, product.Sku, product.Name, product.UnitOfMeasure));
+        harness.Db.Orders.Add(northOrder);
+        await harness.Db.SaveChangesAsync();
+
+        var bothBranches = new DeliveryActor(harness.Manager.Id, [harness.Branch.Id, harness.OtherBranch.Id]);
+        _ = await harness.Service.MaterializeEligibleAsync(bothBranches, harness.Today, CancellationToken.None);
+
+        var mainDelivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.OrderId == harness.Order.Id);
+        var northDelivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.OrderId == northOrder.Id);
+
+        await harness.AdvanceToArrivedAsync(mainDelivery.PublicId, harness.Staff);
+        var mainBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(mainDelivery.PublicId, mainBatchId, 2m);
+        var mainCode = await harness.GetOtpCodeAsync(mainDelivery.PublicId);
+        await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            mainDelivery.PublicId,
+            new VerifyDeliveryOtpRequest(mainCode),
+            CancellationToken.None);
+
+        var northActor = new DeliveryActor(harness.OtherBranchStaff.Id, [harness.OtherBranch.Id]);
+        await harness.Service.AssignAsync(
+            northActor,
+            northDelivery.PublicId,
+            new AssignDeliveryRequest(harness.OtherBranchStaff.PublicId, null),
+            CancellationToken.None);
+        await harness.Service.PickUpAsync(
+            northActor, northDelivery.PublicId, new DeliveryNotesRequest(null), CancellationToken.None);
+        await harness.Service.StartAsync(northActor, northDelivery.PublicId, CancellationToken.None);
+        await harness.Service.ArriveAsync(northActor, northDelivery.PublicId, CancellationToken.None);
+        var northBatchId = await harness.RecordMilkBatchAsync(5m, harness.OtherBranch.Id);
+        await harness.SaveAllocationAsync(northDelivery.PublicId, northBatchId, 3m, northActor);
+        var northCode = await harness.GetOtpCodeAsync(northDelivery.PublicId);
+        await harness.Service.VerifyOtpAsync(
+            northActor,
+            northDelivery.PublicId,
+            new VerifyDeliveryOtpRequest(northCode),
+            CancellationToken.None);
+
+        var usages = await harness.Db.MilkUsages.AsNoTracking()
+            .Where(x => x.Source == MilkUsageSource.Order)
+            .ToListAsync();
+        Assert.Equal(2, usages.Count);
+        var mainUsage = usages.Single(x => x.BranchId == harness.Branch.Id);
+        var northUsage = usages.Single(x => x.BranchId == harness.OtherBranch.Id);
+        Assert.Equal(2m, mainUsage.QuantityUsed);
+        Assert.Equal(harness.Order.Id, mainUsage.OrderId);
+        Assert.Equal(3m, northUsage.QuantityUsed);
+        Assert.Equal(northOrder.Id, northUsage.OrderId);
+    }
+
+    [Fact]
+    public async Task Availability_ManualBatchUsage_ReducesAvailableOnce()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var dairy = new DairyService(harness.CreateContext(), harness.TimeProvider);
+        var actor = new DairyActor(harness.Manager.Id, [], HasGlobalAccess: true);
+        var production = await dairy.RecordProductionAsync(
+            actor,
+            harness.Branch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                10m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+
+        var before = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(10m, before.QuantityProduced);
+        Assert.Equal(0m, before.QuantityUsed);
+        Assert.Equal(10m, before.AvailableQuantity);
+
+        await dairy.RecordUsageAsync(
+            actor,
+            production.Batch.PublicId,
+            new RecordMilkUsageRequest(harness.TimeProvider.Now, 2m, "Pasteurization", null),
+            CancellationToken.None);
+
+        var after = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(10m, after.QuantityProduced);
+        Assert.Equal(2m, after.QuantityUsed);
+        Assert.Equal(8m, after.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task Availability_OrderDelivery_NoReductionBefore_ReducesExactlyOrderQuantityAfter()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var dairy = new DairyService(harness.CreateContext(), harness.TimeProvider);
+        var actor = new DairyActor(harness.Manager.Id, [], HasGlobalAccess: true);
+        var production = await dairy.RecordProductionAsync(
+            actor,
+            harness.Branch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                10m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+        var batchId = await harness.BatchIdAsync(production.Batch.PublicId);
+
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        await harness.SaveAllocationAsync(deliveryId, batchId, 2m);
+
+        var inTransit = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(10m, inTransit.QuantityProduced);
+        Assert.Equal(0m, inTransit.QuantityUsed);
+        Assert.Equal(10m, inTransit.AvailableQuantity);
+
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        var delivered = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, delivered.Status);
+
+        var after = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(10m, after.QuantityProduced);
+        Assert.Equal(2m, after.QuantityUsed);
+        Assert.Equal(8m, after.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task Availability_ManualAndOrderConsumption_CountedTogether()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var dairy = new DairyService(harness.CreateContext(), harness.TimeProvider);
+        var actor = new DairyActor(harness.Manager.Id, [], HasGlobalAccess: true);
+        var production = await dairy.RecordProductionAsync(
+            actor,
+            harness.Branch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                10m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+
+        await dairy.RecordUsageAsync(
+            actor,
+            production.Batch.PublicId,
+            new RecordMilkUsageRequest(harness.TimeProvider.Now, 2m, "Pasteurization", null),
+            CancellationToken.None);
+        var batchId = await harness.BatchIdAsync(production.Batch.PublicId);
+
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        await harness.SaveAllocationAsync(deliveryId, batchId, 2m);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        var delivered = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, delivered.Status);
+
+        var availability = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(10m, availability.QuantityProduced);
+        Assert.Equal(4m, availability.QuantityUsed);
+        Assert.Equal(6m, availability.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task Availability_Subscription_ActivationNoReduction_DeliveredOccurrenceReducesByQuantity()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var dairy = new DairyService(harness.CreateContext(), harness.TimeProvider);
+        var actor = new DairyActor(harness.Manager.Id, [], HasGlobalAccess: true);
+        var production = await dairy.RecordProductionAsync(
+            actor,
+            harness.Branch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                10m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+        var batchId = await harness.BatchIdAsync(production.Batch.PublicId);
+
+        var deliveryId = await harness.MaterializeSubscriptionAsync();
+        var activated = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(10m, activated.QuantityProduced);
+        Assert.Equal(0m, activated.QuantityUsed);
+        Assert.Equal(10m, activated.AvailableQuantity);
+
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        var verified = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, verified.Status);
+
+        var after = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(10m, after.QuantityProduced);
+        Assert.Equal(1m, after.QuantityUsed);
+        Assert.Equal(9m, after.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task Availability_FailedAndSkippedSubscriptionOccurrences_CreateNoConsumption()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var dairy = new DairyService(harness.CreateContext(), harness.TimeProvider);
+        var actor = new DairyActor(harness.Manager.Id, [], HasGlobalAccess: true);
+        await dairy.RecordProductionAsync(
+            actor,
+            harness.Branch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                10m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+
+        var deliveryId = await harness.MaterializeSubscriptionAsync();
+        await harness.AssignAsync(deliveryId, harness.Staff);
+        var failed = await harness.Service.FailAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new FailDeliveryRequest(
+                DeliveryFailureReasons.CustomerNotAvailable,
+                "No response",
+                12.972m,
+                77.595m),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Failed, failed.Status);
+        Assert.Equal(0, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
+
+        var subscription = await harness.Db.Subscriptions
+            .Include(x => x.Deliveries)
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        subscription.AddDelivery(harness.Today.AddDays(2));
+        subscription.Skip(subscription.Deliveries.Single(x => x.ScheduledDate == harness.Today.AddDays(2)), harness.TimeProvider.Now, TimeSpan.FromHours(24));
+        await harness.Db.SaveChangesAsync();
+        Assert.Equal(0, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
+
+        var availability = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(10m, availability.QuantityProduced);
+        Assert.Equal(0m, availability.QuantityUsed);
+        Assert.Equal(10m, availability.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task Availability_TwoBranches_KeepsSeparateAvailabilityTotals()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var dairy = new DairyService(harness.CreateContext(), harness.TimeProvider);
+        var actor = new DairyActor(harness.Manager.Id, [], HasGlobalAccess: true);
+        var mainProduction = await dairy.RecordProductionAsync(
+            actor,
+            harness.Branch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                10m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+        var mainBatchId = await harness.BatchIdAsync(mainProduction.Batch.PublicId);
+        var northProduction = await dairy.RecordProductionAsync(
+            actor,
+            harness.OtherBranch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                5m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+        var northBatchId = await harness.BatchIdAsync(northProduction.Batch.PublicId);
+
+        var product = await harness.Db.Products.AsNoTracking().SingleAsync(x => x.Sku == "MILK-001");
+        var address = await harness.Db.CustomerAddresses.AsNoTracking()
+            .SingleAsync(x => x.UserId == harness.Customer.Id);
+        var northOrder = new Order(
+            harness.Customer.Id,
+            address.Id,
+            harness.OtherBranch.Id,
+            "order-delivery-2",
+            "ORD-DEL-002",
+            80m,
+            0m,
+            harness.OtherBranch.Code,
+            harness.OtherBranch.Name,
+            address.Label,
+            address.AddressLine1,
+            address.AddressLine2,
+            address.Locality,
+            address.City,
+            address.State,
+            address.PinCode,
+            address.Landmark,
+            address.DeliveryInstructions,
+            address.ContactName,
+            address.ContactMobile,
+            address.Latitude,
+            address.Longitude);
+        northOrder.ConfirmPayment();
+        northOrder.AddItem(new OrderItem(product.Id, 3m, 40m, product.Sku, product.Name, product.UnitOfMeasure));
+        harness.Db.Orders.Add(northOrder);
+        await harness.Db.SaveChangesAsync();
+
+        var bothBranches = new DeliveryActor(harness.Manager.Id, [harness.Branch.Id, harness.OtherBranch.Id]);
+        _ = await harness.Service.MaterializeEligibleAsync(bothBranches, harness.Today, CancellationToken.None);
+
+        var mainDelivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.OrderId == harness.Order.Id);
+        var northDelivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.OrderId == northOrder.Id);
+
+        await harness.AdvanceToArrivedAsync(mainDelivery.PublicId, harness.Staff);
+        await harness.SaveAllocationAsync(mainDelivery.PublicId, mainBatchId, 2m);
+        var mainCode = await harness.GetOtpCodeAsync(mainDelivery.PublicId);
+        await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            mainDelivery.PublicId,
+            new VerifyDeliveryOtpRequest(mainCode),
+            CancellationToken.None);
+
+        var northActor = new DeliveryActor(harness.OtherBranchStaff.Id, [harness.OtherBranch.Id]);
+        await harness.Service.AssignAsync(
+            northActor,
+            northDelivery.PublicId,
+            new AssignDeliveryRequest(harness.OtherBranchStaff.PublicId, null),
+            CancellationToken.None);
+        await harness.Service.PickUpAsync(
+            northActor, northDelivery.PublicId, new DeliveryNotesRequest(null), CancellationToken.None);
+        await harness.Service.StartAsync(northActor, northDelivery.PublicId, CancellationToken.None);
+        await harness.Service.ArriveAsync(northActor, northDelivery.PublicId, CancellationToken.None);
+        await harness.SaveAllocationAsync(northDelivery.PublicId, northBatchId, 3m, northActor);
+        var northCode = await harness.GetOtpCodeAsync(northDelivery.PublicId);
+        await harness.Service.VerifyOtpAsync(
+            northActor,
+            northDelivery.PublicId,
+            new VerifyDeliveryOtpRequest(northCode),
+            CancellationToken.None);
+
+        var mainAvailability = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(10m, mainAvailability.QuantityProduced);
+        Assert.Equal(2m, mainAvailability.QuantityUsed);
+        Assert.Equal(8m, mainAvailability.AvailableQuantity);
+
+        var northAvailability = await dairy.GetAvailabilityAsync(actor, harness.OtherBranch.Id, CancellationToken.None);
+        Assert.Equal(5m, northAvailability.QuantityProduced);
+        Assert.Equal(3m, northAvailability.QuantityUsed);
+        Assert.Equal(2m, northAvailability.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task Availability_NoDoubleCounting_CountsEachMilkUsageExactlyOnce()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var dairy = new DairyService(harness.CreateContext(), harness.TimeProvider);
+        var actor = new DairyActor(harness.Manager.Id, [], HasGlobalAccess: true);
+        var first = await dairy.RecordProductionAsync(
+            actor,
+            harness.Branch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                10m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+        var firstBatchId = await harness.BatchIdAsync(first.Batch.PublicId);
+        await dairy.RecordProductionAsync(
+            actor,
+            harness.Branch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Evening",
+                12,
+                5m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+
+        await dairy.RecordUsageAsync(
+            actor,
+            first.Batch.PublicId,
+            new RecordMilkUsageRequest(harness.TimeProvider.Now, 2m, "Pasteurization", null),
+            CancellationToken.None);
+
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        await harness.SaveAllocationAsync(deliveryId, firstBatchId, 2m);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+
+        var availability = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        // Total produced = 10 + 5 = 15. Total consumed = 2 (manual, batch-linked) + 2 (automatic order) = 4.
+        // Available must be 11, NOT 15 - (2 + 4) = 9 (which would double count the manual usage).
+        Assert.Equal(15m, availability.QuantityProduced);
+        Assert.Equal(4m, availability.QuantityUsed);
+        Assert.Equal(11m, availability.AvailableQuantity);
+        Assert.Equal(4m, await harness.Db.MilkUsages.AsNoTracking().SumAsync(x => x.QuantityUsed));
+    }
+
+    [Fact]
+    public async Task Availability_ArchivedBranch_HistoricalConsumptionStaysAttributed()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var dairy = new DairyService(harness.CreateContext(), harness.TimeProvider);
+        var actor = new DairyActor(harness.Manager.Id, [], HasGlobalAccess: true);
+        var production = await dairy.RecordProductionAsync(
+            actor,
+            harness.OtherBranch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                5m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+        var northBatchId = await harness.BatchIdAsync(production.Batch.PublicId);
+
+        var product = await harness.Db.Products.AsNoTracking().SingleAsync(x => x.Sku == "MILK-001");
+        var address = await harness.Db.CustomerAddresses.AsNoTracking()
+            .SingleAsync(x => x.UserId == harness.Customer.Id);
+        var northOrder = new Order(
+            harness.Customer.Id,
+            address.Id,
+            harness.OtherBranch.Id,
+            "order-delivery-3",
+            "ORD-DEL-003",
+            80m,
+            0m,
+            harness.OtherBranch.Code,
+            harness.OtherBranch.Name,
+            address.Label,
+            address.AddressLine1,
+            address.AddressLine2,
+            address.Locality,
+            address.City,
+            address.State,
+            address.PinCode,
+            address.Landmark,
+            address.DeliveryInstructions,
+            address.ContactName,
+            address.ContactMobile,
+            address.Latitude,
+            address.Longitude);
+        northOrder.ConfirmPayment();
+        northOrder.AddItem(new OrderItem(product.Id, 3m, 40m, product.Sku, product.Name, product.UnitOfMeasure));
+        harness.Db.Orders.Add(northOrder);
+        await harness.Db.SaveChangesAsync();
+
+        var bothBranches = new DeliveryActor(harness.Manager.Id, [harness.Branch.Id, harness.OtherBranch.Id]);
+        _ = await harness.Service.MaterializeEligibleAsync(bothBranches, harness.Today, CancellationToken.None);
+
+        var northDelivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.OrderId == northOrder.Id);
+        var northActor = new DeliveryActor(harness.OtherBranchStaff.Id, [harness.OtherBranch.Id]);
+        await harness.Service.AssignAsync(
+            northActor,
+            northDelivery.PublicId,
+            new AssignDeliveryRequest(harness.OtherBranchStaff.PublicId, null),
+            CancellationToken.None);
+        await harness.Service.PickUpAsync(
+            northActor, northDelivery.PublicId, new DeliveryNotesRequest(null), CancellationToken.None);
+        await harness.Service.StartAsync(northActor, northDelivery.PublicId, CancellationToken.None);
+        await harness.Service.ArriveAsync(northActor, northDelivery.PublicId, CancellationToken.None);
+        await harness.SaveAllocationAsync(northDelivery.PublicId, northBatchId, 3m, northActor);
+        var northCode = await harness.GetOtpCodeAsync(northDelivery.PublicId);
+        await harness.Service.VerifyOtpAsync(
+            northActor,
+            northDelivery.PublicId,
+            new VerifyDeliveryOtpRequest(northCode),
+            CancellationToken.None);
+
+        var archivedBranch = await harness.Db.Branches.SingleAsync(x => x.Id == harness.OtherBranch.Id);
+        archivedBranch.Archive(harness.TimeProvider.Now);
+        await harness.Db.SaveChangesAsync();
+
+        var usage = Assert.Single(await harness.Db.MilkUsages.AsNoTracking().ToListAsync());
+        Assert.Equal(harness.OtherBranch.Id, usage.BranchId);
+        Assert.Equal(3m, usage.QuantityUsed);
+
+        var produced = await harness.Db.MilkBatches.AsNoTracking()
+            .Where(x => x.BranchId == harness.OtherBranch.Id)
+            .SumAsync(x => x.QuantityProduced);
+        var used = await harness.Db.MilkUsages.AsNoTracking()
+            .Where(x => x.BranchId == harness.OtherBranch.Id)
+            .SumAsync(x => x.QuantityUsed);
+        Assert.Equal(5m, produced);
+        Assert.Equal(3m, used);
+        Assert.Equal(2m, produced - used);
+    }
+
+    [Fact]
+    public async Task Availability_RetriedOrderDelivery_ConsumptionCreatedExactlyOnce()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var dairy = new DairyService(harness.CreateContext(), harness.TimeProvider);
+        var actor = new DairyActor(harness.Manager.Id, [], HasGlobalAccess: true);
+        var production = await dairy.RecordProductionAsync(
+            actor,
+            harness.Branch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                10m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+        var batchId = await harness.BatchIdAsync(production.Batch.PublicId);
+
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        await harness.SaveAllocationAsync(deliveryId, batchId, 2m);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+
+        var verified = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, verified.Status);
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None));
+
+        Assert.Equal(1, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
+        var availability = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(10m, availability.QuantityProduced);
+        Assert.Equal(2m, availability.QuantityUsed);
+        Assert.Equal(8m, availability.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task Availability_ConsumptionExceedsProduction_ReportsNegativeWithoutClamping()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var dairy = new DairyService(harness.CreateContext(), harness.TimeProvider);
+        var actor = new DairyActor(harness.Manager.Id, [], HasGlobalAccess: true);
+        var production = await dairy.RecordProductionAsync(
+            actor,
+            harness.Branch.Id,
+            new RecordMilkProductionRequest(
+                harness.TimeProvider.Now.AddHours(-1),
+                "Morning",
+                12,
+                2m,
+                "L",
+                "Fresh production"),
+            CancellationToken.None);
+        var batchId = await harness.BatchIdAsync(production.Batch.PublicId);
+
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+
+        // Allocate the full batch to the delivery BEFORE the manual usage exhausts it. The allocation
+        // reserves the batch (SaveBatchAllocationsAsync sees produced quantity minus any MilkUsage, and
+        // allocations do not count) but does NOT itself reduce branch availability.
+        await harness.SaveAllocationAsync(deliveryId, batchId, 2m);
+
+        // Manual usage exhausts the batch (2L used of 2L produced) — RecordUsageAsync allows a usage equal
+        // to the batch's available quantity and marks the batch exhausted. Allocations are not counted in
+        // the manual-usage availability ledger, so the full 2L remains recordable.
+        await dairy.RecordUsageAsync(
+            actor,
+            production.Batch.PublicId,
+            new RecordMilkUsageRequest(harness.TimeProvider.Now, 2m, "Pasteurization", null),
+            CancellationToken.None);
+
+        // Delivered order adds automatic consumption (2L) which is NOT gated on batch availability.
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        var delivered = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, delivered.Status);
+
+        // Total used = 2L manual + 2L automatic = 4L, exceeding the 2L produced. The negative availability
+        // must be reported as-is (NOT clamped to zero) — overselling is not prevented by this service.
+        var availability = await dairy.GetAvailabilityAsync(actor, harness.Branch.Id, CancellationToken.None);
+        Assert.Equal(2m, availability.QuantityProduced);
+        Assert.Equal(4m, availability.QuantityUsed);
+        Assert.Equal(-2m, availability.AvailableQuantity);
+    }
+
+    [Fact]
+    public async Task BatchAllocations_RequiresBranchScope_OutOfBranchActorIsNotFound()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        var batchId = await harness.RecordMilkBatchAsync();
+        var northActor = new DeliveryActor(harness.OtherBranchStaff.Id, [harness.OtherBranch.Id]);
+
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.SaveBatchAllocationsAsync(
+            northActor,
+            deliveryId,
+            new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(batchId, 2m)]),
+            CancellationToken.None));
+
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.GetBatchAllocationsAsync(
+            northActor,
+            deliveryId,
+            CancellationToken.None));
+
+        // A manager can save allocations before the delivery is assigned at all.
+        var saved = await harness.SaveAllocationAsync(deliveryId, batchId, 2m);
+        Assert.Equal(DeliveryStatus.ReadyForAssignment, saved.Status);
+        Assert.Equal(1, await harness.Db.DeliveryBatchAllocations.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task BatchAllocations_Validation_RejectsInvalidRequests()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        var batchId = await harness.RecordMilkBatchAsync(10m);
+
+        var empty = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                deliveryId,
+                new SaveDeliveryBatchAllocationsRequest([]),
+                CancellationToken.None));
+        Assert.Equal("At least one batch allocation is required.", empty.Message);
+
+        var duplicate = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                deliveryId,
+                new SaveDeliveryBatchAllocationsRequest(
+                    [new DeliveryBatchAllocationRequest(batchId, 1m), new DeliveryBatchAllocationRequest(batchId, 1m)]),
+                CancellationToken.None));
+        Assert.Equal("A batch cannot be allocated more than once.", duplicate.Message);
+
+        var zero = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                deliveryId,
+                new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(batchId, 0m)]),
+                CancellationToken.None));
+        Assert.Equal("Allocation quantity must be greater than zero.", zero.Message);
+
+        var precision = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                deliveryId,
+                new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(batchId, 1.2345m)]),
+                CancellationToken.None));
+        Assert.Equal("Allocation quantity cannot exceed three decimal places.", precision.Message);
+
+        var mismatch = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                deliveryId,
+                new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(batchId, 1.5m)]),
+                CancellationToken.None));
+        Assert.Contains("must equal the delivery requirement (2 L)", mismatch.Message);
+
+        // None of the rejected requests may have persisted a partial allocation.
+        Assert.Equal(0, await harness.Db.DeliveryBatchAllocations.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task BatchAllocations_Validation_RejectsBatchFromAnotherBranch()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        var northBatchId = await harness.RecordMilkBatchAsync(2m, harness.OtherBranch.Id);
+
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                deliveryId,
+                new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(northBatchId, 2m)]),
+                CancellationToken.None));
+        Assert.Equal("One or more selected batches do not exist for this branch.", exception.Message);
+        Assert.Equal(0, await harness.Db.DeliveryBatchAllocations.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task BatchAllocations_OverAllocation_ThrowsBusinessRuleWithRemainingQuantity()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        // The batch only holds 1L, so the full 2L requirement cannot be met by it alone.
+        // The request total (2L) matches the delivery requirement so the over-allocation
+        // check (not the total-mismatch validation) is what rejects it.
+        var batchId = await harness.RecordMilkBatchAsync(1m);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.Service.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                deliveryId,
+                new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(batchId, 2m)]),
+                CancellationToken.None));
+        Assert.Contains("has only 1 L available to allocate", exception.Message);
+        Assert.Contains("requested 2 L", exception.Message);
+        Assert.Equal(0, await harness.Db.DeliveryBatchAllocations.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task BatchAllocations_Get_ReportsEligibleAvailabilityAndCrossDeliveryReservations()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var orderDeliveryId = await harness.MaterializeOrderAsync();
+        var subscriptionDeliveryId = await harness.MaterializeSubscriptionAsync();
+        var firstBatchId = await harness.RecordMilkBatchAsync(2m);
+        var secondBatchId = await harness.RecordMilkBatchAsync(2m);
+
+        var before = await harness.Service.GetBatchAllocationsAsync(
+            harness.ManagerActor, orderDeliveryId, CancellationToken.None);
+        Assert.Equal(2m, before.TotalRequiredQuantity);
+        Assert.Equal(2, before.EligibleBatches.Count);
+        Assert.All(before.EligibleBatches, b => Assert.Equal(2m, b.QuantityAvailable));
+        Assert.Empty(before.Allocations);
+
+        await harness.SaveAllocationAsync(orderDeliveryId, firstBatchId, 2m);
+
+        // The other delivery must see the first delivery's pending allocation as a reservation.
+        var forSubscription = await harness.Service.GetBatchAllocationsAsync(
+            harness.ManagerActor, subscriptionDeliveryId, CancellationToken.None);
+        Assert.Equal(1m, forSubscription.TotalRequiredQuantity);
+        Assert.Equal(0m, forSubscription.EligibleBatches.Single(x => x.BatchId == firstBatchId).QuantityAvailable);
+        Assert.Equal(2m, forSubscription.EligibleBatches.Single(x => x.BatchId == secondBatchId).QuantityAvailable);
+
+        // The owning delivery's own allocation is NOT double-counted in its own eligibility.
+        var forOrder = await harness.Service.GetBatchAllocationsAsync(
+            harness.ManagerActor, orderDeliveryId, CancellationToken.None);
+        Assert.Equal(2m, forOrder.EligibleBatches.Single(x => x.BatchId == firstBatchId).QuantityAvailable);
+        var allocation = Assert.Single(forOrder.Allocations);
+        Assert.Equal(firstBatchId, allocation.BatchId);
+        Assert.Equal(2m, allocation.QuantityAllocated);
+
+        var overReserved = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.Service.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                subscriptionDeliveryId,
+                new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(firstBatchId, 1m)]),
+                CancellationToken.None));
+        Assert.Contains("has only 0 L available to allocate", overReserved.Message);
+    }
+
+    [Fact]
+    public async Task BatchAllocations_Replace_SwapsToNewBatchAndPersistsExactlyOneSet()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        var firstBatchId = await harness.RecordMilkBatchAsync(2m);
+        var secondBatchId = await harness.RecordMilkBatchAsync(2m);
+
+        await harness.SaveAllocationAsync(deliveryId, firstBatchId, 2m);
+        Assert.Equal(1, await harness.Db.DeliveryBatchAllocations.AsNoTracking().CountAsync());
+
+        await harness.SaveAllocationAsync(deliveryId, secondBatchId, 2m);
+
+        var persisted = Assert.Single(await harness.Db.DeliveryBatchAllocations.AsNoTracking().ToListAsync());
+        Assert.Equal(secondBatchId, persisted.BatchId);
+        Assert.Equal(2m, persisted.QuantityAllocated);
+        Assert.Equal(2, await harness.Db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.Action == "DELIVERY.BATCH_ALLOCATIONS"));
+    }
+
+    [Fact]
+    public async Task BatchAllocations_Immutability_AfterDeliveredOrFailed_RejectsChanges()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var orderDeliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(orderDeliveryId, harness.Staff);
+        var orderBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(orderDeliveryId, orderBatchId, 2m);
+        var code = await harness.GetOtpCodeAsync(orderDeliveryId);
+        await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            orderDeliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+
+        var delivered = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.Service.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                orderDeliveryId,
+                new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(orderBatchId, 2m)]),
+                CancellationToken.None));
+        Assert.Contains("cannot be changed after a delivery has been completed or failed", delivered.Message);
+
+        var subscriptionDeliveryId = await harness.MaterializeSubscriptionAsync();
+        await harness.AssignAsync(subscriptionDeliveryId, harness.Staff);
+        var failedBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(subscriptionDeliveryId, failedBatchId, 1m);
+        await harness.Service.FailAsync(
+            harness.StaffActor(harness.Staff),
+            subscriptionDeliveryId,
+            new FailDeliveryRequest(DeliveryFailureReasons.CustomerNotAvailable, "Test", null, null),
+            CancellationToken.None);
+
+        var failed = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.Service.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                subscriptionDeliveryId,
+                new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(failedBatchId, 1m)]),
+                CancellationToken.None));
+        Assert.Contains("cannot be changed after a delivery has been completed or failed", failed.Message);
+    }
+
+    [Fact]
+    public async Task BatchAllocations_ConcurrentManagers_CannotBothOverAllocateSharedBatch()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var orderDeliveryId = await harness.MaterializeOrderAsync();
+        var subscriptionDeliveryId = await harness.MaterializeSubscriptionAsync();
+        var sharedBatchId = await harness.RecordMilkBatchAsync(2m);
+
+        await using var firstDb = harness.CreateContext();
+        await using var secondDb = harness.CreateContext();
+        var firstService = harness.CreateService(firstDb);
+        var secondService = harness.CreateService(secondDb);
+
+        var requests = new[]
+        {
+            firstService.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                orderDeliveryId,
+                new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(sharedBatchId, 2m)]),
+                CancellationToken.None),
+            secondService.SaveBatchAllocationsAsync(
+                harness.ManagerActor,
+                subscriptionDeliveryId,
+                new SaveDeliveryBatchAllocationsRequest([new DeliveryBatchAllocationRequest(sharedBatchId, 1m)]),
+                CancellationToken.None)
+        };
+        var outcomes = await Task.WhenAll(requests.Select(async request =>
+        {
+            try
+            {
+                return (Result: await request, Error: (Exception?)null);
+            }
+            catch (Exception exception)
+            {
+                return (Result: (DeliveryResult?)null, Error: exception);
+            }
+        }));
+
+        // Exactly one manager may commit; the other is rejected either by the
+        // reservation business rule or by SQLite's serializable lock.
+        Assert.Single(outcomes, x => x.Result is not null);
+        Assert.Single(outcomes, x => x.Error is not null);
+        var loser = outcomes.Single(x => x.Error is not null);
+        if (loser.Error is BusinessRuleException businessRule)
+        {
+            Assert.Contains("available to allocate", businessRule.Message);
+        }
+
+        harness.Db.ChangeTracker.Clear();
+        var winner = Assert.Single(await harness.Db.DeliveryBatchAllocations.AsNoTracking().ToListAsync());
+        Assert.True(winner.QuantityAllocated is 1m or 2m);
+        Assert.True(winner.QuantityAllocated <= 2m);
+    }
+
     private static JsonElement Payload(
         DoodhDirect.Domain.Notifications.NotificationEvent notificationEvent) =>
         JsonSerializer.Deserialize<JsonElement>(notificationEvent.PayloadJson);
@@ -1032,11 +2141,12 @@ public sealed class DeliveryServiceTests
         DoodhDirect.Domain.Notifications.NotificationEvent notificationEvent) =>
         Payload(notificationEvent).GetProperty("Variables");
 
-    private sealed class DeliveryHarness : IAsyncDisposable
+    internal sealed class DeliveryHarness : IAsyncDisposable
     {
         private readonly SqliteConnection connection;
         private readonly string connectionString;
         private readonly int subscriptionGenerationWindowDays;
+        private int batchSequence;
 
         private DeliveryHarness(
             SqliteConnection connection,
@@ -1155,6 +2265,52 @@ public sealed class DeliveryServiceTests
             await Service.StartAsync(actor, deliveryId, CancellationToken.None);
             await Service.ArriveAsync(actor, deliveryId, CancellationToken.None);
         }
+
+        public async Task<long> RecordMilkBatchAsync(decimal quantityProduced = 2m, long? branchId = null)
+        {
+            var branch = branchId ?? Branch.Id;
+            var producedAt = TimeProvider.Now.AddHours(-1);
+            var production = new MilkProduction(
+                branch,
+                producedAt,
+                12,
+                quantityProduced,
+                "L",
+                Manager.Id,
+                "Morning",
+                null);
+            Db.MilkProductions.Add(production);
+            await Db.SaveChangesAsync();
+
+            var batch = new MilkBatch(
+                branch,
+                production.Id,
+                $"TEST-{++batchSequence}",
+                producedAt,
+                quantityProduced,
+                "L");
+            Db.MilkBatches.Add(batch);
+            await Db.SaveChangesAsync();
+            return batch.Id;
+        }
+
+        public async Task<long> BatchIdAsync(Guid publicId) =>
+            await Db.MilkBatches.AsNoTracking()
+                .Where(x => x.PublicId == publicId)
+                .Select(x => x.Id)
+                .SingleAsync();
+
+        public async Task<DeliveryResult> SaveAllocationAsync(
+            Guid deliveryId,
+            long batchId,
+            decimal quantity,
+            DeliveryActor? actor = null) =>
+            await Service.SaveBatchAllocationsAsync(
+                actor ?? ManagerActor,
+                deliveryId,
+                new SaveDeliveryBatchAllocationsRequest(
+                    [new DeliveryBatchAllocationRequest(batchId, quantity)]),
+                CancellationToken.None);
 
         public DoodhDirectDbContext CreateContext()
         {
@@ -1359,7 +2515,7 @@ public sealed class DeliveryServiceTests
         }
     }
 
-    private sealed class CapturingOtpDeliveryService : IOtpDeliveryService
+    internal sealed class CapturingOtpDeliveryService : IOtpDeliveryService
     {
         public List<(string Destination, string Code)> Messages { get; } = [];
         public List<(string Destination, string Code)> Attempts { get; } = [];
@@ -1412,7 +2568,7 @@ public sealed class DeliveryServiceTests
         }
     }
 
-    private sealed class CapturingRealtimePublisher : IDeliveryRealtimePublisher
+    internal sealed class CapturingRealtimePublisher : IDeliveryRealtimePublisher
     {
         public List<DeliveryResult> Deliveries { get; } = [];
         public List<(Guid DeliveryId, DeliveryLocationResult Location)> Locations { get; } = [];

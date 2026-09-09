@@ -2,8 +2,9 @@ import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/admin_reports/admin_report_screens.dart';
 import 'package:doodh_direct_mobile/features/auth/login_screen.dart';
+import 'package:doodh_direct_mobile/features/auth/otp_onboarding_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/otp_screen.dart';
-import 'package:doodh_direct_mobile/features/auth/register_screen.dart';
+import 'package:doodh_direct_mobile/features/auth/security_screens.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_screens.dart';
@@ -22,6 +23,8 @@ import 'package:doodh_direct_mobile/features/notifications/notification_screen.d
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/orders/order_screens.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_screens.dart';
+import 'package:doodh_direct_mobile/features/otp_config/otp_config_screen.dart';
+import 'package:doodh_direct_mobile/features/integrations/integrations_screen.dart';
 import 'package:doodh_direct_mobile/features/setup/number_series_models.dart';
 import 'package:doodh_direct_mobile/features/setup/number_series_screens.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_screens.dart';
@@ -30,37 +33,189 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-final routerProvider = Provider<GoRouter>((ref) {
-  final session = ref.watch(sessionControllerProvider);
-  return GoRouter(
-    initialLocation: '/restore',
-    redirect: (context, state) {
-      final location = state.matchedLocation;
-      final isAuthRoute =
-          location == '/login' ||
-          location == '/register' ||
-          location == '/otp' ||
-          location.startsWith('/invite');
+/// Persists the sanitized destination the user should land on after signing
+/// in. The GoRouter instance is rebuilt whenever the session changes, which
+/// would otherwise discard the `/login?redirectTo=...` query parameter; this
+/// provider survives that rebuild so the redirect can recover the intent.
+final returnIntentProvider = NotifierProvider<ReturnIntentController, String?>(
+  ReturnIntentController.new,
+);
 
-      if (session.isLoading) return location == '/restore' ? null : '/restore';
-      if (!session.isAuthenticated) return isAuthRoute ? null : '/login';
-      if (isAuthRoute || location == '/restore') return '/home';
-      return null;
+/// Holds a single pending return-intent. [take] consumes the value (used by
+/// the redirect after authentication) so an intent is never applied twice.
+class ReturnIntentController extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void set(String? value) => state = value;
+
+  String? take() {
+    final value = state;
+    state = null;
+    return value;
+  }
+}
+
+final routerProvider = Provider<GoRouter>((ref) {
+  final refresh = _RouterRefreshNotifier();
+  ref.onDispose(refresh.dispose);
+  late final GoRouter router;
+  ref.listen(sessionControllerProvider, (previous, next) {
+    refresh.notify();
+    // Sign-out is an explicit boundary: do not silently turn the authenticated
+    // home into guest home. Initial unauthenticated startup still follows the
+    // normal public-home behavior through the redirect below.
+    if (previous?.isAuthenticated == true && !next.isAuthenticated) {
+      Future.microtask(() => router.go('/login'));
+    }
+  });
+
+  router = GoRouter(
+    // Let GoRouter read the browser's initial path. Session changes refresh the
+    // existing router below instead of rebuilding it and losing that path.
+    refreshListenable: refresh,
+    redirect: (context, state) {
+      final session = ref.read(sessionControllerProvider);
+      // Use the query-stripped path for matching: state.matchedLocation keeps
+      // query parameters (e.g. /login?redirectTo=/checkout) which would break
+      // exact equality checks below.
+      final path = state.uri.path;
+      final isInvitationRoute = _isInvitationRoute(path);
+      final isAuthRoute = _isAuthRoute(path);
+      final isPublicStorefront = _isPublicStorefront(path);
+
+      // Invitation links are credential-bearing deep links. They must bypass
+      // restore, home, login, generic OTP, and return-intent routing for the
+      // entire anonymous onboarding flow. The token remains in the route
+      // parameter and is never copied into generic redirect state.
+      if (isInvitationRoute) return null;
+
+      // go_router runs this callback while the widget tree is building, so it
+      // must stay pure: only reads are allowed here. Every provider write is
+      // deferred to a microtask (see the _defer*/_take* helpers below).
+      if (session.isLoading) {
+        return path == '/restore' ? null : '/restore';
+      }
+
+      if (session.isAuthenticated) {
+        if (path == '/restore') {
+          // A session change rebuilds the GoRouter, so the login redirectTo
+          // query is gone; recover the intent persisted by the auth flow.
+          return _takePendingIntent(ref) ?? '/home';
+        }
+        if (isAuthRoute) {
+          return _returnIntentFrom(state) ?? _takePendingIntent(ref) ?? '/home';
+        }
+        return null;
+      }
+
+      if (session.isGuest) {
+        if (path == '/restore') {
+          // A session change rebuilds the GoRouter; land back on the captured
+          // deep link (set before enterAsGuest) instead of the guest home.
+          return _takePendingIntent(ref) ?? '/home';
+        }
+        // A guest may browse the public storefront and open the auth flows
+        // (sign in / register / OTP) freely.
+        if (isAuthRoute || isPublicStorefront) {
+          _syncReturnIntent(ref, state);
+          return null;
+        }
+        // Any protected page is gated behind sign in; capture the intended
+        // destination so the user returns there after authenticating.
+        return _loginWithReturn(ref, state);
+      }
+
+      // Unauthenticated: allow the auth flows, auto-enter guest mode on the
+      // public storefront so deep links browse seamlessly, and capture a
+      // return-intent for every protected route.
+      if (path == '/restore') return '/login';
+      if (isAuthRoute) {
+        _syncReturnIntent(ref, state);
+        return null;
+      }
+      if (isPublicStorefront) {
+        // A session change rebuilds the GoRouter; persist the destination so
+        // the guest '/restore' branch can land back on this exact deep link
+        // instead of the guest home. enterAsGuest is deferred: the resulting
+        // session change rebuilds the router, whose '/restore' redirect then
+        // consumes this intent.
+        final intent = _sanitizeReturnIntent(path);
+        if (intent != null) {
+          _deferIntentSet(ref, intent);
+        }
+        _deferEnterAsGuest(ref);
+        return null;
+      }
+      return _loginWithReturn(ref, state);
     },
     routes: [
+      GoRoute(path: '/', redirect: (context, state) => '/home'),
       GoRoute(
         path: '/restore',
         builder: (context, state) => const _SessionRestoreScreen(),
       ),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      // Mobile OTP sign-in. A mobile entered on /login is carried here so the
+      // field pre-fills and an OTP is requested without retyping.
       GoRoute(
-        path: '/register',
-        builder: (context, state) => const RegisterScreen(),
+        path: '/otp',
+        builder: (context, state) => OtpScreen(
+          initialMobile: state.uri.queryParameters['mobile'],
+        ),
       ),
-      GoRoute(path: '/otp', builder: (context, state) => const OtpScreen()),
+      // Customer onboarding for a mobile the OTP provider attested but that has
+      // no account yet. Only reachable from a completed verify-otp handshake
+      // that returned requiresOnboarding (carrying mobile + reqId).
+      GoRoute(
+        path: '/otp/onboarding',
+        builder: (context, state) => const OtpOnboardingScreen(),
+      ),
+      GoRoute(
+        path: '/forgot-password',
+        builder: (context, state) => const ForgotPasswordScreen(),
+      ),
+      GoRoute(
+        path: '/create-password',
+        builder: (context, state) => const CreatePasswordScreen(),
+      ),
+      // Changes the password after verifying the current one. Authenticated-only
+      // (like /create-password): deliberately NOT in _isAuthRoute so a guest
+      // hitting it falls through to the login gate instead of being redirected
+      // to /home, while an authenticated session opens it normally.
+      GoRoute(
+        path: '/change-password',
+        builder: (context, state) => const ChangePasswordScreen(),
+      ),
+      GoRoute(
+        path: '/customer/security',
+        redirect: (context, state) => '/security',
+      ),
+      GoRoute(
+        path: '/customer/security/email',
+        redirect: (context, state) => '/security/email',
+      ),
+      GoRoute(
+        path: '/security',
+        builder: (context, state) => const LoginSecurityScreen(),
+      ),
+      GoRoute(
+        path: '/security/email',
+        builder: (context, state) => const EmailChangeScreen(),
+      ),
+      GoRoute(
+        path: '/security/mobile',
+        builder: (context, state) => const MobileChangeScreen(),
+      ),
       GoRoute(
         path: '/home',
-        builder: (context, state) => RoleHomeScreen(role: session.role!),
+        builder: (context, state) => Consumer(
+          builder: (context, ref, child) {
+            final session = ref.watch(sessionControllerProvider);
+            if (!session.isAuthenticated) return const GuestHomeScreen();
+            return RoleHomeScreen(role: session.role!);
+          },
+        ),
       ),
       GoRoute(
         path: '/notifications',
@@ -81,6 +236,12 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/customer/addresses/new',
         builder: (context, state) => const CustomerAddressEditScreen(),
+      ),
+      GoRoute(
+        path: '/checkout/address/new',
+        builder: (context, state) => const CustomerAddressEditScreen(
+          checkoutMode: true,
+        ),
       ),
       GoRoute(
         path: '/customer/addresses/:addressId/edit',
@@ -204,6 +365,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/admin/cameras',
         builder: (context, state) => const AdminCameraListScreen(),
+      ),
+      GoRoute(
+        path: '/admin/setup/otp-provider',
+        builder: (context, state) => const OtpProviderConfigScreen(),
+      ),
+      GoRoute(
+        path: '/admin/setup/integrations',
+        builder: (context, state) => const IntegrationConfigurationScreen(),
       ),
       GoRoute(
         path: '/admin/setup/number-series',
@@ -437,11 +606,140 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
     ],
   );
+  return router;
 });
 
 String? _requiredPathParameter(GoRouterState state, String name) {
   final value = state.pathParameters[name]?.trim();
   return value == null || value.isEmpty ? null : value;
+}
+
+/// True only for a complete invitation route containing a token. Invitation
+/// links are handled before all session/startup redirects so their token stays
+/// in the route and never enters generic return-intent state.
+bool _isInvitationRoute(String path) =>
+    path.startsWith('/invite/') && path.length > '/invite/'.length;
+
+/// True for the sign-in, OTP, onboarding, and password-reset flows that a
+/// guest/unauthenticated user may open freely. Employee-invitation links are
+/// handled earlier by [_isInvitationRoute]; this also covers a bare `/invite`
+/// without a token so it is never mislabelled a protected page. Registration
+/// is no longer a standalone route — new accounts are created through the OTP
+/// onboarding flow (`/otp/onboarding`, matched by the `/otp` prefix).
+///
+/// `/create-password` is intentionally NOT in this set: it is an authenticated
+/// flow reachable from Login & security for an OTP-created account that has no
+/// password yet. Keeping it out of the auth set means an authenticated session
+/// (even one whose user has `hasPassword == false`) is not redirected away
+/// from it to `/home`, while a guest/unauthenticated user hitting the route
+/// falls through to the login gate instead.
+bool _isAuthRoute(String path) =>
+    path == '/login' ||
+    path.startsWith('/otp') ||
+    path == '/forgot-password' ||
+    path.startsWith('/invite');
+
+/// The guest allowlist: everything a browsing-only visitor may open without an
+/// account. Every other route is protected and requires sign in.
+bool _isPublicStorefront(String path) =>
+    path == '/' ||
+    path == '/home' ||
+    path == '/catalogue' ||
+    path.startsWith('/catalogue/products/') ||
+    path == '/checkout';
+
+/// Internal route prefixes a return-intent may target. Only these are accepted
+/// so the app can never act as an open redirect to an external location or to
+/// an unknown path.
+const _returnIntentAllowedPrefixes = <String>[
+  '/home',
+  '/catalogue',
+  '/checkout',
+  '/orders',
+  '/subscriptions',
+  '/wallet',
+  '/customer',
+  '/deliveries',
+  '/notifications',
+  '/payments',
+  '/cameras',
+  '/admin',
+  '/delivery',
+  '/delivery-management',
+  '/dairy',
+];
+
+/// Reads and sanitizes the `redirectTo` query parameter carried on a login
+/// route so the user returns to the exact protected page they intended.
+String? _returnIntentFrom(GoRouterState state) =>
+    _sanitizeReturnIntent(state.uri.queryParameters['redirectTo']);
+
+/// Builds the login location for [state], capturing a validated return-intent
+/// when the user was blocked on a protected route. The intent is also stored
+/// in [returnIntentProvider] so it survives the router rebuild on sign in.
+/// The write is deferred because go_router runs this redirect while the widget
+/// tree is building and Riverpod forbids provider writes during build.
+String _loginWithReturn(Ref ref, GoRouterState state) {
+  final target = _sanitizeReturnIntent(state.uri.path);
+  if (target != null) {
+    _deferIntentSet(ref, target);
+  }
+  return target == null
+      ? '/login'
+      : '/login?redirectTo=${Uri.encodeQueryComponent(target)}';
+}
+
+/// Persists a valid `redirectTo` carried by an auth route into
+/// [returnIntentProvider] so it survives the router rebuild triggered by a
+/// session change, and clears a stale intent when an auth route carries none.
+/// The write is deferred out of the widget-build phase.
+void _syncReturnIntent(Ref ref, GoRouterState state) {
+  final notifier = ref.read(returnIntentProvider.notifier);
+  final intent = _sanitizeReturnIntent(state.uri.queryParameters['redirectTo']);
+  if (intent != null) {
+    Future.microtask(() => notifier.set(intent));
+  } else if (state.uri.path == '/login') {
+    Future.microtask(() => notifier.set(null));
+  }
+}
+
+/// Reads the pending return-intent synchronously (reads are allowed during the
+/// build phase) and schedules the consuming clear for after the build. The
+/// redirect must stay pure during build: go_router runs it while the widget
+/// tree is building and Riverpod rejects provider writes in that phase.
+String? _takePendingIntent(Ref ref) {
+  final value = ref.read(returnIntentProvider);
+  if (value != null) {
+    final notifier = ref.read(returnIntentProvider.notifier);
+    Future.microtask(() => notifier.take());
+  }
+  return value;
+}
+
+/// Defers a write to [returnIntentProvider] out of the widget-build phase.
+void _deferIntentSet(Ref ref, String intent) {
+  final notifier = ref.read(returnIntentProvider.notifier);
+  Future.microtask(() => notifier.set(intent));
+}
+
+/// Defers entering guest mode out of the widget-build phase. The resulting
+/// session change rebuilds the router, which re-runs the redirect from
+/// `/restore` and lands on the pending intent (or the guest home).
+void _deferEnterAsGuest(Ref ref) {
+  final notifier = ref.read(sessionControllerProvider.notifier);
+  Future.microtask(() => notifier.enterAsGuest());
+}
+
+/// Validates a return-intent against the internal route allowlist, dropping
+/// any query/fragment and rejecting external or unknown destinations.
+String? _sanitizeReturnIntent(String? value) {
+  if (value == null || value.isEmpty) return null;
+  final path = value.split('?').first.split('#').first;
+  if (path.isEmpty || path == '/') return null;
+  for (final prefix in _returnIntentAllowedPrefixes) {
+    if (path == prefix || path.startsWith('$prefix/')) return path;
+  }
+  return null;
 }
 
 class _RouteErrorScreen extends StatelessWidget {
@@ -471,6 +769,10 @@ class _SessionRestoreScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) =>
       const Scaffold(body: Center(child: CircularProgressIndicator()));
+}
+
+class _RouterRefreshNotifier extends ChangeNotifier {
+  void notify() => notifyListeners();
 }
 
 class DoodhDirectApp extends ConsumerWidget {

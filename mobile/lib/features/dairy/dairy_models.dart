@@ -25,6 +25,28 @@ enum MilkBatchStatus {
   };
 }
 
+enum MilkUsageSource {
+  manual,
+  order,
+  subscription,
+  unknown;
+
+  factory MilkUsageSource.fromApi(String? value) =>
+      switch (value?.toLowerCase()) {
+        'manual' => MilkUsageSource.manual,
+        'order' => MilkUsageSource.order,
+        'subscription' => MilkUsageSource.subscription,
+        _ => MilkUsageSource.unknown,
+      };
+
+  String get label => switch (this) {
+    MilkUsageSource.manual => 'Manual',
+    MilkUsageSource.order => 'Order',
+    MilkUsageSource.subscription => 'Subscription',
+    MilkUsageSource.unknown => 'Unknown',
+  };
+}
+
 class MilkBatch {
   const MilkBatch({
     required this.publicId,
@@ -109,22 +131,26 @@ class MilkProduction {
 class MilkUsage {
   const MilkUsage({
     required this.publicId,
-    required this.batchPublicId,
-    required this.batchNumber,
+    this.batchPublicId,
+    this.batchNumber,
     required this.branchId,
     required this.usedAt,
     required this.quantityUsed,
     required this.unit,
     required this.purpose,
     required this.recordedByUserId,
-    required this.remarks,
+    this.remarks,
     required this.createdAt,
+    this.source = MilkUsageSource.manual,
+    this.orderNumber,
+    this.deliveryNumber,
+    this.productName,
   });
 
   factory MilkUsage.fromJson(Map<String, dynamic> json) => MilkUsage(
     publicId: json['publicId'] as String,
-    batchPublicId: json['batchPublicId'] as String,
-    batchNumber: json['batchNumber'] as String,
+    batchPublicId: json['batchPublicId'] as String?,
+    batchNumber: json['batchNumber'] as String?,
     branchId: (json['branchId'] as num).toInt(),
     usedAt: DateTime.parse(json['usedAt'] as String),
     quantityUsed: (json['quantityUsed'] as num).toDouble(),
@@ -133,11 +159,15 @@ class MilkUsage {
     recordedByUserId: (json['recordedByUserId'] as num).toInt(),
     remarks: json['remarks'] as String?,
     createdAt: DateTime.parse(json['createdAt'] as String),
+    source: MilkUsageSource.fromApi(json['source'] as String?),
+    orderNumber: json['orderNumber'] as String?,
+    deliveryNumber: json['deliveryNumber'] as String?,
+    productName: json['productName'] as String?,
   );
 
   final String publicId;
-  final String batchPublicId;
-  final String batchNumber;
+  final String? batchPublicId;
+  final String? batchNumber;
   final int branchId;
   final DateTime usedAt;
   final double quantityUsed;
@@ -146,6 +176,13 @@ class MilkUsage {
   final int recordedByUserId;
   final String? remarks;
   final DateTime createdAt;
+  final MilkUsageSource source;
+  final String? orderNumber;
+  final String? deliveryNumber;
+  final String? productName;
+
+  bool get isAutomatic =>
+      source == MilkUsageSource.order || source == MilkUsageSource.subscription;
 }
 
 class MilkAvailability {
@@ -283,4 +320,20 @@ String formatApiDairyDate(DateTime value) {
 String formatMilkQuantity(double value, String unit) {
   final text = value.toStringAsFixed(3).replaceFirst(RegExp(r'\.?0+$'), '');
   return '$text $unit';
+}
+
+/// Builds the reference line shown under an automatic consumption record.
+///
+/// Automatic records carry no batch and instead reference the originating
+/// order (or subscription order) and the completed delivery.
+String usageReference(MilkUsage usage) {
+  final parts = <String>[
+    if (usage.productName != null && usage.productName!.isNotEmpty)
+      usage.productName!,
+    if (usage.orderNumber != null && usage.orderNumber!.isNotEmpty)
+      'Order ${usage.orderNumber}',
+    if (usage.deliveryNumber != null && usage.deliveryNumber!.isNotEmpty)
+      'Delivery ${usage.deliveryNumber}',
+  ];
+  return parts.join(' • ');
 }

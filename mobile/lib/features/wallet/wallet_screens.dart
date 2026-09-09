@@ -1,4 +1,3 @@
-import 'package:doodh_direct_mobile/core/config/app_config.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:flutter/material.dart';
@@ -6,10 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'wallet_controller.dart';
 import 'wallet_models.dart';
-
-/// Backwards-compatible alias so tests and call sites can keep referencing the
-/// development top-up toggle; in release builds it is always false.
-const developmentWalletTopUpEnabled = devToolsEnabled;
 
 class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
@@ -25,50 +20,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     Future.microtask(() => ref.read(walletControllerProvider.notifier).load());
   }
 
-  Future<void> _showTopUpDialog() async {
-    final controller = TextEditingController(text: '500');
-    final amount = await showDialog<double>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Development wallet top-up'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            labelText: 'Amount',
-            prefixText: '₹',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final value = double.tryParse(controller.text.trim());
-              if (value != null && value > 0) Navigator.pop(context, value);
-            },
-            child: const Text('Add balance'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (amount == null || !mounted) return;
-
-    final success = await ref
-        .read(walletControllerProvider.notifier)
-        .topUp(amount);
-    if (success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Development balance added.')),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(walletControllerProvider);
@@ -77,6 +28,11 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       currentPath: '/wallet',
       title: 'Wallet',
       actions: [
+        IconButton(
+          tooltip: 'Add money',
+          icon: const Icon(Icons.add_card_outlined),
+          onPressed: state.isSaving ? null : () => _showTopUpDialog(context),
+        ),
         IconButton(
           tooltip: 'Refresh wallet',
           onPressed: state.isLoading
@@ -100,20 +56,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                 padding: const EdgeInsets.all(16),
                 children: [
                   _BalancePanel(wallet: wallet),
-                  if (developmentWalletTopUpEnabled) ...[
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: state.isSaving ? null : _showTopUpDialog,
-                      icon: state.isSaving
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.add_card_outlined),
-                      label: const Text('Development top-up'),
-                    ),
-                  ],
                   if (state.errorMessage != null) ...[
                     const SizedBox(height: 12),
                     Text(
@@ -143,6 +85,62 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
               ),
             ),
     );
+  }
+
+  Future<void> _showTopUpDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Add money to wallet'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(labelText: 'Amount', prefixText: '₹ '),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              dialogContext,
+              double.tryParse(controller.text.trim()),
+            ),
+            child: const Text('Add money'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (amount == null || amount <= 0) return;
+    if (!context.mounted) return;
+
+    // Keep the checkout in progress visible: Razorpay opens on top of the app
+    // and a blocking indicator covers the moment before it appears.
+    final navigator = Navigator.of(context);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+    final message =
+        await ref.read(walletControllerProvider.notifier).topUp(amount);
+    if (!context.mounted) return;
+    navigator.pop(); // Dismiss the progress indicator.
+    if (message == null) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 }
 

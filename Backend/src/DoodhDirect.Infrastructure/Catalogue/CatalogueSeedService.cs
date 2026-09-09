@@ -1,4 +1,3 @@
-using DoodhDirect.Application.Setup;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Infrastructure.Persistence;
 using DoodhDirect.Infrastructure.Setup;
@@ -8,7 +7,6 @@ namespace DoodhDirect.Infrastructure.Catalogue;
 
 public sealed class CatalogueSeedService(
     DoodhDirectDbContext dbContext,
-    INumberSeriesService numberSeriesService,
     NumberSeriesSeedService numberSeriesSeedService)
 {
     private const string MilkCategoryCode = "MILK";
@@ -50,8 +48,6 @@ public sealed class CatalogueSeedService(
                     "Karnataka",
                     12.9716m,
                     77.5946m);
-                branch.AssignBranchNumber(
-                    await numberSeriesService.GetNextNumberAsync("BRANCH", null, cancellationToken));
                 dbContext.Branches.Add(branch);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }

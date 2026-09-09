@@ -196,21 +196,58 @@ paths:
         '200': { description: Address deactivated }
   /auth/send-otp:
     post:
-      summary: Send OTP
+      summary: Send an identity OTP
+      description: Anonymous. Accepts mobile and OtpPurpose (0 login, 1 registration, 2 password reset, 3 employee invitation). The provider request id (reqId) returned by the response must be supplied to retry-otp and verify-otp.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [mobile]
-              properties:
-                mobile:
-                  type: string
-                  example: "+919876543210"
+            schema: { $ref: '#/components/schemas/SendOtpRequest' }
       responses:
-        '202':
-          description: OTP request accepted
+        '200':
+          description: OTP request accepted envelope carrying the MSG91 reqId
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SendOtpResultEnvelope' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '429': { description: OTP request rate limited }
+  /auth/retry-otp:
+    post:
+      summary: Resend an identity OTP
+      description: Anonymous. Re-issues the OTP for an existing challenge identified by mobile and purpose. A new reqId is returned and replaces the previous one on the challenge.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SendOtpRequest' }
+      responses:
+        '200':
+          description: OTP request accepted envelope carrying the new reqId
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SendOtpResultEnvelope' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { description: OTP request rate limited }
+  /auth/verify-otp:
+    post:
+      summary: Verify an identity OTP and complete the auth action
+      description: Anonymous. The backend validates the entered code with the MSG91 widget provider using the reqId returned by send-otp or retry-otp, then validates the provider access token server-side before issuing the authenticated session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VerifyOtpRequest' }
+      responses:
+        '200':
+          description: Authenticated session envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSessionEnvelope' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { description: OTP verification rate limited }
   /products:
     get:
       summary: List active catalogue products
@@ -1433,6 +1470,55 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /wallet:
+    get:
+      summary: Get the authenticated customer's wallet balance
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Wallet balance envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /wallet/top-up:
+    post:
+      summary: Start a customer wallet top-up with a Razorpay payment
+      description: Records the authoritative server-side amount, creates a pending wallet top-up payment and Razorpay gateway order, and returns the checkout details. The wallet is NOT credited by this call. Credit happens exactly once only after the server verifies the payment (signature, order, payment, amount, currency, capture state, wallet-top-up target, and ownership). Replays with the same idempotency key return the existing payment result.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletTopUpRequest' }
+      responses:
+        '201':
+          description: Created pending wallet top-up payment with Razorpay checkout details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PaymentResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
+  /wallet/transactions:
+    get:
+      summary: List the authenticated customer's wallet transactions
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Wallet transaction list envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletTransactionListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /admin/cameras:
     get:
       tags: [Camera administration]
@@ -2021,6 +2107,57 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /admin/setup/otp-provider:
+    get:
+      tags: [OTP provider setup]
+      summary: Read the OTP provider configuration
+      description: Requires SETUP.OTP_PROVIDER.READ (OWNER and SYSTEM_ADMIN only). The MSG91 AuthKey is write-only and is never returned.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OTP provider configuration envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpProviderConfigurationResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      tags: [OTP provider setup]
+      summary: Update the OTP provider configuration
+      description: Requires SETUP.OTP_PROVIDER.MANAGE (OWNER and SYSTEM_ADMIN only). A non-empty AuthKey is encrypted at rest with IDataProtector before persistence and never returned by reads or audits.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateOtpProviderConfigurationRequest' }
+      responses:
+        '200':
+          description: Updated OTP provider configuration envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpProviderConfigurationResult' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /admin/setup/otp-provider/test:
+    post:
+      tags: [OTP provider setup]
+      summary: Test the OTP provider configuration
+      description: Requires SETUP.OTP_PROVIDER.MANAGE (OWNER and SYSTEM_ADMIN only). Sends a provider probe and reports success or a safe diagnostic message. Requires the provider to be fully configured and enabled.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OTP provider test result envelope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpProviderTestResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/BusinessRuleError' }
   /webhooks/razorpay:
     post:
       summary: Razorpay webhook
@@ -2656,6 +2793,104 @@ components:
         errors:
           type: array
           items: { $ref: '#/components/schemas/ApiError' }
+    OtpPurpose:
+      type: integer
+      format: int32
+      enum: [0, 1, 2, 3]
+      description: 0 login, 1 registration, 2 password reset, 3 employee invitation.
+    SendOtpRequest:
+      type: object
+      required: [mobile, purpose]
+      properties:
+        mobile:
+          type: string
+          minLength: 10
+          maxLength: 15
+          description: Normalized India mobile number.
+        purpose:
+          $ref: '#/components/schemas/OtpPurpose'
+    SendOtpResultEnvelope:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [reqId]
+          properties:
+            reqId:
+              type: string
+              maxLength: 64
+              description: MSG91 provider request id. The client holds it only in memory and must supply it to retry-otp and verify-otp.
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    VerifyOtpRequest:
+      type: object
+      required: [mobile, code, purpose, reqId, device]
+      properties:
+        mobile:
+          type: string
+          minLength: 10
+          maxLength: 15
+        code:
+          type: string
+          minLength: 6
+          maxLength: 6
+          description: Six-digit code entered by the user.
+        purpose:
+          $ref: '#/components/schemas/OtpPurpose'
+        reqId:
+          type: string
+          maxLength: 64
+          description: The reqId returned by send-otp or retry-otp for this challenge.
+        device:
+          $ref: '#/components/schemas/OtpDeviceInfo'
+    OtpDeviceInfo:
+      type: object
+      required: [deviceIdentifier]
+      properties:
+        deviceIdentifier: { type: string, minLength: 1, maxLength: 200 }
+        deviceName: { type: string, nullable: true }
+        platform: { type: string, nullable: true }
+    AuthSessionEnvelope:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          description: Full authenticated session (user, roles, permissions, branch ids, token pair) returned after successful OTP verification. The backend validates the MSG91 access token server-side before issuing this session.
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    OtpProviderConfigurationResult:
+      type: object
+      required: [provider, enabled, configured, status]
+      properties:
+        provider: { type: string, description: OTP provider code (MSG91). }
+        enabled: { type: boolean }
+        widgetId: { type: string, nullable: true }
+        environment: { type: string, nullable: true, enum: [Test, Production], description: MSG91 environment. }
+        configured: { type: boolean, description: True when both a widget id and an auth key are present. }
+        status: { type: string, description: Human-readable configuration status. }
+    UpdateOtpProviderConfigurationRequest:
+      type: object
+      properties:
+        enabled: { type: boolean, nullable: true }
+        widgetId: { type: string, nullable: true }
+        authKey: { type: string, nullable: true, format: password, description: MSG91 auth key. Write-only; encrypted at rest with IDataProtector and never returned. An empty value is rejected. }
+        environment: { type: string, nullable: true, enum: [Test, Production] }
+    OtpProviderTestResult:
+      type: object
+      required: [success, message]
+      properties:
+        success: { type: boolean }
+        message: { type: string, description: Safe diagnostic message; never contains credentials. }
     NotificationChannel:
       type: string
       enum: [Push, Sms, WhatsApp, Email]
@@ -3927,6 +4162,73 @@ components:
         verifiedAtUtc: { type: string, format: date-time, nullable: true }
         createdAtUtc: { type: string, format: date-time }
         subscriptionId: { type: string, format: uuid, nullable: true }
+    WalletTopUpRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount: { type: number, format: double, minimum: 0.01, description: Customer-entered top-up amount in INR. The server stores this as the authoritative amount and converts it to minor units for the Razorpay order. The wallet is never credited at creation time. }
+    WalletTransactionType:
+      type: string
+      enum: [TopUp, OrderDebit, RefundCredit, PromotionalCredit, AdminAdjustment, SubscriptionDebit]
+    Wallet:
+      type: object
+      required: [publicId, balance, currency, createdAt, updatedAt]
+      properties:
+        publicId: { type: string, format: uuid }
+        balance: { type: number, format: double, minimum: 0 }
+        currency: { type: string, example: INR }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    WalletTransaction:
+      type: object
+      required: [publicId, type, balanceBefore, amount, balanceAfter, currency, description, occurredAt]
+      properties:
+        publicId: { type: string, format: uuid }
+        type: { $ref: '#/components/schemas/WalletTransactionType' }
+        balanceBefore: { type: number, format: double }
+        amount: { type: number, format: double }
+        balanceAfter: { type: number, format: double }
+        currency: { type: string, example: INR }
+        description: { type: string }
+        occurredAt: { type: string, format: date-time, description: India-local wall-clock timestamp without a Z suffix or offset. }
+        paymentId: { type: string, format: uuid, nullable: true }
+        orderId: { type: string, format: uuid, nullable: true }
+        subscriptionId: { type: string, format: uuid, nullable: true }
+    WalletResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/Wallet' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    WalletTransactionListResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/WalletTransaction' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
+    PaymentResponse:
+      type: object
+      required: [success, data, errors]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/Payment' }
+        message: { type: string, nullable: true }
+        errors:
+          type: array
+          maxItems: 0
+          items: { $ref: '#/components/schemas/ApiError' }
     CreatedSubscription:
       type: object
       required: [subscription, payment]

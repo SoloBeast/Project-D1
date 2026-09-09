@@ -7,7 +7,7 @@
 | CatalogueRepository | GET public products/categories/detail; admin product/category CRUD, activation, branch availability (branch list via Branch Management `/admin/branches`) |
 | OrderRepository | POST `/orders/checkout-preview`, `/orders`; GET own list/detail; POST cancel; admin list/detail |
 | PaymentRepository | POST create/verify/cancel; GET detail |
-| WalletRepository | GET wallet/transactions; POST development top-up |
+| WalletRepository | GET wallet and transactions |
 | SubscriptionRepository | POST create/retry; GET list/detail/calendar; PATCH update; POST skip/pause/resume/cancel |
 | DeliveryRepository | GET own deliveries/detail; GET staff today/detail; delivery action POST/PATCH; management branch queue with date/status/source/slot filters; employees/detail; POST materialize, fetch-subscriptions, assign, and bulk-assign; OTP/location |
 | MilkTestRepository | customer/staff GET; request; multipart image upload; complete; confirm/reject; protected image bytes |

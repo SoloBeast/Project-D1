@@ -267,6 +267,44 @@ class NumberSeriesController extends Notifier<NumberSeriesState> {
     }
   }
 
+  /// Permanently deletes a series and refreshes the list. Returns true on
+  /// success, false on failure.
+  Future<bool> delete(
+    String code, {
+    String? scope,
+  }) async {
+    final token = _token;
+    if (token == null) return false;
+
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      await _repository.delete(token, code, scope: scope);
+      if (token != _token) return false;
+      final series = await _repository.list(token);
+      if (token != _token) return false;
+      state = state.copyWith(
+        series: series,
+        isSaving: false,
+        savedMessage: 'Series $code deleted.',
+      );
+      return true;
+    } on ApiException catch (error) {
+      state = state.copyWith(
+        isSaving: false,
+        errorMessage: error.message,
+        fieldErrors: _fieldErrors(error),
+      );
+      return false;
+    } on Object {
+      state = state.copyWith(
+        isSaving: false,
+        errorMessage:
+            'Unable to delete the series. Check your connection and try again.',
+      );
+      return false;
+    }
+  }
+
   Map<String, String> _fieldErrors(ApiException error) {
     final field = error.field;
     if (field == null || field.trim().isEmpty) {

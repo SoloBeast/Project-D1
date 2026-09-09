@@ -2,6 +2,7 @@ import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -388,9 +389,18 @@ class _DeliveryManagementScreenState
     final canFilterSlot =
         _sourceType == null ||
         _sourceType == DeliverySourceType.subscriptionOccurrence;
+    final session = ref.watch(sessionControllerProvider).session;
+    final branchDetails = session?.user.branchDetails ?? const [];
+    String branchLabel(int id) {
+      for (final branch in branchDetails) {
+        if (branch.id == id) return branch.name;
+      }
+      return 'Branch $id';
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: Text('Branch ${widget.branchId} deliveries'),
+        title: Text('${branchLabel(widget.branchId)} deliveries'),
         actions: [
           IconButton(
             tooltip: 'Choose date',
@@ -667,6 +677,11 @@ class _DeliveryManagementDetailScreenState
                     ),
                   ),
                 ],
+                const SizedBox(height: 20),
+                _BatchAllocationSection(
+                  delivery: delivery,
+                  saving: state.isSaving,
+                ),
               ],
             ),
     );
@@ -1352,4 +1367,357 @@ Future<void> _showAssignmentDialog(
           reason: trimmedReason.isEmpty ? null : trimmedReason,
         );
   }
+}
+
+String _formatQty(double value) {
+  var text = value.toStringAsFixed(3);
+  if (text.contains('.')) {
+    text = text
+        .replaceFirst(RegExp(r'0+$'), '')
+        .replaceFirst(RegExp(r'\.$'), '');
+  }
+  return text;
+}
+
+class _BatchAllocationSection extends ConsumerWidget {
+  const _BatchAllocationSection({
+    required this.delivery,
+    required this.saving,
+  });
+  final DeliveryDetails delivery;
+  final bool saving;
+
+  bool get _canEdit =>
+      delivery.status != DeliveryStatus.delivered &&
+      delivery.status != DeliveryStatus.failed;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final allocations = delivery.batchAllocations;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Batch allocations',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            if (_canEdit)
+              TextButton.icon(
+                icon: const Icon(Icons.tune),
+                label: const Text('Set allocations'),
+                onPressed: saving
+                    ? null
+                    : () => _openBatchAllocationEditor(
+                        context,
+                        ref,
+                        delivery,
+                      ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        if (allocations.isEmpty)
+          const _InfoTile(
+            icon: Icons.inventory_2_outlined,
+            title: 'No allocations yet',
+            text:
+                'Select the milk batches that will fulfill this delivery before it is assigned.',
+          )
+        else
+          Card(
+            child: Column(
+              children: [
+                for (final allocation in allocations)
+                  ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 2,
+                    ),
+                    leading: const Icon(Icons.local_drink_outlined),
+                    title: Text(allocation.batchNumber),
+                    subtitle: Text(
+                      'Allocated ${_formatQty(allocation.quantityAllocated)} L',
+                    ),
+                    trailing: Icon(
+                      delivery.status == DeliveryStatus.delivered
+                          ? Icons.check_circle_outline
+                          : Icons.schedule,
+                      color: delivery.status == DeliveryStatus.delivered
+                          ? DoodhColors.tealDark
+                          : DoodhColors.muted,
+                    ),
+                  ),
+                if (delivery.status == DeliveryStatus.delivered) ...[
+                  const Divider(height: 1),
+                  const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Text(
+                      'These batches were consumed when the delivery was completed.',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        if (delivery.status == DeliveryStatus.failed)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'No milk was consumed for this delivery.',
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+Future<void> _openBatchAllocationEditor(
+  BuildContext context,
+  WidgetRef ref,
+  DeliveryDetails delivery,
+) async {
+  final controller = ref.read(deliveryControllerProvider.notifier);
+  final loaded = await controller.loadBatchAllocations(delivery.deliveryId);
+  if (!loaded || !context.mounted) return;
+  final info = ref.read(deliveryControllerProvider).batchAllocations;
+  if (info == null) return;
+  await Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => _BatchAllocationEditorScreen(
+        deliveryId: delivery.deliveryId,
+        initial: info,
+      ),
+    ),
+  );
+}
+
+class _BatchAllocationEditorScreen extends ConsumerStatefulWidget {
+  const _BatchAllocationEditorScreen({
+    required this.deliveryId,
+    required this.initial,
+  });
+  final String deliveryId;
+  final DeliveryBatchAllocationsInfo initial;
+
+  @override
+  ConsumerState<_BatchAllocationEditorScreen> createState() =>
+      _BatchAllocationEditorScreenState();
+}
+
+class _BatchAllocationEditorScreenState
+    extends ConsumerState<_BatchAllocationEditorScreen> {
+  final Map<int, TextEditingController> _quantity = {};
+  late final Set<int> _selected = widget.initial.allocations
+      .map((allocation) => allocation.batchId)
+      .toSet();
+
+  double get _required => widget.initial.totalRequiredQuantity;
+
+  double get _allocated {
+    var total = 0.0;
+    for (final id in _selected) {
+      total += double.tryParse(_quantity[id]?.text ?? '') ?? 0;
+    }
+    return total;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    for (final batch in widget.initial.eligibleBatches) {
+      DeliveryBatchAllocation? existing;
+      for (final allocation in widget.initial.allocations) {
+        if (allocation.batchId == batch.batchId) {
+          existing = allocation;
+          break;
+        }
+      }
+      _quantity[batch.batchId] = TextEditingController(
+        text: existing == null ? '' : _formatQty(existing.quantityAllocated),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _quantity.values) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  bool _isValid() {
+    if (_selected.isEmpty) return false;
+    final roundedAllocated = (_allocated * 1000).round();
+    final roundedRequired = (_required * 1000).round();
+    if (roundedAllocated != roundedRequired) return false;
+    for (final batch in widget.initial.eligibleBatches) {
+      if (!_selected.contains(batch.batchId)) continue;
+      final value = double.tryParse(_quantity[batch.batchId]?.text ?? '') ?? 0;
+      if (value <= 0) return false;
+      if (value > batch.quantityAvailable + 0.0005) return false;
+    }
+    return true;
+  }
+
+  Future<void> _save() async {
+    final allocations = <DeliveryBatchAllocation>[
+      for (final batch in widget.initial.eligibleBatches)
+        if (_selected.contains(batch.batchId))
+          DeliveryBatchAllocation(
+            batchId: batch.batchId,
+            batchNumber: batch.batchNumber,
+            quantityAllocated:
+                double.tryParse(_quantity[batch.batchId]!.text) ?? 0,
+            allocatedAt: DateTime.now(),
+            updatedAt: DateTime.now(),
+          ),
+    ];
+    final saved = await ref
+        .read(deliveryControllerProvider.notifier)
+        .saveBatchAllocations(widget.deliveryId, allocations);
+    if (!saved || !mounted) return;
+    await ref
+        .read(deliveryControllerProvider.notifier)
+        .loadManagedDelivery(widget.deliveryId);
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Batch allocations saved')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(deliveryControllerProvider);
+    return Scaffold(
+      appBar: AppBar(title: const Text('Set batch allocations')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Text(
+              'Required ${_formatQty(_required)} L · '
+              'Allocated ${_formatQty(_allocated)} L',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+          Expanded(
+            child: widget.initial.eligibleBatches.isEmpty
+                ? const Center(
+                    child: Text('No available milk batches for this branch.'),
+                  )
+                : ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      for (final batch in widget.initial.eligibleBatches)
+                        _EligibleBatchRow(
+                          batch: batch,
+                          selected: _selected.contains(batch.batchId),
+                          controller: _quantity[batch.batchId]!,
+                          onSelectedChanged: (value) {
+                            setState(() {
+                              if (value == true) {
+                                _selected.add(batch.batchId);
+                              } else {
+                                _selected.remove(batch.batchId);
+                              }
+                            });
+                          },
+                          onTextChanged: () => setState(() {}),
+                        ),
+                    ],
+                  ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: FilledButton.icon(
+                icon: const Icon(Icons.save_outlined),
+                label: Text(
+                  state.isSaving ? 'Saving...' : 'Save allocations',
+                ),
+                onPressed: state.isSaving || !_isValid() ? null : _save,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EligibleBatchRow extends StatelessWidget {
+  const _EligibleBatchRow({
+    required this.batch,
+    required this.selected,
+    required this.controller,
+    required this.onSelectedChanged,
+    required this.onTextChanged,
+  });
+  final EligibleDeliveryBatch batch;
+  final bool selected;
+  final TextEditingController controller;
+  final ValueChanged<bool?> onSelectedChanged;
+  final VoidCallback onTextChanged;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        children: [
+          Checkbox(value: selected, onChanged: onSelectedChanged),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  batch.batchNumber,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Produced ${_formatQty(batch.quantityProduced)} ${batch.unit} · '
+                  'Available ${_formatQty(batch.quantityAvailable)} ${batch.unit}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).hintColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            width: 110,
+            child: TextField(
+              controller: controller,
+              enabled: selected,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: InputDecoration(
+                isDense: true,
+                suffixText: batch.unit,
+                border: const OutlineInputBorder(),
+                hintText: '0',
+              ),
+              onChanged: (_) => onTextChanged(),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

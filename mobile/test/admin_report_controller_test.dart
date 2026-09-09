@@ -7,7 +7,9 @@ import 'package:doodh_direct_mobile/features/admin_reports/admin_report_models.d
 import 'package:doodh_direct_mobile/features/admin_reports/admin_report_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/orders/guest_cart_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -27,7 +29,7 @@ void main() {
       expect(state.dashboard?.customers, 12);
       expect(state.report?.items.single['orderNumber'], 'ORD-1001');
       expect(state.module?.slug, 'orders');
-      expect(state.filter.sortBy, 'createdAtUtc');
+      expect(state.filter.sortBy, 'createdAt');
       expect(state.isDashboardLoading, isFalse);
       expect(state.isReportLoading, isFalse);
       expect(repository.lastToken, 'report-token');
@@ -262,12 +264,77 @@ Future<ProviderContainer> _authenticatedContainer(
         authRepository ?? _AuthenticatedRepository(),
       ),
       adminReportRepositoryProvider.overrideWithValue(repository),
+      // The order controller (a dependency of the session graph) reads the
+      // guest cart storage when the session restores; an in-memory fake keeps
+      // the test free of the MissingPluginException from the real storage.
+      guestCartStorageProvider.overrideWithValue(
+        GuestCartStorage(storage: _FakeFlutterSecureStorage()),
+      ),
     ],
   );
   container.read(sessionControllerProvider);
   container.read(adminReportControllerProvider);
   await Future<void>.delayed(Duration.zero);
   return container;
+}
+
+/// In-memory secure storage replicating flutter_secure_storage v9.2.4
+/// write/read/delete semantics (writing null deletes the key).
+class _FakeFlutterSecureStorage extends FlutterSecureStorage {
+  final Map<String, String> values = {};
+
+  @override
+  Future<void> write({
+    required String key,
+    required String? value,
+    IOSOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    MacOsOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    if (value == null) {
+      values.remove(key);
+    } else {
+      values[key] = value;
+    }
+  }
+
+  @override
+  Future<String?> read({
+    required String key,
+    IOSOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    MacOsOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => values[key];
+
+  @override
+  Future<bool> containsKey({
+    required String key,
+    IOSOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    MacOsOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async => values.containsKey(key);
+
+  @override
+  Future<void> delete({
+    required String key,
+    IOSOptions? iOptions,
+    AndroidOptions? aOptions,
+    LinuxOptions? lOptions,
+    WebOptions? webOptions,
+    MacOsOptions? mOptions,
+    WindowsOptions? wOptions,
+  }) async {
+    values.remove(key);
+  }
 }
 
 class _AuthenticatedRepository extends AuthRepository {

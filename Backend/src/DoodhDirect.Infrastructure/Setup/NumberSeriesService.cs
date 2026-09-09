@@ -32,6 +32,7 @@ public sealed class NumberSeriesService(
     public const string ActionUpdated = "NUMBER_SERIES.UPDATED";
     public const string ActionActivated = "NUMBER_SERIES.ACTIVATED";
     public const string ActionDeactivated = "NUMBER_SERIES.DEACTIVATED";
+    public const string ActionDeleted = "NUMBER_SERIES.DELETED";
 
     public async Task<string> GetNextNumberAsync(
         string seriesCode,
@@ -46,12 +47,12 @@ public sealed class NumberSeriesService(
 
         var normalizedCode = seriesCode.Trim().ToUpperInvariant();
         var normalizedScope = NormalizeScope(scopeKey);
-        var series = await FindAsync(normalizedCode, normalizedScope, cancellationToken);
+        var series = await FindForAllocationAsync(normalizedCode, normalizedScope, cancellationToken);
 
         if (!series.IsActive)
         {
             throw new BusinessRuleException(
-                $"Number series '{normalizedCode}' is inactive and cannot allocate numbers.");
+                $"Number series '{series.Code}' is inactive and cannot allocate numbers.");
         }
 
         var now = timeProvider.Now;
@@ -63,7 +64,9 @@ public sealed class NumberSeriesService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        return Format(normalizedCode, series.Template, next, now, normalizedScope);
+        // Render with the resolved series' own code and scope so a fallback
+        // (unscoped or scope-suffixed) series formats exactly as configured.
+        return Format(series.Code, series.Template, next, now, series.ScopeKey);
     }
 
     public async Task<NumberSeriesPreviewResult> PreviewNextNumberAsync(
@@ -78,17 +81,17 @@ public sealed class NumberSeriesService(
 
         var normalizedCode = seriesCode.Trim().ToUpperInvariant();
         var normalizedScope = NormalizeScope(scopeKey);
-        var series = await FindAsync(normalizedCode, normalizedScope, cancellationToken);
+        var series = await FindForAllocationAsync(normalizedCode, normalizedScope, cancellationToken);
 
         var now = timeProvider.Now;
         var next = series.PeekNextNumber(series.ResetPolicy, DateOnly.FromDateTime(now));
 
         return new NumberSeriesPreviewResult(
-            normalizedCode,
+            series.Code,
             series.Template,
             next,
-            Format(normalizedCode, series.Template, next, now, normalizedScope),
-            normalizedScope);
+            Format(series.Code, series.Template, next, now, series.ScopeKey),
+            series.ScopeKey);
     }
 
     public NumberSeriesPreviewResult PreviewTemplate(
@@ -205,8 +208,9 @@ public sealed class NumberSeriesService(
         string? scopeKey = null)
     {
         var normalizedCode = NormalizeCode(code);
-        var normalizedScope = NormalizeScope(scopeKey);
-        var template = ValidateAndNormalizeTemplate(request.Template, normalizedCode, normalizedScope);
+        var oldScope = NormalizeScope(scopeKey);
+        var newScope = NormalizeScope(request.ScopeKey ?? scopeKey);
+        var template = ValidateAndNormalizeTemplate(request.Template, normalizedCode, newScope);
 
         if (request.StartingNumber < 1)
         {
@@ -220,8 +224,21 @@ public sealed class NumberSeriesService(
 
         ValidateResetPolicy(request.ResetPolicy, template);
 
-        var series = await FindAsync(normalizedCode, normalizedScope, cancellationToken);
-        EnsureSafeEdit(series, request);
+        var series = await FindAsync(normalizedCode, oldScope, cancellationToken);
+        EnsureSafeEdit(series, request, newScope);
+
+        if (newScope != oldScope)
+        {
+            var exists = await dbContext.NumberSeries
+                .AnyAsync(item => item.Code == normalizedCode && item.ScopeKey == newScope, cancellationToken);
+            if (exists)
+            {
+                throw new ConflictException(
+                    newScope.Length == 0
+                        ? $"A number series with code '{normalizedCode}' already exists."
+                        : $"A number series with code '{normalizedCode}' already exists for scope '{newScope}'.");
+            }
+        }
 
         var now = timeProvider.Now;
         var oldSnapshot = ToSnapshotJson(series);
@@ -233,7 +250,8 @@ public sealed class NumberSeriesService(
             request.IncrementBy,
             request.ResetPolicy,
             now,
-            actorUserId);
+            actorUserId,
+            newScope);
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -241,7 +259,7 @@ public sealed class NumberSeriesService(
             actorUserId,
             ActionUpdated,
             "NumberSeries",
-            normalizedScope.Length == 0 ? normalizedCode : $"{normalizedCode}@{normalizedScope}",
+            newScope.Length == 0 ? normalizedCode : $"{normalizedCode}@{newScope}",
             oldSnapshot,
             ToSnapshotJson(series),
             null,
@@ -301,16 +319,48 @@ public sealed class NumberSeriesService(
         return ToResult(series, DateOnly.FromDateTime(now));
     }
 
+    public async Task DeleteAsync(
+        string code,
+        long actorUserId,
+        CancellationToken cancellationToken,
+        string? scopeKey = null)
+    {
+        var normalizedCode = NormalizeCode(code);
+        var normalizedScope = NormalizeScope(scopeKey);
+        var series = await FindAsync(normalizedCode, normalizedScope, cancellationToken);
+
+        var now = timeProvider.Now;
+        var oldSnapshot = ToSnapshotJson(series);
+
+        dbContext.NumberSeries.Remove(series);
+
+        dbContext.AddAuditLog(new AuditLog(
+            actorUserId,
+            ActionDeleted,
+            "NumberSeries",
+            normalizedScope.Length == 0 ? normalizedCode : $"{normalizedCode}@{normalizedScope}",
+            oldSnapshot,
+            null,
+            null,
+            null,
+            "Number series deleted.",
+            now));
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Strict exact-match lookup used by management operations (get, update,
+    /// activate, delete). An admin always edits the series they explicitly asked
+    /// for, so a missing (code, scope) is reported instead of being redirected.
+    /// </summary>
     private async Task<NumberSeries> FindAsync(
         string code,
         string scopeKey,
         CancellationToken cancellationToken)
     {
         var normalizedCode = NormalizeCode(code);
-        var series = await dbContext.NumberSeries
-            .SingleOrDefaultAsync(
-                item => item.Code == normalizedCode && item.ScopeKey == scopeKey,
-                cancellationToken);
+        var series = await FindExactAsync(normalizedCode, scopeKey, cancellationToken);
         if (series is null)
         {
             throw new NotFoundException(
@@ -321,6 +371,68 @@ public sealed class NumberSeriesService(
 
         return series;
     }
+
+    /// <summary>
+    /// Tolerant lookup for business allocation and preview requests. The same
+    /// business code must work whether the series was configured with a scope,
+    /// as a legacy global series, or with the scope embedded in the code by the
+    /// Setup screen (e.g. a description "Order DB0001" produces code
+    /// "ORDER_DB0001" stored under scope "DB0001"):
+    /// <list type="number">
+    ///   <item>exact match — a series for exactly (code, scopeKey);</item>
+    ///   <item>unscoped fallback — a legacy global series for the code;</item>
+    ///   <item>scope-suffixed fallback — (code + "_" + scopeKey, scopeKey).</item>
+    /// </list>
+    /// An unscoped request stays exact so an empty database still reports the
+    /// series as missing rather than silently matching a scoped row.
+    /// </summary>
+    private async Task<NumberSeries> FindForAllocationAsync(
+        string code,
+        string scopeKey,
+        CancellationToken cancellationToken)
+    {
+        var normalizedCode = NormalizeCode(code);
+
+        if (scopeKey.Length == 0)
+        {
+            return await FindExactAsync(normalizedCode, string.Empty, cancellationToken)
+                ?? throw new NotFoundException($"Number series '{normalizedCode}' was not found.");
+        }
+
+        var exact = await FindExactAsync(normalizedCode, scopeKey, cancellationToken);
+        if (exact is not null)
+        {
+            return exact;
+        }
+
+        var unscoped = await FindExactAsync(normalizedCode, string.Empty, cancellationToken);
+        if (unscoped is not null)
+        {
+            return unscoped;
+        }
+
+        var suffixedCandidate = $"{normalizedCode}_{scopeKey}";
+        if (suffixedCandidate.Length <= 50
+            && suffixedCandidate.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '_' || ch == '-'))
+        {
+            var suffixed = await FindExactAsync(suffixedCandidate, scopeKey, cancellationToken);
+            if (suffixed is not null)
+            {
+                return suffixed;
+            }
+        }
+
+        throw new NotFoundException(
+            $"Number series '{normalizedCode}' for scope '{scopeKey}' was not found.");
+    }
+
+    private Task<NumberSeries?> FindExactAsync(
+        string code,
+        string scopeKey,
+        CancellationToken cancellationToken) =>
+        dbContext.NumberSeries.SingleOrDefaultAsync(
+            item => item.Code == code && item.ScopeKey == scopeKey,
+            cancellationToken);
 
     private static string NormalizeCode(string? code)
     {
@@ -640,11 +752,18 @@ public sealed class NumberSeriesService(
     /// freely edited; after first use, a series must not move its sequence backwards and must
     /// not be reconfigured in a way that would re-issue numbers that already exist.
     /// </summary>
-    private static void EnsureSafeEdit(NumberSeries series, UpdateNumberSeriesRequest request)
+    private static void EnsureSafeEdit(NumberSeries series, UpdateNumberSeriesRequest request, string newScopeKey)
     {
         if (series.LastUsedNumber < series.StartingNumber)
         {
             return; // Never used yet — free editing.
+        }
+
+        if (newScopeKey != series.ScopeKey)
+        {
+            throw new BusinessRuleException(
+                $"Series '{series.Code}' has already issued numbers. The scope cannot be changed " +
+                "once numbers have been allocated.");
         }
 
         if (request.StartingNumber > series.StartingNumber)

@@ -64,8 +64,14 @@ public sealed class CatalogueService(DoodhDirectDbContext dbContext) : ICatalogu
         if (await dbContext.Products.AnyAsync(product => product.Sku == normalizedSku, cancellationToken))
             throw new ConflictException("The SKU is already in use.");
 
+        var branches = await ResolveBranchesAsync(request.BranchIds, cancellationToken);
         var product = new Product(category.Id, normalizedSku, request.Name, request.Description, request.UnitOfMeasure, request.Price);
         dbContext.Products.Add(product);
+        foreach (var branch in branches)
+        {
+            product.ProductBranches.Add(new ProductBranch(product.Id, branch.Id, isAvailable: true, maxDailyQuantity: null));
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         return await GetProductForAdministrationAsync(product.PublicId, cancellationToken);
     }
@@ -82,7 +88,9 @@ public sealed class CatalogueService(DoodhDirectDbContext dbContext) : ICatalogu
         if (await dbContext.Products.AnyAsync(item => item.Sku == normalizedSku && item.Id != product.Id, cancellationToken))
             throw new ConflictException("The SKU is already in use.");
 
+        var branches = await ResolveBranchesAsync(request.BranchIds, cancellationToken);
         product.Update(category.Id, normalizedSku, request.Name, request.Description, request.UnitOfMeasure, request.Price);
+        ApplyBranchReplacements(product, branches);
         await dbContext.SaveChangesAsync(cancellationToken);
         return await GetProductForAdministrationAsync(product.PublicId, cancellationToken);
     }
@@ -109,8 +117,8 @@ public sealed class CatalogueService(DoodhDirectDbContext dbContext) : ICatalogu
         var product = await FindProductAsync(productId, cancellationToken);
         var branch = await dbContext.Branches.SingleOrDefaultAsync(item => item.PublicId == request.BranchId, cancellationToken)
             ?? throw new NotFoundException("The branch was not found.");
-        if (!branch.IsActive)
-            throw new BusinessRuleException("Product availability can only be assigned to an active branch.");
+        if (!branch.IsActive || branch.IsArchived)
+            throw new BusinessRuleException("Product availability can only be assigned to an active, non-archived branch.");
 
         var assignment = product.ProductBranches.SingleOrDefault(item => item.BranchId == branch.Id);
         if (assignment is null)
@@ -191,6 +199,58 @@ public sealed class CatalogueService(DoodhDirectDbContext dbContext) : ICatalogu
         await dbContext.ProductCategories.SingleOrDefaultAsync(category => category.PublicId == categoryId, cancellationToken)
         ?? throw new NotFoundException("The product category was not found.");
 
+    private async Task<IReadOnlyList<Branch>> ResolveBranchesAsync(IReadOnlyList<Guid> branchIds, CancellationToken cancellationToken)
+    {
+        var branchIdsSet = branchIds.Distinct().ToArray();
+        var branches = await dbContext.Branches
+            .Where(branch => branchIdsSet.Contains(branch.PublicId))
+            .ToListAsync(cancellationToken);
+
+        if (branches.Count != branchIdsSet.Length)
+            throw new NotFoundException("One or more branches were not found.");
+
+        foreach (var branch in branches)
+        {
+            if (!branch.IsActive || branch.IsArchived)
+                throw new BusinessRuleException("A product can only be assigned to an active, non-archived branch.");
+        }
+
+        return branchIdsSet
+            .Select(id => branches.Single(branch => branch.PublicId == id))
+            .ToArray();
+    }
+
+    private void ApplyBranchReplacements(Product product, IReadOnlyList<Branch> branches)
+    {
+        var requestedBranchIds = branches.Select(branch => branch.Id).ToHashSet();
+
+        // Replace semantics for the assignable (active, non-archived) set: remove links to
+        // branches that are no longer selected, while preserving historical links to
+        // archived branches (their rows must survive for audit/reporting purposes).
+        var removals = product.ProductBranches
+            .Where(link => !requestedBranchIds.Contains(link.BranchId) && !link.Branch.IsArchived)
+            .ToArray();
+        foreach (var removal in removals)
+        {
+            // Removing through the DbSet marks the join row for deletion. Removing only from
+            // the navigation collection would make EF attempt to null the required FK
+            // (DeleteBehavior.Restrict), which throws HandleConceptualNulls.
+            dbContext.ProductBranches.Remove(removal);
+        }
+
+        foreach (var branch in branches)
+        {
+            if (product.ProductBranches.All(link => link.BranchId != branch.Id))
+            {
+                product.ProductBranches.Add(new ProductBranch(
+                    product.Id,
+                    branch.Id,
+                    isAvailable: true,
+                    maxDailyQuantity: null));
+            }
+        }
+    }
+
     private static void ValidateCategory(UpsertProductCategoryRequest request)
     {
         ValidateRequired(request.Code, nameof(request.Code), 50);
@@ -210,6 +270,10 @@ public sealed class CatalogueService(DoodhDirectDbContext dbContext) : ICatalogu
             throw new ValidationAppException("Description cannot exceed 2000 characters.", nameof(request.Description));
         if (request.Price <= 0 || decimal.Round(request.Price, 2) != request.Price)
             throw new ValidationAppException("Price must be positive and support no more than two decimal places.", nameof(request.Price));
+        if (request.BranchIds is null || request.BranchIds.Count == 0)
+            throw new ValidationAppException("At least one active branch must be assigned to the product.", nameof(request.BranchIds));
+        if (request.BranchIds.Distinct().Count() != request.BranchIds.Count)
+            throw new ValidationAppException("Duplicate branches are not allowed.", nameof(request.BranchIds));
     }
 
     private static void ValidateRequired(string? value, string field, int maxLength)

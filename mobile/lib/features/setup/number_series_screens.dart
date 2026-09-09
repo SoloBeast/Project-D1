@@ -248,6 +248,14 @@ class _SeriesCard extends ConsumerWidget {
                           ),
                     icon: const Icon(Icons.settings_outlined),
                   ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Delete ${series.code}',
+                    onPressed: isBusy
+                        ? null
+                        : () => _confirmDelete(context, ref),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
                 ],
               ),
             ],
@@ -262,6 +270,45 @@ class _SeriesCard extends ConsumerWidget {
       return '${series.lastUsedNumber + series.incrementBy}';
     }
     return '—';
+  }
+
+  Future<void> _confirmDelete(
+    BuildContext context,
+    WidgetRef ref,
+  ) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete series?'),
+        content: Text(
+          '"${series.code}" will be permanently deleted, active or inactive. '
+          'Numbers already issued stay on historical records — only the series '
+          'configuration and its counter are removed. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+    final success = await ref
+        .read(numberSeriesControllerProvider.notifier)
+        .delete(series.code, scope: series.scopeKey);
+    if (!context.mounted) return;
+    final controller = ref.read(numberSeriesControllerProvider);
+    final message = success
+        ? (controller.savedMessage ?? 'Series ${series.code} deleted.')
+        : (controller.errorMessage ?? 'Unable to delete the series.');
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -384,10 +431,6 @@ class _NumberSeriesConfigScreenState
     return value.isEmpty ? null : value;
   }
 
-  /// Scope is fixed once a series exists — it identifies the series instance
-  /// and cannot be changed without breaking existing numbers.
-  bool get _scopeLocked => widget.series != null;
-
   int? get _startingNumberValue => int.tryParse(_startingNumber.text.trim());
 
   int? get _incrementByValue => int.tryParse(_incrementBy.text.trim());
@@ -454,17 +497,14 @@ class _NumberSeriesConfigScreenState
           const SizedBox(height: 12),
           TextField(
             controller: _scope,
-            enabled: !state.isSaving && !_scopeLocked,
+            enabled: !state.isSaving,
             onChanged: (_) => setState(() {}),
             textCapitalization: TextCapitalization.characters,
             decoration: InputDecoration(
               labelText: 'Scope key',
               hintText: 'e.g. MAIN',
-              helperText: _scopeLocked
-                  ? 'Fixed for this series — identifies the branch or '
-                        'division it belongs to.'
-                  : 'Branch/division key. Required when the template '
-                        'contains {SCOPE}.',
+              helperText: 'Branch/division key. Required when the template '
+                    'contains {SCOPE}.',
               errorText: _templateContainsScope && _draftScopeValue == null
                   ? 'Enter a scope key — the template uses {SCOPE}.'
                   : null,
@@ -603,10 +643,8 @@ class _NumberSeriesConfigScreenState
   bool get _templateContainsScope =>
       _template.text.trim().contains('{SCOPE}');
 
-  /// The scope used for preview: the locked scope on existing series, or the
-  /// draft scope value on a new series.
-  String? get _previewScope =>
-      _scopeLocked ? widget.series!.scopeKey : _draftScopeValue;
+  /// The scope used for preview — always the current draft scope value.
+  String? get _previewScope => _draftScopeValue;
 
   bool _validate() =>
       _description.text.trim().isNotEmpty &&
@@ -648,6 +686,7 @@ class _NumberSeriesConfigScreenState
             startingNumber: _startingNumberValue!,
             incrementBy: _incrementByValue!,
             resetPolicy: _resetPolicy,
+            scopeKey: _draftScopeValue,
           ),
           scope: series.scopeKey,
         );

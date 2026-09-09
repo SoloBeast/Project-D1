@@ -1,4 +1,5 @@
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
+import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
 
 class OrderItemInput {
   const OrderItemInput({required this.productId, required this.quantity});
@@ -12,14 +13,92 @@ class OrderItemInput {
   };
 }
 
-class CheckoutRequest {
-  const CheckoutRequest({required this.addressId, required this.items});
+class CheckoutAddressDraft {
+  const CheckoutAddressDraft({
+    this.label,
+    required this.addressLine1,
+    this.addressLine2,
+    required this.locality,
+    required this.city,
+    required this.state,
+    required this.pinCode,
+    this.landmark,
+    this.deliveryInstructions,
+    required this.contactName,
+    required this.contactMobile,
+    required this.latitude,
+    required this.longitude,
+  });
 
-  final String addressId;
+  final String? label;
+  final String addressLine1;
+  final String? addressLine2;
+  final String locality;
+  final String city;
+  final String state;
+  final String pinCode;
+  final String? landmark;
+  final String? deliveryInstructions;
+  final String contactName;
+  final String contactMobile;
+  final double latitude;
+  final double longitude;
+
+  factory CheckoutAddressDraft.fromCustomerDraft(AddressDraft draft) =>
+      CheckoutAddressDraft(
+        label: draft.label,
+        addressLine1: draft.addressLine1,
+        addressLine2: draft.addressLine2,
+        locality: draft.locality,
+        city: draft.city,
+        state: draft.state,
+        pinCode: draft.pinCode,
+        landmark: draft.landmark,
+        deliveryInstructions: draft.deliveryInstructions,
+        contactName: draft.contactName,
+        contactMobile: draft.contactMobile,
+        latitude: draft.latitude,
+        longitude: draft.longitude,
+      );
+
+  Map<String, dynamic> toJson() => {
+    'label': _optional(label),
+    'addressLine1': addressLine1.trim(),
+    'addressLine2': _optional(addressLine2),
+    'locality': locality.trim(),
+    'city': city.trim(),
+    'state': state.trim(),
+    'pinCode': pinCode.trim(),
+    'landmark': _optional(landmark),
+    'deliveryInstructions': _optional(deliveryInstructions),
+    'contactName': contactName.trim(),
+    'contactMobile': contactMobile.trim(),
+    'latitude': latitude,
+    'longitude': longitude,
+  };
+}
+
+class CheckoutAddressSelection {
+  const CheckoutAddressSelection.saved(this.addressId) : manualAddress = null;
+  const CheckoutAddressSelection.manual(this.manualAddress) : addressId = null;
+
+  final String? addressId;
+  final CheckoutAddressDraft? manualAddress;
+
+  bool get isValid => (addressId != null) != (manualAddress != null);
+}
+
+class CheckoutRequest {
+  const CheckoutRequest({this.addressId, this.manualAddress, required this.items})
+    : assert((addressId != null) != (manualAddress != null));
+
+  final String? addressId;
+  final CheckoutAddressDraft? manualAddress;
   final List<OrderItemInput> items;
 
   Map<String, dynamic> toJson() => {
-    'addressId': addressId,
+    if (addressId != null) 'addressId': addressId,
+    if (manualAddress != null) 'manualAddress': manualAddress!.toJson(),
     'items': items.map((item) => item.toJson()).toList(growable: false),
   };
 }
@@ -78,7 +157,7 @@ class CheckoutPreview {
 
   factory CheckoutPreview.fromJson(Map<String, dynamic> json) =>
       CheckoutPreview(
-        addressId: json['addressId'] as String,
+        addressId: json['addressId'] as String?,
         addressLabel: json['addressLabel'] as String,
         addressLine1: json['addressLine1'] as String,
         addressLine2: json['addressLine2'] as String?,
@@ -101,7 +180,7 @@ class CheckoutPreview {
         payableAmount: (json['payableAmount'] as num).toDouble(),
       );
 
-  final String addressId;
+  final String? addressId;
   final String addressLabel;
   final String addressLine1;
   final String? addressLine2;
@@ -231,11 +310,28 @@ class OrderSummary {
 class OrderCartItem {
   const OrderCartItem({required this.product, required this.quantity});
 
+  factory OrderCartItem.fromJson(Map<String, dynamic> json) => OrderCartItem(
+    product: CatalogueProduct.fromJson(
+      json['product'] as Map<String, dynamic>,
+    ),
+    quantity: (json['quantity'] as num).toDouble(),
+  );
+
   final CatalogueProduct product;
   final double quantity;
 
+  Map<String, dynamic> toJson() => {
+    'product': product.toJson(),
+    'quantity': quantity,
+  };
+
   OrderCartItem copyWith({double? quantity}) =>
       OrderCartItem(product: product, quantity: quantity ?? this.quantity);
+}
+
+String? _optional(String? value) {
+  final normalized = value?.trim();
+  return normalized == null || normalized.isEmpty ? null : normalized;
 }
 
 String formatOrderDate(DateTime value) {

@@ -1,6 +1,8 @@
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Integrations;
 using DoodhDirect.Domain.Catalogue;
+using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Persistence;
@@ -42,6 +44,8 @@ public sealed class EmployeeServiceTests
             CancellationToken.None);
 
         Assert.NotNull(created.Invitation);
+        Assert.Null(harness.Delivery.LastReqId);
+        Assert.Equal(0, await harness.Db.OtpChallenges.CountAsync());
         Assert.Equal(harness.MainBranch.Id, created.Employee.BranchId);
         Assert.Equal(AuthorizationCodes.DeliveryStaff, created.Employee.RoleCode);
         Assert.Equal(created.Invitation.InvitationId, created.Employee.InvitationId);
@@ -100,6 +104,8 @@ public sealed class EmployeeServiceTests
         Assert.Equal("ravi@example.com", verification.Email);
         Assert.Equal(AuthorizationCodes.DeliveryStaff, verification.RoleCode);
         Assert.Equal(harness.MainBranch.Id, verification.BranchId);
+        Assert.Equal(harness.MainBranch.Code, verification.BranchCode);
+        Assert.Equal(harness.MainBranch.Name, verification.BranchName);
         Assert.Null(verification.Reason);
     }
 
@@ -128,6 +134,14 @@ public sealed class EmployeeServiceTests
         Assert.Equal("ravi@example.com", completed.Session.User.Email);
         Assert.Contains(AuthorizationCodes.DeliveryStaff, completed.Session.User.Roles);
         Assert.Contains(harness.MainBranch.Id, completed.Session.User.BranchIds);
+
+        // The authenticated session resolves the assigned branch into display metadata so
+        // dashboards render the real branch name instead of a numeric fallback.
+        Assert.NotNull(completed.Session.User.BranchDetails);
+        var assignedBranch = Assert.Single(completed.Session.User.BranchDetails!);
+        Assert.Equal(harness.MainBranch.Id, assignedBranch.Id);
+        Assert.Equal(harness.MainBranch.Code, assignedBranch.Code);
+        Assert.Equal(harness.MainBranch.Name, assignedBranch.Name);
         Assert.False(string.IsNullOrWhiteSpace(completed.Session.Tokens.AccessToken));
         Assert.False(string.IsNullOrWhiteSpace(completed.Session.Tokens.RefreshToken));
 
@@ -194,9 +208,17 @@ public sealed class EmployeeServiceTests
         await using var harness = await EmployeeHarness.CreateAsync();
         var created = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
 
+        // Invitation creation does not send an OTP. The only outstanding OTP below is the Login
+        // one, proving it cannot satisfy EmployeeInvitation registration (purpose-binding in
+        // CompleteRegistrationAsync).
+        var invitee = await harness.Db.EmployeeInvitations
+            .SingleAsync(x => x.Id == created.Invitation!.InvitationId);
+        Assert.Equal(0, await harness.Db.OtpChallenges.CountAsync());
+        Assert.Null(harness.Delivery.LastReqId);
+
         // Send a Login OTP instead of an EmployeeInvitation OTP.
         await harness.Otp.SendAsync(
-            new SendOtpRequest("+919876543210", OtpPurpose.Login, "127.0.0.1"),
+            new SendOtpRequest(invitee.InviteeMobile, OtpPurpose.Login, "127.0.0.1"),
             CancellationToken.None);
 
         await Assert.ThrowsAsync<UnauthorizedAppException>(() =>
@@ -227,7 +249,7 @@ public sealed class EmployeeServiceTests
             new SendOtpRequest("+919876543210", OtpPurpose.EmployeeInvitation, "127.0.0.1"),
             CancellationToken.None);
 
-        await Assert.ThrowsAsync<UnauthorizedAppException>(() =>
+        await Assert.ThrowsAsync<OtpProviderRejectedException>(() =>
             harness.Employees.CompleteRegistrationAsync(
                 new CompleteEmployeeRegistrationRequest(
                     created.Invitation!.Token,
@@ -281,6 +303,59 @@ public sealed class EmployeeServiceTests
 
         Assert.Contains(await harness.Db.AuditLogs.ToListAsync(), x =>
             x.Action == EmployeeService.ActionInvitationResent && x.UserId == harness.SystemAdmin.Id);
+    }
+
+    [Fact]
+    public async Task CreateInvitation_WhenSmtpAcceptsEmail_ReturnsSentOutcomeAndAuditsDelivery()
+    {
+        var sender = new TestEmailSender(new EmailSendResult(true, null));
+        await using var harness = await EmployeeHarness.CreateAsync(
+            emailSender: sender,
+            integrationSettings: new TestIntegrationSettingsProvider("https://app.example.test"));
+
+        var created = await CreateDeliveryStaffAsync(
+            harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        Assert.NotNull(created.Invitation);
+        Assert.Equal(InvitationEmailDeliveryStatus.Sent, created.Invitation.EmailDeliveryStatus);
+        Assert.Equal("ravi@example.com", created.Invitation.EmailRecipient);
+        Assert.Contains($"/invite/{created.Invitation.Token}", sender.LastMessage!.PlainTextBody);
+        Assert.Contains(await harness.Db.AuditLogs.ToListAsync(), x =>
+            x.Action == EmployeeService.ActionInvitationEmailSent &&
+            x.EntityId == created.Invitation.InvitationPublicId.ToString());
+    }
+
+    [Fact]
+    public async Task CreateInvitation_WhenSmtpReturnsNotSent_ReturnsSkippedOutcome()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync(
+            emailSender: new TestEmailSender(
+                new EmailSendResult(false, "SMTP delivery is not configured.")),
+            integrationSettings: new TestIntegrationSettingsProvider("https://app.example.test"));
+
+        var created = await CreateDeliveryStaffAsync(
+            harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        Assert.Equal(InvitationEmailDeliveryStatus.Skipped, created.Invitation!.EmailDeliveryStatus);
+        Assert.Contains("SMTP delivery is not configured.", created.Invitation.EmailDeliveryReason);
+        Assert.Contains(await harness.Db.AuditLogs.ToListAsync(), x =>
+            x.Action == EmployeeService.ActionInvitationEmailSkipped);
+    }
+
+    [Fact]
+    public async Task CreateInvitation_WhenSmtpThrows_ReturnsFailedOutcome()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync(
+            emailSender: new TestEmailSender(new InvalidOperationException("SMTP authentication failed.")),
+            integrationSettings: new TestIntegrationSettingsProvider("https://app.example.test"));
+
+        var created = await CreateDeliveryStaffAsync(
+            harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        Assert.Equal(InvitationEmailDeliveryStatus.Failed, created.Invitation!.EmailDeliveryStatus);
+        Assert.Contains("SMTP authentication failed.", created.Invitation.EmailDeliveryReason);
+        Assert.Contains(await harness.Db.AuditLogs.ToListAsync(), x =>
+            x.Action == EmployeeService.ActionInvitationEmailFailed);
     }
 
     [Fact]
@@ -371,6 +446,52 @@ public sealed class EmployeeServiceTests
     }
 
     [Fact]
+    public async Task UpdateEmployee_CanDeactivateAfterAssignedBranchIsDeactivated()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+        var created = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        harness.MainBranch.Deactivate();
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var deactivated = await harness.Employees.UpdateAsync(
+            created.Employee.Id,
+            new UpdateEmployeeRequest("Ravi Kumar", "ravi@example.com", null, null, IsActive: false),
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+
+        Assert.False(deactivated.IsActive);
+        Assert.Equal(harness.MainBranch.Id, deactivated.BranchId);
+    }
+
+    [Fact]
+    public async Task UpdateEmployee_CannotReactivateOnInactiveAssignedBranch()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+        var created = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        var employee = await harness.Db.Users
+            .Include(user => user.UserRoles)
+            .ThenInclude(userRole => userRole.Role)
+            .SingleAsync(user => user.Id == created.Employee.Id);
+        employee.Deactivate();
+        var assignedBranchId = employee.UserRoles.Single().BranchId;
+        var assignedBranch = await harness.Db.Branches.SingleAsync(branch => branch.Id == assignedBranchId);
+        assignedBranch.Deactivate();
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() => harness.Employees.UpdateAsync(
+            created.Employee.Id,
+            new UpdateEmployeeRequest("Ravi Kumar", "ravi@example.com", null, null, IsActive: true),
+            harness.SystemAdmin.Id,
+            CancellationToken.None));
+
+        Assert.Equal("The selected branch is inactive.", exception.Message);
+    }
+
+    [Fact]
     public async Task Owner_CanCreateSystemAdministrator()
     {
         await using var harness = await EmployeeHarness.CreateAsync();
@@ -424,7 +545,7 @@ public sealed class EmployeeServiceTests
                 new CreateEmployeeRequest(
                     "Owner Clone",
                     "+919877770003",
-                    null,
+                    "owner-clone@example.com",
                     AuthorizationCodes.Owner,
                     harness.MainBranch.Id,
                     SendInvitation: false),
@@ -587,6 +708,428 @@ public sealed class EmployeeServiceTests
         Assert.Equal(EmployeeInvitationStatus.Registered, invitation.Status);
         Assert.Equal(1, await harness.Db.UserSessions.CountAsync());
         Assert.Equal(1, await harness.Db.RefreshTokens.CountAsync());
+    }
+
+    [Fact]
+    public async Task CompleteRegistration_NorthBranchInvitation_CarriesBranchMetadataIntoSession()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+
+        // A Dairy Manager invitation to the NORTH branch — the harness analog of a Dabua/NIT3
+        // invitation. The branch must come from the invitation, never from the role or from
+        // any default/first branch (no Branch 4, no MAIN substitution).
+        var created = await harness.Employees.CreateAsync(
+            new CreateEmployeeRequest(
+                "Priya Singh",
+                "+919876543211",
+                "priya@example.com",
+                AuthorizationCodes.DairyManager,
+                harness.NorthBranch.Id,
+                SendInvitation: true),
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+        Assert.Equal(harness.NorthBranch.Id, created.Employee.BranchId);
+
+        var verification = await harness.Employees.VerifyInvitationAsync(
+            created.Invitation!.Token, CancellationToken.None);
+        Assert.True(verification.IsValid);
+        Assert.Equal(AuthorizationCodes.DairyManager, verification.RoleCode);
+        Assert.Equal(harness.NorthBranch.Id, verification.BranchId);
+        Assert.Equal(harness.NorthBranch.Code, verification.BranchCode);
+        Assert.Equal(harness.NorthBranch.Name, verification.BranchName);
+
+        var completed = await SendOtpAndCompleteAsync(
+            harness, created.Invitation!.Token, "Priya Singh", "+919876543211", "priya@example.com");
+        Assert.Equal(EmployeeInvitationStatus.Registered, completed.InvitationStatus);
+        Assert.Contains(AuthorizationCodes.DairyManager, completed.Session.User.Roles);
+        Assert.Contains(harness.NorthBranch.Id, completed.Session.User.BranchIds);
+
+        // The session exposes the resolved branch (id + code + name) so the dashboard can
+        // render "North Branch" — and never MAIN or a numeric fallback.
+        Assert.NotNull(completed.Session.User.BranchDetails);
+        var sessionBranch = Assert.Single(completed.Session.User.BranchDetails!);
+        Assert.Equal(harness.NorthBranch.Id, sessionBranch.Id);
+        Assert.Equal(harness.NorthBranch.Code, sessionBranch.Code);
+        Assert.Equal(harness.NorthBranch.Name, sessionBranch.Name);
+    }
+
+    [Fact]
+    public async Task VerifyInvitation_SystemAdminWithoutBranch_HasNoBranchMetadata()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+
+        // Only the owner may create a SYSTEM_ADMIN. The invitation has no branch by design,
+        // proving the role never invents a branch assignment.
+        var created = await harness.Employees.CreateAsync(
+            new CreateEmployeeRequest(
+                "Sita Devi",
+                "+919876543212",
+                "sita@example.com",
+                AuthorizationCodes.SystemAdmin,
+                null,
+                SendInvitation: true),
+            harness.Owner.Id,
+            CancellationToken.None);
+
+        var verification = await harness.Employees.VerifyInvitationAsync(
+            created.Invitation!.Token, CancellationToken.None);
+        Assert.True(verification.IsValid);
+        Assert.Equal(AuthorizationCodes.SystemAdmin, verification.RoleCode);
+        Assert.Null(verification.BranchId);
+        Assert.Null(verification.BranchCode);
+        Assert.Null(verification.BranchName);
+    }
+
+    [Fact]
+    public async Task VerifyAndComplete_WhenInvitationBranchDeleted_FailsSafely()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+
+        // Dedicated branch so MAIN/NORTH stay intact; then delete it to reproduce an
+        // invitation whose persisted BranchId points at a branch that no longer exists.
+        var deletedBranch = new Branch("TEMP", "Temp Branch", "Bengaluru", "Karnataka", 12.9m, 77.5m);
+        harness.Db.Branches.Add(deletedBranch);
+        await harness.Db.SaveChangesAsync();
+
+        var created = await harness.Employees.CreateAsync(
+            new CreateEmployeeRequest(
+                "Ravi Kumar",
+                "+919876543210",
+                "ravi@example.com",
+                AuthorizationCodes.DeliveryStaff,
+                deletedBranch.Id,
+                SendInvitation: true),
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+
+        harness.Db.Branches.Remove(deletedBranch);
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        // Verification stops with a clear business reason instead of silently defaulting.
+        var verification = await harness.Employees.VerifyInvitationAsync(
+            created.Invitation!.Token, CancellationToken.None);
+        Assert.False(verification.IsValid);
+        Assert.Equal(created.Employee.BranchId, verification.BranchId);
+        Assert.Null(verification.BranchCode);
+        Assert.Null(verification.BranchName);
+        Assert.Equal(
+            "The branch for this invitation is no longer available. Ask your administrator to create a new invitation.",
+            verification.Reason);
+
+        // Registration also stops inside the atomic transaction; the OTP stays live.
+        await harness.Otp.SendAsync(
+            new SendOtpRequest("+919876543210", OtpPurpose.EmployeeInvitation, "127.0.0.1"),
+            CancellationToken.None);
+        var otpCode = harness.Delivery.LastCode!;
+        var ex = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Employees.CompleteRegistrationAsync(
+                new CompleteEmployeeRegistrationRequest(
+                    created.Invitation!.Token,
+                    "Ravi Kumar",
+                    "ravi@example.com",
+                    "+919876543210",
+                    "StrongPass!1",
+                    otpCode,
+                    Device),
+                CancellationToken.None));
+        Assert.Equal("The selected branch was not found.", ex.Message);
+
+        harness.Db.ChangeTracker.Clear();
+        var invitation = await harness.Db.EmployeeInvitations
+            .SingleAsync(x => x.Id == created.Invitation.InvitationId);
+        Assert.Equal(EmployeeInvitationStatus.Invited, invitation.Status);
+        var challenge = await harness.Db.OtpChallenges.SingleAsync();
+        Assert.Null(challenge.ConsumedAt);
+        Assert.Equal(0, await harness.Db.UserSessions.CountAsync());
+        Assert.Equal(0, await harness.Db.RefreshTokens.CountAsync());
+    }
+
+    [Fact]
+    public async Task VerifyAndComplete_WhenInvitationBranchInactive_FailsSafely()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+
+        // Create the invitation while the branch is active, then deactivate the branch to
+        // reproduce an invitation whose persisted branch has been turned off.
+        var deactivatedBranch = new Branch("TEMP2", "Temp Branch Two", "Bengaluru", "Karnataka", 12.91m, 77.51m);
+        harness.Db.Branches.Add(deactivatedBranch);
+        await harness.Db.SaveChangesAsync();
+
+        var created = await harness.Employees.CreateAsync(
+            new CreateEmployeeRequest(
+                "Ravi Kumar",
+                "+919876543210",
+                "ravi@example.com",
+                AuthorizationCodes.DeliveryStaff,
+                deactivatedBranch.Id,
+                SendInvitation: true),
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+
+        deactivatedBranch.Deactivate();
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var verification = await harness.Employees.VerifyInvitationAsync(
+            created.Invitation!.Token, CancellationToken.None);
+        Assert.False(verification.IsValid);
+        Assert.Null(verification.BranchCode);
+        Assert.Null(verification.BranchName);
+        Assert.Equal(
+            "The branch for this invitation is inactive. Ask your administrator to create a new invitation.",
+            verification.Reason);
+
+        await harness.Otp.SendAsync(
+            new SendOtpRequest("+919876543210", OtpPurpose.EmployeeInvitation, "127.0.0.1"),
+            CancellationToken.None);
+        var otpCode = harness.Delivery.LastCode!;
+        var ex = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Employees.CompleteRegistrationAsync(
+                new CompleteEmployeeRegistrationRequest(
+                    created.Invitation!.Token,
+                    "Ravi Kumar",
+                    "ravi@example.com",
+                    "+919876543210",
+                    "StrongPass!1",
+                    otpCode,
+                    Device),
+                CancellationToken.None));
+        Assert.Equal("The selected branch is inactive.", ex.Message);
+
+        harness.Db.ChangeTracker.Clear();
+        var invitation = await harness.Db.EmployeeInvitations
+            .SingleAsync(x => x.Id == created.Invitation.InvitationId);
+        Assert.Equal(EmployeeInvitationStatus.Invited, invitation.Status);
+        var challenge = await harness.Db.OtpChallenges.SingleAsync();
+        Assert.Null(challenge.ConsumedAt);
+        Assert.Equal(0, await harness.Db.UserSessions.CountAsync());
+        Assert.Equal(0, await harness.Db.RefreshTokens.CountAsync());
+    }
+
+    [Fact]
+    public void CompleteRegistrationRequest_CannotCarryRoleOrBranchOverride()
+    {
+        // The registration contract has no role or branch fields — the invitation is the only
+        // source of authority. This reflection guard fails the moment anyone adds an override.
+        var names = typeof(CompleteEmployeeRegistrationRequest)
+            .GetProperties()
+            .Select(p => p.Name)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(
+            new[] { "Device", "DisplayName", "Email", "Mobile", "OtpCode", "Password", "Token" },
+            names);
+    }
+
+    // ---- delete-or-archive lifecycle ------------------------------------------------
+    // An archived employee is never removed: the row is retained with IsArchived set so
+    // historical and operational records keep a stable identity. The server decides whether
+    // a delete request permanently removes the account (no dependencies) or archives it
+    // (dependencies exist) — the client never influences that decision.
+
+    [Fact]
+    public async Task DeleteAsync_ThrowsBusinessRuleForActiveEmployee()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+        var created = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.Employees.DeleteAsync(created.Employee.Id, harness.SystemAdmin.Id, CancellationToken.None));
+
+        Assert.Contains("deactivate", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await harness.Db.Users.CountAsync(x => x.Id == created.Employee.Id));
+    }
+
+    [Fact]
+    public async Task DeleteAsync_PermanentlyDeletesInactiveEmployeeWithoutDependencies()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+        var created = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        await harness.Employees.UpdateAsync(
+            created.Employee.Id,
+            new UpdateEmployeeRequest("Ravi Kumar", "ravi@example.com", null, null, IsActive: false),
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+
+        var result = await harness.Employees.DeleteAsync(
+            created.Employee.Id,
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+
+        Assert.True(result.IsDeleted);
+        Assert.False(result.IsArchived);
+        Assert.Null(result.Employee);
+        Assert.Equal(0, await harness.Db.Users.CountAsync(x => x.Id == created.Employee.Id));
+
+        var audit = await harness.Db.AuditLogs
+            .SingleAsync(item => item.Action == EmployeeService.ActionDeleted
+                                 && item.EntityId == created.Employee.PublicId.ToString());
+        Assert.Equal(EmployeeService.ActionDeleted, audit.Action);
+        Assert.Equal("Employee", audit.EntityType);
+        Assert.Equal(harness.SystemAdmin.Id, audit.UserId);
+        Assert.NotNull(audit.OldValueJson);
+        Assert.Null(audit.NewValueJson);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_ArchivesInactiveEmployeeWithDependency()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+        var created = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        await harness.Employees.UpdateAsync(
+            created.Employee.Id,
+            new UpdateEmployeeRequest("Ravi Kumar", "ravi@example.com", null, null, IsActive: false),
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+
+        // A shared operational record — a customer profile with a Restrict FK back to the
+        // user — blocks the permanent delete at the database, so the server archives instead.
+        harness.Db.CustomerProfiles.Add(new CustomerProfile(created.Employee.Id));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var result = await harness.Employees.DeleteAsync(
+            created.Employee.Id,
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+
+        Assert.False(result.IsDeleted);
+        Assert.True(result.IsArchived);
+        Assert.NotNull(result.Employee);
+        Assert.True(result.Employee!.IsArchived);
+        Assert.False(result.Employee.IsActive);
+        Assert.NotNull(result.Employee.ArchivedAt);
+
+        // The employee is retained in the database so historical records keep identifying it.
+        var stored = await harness.Db.Users.SingleAsync(x => x.Id == created.Employee.Id);
+        Assert.True(stored.IsArchived);
+        Assert.NotNull(stored.ArchivedAt);
+        Assert.Equal(1, await harness.Db.CustomerProfiles.CountAsync());
+
+        var audit = await harness.Db.AuditLogs
+            .SingleAsync(item => item.Action == EmployeeService.ActionArchived
+                                 && item.EntityId == created.Employee.PublicId.ToString());
+        Assert.Equal("Employee", audit.EntityType);
+        Assert.Equal(harness.SystemAdmin.Id, audit.UserId);
+        Assert.NotNull(audit.OldValueJson);
+        Assert.NotNull(audit.NewValueJson);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_IsIdempotentForArchivedEmployee()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+        var created = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        await harness.Employees.UpdateAsync(
+            created.Employee.Id,
+            new UpdateEmployeeRequest("Ravi Kumar", "ravi@example.com", null, null, IsActive: false),
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+
+        harness.Db.CustomerProfiles.Add(new CustomerProfile(created.Employee.Id));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var first = await harness.Employees.DeleteAsync(
+            created.Employee.Id,
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+        var again = await harness.Employees.DeleteAsync(
+            created.Employee.Id,
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+
+        Assert.True(first.IsArchived);
+        Assert.False(first.IsDeleted);
+        Assert.NotNull(first.Employee);
+        // The second call observes the archive without rewriting the archive timestamp.
+        Assert.True(again.IsArchived);
+        Assert.False(again.IsDeleted);
+        Assert.Equal(first.Employee!.ArchivedAt, again.Employee!.ArchivedAt);
+
+        // Only one EMPLOYEE.ARCHIVED audit entry is written.
+        var archivedAudits = await harness.Db.AuditLogs
+            .CountAsync(item => item.Action == EmployeeService.ActionArchived
+                                && item.EntityId == created.Employee.PublicId.ToString());
+        Assert.Equal(1, archivedAudits);
+    }
+
+    [Fact]
+    public async Task ListAsync_ExcludesArchivedEmployees()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+        var active = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+        var doomed = await CreateDeliveryStaffAsync(harness, "Suresh Verma", "+919876543211", "suresh@example.com");
+
+        await harness.Employees.UpdateAsync(
+            doomed.Employee.Id,
+            new UpdateEmployeeRequest("Suresh Verma", "suresh@example.com", null, null, IsActive: false),
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+        harness.Db.CustomerProfiles.Add(new CustomerProfile(doomed.Employee.Id));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+        await harness.Employees.DeleteAsync(doomed.Employee.Id, harness.SystemAdmin.Id, CancellationToken.None);
+
+        var list = await harness.Employees.ListAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(list, x => x.Id == doomed.Employee.Id);
+        Assert.Contains(list, x => x.Id == active.Employee.Id);
+        Assert.All(list, x => Assert.False(x.IsArchived));
+    }
+
+    [Fact]
+    public async Task GetAsync_StillReturnsArchivedEmployeeForHistory()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+        var created = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        await harness.Employees.UpdateAsync(
+            created.Employee.Id,
+            new UpdateEmployeeRequest("Ravi Kumar", "ravi@example.com", null, null, IsActive: false),
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+        harness.Db.CustomerProfiles.Add(new CustomerProfile(created.Employee.Id));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+        await harness.Employees.DeleteAsync(created.Employee.Id, harness.SystemAdmin.Id, CancellationToken.None);
+
+        // Archived employees remain retrievable (read-only view) and stay in the database.
+        var result = await harness.Employees.GetAsync(created.Employee.Id, CancellationToken.None);
+
+        Assert.Equal(created.Employee.Id, result.Id);
+        Assert.True(result.IsArchived);
+        Assert.NotNull(result.ArchivedAt);
+        Assert.Equal(1, await harness.Db.Users.CountAsync(x => x.Id == created.Employee.Id));
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ThrowsWhenReactivatingArchivedEmployee()
+    {
+        await using var harness = await EmployeeHarness.CreateAsync();
+        var created = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
+
+        await harness.Employees.UpdateAsync(
+            created.Employee.Id,
+            new UpdateEmployeeRequest("Ravi Kumar", "ravi@example.com", null, null, IsActive: false),
+            harness.SystemAdmin.Id,
+            CancellationToken.None);
+        harness.Db.CustomerProfiles.Add(new CustomerProfile(created.Employee.Id));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+        await harness.Employees.DeleteAsync(created.Employee.Id, harness.SystemAdmin.Id, CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Employees.UpdateAsync(
+            created.Employee.Id,
+            new UpdateEmployeeRequest("Ravi Kumar", "ravi@example.com", null, null, IsActive: true),
+            harness.SystemAdmin.Id,
+            CancellationToken.None));
+
+        Assert.Contains("cannot be updated or reactivated", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<CreateEmployeeResult> CreateDeliveryStaffAsync(
@@ -785,7 +1328,9 @@ internal sealed class EmployeeHarness : IAsyncDisposable
     public static async Task<EmployeeHarness> CreateAsync(
         int otpLifetimeMinutes = 5,
         int otpMaxAttempts = 5,
-        int otpRequestsPerWindow = 3)
+        int otpRequestsPerWindow = 3,
+        IEmailSender? emailSender = null,
+        IIntegrationSettingsProvider? integrationSettings = null)
     {
         var clock = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
         var timeProvider = new TestIndiaTimeProvider(clock);
@@ -859,10 +1404,13 @@ internal sealed class EmployeeHarness : IAsyncDisposable
             tokens,
             timeProvider,
             new TestNotificationEventWriter(db, clock),
-            new SecureTokenGenerator());
+            new SecureTokenGenerator(),
+            delivery,
+            Options.Create(identityOptions),
+            emailSender,
+            integrationSettings);
         var otp = new OtpService(
             db,
-            hasher,
             delivery,
             timeProvider,
             tokens,
@@ -902,7 +1450,9 @@ internal sealed class EmployeeHarness : IAsyncDisposable
         Tokens,
         TimeProvider,
         new TestNotificationEventWriter(db, Clock),
-        new SecureTokenGenerator());
+        new SecureTokenGenerator(),
+        Delivery,
+        Options.Create(IdentityOptions));
 
     public async ValueTask DisposeAsync()
     {
@@ -934,5 +1484,50 @@ internal sealed class EmployeeHarness : IAsyncDisposable
         }
 
         await db.SaveChangesAsync();
+    }
+}
+
+internal sealed class TestIntegrationSettingsProvider(string? inviteUrlBase) : IIntegrationSettingsProvider
+{
+    public Task<EmailDeliverySettings> GetEmailAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(new EmailDeliverySettings(
+            "no-reply@example.test",
+            "DoodhDirect",
+            "smtp.example.test",
+            587,
+            "smtp-user",
+            "smtp-password",
+            true,
+            true));
+
+    public Task<RazorpayRuntimeSettings> GetRazorpayAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(new RazorpayRuntimeSettings(null, null, null, false));
+
+    public Task<GoogleMapsRuntimeSettings> GetGoogleMapsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(new GoogleMapsRuntimeSettings(null, null, false));
+
+    public Task<string?> GetInviteUrlBaseAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(inviteUrlBase);
+}
+
+internal sealed class TestEmailSender : IEmailSender
+{
+    private readonly EmailSendResult? result;
+    private readonly Exception? exception;
+
+    public TestEmailSender(EmailSendResult result) => this.result = result;
+
+    public TestEmailSender(Exception exception) => this.exception = exception;
+
+    public EmailMessage? LastMessage { get; private set; }
+
+    public Task<EmailSendResult> SendAsync(
+        EmailMessage message,
+        CancellationToken cancellationToken)
+    {
+        LastMessage = message;
+        return exception is null
+            ? Task.FromResult(result!)
+            : Task.FromException<EmailSendResult>(exception);
     }
 }

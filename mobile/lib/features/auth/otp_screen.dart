@@ -1,10 +1,18 @@
+import 'package:doodh_direct_mobile/core/utils/country_codes.dart';
+import 'package:doodh_direct_mobile/core/utils/india_mobile.dart';
+import 'package:doodh_direct_mobile/core/utils/mobile_number.dart';
+import 'package:doodh_direct_mobile/core/widgets/country_code_mobile_field.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
-  const OtpScreen({super.key});
+  const OtpScreen({super.key, this.initialMobile});
+
+  /// Canonical `+91XXXXXXXXXX` mobile pre-filled from the login screen. When
+  /// present the field is pre-populated and an OTP is requested automatically.
+  final String? initialMobile;
 
   @override
   ConsumerState<OtpScreen> createState() => _OtpScreenState();
@@ -12,11 +20,45 @@ class OtpScreen extends ConsumerStatefulWidget {
 
 class _OtpScreenState extends ConsumerState<OtpScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _countryKey = GlobalKey<CountryCodeMobileFieldState>();
   final _mobileController = TextEditingController();
   final _codeController = TextEditingController();
-  bool _registration = false;
+  late CountryCode _initialCountry;
   bool _codeSent = false;
   bool _sending = false;
+  String? _reqId;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialCountry = CountryCodes.india;
+    final initialMobile = widget.initialMobile;
+    if (initialMobile == null || initialMobile.trim().isEmpty) return;
+    final trimmed = initialMobile.trim();
+    var didPrefill = false;
+    if (trimmed.startsWith('+') || trimmed.startsWith('00')) {
+      // International form: split into the matching country + national number.
+      final parsed = parseMobileCountry(trimmed);
+      if (parsed != null) {
+        _initialCountry = parsed.$1;
+        _mobileController.text = parsed.$2;
+        didPrefill = true;
+      }
+    } else {
+      // Plain national value: existing Indian normalization. This keeps
+      // 10-digit numbers (e.g. stored `9876543210`) on India +91 instead of
+      // being mis-read as another country sharing the leading digits.
+      final canonical = canonicalizeIndianMobile(trimmed);
+      if (canonical != null && canonical.length == 13) {
+        _mobileController.text = canonical.substring(3);
+        didPrefill = true;
+      }
+    }
+    if (!didPrefill) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_codeSent && !_sending) _send();
+    });
+  }
 
   @override
   void dispose() {
@@ -52,27 +94,6 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                       'A one-time code will be sent to your mobile number.',
                     ),
                     const SizedBox(height: 24),
-                    SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment<bool>(
-                          value: false,
-                          label: Text('Sign in'),
-                          icon: Icon(Icons.login),
-                        ),
-                        ButtonSegment<bool>(
-                          value: true,
-                          label: Text('Register'),
-                          icon: Icon(Icons.person_add_outlined),
-                        ),
-                      ],
-                      selected: {_registration},
-                      onSelectionChanged: busy
-                          ? null
-                          : (selection) => setState(() {
-                              _registration = selection.first;
-                              _codeSent = false;
-                            }),
-                    ),
                     if (session.errorMessage != null) ...[
                       const SizedBox(height: 16),
                       Text(
@@ -83,19 +104,11 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                       ),
                     ],
                     const SizedBox(height: 24),
-                    TextFormField(
+                    CountryCodeMobileField(
+                      key: _countryKey,
                       controller: _mobileController,
+                      initialCountry: _initialCountry,
                       enabled: !busy,
-                      keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(
-                        labelText: 'Mobile number',
-                        prefixIcon: Icon(Icons.phone_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) =>
-                          value == null || value.trim().length < 8
-                          ? 'Enter a valid mobile number.'
-                          : null,
                     ),
                     if (_codeSent) ...[
                       const SizedBox(height: 16),
@@ -133,12 +146,12 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                     ),
                     if (_codeSent)
                       TextButton.icon(
-                        onPressed: busy ? null : _send,
+                        onPressed: busy ? null : _resend,
                         icon: const Icon(Icons.refresh),
                         label: const Text('Send a new code'),
                       ),
                     TextButton(
-                      onPressed: busy ? null : () => context.go('/login'),
+                      onPressed: busy ? null : () => context.go(_withRedirect('/login')),
                       child: const Text('Back to password sign in'),
                     ),
                   ],
@@ -155,11 +168,15 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _sending = true);
     try {
-      await ref
+      final mobile = _countryKey.currentState?.canonicalValue ?? '';
+      final reqId = await ref
           .read(sessionControllerProvider.notifier)
-          .sendOtp(_mobileController.text, registration: _registration);
+          .sendOtp(mobile);
       if (mounted) {
-        setState(() => _codeSent = true);
+        setState(() {
+          _reqId = reqId;
+          _codeSent = true;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Verification code request accepted.')),
         );
@@ -174,14 +191,77 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     }
   }
 
+  Future<void> _resend() async {
+    setState(() => _sending = true);
+    try {
+      final mobile = _countryKey.currentState?.canonicalValue ?? '';
+      final reqId = await ref
+          .read(sessionControllerProvider.notifier)
+          .retryOtp(mobile);
+      if (mounted) {
+        setState(() => _reqId = reqId);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('A new verification code is on its way.')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
   Future<void> _verify() async {
     if (!_formKey.currentState!.validate()) return;
-    await ref
-        .read(sessionControllerProvider.notifier)
-        .verifyOtp(
-          _mobileController.text,
-          _codeController.text,
-          registration: _registration,
+    final reqId = _reqId;
+    if (reqId == null || reqId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Request a verification code before verifying.'),
+        ),
+      );
+      return;
+    }
+    final mobile = _countryKey.currentState?.canonicalValue ?? '';
+    try {
+      final result = await ref
+          .read(sessionControllerProvider.notifier)
+          .verifyOtp(mobile, _codeController.text, reqId);
+      if (!mounted) return;
+      // The server decided the outcome: a verified mobile with no account yet
+      // continues into customer onboarding (create password); an existing user
+      // of any role is already authenticated and the router lands on their home.
+      if (result.requiresOnboarding) {
+        final verifiedMobile = result.verifiedMobile ?? mobile;
+        final onboardingReqId = result.reqId ?? reqId;
+        final redirect =
+            GoRouterState.of(context).uri.queryParameters['redirectTo'];
+        context.go(
+          '/otp/onboarding?mobile=${Uri.encodeQueryComponent(verifiedMobile)}'
+          '&reqId=${Uri.encodeQueryComponent(onboardingReqId)}'
+          '${redirect == null || redirect.isEmpty ? '' : '&redirectTo=${Uri.encodeQueryComponent(redirect)}'}',
         );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        // The session state carries the error message; surface it inline. The
+        // controller rethrows so callers do not silently swallow failures.
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    }
+  }
+
+  /// Carries the validated return-intent across the auth routes so the user
+  /// returns to the exact page they wanted after signing in. The router
+  /// validates the value before acting on it.
+  String _withRedirect(String path) {
+    final redirect = GoRouterState.of(context).uri.queryParameters['redirectTo'];
+    return redirect == null || redirect.isEmpty
+        ? path
+        : '$path?redirectTo=${Uri.encodeQueryComponent(redirect)}';
   }
 }

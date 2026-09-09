@@ -1,0 +1,69 @@
+ript>self.__next_f.push([1,"5:[[\"$\",\"link\",null,{\"id\":\"favicon\",\"rel\":\"icon\",\"href\":\"https://stuff.walkover.in/msg9
+1-icon-blue.svg\"}],[\"$\",\"link\",null,{\"rel\":\"canonical\",\"href\":\"https://docs.msg91.com/otp-widget/verify-otp\"}],[\"$\"
+,\"title\",null,{\"children\":\"Verify OTP\"}],[\"$\",\"meta\",\"og-title\",{\"property\":\"og:title\",\"content\":\"Verify OTP\"}
+],\"\",\"\",\"\",[\"$\",\"script\",null,{\"type\":\"application/ld+json\",\"dangerouslySetInnerHTML\":{\"__html\":\"{\\\"@context\
+\\":\\\"https://schema.org\\\",\\\"@type\\\":\\\"TechArticle\\\",\\\"name\\\":\\\"Verify OTP\\\",\\\"url\\\":\\\"https://docs.msg9
+1.com/otp-widget/verify-otp\\\",\\\"publisher\\\":{\\\"@type\\\":\\\"Organization\\\",\\\"name\\\":\\\"Msg91\\\",\\\"url\\\":\\\"h
+ttps://docs.msg91.com\\\",\\\"logo\\\":{\\\"@type\\\":\\\"ImageObject\\\",\\\"url\\\":\\\"https://stuff.walkover.in/msg91-icon-blu
+e.svg\\\"}},\\\"provider\\\":{\\\"@type\\\":\\\"Organization\\\",\\\"name\\\":\\\"Msg91\\\",\\\"url\\\":\\\"https://docs.msg91.com
+\\\",\\\"logo\\\":{\\\"@type\\\":\\\"ImageObject\\\",\\\"url\\\":\\\"https://stuff.walkover.in/msg91-icon-blue.svg\\\"}},\\\"mainE
+ntityOfPage\\\":\\\"https://docs.msg91.com/otp-widget/verify-otp\\\",\\\"dateModified\\\":\\\"2025-08-11T07:52:00.661Z\\\",\\\"hea
+dline\\\":\\\"Verify OTP\\\"}\"}}],[\"$\",\"$L13\",null,{\"children\":[[\"$\",\"div\",null,{\"className\":\"flex w-full min-w-0 ov
+erflow-none blog-view-container  \",\"data-public-theme\":\"default\",\"data-theme-type\":\"$undefined\",\"children\":[[\"$\",\"di
+v\",null,{\"id\":\"main-scroll-container\",\"className\":\"flex flex-1 justify-center mx-auto mt-4 w-full min-w-0 h-full overflow-
+x-hidden overflow-y-auto scrollbar-none\",\"children\":[[\"$\",\"$L14\",null,{\"children\":[\"$\",\"$L15\",null,{\"collectionData\
+":{\"id\":\"C6NTmvei0Af4\",\"name\":\"Msg91\",\"description\":\"\",\"domain\":\"docs.msg91.com\",\"path\":\"\",\"type\":\"api\",\"
+categories\":null,\"docProperties\":{\"defaultTitle\":\"MSG91 API Doc\",\"defaultLogoUrl\":\"https://stuff.walkover.in/msg91-icon-
+blue.svg\",\"defaultHeader\":\"$16\",\"defaultFooter\":\"$17\",\"visibleComponents\":{\"buildwithtechdoc\":true,\"homepage\":false
+},\"viewType\":0,\"pageTextColor\":\"#37352f\",\"backgroundColor\":\"rgba(255, 255, 255, 0.04)\",\"chatBotConfig\":{},\"titleFont\
+":\"Inter\",\"contentFont\":\"Inter\",\"languages\":[],\"borderRadius\":\"4px\",\"themePreference\":\"system\",\"cliName\":\"msg91
+\"},\"gtmId\":null,\"theme\":\"#156bb3\",\"environment\":{},\"favicon\":\"\",\"rootParentId\":\"yJWh8Jr0sAsu\"},\"workerHeaders\":
+{\"urlHost\":\"\",\"urlPath\":\"\",\"urlLang\":\"\"},\"widget_token\":\"$undefined\",\"pageContentDataSSR\":{\"URL\":\"\u003cspan 
+text-block=\\\"true\\\"\u003ehttps://api.msg91.com/api/v5/widget/verifyOtp\u003c/span\u003e\",\"body\":{\"raw\":{\"value\":\"{\\n 
+ \\\"widgetId\\\": \\\"your widget id\\\",\\n  \\\"reqId\\\": \\\"requestId from send OTP response\\\",\\n  \\\"otp\\\": \\\"clien
+t OTP\\\"\\n}\\n\",\"rawType\":\"JSON\"},\"type\":\"JSON\",\"multipart/form-data\":[{\"key\":\"\",\"type\":\"text\",\"value\":\"\"
+,\"checked\":\"notApplicable\",\"description\":\"\"}],\"application/x-www-form-urlencoded\":[{\"key\":\"\",\"type\":\"text\",\"val
+ue\":\"\",\"checked\":\"notApplicable\",\"description\":\"\"}]},\"meta\":{},\"name\":\"Verify OTP\",\"params\":{},\"headers\":{\"\
+u003cspan text-block=\\\"true\\\"\u003eauthkey\u003c/span\u003e\":{\"value\":\"\u003cspan text-block=\\\"true\\\"\u003eEnter your 
+MSG91 authkey\u003c/span\u003e\",\"checked\":\"true\",\"description\":\"\"},\"\u003cspan text-block=\\\"true\\\"\u003econtent-type
+\u003c/span\u003e\":{\"value\":\"\u003cspan text-block=\\\"true\\\"\u003eapplication/json\u003c/span\u003e\",\"checked\":\"true\",
+\"description\":\"\"}},\"urlName\":\"verify-otp\",\"contents\":null,\"preScript\":\"\",\"postScript\":\"\",\"description\":\"Verif
+ies the OTP submitted by the user. On successful verification, it returns an access token (JWT)\",\"docViewData\":[{\"type\":\"hos
+t\"},{\"type\":\"body\"},{\"type\":\"params\"},{\"type\":\"pathVariables\"},{\"type\":\"headers\"},{\"type\":\"sampleResponse\"}],
+\"requestType\":\"POST\",\"protocolType\
+
+
+
+===== AFTER docViewData =====
+
+docViewData\":[{\"type\":\"host\"},{\"type\":\"body\"},{\"type\":\"params\"},{\"type\":\"pathVariables\"},{\"type\":\"headers\"},{
+\"type\":\"sampleResponse\"}],\"requestType\":\"POST\",\"protocolType\":1,\"pathVariables\":{},\"sampleResponse\":[{\"data\":null,
+\"status\":\"200\",\"description\":\"Success\"}],\"bodyDescription\":{},\"authorizationData\":{\"authorization\":{},\"authorizatio
+nTypeSelected\":\"\"},\"type\":4,\"id\":\"zakqFeIRg-d9\",\"collectionId\":\"C6NTmvei0Af4\",\"updatedBy\":5561,\"updatedAt\":\"2025
+-08-11T07:52:00.661Z\",\"companyId\":\"$undefined\"},\"shouldRenderHeaderAndFooter\":false}]}],false]}],false]}],\"$L18\"]}]]\n"])
+</script><script>self.__next_f.push([1,"19:I[56399,[\"577\",\"static/chunks/577-caee63e3f5513bdf.js\",\"1833\",\"static/chunks/183
+3-cb40514f2c7e005d.js\",\"4055\",\"static/chunks/4055-71490ece18195c78.js\",\"3237\",\"static/chunks/3237-cdd459112d39ab76.js\",\"
+1361\",\"static/chunks/1361-7a67223e365754f0.js\",\"8277\",\"static/chunks/8277-bebe2eb4b268116c.js\",\"6767\",\"static/chunks/676
+7-383320a889bd1220.js\",\"3807\",\"static/chunks/3807-d7c2e83ba6693c0f.js\",\"7216\",\"static/chunks/7216-30c32347c7ab5457.js\",\"
+7356\",\"static/chunks/7356-19fc35d95d029928.js\",\"5991\",\"static/chunks/5991-cce66502a2e579af.js\",\"3567\",\"static/chunks/356
+7-700918739cb98e55.js\",\"6862\",\"static/chunks/6862-50248a425f5b6608.js\",\"7909\",\"static/chunks/7909-4404d21d0e1d8ae0.js\",\"
+1974\",\"static/chunks/1974-d3ef36df0bce2e7f.js\",\"8974\",\"static/chunks/app/page-a6bff404f5c50595.js\"],\"default\"]\n18:null\n
+"])</script><script>self.__next_f.push([1,"11:[\"$\",\"$L13\",null,{\"children\":[[\"$\",\"$L19\",null,{\"sidebarData\":{\"collect
+ions\":{\"C6NTmvei0Af4\":{\"id\":\"C6NTmvei0Af4\",\"name\":\"Msg91\",\"description\":\"\",\"domain\":\"docs.msg91.com\",\"path\":\
+"\",\"type\":\"api\",\"categories\":null,\"docProperties\":\"$5:8:props:children:0:props:children:0:props:children:0:props:childre
+n:props:collectionData:docProperties\",\"gtmId\":null,\"theme\":\"#156bb3\",\"environment\":\"$5:8:props:children:0:props:children
+:0:props:children:0:props:children:props:collectionData:environment\",\"favicon\":\"\",\"rootParentId\":\"yJWh8Jr0sAsu\"}},\"pages
+\":{\"GyIgNvm_1WrY\":{\"id\":\"GyIgNvm_1WrY\",\"name\":\"Suggested Replies\",\"urlName\":\"suggested-replies\",\"parentId\":\"uZQO
+jGN17Ryd\",\"child\":[],\"type\":4,\"publishedPage\":{\"name\":\"Suggested Replies\",\"requestType\":\"POST\"},\"count\":121,\"cre
+atedBy\":4437,\"createdAt\":\"2025-09-20T13:01:20.131Z\",\"updatedAt\":\"2026-08-30T01:26:53.033Z\"},\"tUyQ3FqFzOXU\":{\"id\":\"tU
+yQ3FqFzOXU\",\"name\":\"Launch Campaign (For specific Segment)\",\"urlName\":\"launch-campaign--for-specific-segment-\",\"parentId
+\":\"2U_m4Wi0Svcu\",\"child\":[],\"type\":4,\"publishedPage\":{\"name\":\"Launch Campaign (For specific Segment)\",\"requestType\"
+:\"POST\"},\"count\":185,\"createdBy\":4437,\"createdAt\":\"2026-04-01T11:25:36.446Z\",\"updatedAt\":\"2026-08-28T04:13:36.630Z\"}
+,\"Sdh1DyzBSA3Z\":{\"id\":\"Sdh1DyzBSA3Z\",\"name\":\"Interactive Wa Send Location\",\"urlName\":\"interactive-wa-send-location\",
+\"parentId\":\"giOzbAXXSVa_\",\"child\":[],\"type\":4,\"publishedPage\":{\"name\":\"Interactive Wa Send Location\",\"requestType\"
+:\"POST\"},\"count\":367,\"createdBy\":5561,\"createdAt\":\"2025-09-22T07:58:21.243Z\",\"updatedAt\":\"2026-09-01T07:17:59.138Z\"}
+,\"QvLm38DTax0O\":{\"id\":\"QvLm38DTax0O\",\"name\":\"OTP\",\"urlName\":\"otp\",\"parentId\":\"yJWh8Jr0sAsu\",\"child\":[\"ZOHgw9c
+EncvD\",\"MxLjULNZ4izv\",\"rd3ygJCKYat0\",\"bhM-o1YsWnkR\",\"xrwOsWxqp_ZE\",\"Iy5KIaigwAiv\"],\"type\":1,\"publishedPage\":{\"name
+\":\"OTP\"},\"count\":1132,\"createdBy\":530,\"createdAt\":\"2024-02-06T13:15:32.732Z\",\"updatedAt\":\"2026-09-01T09:08:00.911Z\"
+},\"cxVoUaPUCg5l\":{\"id\":\"c
+

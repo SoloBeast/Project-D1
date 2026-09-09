@@ -1,5 +1,12 @@
 ﻿using System.Net;
+using System.Text;
 using System.Text.Json;
+using DoodhDirect.Application.Deliveries;
+using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Payments;
+using DoodhDirect.Infrastructure.Identity;
+using DoodhDirect.Infrastructure.OtpProvider;
+using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Infrastructure;
@@ -8,6 +15,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -16,7 +24,7 @@ namespace DoodhDirect.Api.IntegrationTests;
 public sealed class ApiFoundationTests : IClassFixture<FoundationApiFactory>
 {
     private const string CorrelationHeader = "X-Correlation-Id";
-    private const string AllowedDevelopmentOrigin = "http://localhost:54187";
+    private const string AllowedDevelopmentOrigin = "http://localhost:51482";
     private readonly FoundationApiFactory _factory;
 
     public ApiFoundationTests(FoundationApiFactory factory)
@@ -59,7 +67,7 @@ public sealed class ApiFoundationTests : IClassFixture<FoundationApiFactory>
     }
 
     [Fact]
-    public async Task CorsPreflight_AllowsDevelopmentLocalhostOriginWithDynamicPort()
+    public async Task CorsPreflight_AllowsDevelopmentLocalhostOrigin()
     {
         using var client = _factory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Options, "/api/v1/auth/login");
@@ -95,6 +103,69 @@ public sealed class ApiFoundationTests : IClassFixture<FoundationApiFactory>
         using var response = await client.SendAsync(request, CancellationToken.None);
 
         Assert.False(response.Headers.Contains("Access-Control-Allow-Origin"));
+    }
+
+    [Fact]
+    public async Task Cors_PostLogin_FromAllowedOrigin_ReachesApi()
+    {
+        using var client = _factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/login");
+        request.Headers.Add("Origin", AllowedDevelopmentOrigin);
+        request.Content = new StringContent(
+            """{"login":"missing@example.com","password":"wrong-password","device":{"deviceIdentifier":"cors-test","deviceName":"CORS test","platform":"test"}}""",
+            Encoding.UTF8,
+            "application/json");
+
+        using var response = await client.SendAsync(request, CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(
+            AllowedDevelopmentOrigin,
+            Assert.Single(response.Headers.GetValues("Access-Control-Allow-Origin")));
+    }
+
+    [Fact]
+    public async Task Cors_PostSendOtp_FromAllowedOrigin_ReachesApi()
+    {
+        using var client = _factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/auth/send-otp");
+        request.Headers.Add("Origin", AllowedDevelopmentOrigin);
+        request.Content = new StringContent(
+            """{"mobile":"9876543210","purpose":"Login"}""",
+            Encoding.UTF8,
+            "application/json");
+
+        using var response = await client.SendAsync(request, CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(
+            AllowedDevelopmentOrigin,
+            Assert.Single(response.Headers.GetValues("Access-Control-Allow-Origin")));
+    }
+
+    [Fact]
+    public void Cors_Configuration_IsExplicitAndContainsNoWildcard()
+    {
+        var configuration = _factory.Services.GetRequiredService<IConfiguration>();
+
+        var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+
+        Assert.NotEmpty(origins);
+        Assert.DoesNotContain("*", origins);
+    }
+
+    [Fact]
+    public void Cors_BaseConfiguration_UsedOutsideDevelopment_AllowsNoOriginsByDefault()
+    {
+        var environment = _factory.Services.GetRequiredService<IWebHostEnvironment>();
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(environment.ContentRootPath)
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+            .Build();
+
+        var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+
+        Assert.Empty(origins);
     }
 
     [Fact]
@@ -155,6 +226,61 @@ public sealed class ApiFoundationTests : IClassFixture<FoundationApiFactory>
         var adminRequirement = adminProducts.GetProperty("security")[0];
         Assert.True(adminRequirement.TryGetProperty("bearerAuth", out _));
     }
+
+    [Fact]
+    public void DependencyInjection_OtpProvider_ResolvesConfiguredMsg91Client()
+    {
+        using var scope = _factory.Services.CreateScope();
+
+        var provider = scope.ServiceProvider.GetRequiredService<IMsg91OtpProvider>();
+
+        Assert.IsType<Msg91ApiClient>(provider);
+    }
+
+    [Fact]
+    public void DependencyInjection_OtpProvider_DoesNotExposeDevelopmentFake()
+    {
+        using var scope = _factory.Services.CreateScope();
+
+        Assert.Null(scope.ServiceProvider.GetService<DevelopmentMsg91OtpProvider>());
+    }
+
+    [Fact]
+    public void DependencyInjection_PaymentGateway_ResolvesConfiguredRazorpayGateway()
+    {
+        using var scope = _factory.Services.CreateScope();
+
+        var gateway = scope.ServiceProvider.GetRequiredService<IPaymentGateway>();
+
+        Assert.IsType<RazorpayPaymentGateway>(gateway);
+    }
+
+    [Fact]
+    public void DependencyInjection_PaymentGateway_DoesNotExposeMockGateway()
+    {
+        using var scope = _factory.Services.CreateScope();
+
+        Assert.Null(scope.ServiceProvider.GetService<MockPaymentGateway>());
+    }
+
+    [Fact]
+    public void DependencyInjection_OtpDeliveryService_ResolvesUnconfiguredTransport()
+    {
+        using var scope = _factory.Services.CreateScope();
+
+        var delivery = scope.ServiceProvider.GetRequiredService<IOtpDeliveryService>();
+
+        Assert.IsType<UnconfiguredOtpDeliveryService>(delivery);
+        Assert.Null(scope.ServiceProvider.GetService<DevelopmentOtpDeliveryService>());
+    }
+
+    [Fact]
+    public void SeedOptions_EnableDevelopmentSeeds_DefaultsToFalse()
+    {
+        var configuration = _factory.Services.GetRequiredService<IConfiguration>();
+
+        Assert.False(configuration.GetValue<bool>("SeedOptions:EnableDevelopmentSeeds"));
+    }
 }
 
 public sealed class FoundationApiFactory : WebApplicationFactory<Program>
@@ -175,6 +301,12 @@ public sealed class FoundationApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Development");
+        builder.ConfigureAppConfiguration((_, configuration) =>
+            configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Payments:RazorpayKeyId"] = "rzp_test_key",
+                ["Payments:RazorpayKeySecret"] = "test-secret",
+            }));
         builder.ConfigureServices(services =>
         {
             services.RemoveAll<DbContextOptions<DoodhDirectDbContext>>();

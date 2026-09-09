@@ -36,10 +36,7 @@ public sealed class PaymentWalletServiceTests
         decimal expectedBalance)
     {
         await using var harness = await PaymentHarness.CreateAsync(payableAmount);
-        await harness.WalletService.TopUpAsync(
-            harness.Customer.Id,
-            new WalletTopUpRequest(startingBalance, "topup-1"),
-            CancellationToken.None);
+        await harness.SeedWalletAsync(startingBalance, "topup-1");
 
         var created = await harness.PaymentService.CreateAsync(
             harness.Customer.Id,
@@ -91,10 +88,7 @@ public sealed class PaymentWalletServiceTests
         await using var harness = await PaymentHarness.CreateAsync(payableAmount);
         if (startingBalance > 0)
         {
-            await harness.WalletService.TopUpAsync(
-                harness.Customer.Id,
-                new WalletTopUpRequest(startingBalance, "topup-1"),
-                CancellationToken.None);
+            await harness.SeedWalletAsync(startingBalance, "topup-1");
         }
 
         var exception = await Assert.ThrowsAsync<InsufficientWalletBalanceException>(() =>
@@ -119,10 +113,7 @@ public sealed class PaymentWalletServiceTests
     public async Task WalletPayment_RepeatedInsufficientAttempts_CreateNoFinancialRecords()
     {
         await using var harness = await PaymentHarness.CreateAsync(payableAmount: 800m);
-        await harness.WalletService.TopUpAsync(
-            harness.Customer.Id,
-            new WalletTopUpRequest(340m, "topup-1"),
-            CancellationToken.None);
+        await harness.SeedWalletAsync(340m, "topup-1");
 
         for (var attempt = 1; attempt <= 3; attempt++)
         {
@@ -277,7 +268,7 @@ public sealed class PaymentWalletServiceTests
     }
 
     [Fact]
-    public void RazorpayWebhook_WithoutWebhookSecret_FailsClosed()
+    public async Task RazorpayWebhook_WithoutWebhookSecret_FailsClosed()
     {
         var options = Options.Create(new PaymentOptions
         {
@@ -290,7 +281,7 @@ public sealed class PaymentWalletServiceTests
         });
         var gateway = new RazorpayPaymentGateway(new HttpClient(), options);
 
-        Assert.False(gateway.VerifyWebhookSignature("{}"u8, "any-signature"));
+        Assert.False(await gateway.VerifyWebhookSignatureAsync("{}"u8, "any-signature", CancellationToken.None));
     }
 
     [Fact]
@@ -587,8 +578,7 @@ public sealed class PaymentWalletServiceTests
     public async Task WalletRefund_CreditsWalletMarksRefundedAndWritesAudit()
     {
         await using var harness = await PaymentHarness.CreateAsync();
-        await harness.WalletService.TopUpAsync(
-            harness.Customer.Id, new WalletTopUpRequest(100m, "topup-1"), CancellationToken.None);
+        await harness.SeedWalletAsync(100m, "topup-1");
         var payment = await harness.PaymentService.CreateAsync(
             harness.Customer.Id,
             new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Wallet),
@@ -695,10 +685,7 @@ public sealed class PaymentWalletServiceTests
     {
         await using var harness = await PaymentHarness.CreateAsync(
             otpDelivery: new CapturingOtpDeliveryService { FailNextSend = true });
-        await harness.WalletService.TopUpAsync(
-            harness.Customer.Id,
-            new WalletTopUpRequest(100m, "topup-otp-transport"),
-            CancellationToken.None);
+        await harness.SeedWalletAsync(100m, "topup-otp-transport");
 
         var result = await harness.PaymentService.CreateAsync(
             harness.Customer.Id,
@@ -895,6 +882,489 @@ public sealed class PaymentWalletServiceTests
         Assert.Empty(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Wallet top-up (A–M) integration tests.
+    // Real Razorpay wallet-top-up flow: CreateWalletTopUpAsync creates a Pending
+    // Razorpay payment with a BOTH-NULL target; the wallet is credited ONLY when
+    // a verified capture (Verify/Webhook/Reconcile/Cancel-captured) succeeds.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task WalletTopUp_Create_PendingRazorpayPaymentWithoutWalletCredit()
+    {
+        // A. Customer recharge API creates a pending payment + Razorpay order and
+        // MUST NOT credit the wallet at creation.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-create-a", CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Pending, created.Status);
+        Assert.Equal(PaymentMethod.Razorpay, created.Method);
+        Assert.Equal("Razorpay", created.Provider);
+        Assert.Equal(500m, created.Amount);
+        Assert.Equal("INR", created.Currency);
+        Assert.Null(created.OrderId);
+        Assert.Null(created.OrderNumber);
+        Assert.Null(created.SubscriptionId);
+        Assert.Null(created.GatewayPaymentId);
+        Assert.Equal($"order_test_{created.PublicId:N}", created.GatewayOrderId);
+        Assert.Equal("rzp_test_public", created.GatewayKeyId);
+        Assert.Equal(new DateTime(2026, 8, 16, 7, 45, 0, DateTimeKind.Unspecified), created.ExpiresAt);
+        Assert.Null(created.VerifiedAt);
+
+        harness.Db.ChangeTracker.Clear();
+        var stored = await harness.Db.Payments.AsNoTracking().SingleAsync();
+        Assert.Equal(harness.Customer.Id, stored.CustomerId);
+        Assert.Equal(PaymentStatus.Pending, stored.Status);
+        Assert.Equal(500m, stored.Amount);
+        Assert.Equal("INR", stored.Currency);
+        Assert.Equal("wallet-topup-create-a", stored.IdempotencyKey);
+        Assert.Null(stored.OrderId);
+        Assert.Null(stored.SubscriptionId);
+        Assert.Equal($"order_test_{stored.PublicId:N}", stored.GatewayOrderId);
+        Assert.Equal(new DateTime(2026, 8, 16, 7, 45, 0, DateTimeKind.Unspecified), stored.ExpiresAt);
+
+        Assert.Empty(await harness.Db.Wallets.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_Create_IsIdempotentAndStoresSinglePayment()
+    {
+        // B. Replayed create returns the existing (server-stored amount) result;
+        // exactly one Payment row, no wallet credit.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+
+        var first = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 250m, "wallet-topup-idempotent-b", CancellationToken.None);
+        var replay = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 999m, "wallet-topup-idempotent-b", CancellationToken.None);
+
+        Assert.Equal(first.PublicId, replay.PublicId);
+        Assert.Equal(250m, replay.Amount);
+        Assert.Equal(PaymentStatus.Pending, replay.Status);
+        Assert.Single(await harness.Db.Payments.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.Wallets.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_InvalidAmounts_AreRejectedBeforeAnyCredit()
+    {
+        // C. Non-positive / over-precision amounts are rejected up front; sub-₹1
+        // amounts (less than 100 paise) are rejected by the minor-unit guard.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+
+        foreach (var amount in new[] { 0m, -5m, 100.001m })
+        {
+            var validation = await Assert.ThrowsAsync<ValidationAppException>(() =>
+                harness.PaymentService.CreateWalletTopUpAsync(
+                    harness.Customer.Id, amount, $"wallet-topup-invalid-{amount}", CancellationToken.None));
+            Assert.Equal("Amount must be positive and have at most two decimal places.", validation.Message);
+        }
+
+        Assert.Empty(await harness.Db.Payments.AsNoTracking().ToListAsync());
+
+        var belowMinimum = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.PaymentService.CreateWalletTopUpAsync(
+                harness.Customer.Id, 0.50m, "wallet-topup-below-minimum", CancellationToken.None));
+        Assert.Equal("The payment amount must be at least 100 paise and representable by the gateway.", belowMinimum.Message);
+
+        Assert.Single(await harness.Db.Payments.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.Wallets.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_ReusedKeyFromOrderPayment_IsRejectedAsConflict()
+    {
+        // C. An idempotency key already bound to a different payment kind must not
+        // create a wallet top-up under the same key.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var orderPayment = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            "shared-topup-key",
+            CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() =>
+            harness.PaymentService.CreateWalletTopUpAsync(
+                harness.Customer.Id, 300m, "shared-topup-key", CancellationToken.None));
+
+        Assert.Equal("The idempotency key is already associated with a different payment request.", exception.Message);
+        Assert.Equal(orderPayment.PublicId, (await harness.Db.Payments.AsNoTracking().SingleAsync()).PublicId);
+        Assert.Empty(await harness.Db.Wallets.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_Verify_CreditsWalletExactlyOnce()
+    {
+        // D. Server-side verify (valid Razorpay signature + independent capture
+        // confirmation) credits the wallet once with the authoritative amount and
+        // writes one PaymentSucceeded + one WalletUpdated event.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-verify-d", CancellationToken.None);
+        var invalid = new VerifyPaymentRequest(
+            created.PublicId, created.GatewayOrderId!, $"pay_test_{created.PublicId:N}", "invalid");
+        await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.PaymentService.VerifyAsync(harness.Customer.Id, invalid, CancellationToken.None));
+
+        var verified = await harness.PaymentService.VerifyAsync(
+            harness.Customer.Id,
+            invalid with { Signature = "test_verified" },
+            CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Success, verified.Status);
+        Assert.Equal($"pay_test_{created.PublicId:N}", verified.GatewayPaymentId);
+
+        harness.Db.ChangeTracker.Clear();
+        var stored = await harness.Db.Payments.AsNoTracking().SingleAsync();
+        Assert.Equal(PaymentStatus.Success, stored.Status);
+
+        var wallet = await harness.Db.Wallets.AsNoTracking().SingleAsync();
+        Assert.Equal(harness.Customer.Id, wallet.CustomerId);
+        Assert.Equal(500m, wallet.Balance);
+        Assert.Equal("INR", wallet.Currency);
+
+        var credit = Assert.Single(await harness.Db.WalletTransactions.AsNoTracking()
+            .Where(x => x.Type == WalletTransactionType.TopUp)
+            .ToListAsync());
+        Assert.Equal(stored.Id, credit.PaymentId);
+        Assert.Null(credit.OrderId);
+        Assert.Null(credit.SubscriptionId);
+        Assert.Null(credit.PerformedByUserId);
+        Assert.Equal(0m, credit.BalanceBefore);
+        Assert.Equal(500m, credit.Amount);
+        Assert.Equal(500m, credit.BalanceAfter);
+        Assert.Equal("INR", credit.Currency);
+        Assert.Equal("Wallet top-up", credit.Description);
+        Assert.Equal($"payment:{created.PublicId:N}", credit.IdempotencyKey);
+        Assert.Equal(new DateTime(2026, 8, 16, 7, 30, 0, DateTimeKind.Unspecified), credit.OccurredAt);
+        Assert.Equal(DateTimeKind.Unspecified, credit.OccurredAt.Kind);
+
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
+            .ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.WalletUpdated)
+            .ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_VerifyReplay_DoesNotDoubleCredit()
+    {
+        // E. One Razorpay payment = exactly one credit + one TopUp transaction;
+        // replays return the existing result without double-crediting.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-verify-replay-e", CancellationToken.None);
+        var valid = new VerifyPaymentRequest(
+            created.PublicId, created.GatewayOrderId!, $"pay_test_{created.PublicId:N}", "test_verified");
+
+        var first = await harness.PaymentService.VerifyAsync(
+            harness.Customer.Id, valid, CancellationToken.None);
+        var replay = await harness.PaymentService.VerifyAsync(
+            harness.Customer.Id, valid, CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Success, first.Status);
+        Assert.Equal(PaymentStatus.Success, replay.Status);
+        Assert.Equal(first.PublicId, replay.PublicId);
+
+        harness.Db.ChangeTracker.Clear();
+        Assert.Single(await harness.Db.Payments.AsNoTracking().ToListAsync());
+        Assert.Equal(500m, (await harness.Db.Wallets.AsNoTracking().SingleAsync()).Balance);
+        Assert.Single(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
+            .ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.WalletUpdated)
+            .ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_InvalidSignature_IsRejectedWithoutCredit()
+    {
+        // F. A client callback with a bad signature is not proof of payment; the
+        // payment stays Pending and no wallet credit is produced.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-invalid-signature-f", CancellationToken.None);
+        var invalid = new VerifyPaymentRequest(
+            created.PublicId, created.GatewayOrderId!, $"pay_test_{created.PublicId:N}", "invalid");
+
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.PaymentService.VerifyAsync(harness.Customer.Id, invalid, CancellationToken.None));
+
+        Assert.Equal("The payment signature is invalid.", exception.Message);
+        Assert.Equal(PaymentStatus.Pending, (await harness.Db.Payments.AsNoTracking().SingleAsync()).Status);
+        Assert.Empty(await harness.Db.Wallets.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_CrossCustomerVerifyOrCancel_IsRejectedWithoutCredit()
+    {
+        // G. Target ownership is enforced on every customer-visible operation.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-cross-customer-g", CancellationToken.None);
+        var valid = new VerifyPaymentRequest(
+            created.PublicId, created.GatewayOrderId!, $"pay_test_{created.PublicId:N}", "test_verified");
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            harness.PaymentService.VerifyAsync(harness.OtherCustomer.Id, valid, CancellationToken.None));
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            harness.PaymentService.CancelAsync(harness.OtherCustomer.Id, created.PublicId, CancellationToken.None));
+
+        Assert.Equal(PaymentStatus.Pending, (await harness.Db.Payments.AsNoTracking().SingleAsync()).Status);
+        Assert.Empty(await harness.Db.Wallets.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_Webhook_CreditsWalletExactlyOnceIdempotently()
+    {
+        // H. A signed payment.captured webhook reconciles success and credits the
+        // wallet once; a duplicate webhook is idempotent.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-webhook-h", CancellationToken.None);
+        gateway.WebhookEvent = new GatewayWebhookEvent(
+            "evt_wallet_topup_1",
+            "payment.captured",
+            created.GatewayOrderId,
+            $"pay_test_{created.PublicId:N}",
+            GatewayRefundId: null,
+            Status: "captured",
+            AmountMinor: 50000,
+            Currency: "INR");
+        var payload = "{\"event\":\"payment.captured\",\"id\":\"evt_wallet_topup_1\"}"u8.ToArray();
+
+        await harness.PaymentService.ProcessWebhookAsync(
+            payload, "test_webhook_verified", CancellationToken.None);
+        await harness.PaymentService.ProcessWebhookAsync(
+            payload, "test_webhook_verified", CancellationToken.None);
+
+        harness.Db.ChangeTracker.Clear();
+        Assert.Equal(PaymentStatus.Success, (await harness.Db.Payments.AsNoTracking().SingleAsync()).Status);
+        Assert.Equal(500m, (await harness.Db.Wallets.AsNoTracking().SingleAsync()).Balance);
+        Assert.Single(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        var receipt = Assert.Single(await harness.Db.PaymentWebhooks.AsNoTracking().ToListAsync());
+        Assert.Equal(PaymentWebhookStatus.Processed, receipt.Status);
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
+            .ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.WalletUpdated)
+            .ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_CancelDefinitiveFailure_CancelsWithoutCredit()
+    {
+        // I. A definitive gateway failure cancels the payment; the wallet is NOT
+        // credited and no payment events are emitted.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-cancel-failed-i", CancellationToken.None);
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [GatewayStatus(created, "failed", "failed", false, true)]);
+
+        var cancelled = await harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None);
+        var replay = await harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Cancelled, cancelled.Status);
+        Assert.Equal(PaymentStatus.Cancelled, replay.Status);
+        Assert.Equal(PaymentStatus.Cancelled, (await harness.Db.Payments.AsNoTracking().SingleAsync()).Status);
+        Assert.Empty(await harness.Db.Wallets.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_CancelValidatedCapture_CompletesAndCreditsWalletOnce()
+    {
+        // J. Cancelling a payment that was actually captured must recover success
+        // and credit the wallet exactly once.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-cancel-captured-j", CancellationToken.None);
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [GatewayStatus(created, "captured", "captured", true, false)]);
+
+        var completed = await harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None);
+        var replay = await harness.PaymentService.CancelAsync(
+            harness.Customer.Id, created.PublicId, CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Success, completed.Status);
+        Assert.Equal(PaymentStatus.Success, replay.Status);
+
+        harness.Db.ChangeTracker.Clear();
+        Assert.Equal(PaymentStatus.Success, (await harness.Db.Payments.AsNoTracking().SingleAsync()).Status);
+        Assert.Equal(500m, (await harness.Db.Wallets.AsNoTracking().SingleAsync()).Balance);
+        Assert.Single(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
+            .ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.WalletUpdated)
+            .ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_ReconcileCaptured_CreditsWalletExactlyOnce()
+    {
+        // K. Administrative reconciliation of a captured payment credits the
+        // wallet exactly once and reports the Captured outcome.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-reconcile-k", CancellationToken.None);
+        var captured = GatewayStatus(created, "captured", "captured", true, false);
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [captured]);
+
+        var first = await harness.PaymentService.ReconcileAsync(
+            harness.Administrator.Id, created.PublicId, true, CancellationToken.None);
+        gateway.DirectStatusResult = captured;
+        var replay = await harness.PaymentService.ReconcileAsync(
+            harness.Administrator.Id, created.PublicId, true, CancellationToken.None);
+
+        Assert.Equal(PaymentReconciliationOutcome.Captured, first.Outcome);
+        Assert.Equal(PaymentReconciliationOutcome.Captured, replay.Outcome);
+        Assert.Equal(PaymentStatus.Success, replay.Payment.Status);
+
+        harness.Db.ChangeTracker.Clear();
+        Assert.Equal(500m, (await harness.Db.Wallets.AsNoTracking().SingleAsync()).Balance);
+        Assert.Single(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
+            .ToListAsync());
+        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventType == NotificationEventTypes.WalletUpdated)
+            .ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_ExpiredDefinitiveFailure_RemainsExpiredWithoutCredit()
+    {
+        // L. An expired payment with a definitive gateway failure is terminal and
+        // never credits the wallet.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-expired-l", CancellationToken.None);
+        var payment = await harness.Db.Payments.SingleAsync();
+        payment.Expire(new DateTime(2026, 8, 16, 7, 45, 0));
+        await harness.Db.SaveChangesAsync();
+        gateway.OrderPaymentsResult = new GatewayOrderPaymentsResult(
+            created.GatewayOrderId!,
+            [GatewayStatus(created, "failed", "failed", false, true)]);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            harness.PaymentService.CancelAsync(
+                harness.Customer.Id, created.PublicId, CancellationToken.None));
+
+        Assert.Equal("The payment was not captured and is already expired.", exception.Message);
+        Assert.Equal(PaymentStatus.Expired, (await harness.Db.Payments.AsNoTracking().SingleAsync()).Status);
+        Assert.Empty(await harness.Db.Wallets.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task WalletTopUp_TamperedGatewayAmount_IsAmbiguousAndNeverCredits()
+    {
+        // M. A gateway amount that does not match the authoritative server amount
+        // is treated as ambiguous; the payment is never credited.
+        var options = RazorpayOptions();
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            paymentOptions: options,
+            gateway: gateway);
+        var created = await harness.PaymentService.CreateWalletTopUpAsync(
+            harness.Customer.Id, 500m, "wallet-topup-tamper-m", CancellationToken.None);
+        var captured = GatewayStatus(created, "captured", "captured", true, false);
+        gateway.DirectStatusResult = captured with { AmountMinor = captured.AmountMinor + 1 };
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() =>
+            harness.PaymentService.VerifyAsync(
+                harness.Customer.Id,
+                new VerifyPaymentRequest(
+                    created.PublicId, created.GatewayOrderId!, $"pay_test_{created.PublicId:N}", "test_verified"),
+                CancellationToken.None));
+
+        Assert.Equal("The gateway response is ambiguous; replacement charging is blocked.", exception.Message);
+        Assert.Equal(PaymentStatus.Pending, (await harness.Db.Payments.AsNoTracking().SingleAsync()).Status);
+        Assert.Empty(await harness.Db.Wallets.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.WalletTransactions.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking().ToListAsync());
+    }
+
     private static IOptions<PaymentOptions> RazorpayOptions() => Options.Create(new PaymentOptions
     {
         Provider = "Razorpay",
@@ -1036,7 +1506,6 @@ public sealed class PaymentWalletServiceTests
                 paymentOptions,
                 notificationEventWriter,
                 mockGateway: null,
-                hostEnvironment: null,
                 oneTimeDeliveryCreator: deliveryService);
             return new PaymentHarness(
                 connection,
@@ -1109,6 +1578,19 @@ public sealed class PaymentWalletServiceTests
             Assert.Equal(expectedBalance, topUp.Amount);
         }
 
+        public async Task SeedWalletAsync(decimal amount, string idempotencyKey)
+        {
+            var wallet = await Db.Wallets.SingleOrDefaultAsync(x => x.CustomerId == Customer.Id);
+            if (wallet is null)
+            {
+                wallet = new Wallet(Customer.Id, "INR");
+                Db.Wallets.Add(wallet);
+            }
+
+            wallet.Credit(WalletTransactionType.TopUp, amount, idempotencyKey, "Wallet top-up", TimeProvider.Now);
+            await Db.SaveChangesAsync();
+        }
+
         public async ValueTask DisposeAsync()
         {
             await Db.DisposeAsync();
@@ -1126,7 +1608,8 @@ public sealed class PaymentWalletServiceTests
         public GatewayOrderPaymentsResult? OrderPaymentsResult { get; set; }
         public Exception? OrderPaymentsException { get; set; }
         public string ProviderName => "Razorpay";
-        public string? PublicKeyId => options.Value.RazorpayKeyId;
+        public Task<string?> GetPublicKeyIdAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<string?>(options.Value.RazorpayKeyId);
         public bool IsLive => true;
 
         public Task<GatewayOrderResult> CreateOrderAsync(
@@ -1141,14 +1624,16 @@ public sealed class PaymentWalletServiceTests
                 request.Currency));
         }
 
-        public bool VerifyPaymentSignature(
+        public Task<bool> VerifyPaymentSignatureAsync(
             string gatewayOrderId,
             string gatewayPaymentId,
-            string signature) =>
-            signature == "test_verified" &&
-            TryGetPaymentId(gatewayPaymentId, out var paymentId) &&
-            gatewayOrderId == $"order_test_{paymentId:N}" &&
-            orders.ContainsKey(paymentId);
+            string signature,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(
+                signature == "test_verified" &&
+                TryGetPaymentId(gatewayPaymentId, out var paymentId) &&
+                gatewayOrderId == $"order_test_{paymentId:N}" &&
+                orders.ContainsKey(paymentId));
 
         public Task<GatewayPaymentStatusResult> GetPaymentStatusAsync(
             string gatewayPaymentId,
@@ -1191,8 +1676,8 @@ public sealed class PaymentWalletServiceTests
             return Task.FromResult(new GatewayOrderPaymentsResult(gatewayOrderId, payments));
         }
 
-        public bool VerifyWebhookSignature(ReadOnlySpan<byte> payload, string signature) =>
-            payload.Length > 0 && signature == "test_webhook_verified";
+        public Task<bool> VerifyWebhookSignatureAsync(ReadOnlySpan<byte> payload, string signature, CancellationToken cancellationToken) =>
+            Task.FromResult(payload.Length > 0 && signature == "test_webhook_verified");
 
         public GatewayWebhookEvent ParseWebhook(ReadOnlySpan<byte> payload) =>
             WebhookEvent ?? throw new InvalidOperationException("No test webhook event was configured.");

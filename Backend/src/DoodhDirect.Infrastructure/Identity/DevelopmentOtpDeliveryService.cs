@@ -1,14 +1,14 @@
-using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.Deliveries;
 using Microsoft.Extensions.Logging;
 
 namespace DoodhDirect.Infrastructure.Identity;
 
 /// <summary>
-/// Development-only OTP delivery that logs the code so the invitation
-/// onboarding flow can be manually verified in a local environment.
-/// Registered ONLY when the environment is Development. In any other
-/// environment <see cref="UnconfiguredOtpDeliveryService"/> is used, so
-/// production behavior is unchanged (no OTP provider means the send fails closed).
+/// Test-only OTP transport that logs the code so the delivery OTP handoff can
+/// be manually verified in a local environment. This is explicit test
+/// infrastructure and is never registered as a normal runtime fallback. The
+/// DI container always registers <see cref="UnconfiguredOtpDeliveryService"/>,
+/// which fails closed when the delivery OTP transport is not configured.
 /// </summary>
 public sealed class DevelopmentOtpDeliveryService(ILogger<DevelopmentOtpDeliveryService> logger) : IOtpDeliveryService
 {

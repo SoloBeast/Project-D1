@@ -9,6 +9,7 @@ using DoodhDirect.Application.Identity;
 using DoodhDirect.Application.Setup;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Auditing;
+using DoodhDirect.Domain.Dairy;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
@@ -36,6 +37,7 @@ public sealed class DeliveryService(
     private static readonly DeliveryOtpSendGate DefaultDeliveryOtpSendGate = new();
     private readonly DeliveryOtpSendGate _deliveryOtpSendGate = deliveryOtpSendGate ?? DefaultDeliveryOtpSendGate;
     private readonly DeliveryOptions _options = deliveryOptions.Value;
+    private const string MilkUnit = "L";
 
     public async Task AddIfMissing(Order order, DateOnly scheduledDate, CancellationToken cancellationToken)
     {
@@ -58,7 +60,11 @@ public sealed class DeliveryService(
             order.LatitudeSnapshot,
             order.LongitudeSnapshot);
         delivery.AssignDeliveryNumber(
-            await numberSeriesService.GetNextNumberAsync("DELIVERY", order.CustomerId, cancellationToken));
+            await numberSeriesService.GetNextNumberAsync(
+                "DELIVERY",
+                order.CustomerId,
+                cancellationToken,
+                order.BranchCodeSnapshot));
         dbContext.Deliveries.Add(delivery);
     }
 
@@ -118,7 +124,11 @@ public sealed class DeliveryService(
                     address.Latitude,
                     address.Longitude);
                 delivery.AssignDeliveryNumber(
-                    await numberSeriesService.GetNextNumberAsync("DELIVERY", subscription.CustomerId, cancellationToken));
+                    await numberSeriesService.GetNextNumberAsync(
+                        "DELIVERY",
+                        subscription.CustomerId,
+                        cancellationToken,
+                        occurrence.BranchCodeSnapshot));
                 dbContext.Deliveries.Add(delivery);
             }
 
@@ -189,7 +199,11 @@ public sealed class DeliveryService(
                     address.Latitude,
                     address.Longitude);
                 delivery.AssignDeliveryNumber(
-                    await numberSeriesService.GetNextNumberAsync("DELIVERY", subscription.CustomerId, cancellationToken));
+                    await numberSeriesService.GetNextNumberAsync(
+                        "DELIVERY",
+                        subscription.CustomerId,
+                        cancellationToken,
+                        occurrence.BranchCodeSnapshot));
                 dbContext.Deliveries.Add(delivery);
             }
 
@@ -722,7 +736,279 @@ public sealed class DeliveryService(
             $"delivery:{delivery.PublicId:N}:completed:{completedAt.Ticks}",
             "Your delivery has been completed.",
             completedAt);
+        await CreateAutomaticConsumptionAsync(delivery, actor.UserId, completedAt, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Creates the automatic Usage/Consumption records ONLY when a delivery reaches the
+    /// final successful Delivered state. One MilkUsage row is created per persisted
+    /// manager-selected DeliveryBatchAllocation, so each row carries the batch identity
+    /// (BatchId) and links back to its allocation (DeliveryBatchAllocationId). Branch and
+    /// quantity come from the immutable order/occurrence snapshots; the per-batch quantity
+    /// comes from the authoritative allocation. Idempotent per allocation: if any usage
+    /// already exists for one of this delivery's allocations, nothing is created (backed by
+    /// the filtered unique index on DeliveryBatchAllocationId).
+    /// </summary>
+    private async Task CreateAutomaticConsumptionAsync(
+        Delivery delivery,
+        long recordedByUserId,
+        DateTime completedAt,
+        CancellationToken cancellationToken)
+    {
+        var allocationIds = delivery.BatchAllocations.Select(a => a.Id).ToArray();
+        if (allocationIds.Length > 0 &&
+            await dbContext.MilkUsages.AnyAsync(
+                x => x.DeliveryBatchAllocationId != null && allocationIds.Contains(x.DeliveryBatchAllocationId.Value),
+                cancellationToken))
+        {
+            return;
+        }
+
+        if (allocationIds.Length == 0)
+        {
+            throw new BusinessRuleException(
+                "A delivery cannot be completed until batch allocations have been saved for it.");
+        }
+
+        if (delivery.Order is not null)
+        {
+            var orderItem = delivery.Order.Items.Count == 1 ? delivery.Order.Items.First() : null;
+            foreach (var allocation in delivery.BatchAllocations)
+            {
+                dbContext.MilkUsages.Add(new MilkUsage(
+                    delivery.BranchId,
+                    delivery.Id,
+                    delivery.Order.Id,
+                    orderItem?.Id,
+                    allocation.BatchId,
+                    allocation.Id,
+                    delivery.Order.OrderNumber,
+                    delivery.DeliveryNumber ?? delivery.ReferenceNumber,
+                    orderItem?.ProductNameSnapshot ?? "Milk",
+                    MilkUnit,
+                    completedAt,
+                    allocation.QuantityAllocated,
+                    recordedByUserId));
+            }
+        }
+        else if (delivery.SubscriptionDelivery is not null)
+        {
+            var occurrence = delivery.SubscriptionDelivery;
+            foreach (var allocation in delivery.BatchAllocations)
+            {
+                dbContext.MilkUsages.Add(new MilkUsage(
+                    delivery.BranchId,
+                    delivery.Id,
+                    occurrence.Id,
+                    allocation.BatchId,
+                    allocation.Id,
+                    delivery.DeliveryNumber ?? delivery.ReferenceNumber,
+                    occurrence.Subscription.ProductNameSnapshot,
+                    MilkUnit,
+                    completedAt,
+                    allocation.QuantityAllocated,
+                    recordedByUserId));
+            }
+        }
+    }
+
+    public async Task<DeliveryBatchAllocationsResult> GetBatchAllocationsAsync(
+        DeliveryActor actor,
+        Guid deliveryId,
+        CancellationToken cancellationToken)
+    {
+        var delivery = await FindAsync(deliveryId, cancellationToken);
+        EnsureBranchAccess(actor, delivery.BranchId);
+
+        var required = RequiredQuantityFor(delivery);
+
+        var branchBatches = await dbContext.MilkBatches
+            .AsNoTracking()
+            .Where(x => x.BranchId == delivery.BranchId && x.Status == MilkBatchStatus.Available)
+            .Select(x => new
+            {
+                x.Id,
+                x.BatchNumber,
+                x.ProductionAt,
+                x.QuantityProduced,
+                x.Unit,
+                Used = x.Usages.Sum(u => (decimal?)u.QuantityUsed) ?? 0m
+            })
+            .ToListAsync(cancellationToken);
+
+        var pendingReservations = await dbContext.DeliveryBatchAllocations
+            .AsNoTracking()
+            .Where(a => a.Delivery.BranchId == delivery.BranchId)
+            .Where(a => a.DeliveryId != delivery.Id)
+            .Where(a => a.Delivery.Status != DeliveryStatus.Delivered && a.Delivery.Status != DeliveryStatus.Failed)
+            .GroupBy(a => a.BatchId)
+            .Select(g => new { BatchId = g.Key, Reserved = g.Sum(a => a.QuantityAllocated) })
+            .ToListAsync(cancellationToken);
+        var reservedByBatch = pendingReservations.ToDictionary(x => x.BatchId, x => x.Reserved);
+
+        var eligible = branchBatches
+            .Select(b => new EligibleDeliveryBatchResult(
+                b.Id,
+                b.BatchNumber,
+                b.ProductionAt,
+                b.QuantityProduced,
+                Math.Max(0m, b.QuantityProduced - b.Used - reservedByBatch.GetValueOrDefault(b.Id, 0m)),
+                b.Unit,
+                MilkBatchStatus.Available))
+            .OrderBy(x => x.ProductionAt)
+            .ToArray();
+
+        var allocations = delivery.BatchAllocations
+            .OrderBy(a => a.CreatedAt)
+            .Select(a => new DeliveryBatchAllocationResult(
+                a.BatchId,
+                a.Batch?.BatchNumber ?? $"Batch #{a.BatchId}",
+                a.QuantityAllocated,
+                a.CreatedAt,
+                a.UpdatedAt))
+            .ToArray();
+
+        return new DeliveryBatchAllocationsResult(eligible, allocations, required);
+    }
+
+    public async Task<DeliveryResult> SaveBatchAllocationsAsync(
+        DeliveryActor actor,
+        Guid deliveryId,
+        SaveDeliveryBatchAllocationsRequest request,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteSerializableAsync(async () =>
+        {
+            var delivery = await FindAsync(deliveryId, cancellationToken);
+            EnsureBranchAccess(actor, delivery.BranchId);
+            EnsureAllocatable(delivery);
+
+            var required = RequiredQuantityFor(delivery);
+            ValidateAllocations(request.Allocations, required);
+
+            var batchIds = request.Allocations.Select(a => a.BatchId).Distinct().ToArray();
+            var batches = await dbContext.MilkBatches
+                .Where(x => x.BranchId == delivery.BranchId && batchIds.Contains(x.Id))
+                .ToListAsync(cancellationToken);
+            if (batches.Count != batchIds.Length)
+            {
+                throw new ValidationAppException(
+                    "One or more selected batches do not exist for this branch.", "allocations");
+            }
+
+            var now = timeProvider.Now;
+            var existing = await dbContext.DeliveryBatchAllocations
+                .Where(x => x.DeliveryId == delivery.Id)
+                .ToListAsync(cancellationToken);
+
+            // Concurrency-safe reservation check. Runs inside an IsolationLevel.Serializable
+            // transaction: the aggregation queries below hold range locks on the scanned
+            // Batch/Allocation ranges, so two managers cannot both over-allocate a shared
+            // batch. "Available" = produced - used - pending allocations of other
+            // deliveries - this delivery's current allocation on the batch.
+            foreach (var batch in batches)
+            {
+                var requested = request.Allocations
+                    .Where(a => a.BatchId == batch.Id)
+                    .Sum(a => a.QuantityAllocated);
+
+                var used = await dbContext.MilkUsages
+                    .Where(x => x.BatchId == batch.Id)
+                    .SumAsync(x => (decimal?)x.QuantityUsed, cancellationToken) ?? 0m;
+
+                var reservedByOthers = await dbContext.DeliveryBatchAllocations
+                    .Where(a => a.BatchId == batch.Id && a.DeliveryId != delivery.Id)
+                    .Where(a => a.Delivery.Status != DeliveryStatus.Delivered && a.Delivery.Status != DeliveryStatus.Failed)
+                    .SumAsync(a => (decimal?)a.QuantityAllocated, cancellationToken) ?? 0m;
+
+                var currentOnBatch = existing
+                    .Where(a => a.BatchId == batch.Id)
+                    .Sum(a => a.QuantityAllocated);
+
+                var available = batch.QuantityProduced - used - reservedByOthers - currentOnBatch;
+                if (requested > available)
+                {
+                    throw new BusinessRuleException(
+                        $"Batch {batch.BatchNumber} has only {Math.Max(0m, available):0.###} L available to allocate " +
+                        $"(requested {requested:0.###} L).");
+                }
+            }
+
+            dbContext.DeliveryBatchAllocations.RemoveRange(existing);
+            foreach (var allocation in request.Allocations)
+            {
+                dbContext.DeliveryBatchAllocations.Add(
+                    new DeliveryBatchAllocation(delivery.Id, allocation.BatchId, allocation.QuantityAllocated));
+            }
+
+            AddAudit(
+                actor.UserId,
+                "DELIVERY.BATCH_ALLOCATIONS",
+                "Delivery",
+                delivery.PublicId.ToString(),
+                existing.Select(a => new { a.BatchId, a.QuantityAllocated }).ToArray(),
+                request.Allocations.Select(a => new { a.BatchId, a.QuantityAllocated }).ToArray(),
+                null,
+                now);
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
+        return await PublishChangedAsync(deliveryId, cancellationToken);
+    }
+
+    private static void EnsureAllocatable(Delivery delivery)
+    {
+        if (delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed)
+        {
+            throw new BusinessRuleException(
+                "Batch allocations cannot be changed after a delivery has been completed or failed.");
+        }
+    }
+
+    private static decimal RequiredQuantityFor(Delivery delivery) =>
+        delivery.Order is not null
+            ? delivery.Order.Items.Sum(x => x.Quantity)
+            : delivery.SubscriptionDelivery?.Quantity ?? 0m;
+
+    private static void ValidateAllocations(
+        IReadOnlyCollection<DeliveryBatchAllocationRequest> allocations,
+        decimal required)
+    {
+        if (allocations is null || allocations.Count == 0)
+        {
+            throw new ValidationAppException("At least one batch allocation is required.", "allocations");
+        }
+
+        if (allocations.Select(a => a.BatchId).Distinct().Count() != allocations.Count)
+        {
+            throw new ValidationAppException("A batch cannot be allocated more than once.", "allocations");
+        }
+
+        var total = 0m;
+        foreach (var allocation in allocations)
+        {
+            if (allocation.QuantityAllocated <= 0)
+            {
+                throw new ValidationAppException(
+                    "Allocation quantity must be greater than zero.", "allocations");
+            }
+
+            if (decimal.Round(allocation.QuantityAllocated, 3) != allocation.QuantityAllocated)
+            {
+                throw new ValidationAppException(
+                    "Allocation quantity cannot exceed three decimal places.", "allocations");
+            }
+
+            total += allocation.QuantityAllocated;
+        }
+
+        if (decimal.Round(total, 3) != decimal.Round(required, 3))
+        {
+            throw new ValidationAppException(
+                $"The allocation total ({total:0.###} L) must equal the delivery requirement ({required:0.###} L).",
+                "allocations");
+        }
     }
 
     public async Task<DeliveryResult> FailAsync(
@@ -837,6 +1123,7 @@ public sealed class DeliveryService(
         .Include(x => x.AssignedEmployee)
         .Include(x => x.Assignments).ThenInclude(x => x.Employee)
         .Include(x => x.Assignments).ThenInclude(x => x.AssignedByUser)
+        .Include(x => x.BatchAllocations).ThenInclude(x => x.Batch)
         .Include(x => x.Otps)
         .Include(x => x.Locations);
 
@@ -1045,6 +1332,12 @@ public sealed class DeliveryService(
                 x.AssignedByUser.PublicId,
                 x.AssignedAt,
                 x.Reason)).ToArray(),
+            delivery.BatchAllocations.OrderBy(x => x.CreatedAt).Select(x => new DeliveryBatchAllocationResult(
+                x.BatchId,
+                x.Batch?.BatchNumber ?? $"Batch #{x.BatchId}",
+                x.QuantityAllocated,
+                x.CreatedAt,
+                x.UpdatedAt)).ToArray(),
             delivery.SubscriptionDelivery?.Slot,
             delivery.SubscriptionDelivery?.Quantity,
             delivery.Order is null

@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/widgets/country_code_mobile_field.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +15,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
+  final _countryKey = GlobalKey<CountryCodeMobileFieldState>();
   final _mobileController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
@@ -98,24 +100,18 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       },
                     ),
                     const SizedBox(height: 16),
-                    TextFormField(
+                    CountryCodeMobileField(
+                      key: _countryKey,
                       controller: _mobileController,
                       enabled: !busy,
-                      keyboardType: TextInputType.phone,
-                      decoration: const InputDecoration(
-                        labelText: 'Mobile number (optional)',
-                        prefixIcon: Icon(Icons.phone_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        final mobile = value?.trim() ?? '';
-                        if (mobile.isEmpty &&
+                      optional: true,
+                      label: 'Mobile number (optional)',
+                      validator: (canonical) {
+                        if (canonical == null &&
                             _emailController.text.trim().isEmpty) {
                           return 'Enter an email address or mobile number.';
                         }
-                        return mobile.isEmpty || mobile.length >= 8
-                            ? null
-                            : 'Enter a valid mobile number.';
+                        return null;
                       },
                     ),
                     const SizedBox(height: 16),
@@ -171,7 +167,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                       label: const Text('Create account'),
                     ),
                     TextButton(
-                      onPressed: busy ? null : () => context.go('/login'),
+                      onPressed: busy ? null : () => context.go(_withRedirect('/login')),
                       child: const Text('Back to sign in'),
                     ),
                   ],
@@ -184,14 +180,24 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     );
   }
 
+  /// Threads a sanitized [redirectTo] return-intent (e.g. `/login?redirectTo=/checkout`)
+  /// across the auth screens so the post-auth landing is preserved.
+  String _withRedirect(String path) {
+    final redirect = GoRouterState.of(context).uri.queryParameters['redirectTo'];
+    return redirect == null || redirect.isEmpty
+        ? path
+        : '$path?redirectTo=${Uri.encodeQueryComponent(redirect)}';
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final mobile = _countryKey.currentState?.canonicalValue;
     await ref
         .read(sessionControllerProvider.notifier)
         .register(
           displayName: _nameController.text,
           email: _emailController.text,
-          mobile: _mobileController.text,
+          mobile: mobile,
           password: _passwordController.text,
         );
   }
