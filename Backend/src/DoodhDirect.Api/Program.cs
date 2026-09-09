@@ -31,6 +31,8 @@ LocalDotEnvLoader.Load(
     builder.Environment.IsDevelopment());
 const string corsPolicyName = "DoodhDirectWeb";
 
+const string CloudflareCorsPolicy = "AllowCloudflareTunnels";
+
 builder.Host.UseSerilog((context, services, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration)
     .ReadFrom.Services(services)
@@ -86,6 +88,7 @@ builder.Services.AddCors(options =>
         policy.AllowAnyHeader();
     });
 });
+
 
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment);
 builder.Services.AddProblemDetails();
