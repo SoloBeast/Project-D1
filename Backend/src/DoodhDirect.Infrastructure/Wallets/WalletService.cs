@@ -58,23 +58,27 @@ public sealed class WalletService(
             .ToListAsync(cancellationToken);
     }
 
-    public Task<WalletTransactionResult> TopUpAsync(
+    public async Task<WalletTransactionResult> CreditWalletTopUpAsync(
         long customerId,
-        WalletTopUpRequest request,
+        long paymentId,
+        decimal amount,
+        string idempotencyKey,
         CancellationToken cancellationToken)
     {
-        ValidatePositiveAmount(request.Amount, nameof(request.Amount));
-        ValidateIdempotencyKey(request.IdempotencyKey);
+        ValidatePositiveAmount(amount, nameof(amount));
+        ValidateIdempotencyKey(idempotencyKey);
+        await EnsureWalletTopUpPaymentReferenceAsync(customerId, paymentId, cancellationToken);
 
-        return MutateAsync(
+        return await MutateAsync(
             customerId,
-            request.IdempotencyKey,
+            idempotencyKey,
             wallet => wallet.Credit(
                 WalletTransactionType.TopUp,
-                request.Amount,
-                request.IdempotencyKey,
+                amount,
+                idempotencyKey,
                 "Wallet top-up",
-                timeProvider.Now),
+                timeProvider.Now,
+                paymentId),
             null,
             cancellationToken);
     }
@@ -397,6 +401,24 @@ public sealed class WalletService(
         {
             throw new NotFoundException(
                 "The payment reference was not found for this customer and subscription.");
+        }
+    }
+
+    private async Task EnsureWalletTopUpPaymentReferenceAsync(
+        long customerId,
+        long paymentId,
+        CancellationToken cancellationToken)
+    {
+        var validReference = await dbContext.Payments.AnyAsync(
+            x => x.Id == paymentId &&
+                x.CustomerId == customerId &&
+                x.OrderId == null &&
+                x.SubscriptionId == null,
+            cancellationToken);
+        if (!validReference)
+        {
+            throw new NotFoundException(
+                "The wallet top-up payment reference was not found for this customer.");
         }
     }
 

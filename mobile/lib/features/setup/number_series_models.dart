@@ -201,7 +201,8 @@ class CreateNumberSeriesRequest {
   };
 }
 
-/// Payload for updating an existing series.
+/// Payload for updating an existing series. `scopeKey` is optional: when supplied
+/// (and non-empty) it moves the series to that scope, subject to backend validation.
 class UpdateNumberSeriesRequest {
   const UpdateNumberSeriesRequest({
     required this.description,
@@ -209,6 +210,7 @@ class UpdateNumberSeriesRequest {
     required this.startingNumber,
     required this.incrementBy,
     required this.resetPolicy,
+    this.scopeKey,
   });
 
   final String description;
@@ -216,6 +218,7 @@ class UpdateNumberSeriesRequest {
   final int startingNumber;
   final int incrementBy;
   final NumberSeriesResetPolicy resetPolicy;
+  final String? scopeKey;
 
   Map<String, dynamic> toJson() => {
     'description': description,
@@ -223,6 +226,7 @@ class UpdateNumberSeriesRequest {
     'startingNumber': startingNumber,
     'incrementBy': incrementBy,
     'resetPolicy': resetPolicy.apiValue,
+    if (scopeKey != null && scopeKey!.isNotEmpty) 'scopeKey': scopeKey,
   };
 }
 

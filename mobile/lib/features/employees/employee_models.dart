@@ -134,6 +134,8 @@ class Employee {
     this.invitationExpiresAt,
     this.registeredAt,
     this.createdAt,
+    this.isArchived = false,
+    this.archivedAt,
   });
 
   factory Employee.fromJson(Map<String, dynamic> json) => Employee(
@@ -160,6 +162,10 @@ class Employee {
     createdAt: json['createdAt'] == null
         ? null
         : DateTime.tryParse(json['createdAt'] as String),
+    isArchived: json['isArchived'] as bool? ?? false,
+    archivedAt: json['archivedAt'] == null
+        ? null
+        : DateTime.tryParse(json['archivedAt'] as String),
   );
 
   final int id;
@@ -177,6 +183,8 @@ class Employee {
   final DateTime? invitationExpiresAt;
   final DateTime? registeredAt;
   final DateTime? createdAt;
+  final bool isArchived;
+  final DateTime? archivedAt;
 
   EmployeeRole? get assignableRole => EmployeeRole.fromApiCode(roleCode);
 
@@ -187,6 +195,31 @@ class Employee {
       : value is num
           ? value.toInt()
           : int.tryParse(value.toString());
+}
+
+/// Outcome of deleting an employee. The backend decides between a permanent
+/// delete and an archive: `isDeleted` means the row was removed, while
+/// `isArchived` means the employee carried dependent/historical records and was
+/// archived instead ([employee] then carries the archived record).
+class EmployeeDeleteResult {
+  const EmployeeDeleteResult({
+    required this.isDeleted,
+    required this.isArchived,
+    this.employee,
+  });
+
+  factory EmployeeDeleteResult.fromJson(Map<String, dynamic> json) =>
+      EmployeeDeleteResult(
+        isDeleted: json['isDeleted'] as bool? ?? false,
+        isArchived: json['isArchived'] as bool? ?? false,
+        employee: json['employee'] == null
+            ? null
+            : Employee.fromJson(json['employee'] as Map<String, dynamic>),
+      );
+
+  final bool isDeleted;
+  final bool isArchived;
+  final Employee? employee;
 }
 
 /// A branch option for the Create Employee screen. Unlike the public catalogue
@@ -230,15 +263,15 @@ class CreateEmployeeRequest {
   const CreateEmployeeRequest({
     required this.displayName,
     required this.mobile,
+    required this.email,
     required this.roleCode,
     required this.branchId,
-    this.email,
     this.sendInvitation = true,
   });
 
   final String displayName;
   final String mobile;
-  final String? email;
+  final String email;
   final String roleCode;
   final int? branchId;
   final bool sendInvitation;
@@ -246,7 +279,7 @@ class CreateEmployeeRequest {
   Map<String, dynamic> toJson() => {
     'displayName': displayName,
     'mobile': mobile,
-    if (email != null && email!.trim().isNotEmpty) 'email': email!.trim(),
+    'email': email.trim(),
     'roleCode': roleCode,
     if (branchId != null) 'branchId': branchId,
     'sendInvitation': sendInvitation,
@@ -301,7 +334,11 @@ class CreateEmployeeResult {
   final EmployeeInvitationResult? invitation;
 }
 
-/// A fresh invitation token. Returned exactly once by the backend.
+enum InvitationEmailDeliveryStatus { sent, skipped, failed }
+
+/// A fresh invitation token and the SMTP attempt outcome. Returned exactly once
+/// by the backend. A [InvitationEmailDeliveryStatus.sent] result means the SMTP
+/// relay accepted the message; final mailbox delivery is not guaranteed.
 class EmployeeInvitationResult {
   const EmployeeInvitationResult({
     required this.invitationId,
@@ -309,6 +346,9 @@ class EmployeeInvitationResult {
     required this.employeeId,
     required this.token,
     required this.expiresAt,
+    this.emailDeliveryStatus = InvitationEmailDeliveryStatus.skipped,
+    this.emailDeliveryReason,
+    this.emailRecipient,
   });
 
   factory EmployeeInvitationResult.fromJson(Map<String, dynamic> json) =>
@@ -319,6 +359,13 @@ class EmployeeInvitationResult {
         token: json['token'] as String,
         expiresAt: DateTime.tryParse(json['expiresAt'] as String) ??
             DateTime.fromMillisecondsSinceEpoch(0),
+        emailDeliveryStatus: switch (json['emailDeliveryStatus']) {
+          'Sent' => InvitationEmailDeliveryStatus.sent,
+          'Failed' => InvitationEmailDeliveryStatus.failed,
+          _ => InvitationEmailDeliveryStatus.skipped,
+        },
+        emailDeliveryReason: json['emailDeliveryReason'] as String?,
+        emailRecipient: json['emailRecipient'] as String?,
       );
 
   final int invitationId;
@@ -326,6 +373,9 @@ class EmployeeInvitationResult {
   final int employeeId;
   final String token;
   final DateTime expiresAt;
+  final InvitationEmailDeliveryStatus emailDeliveryStatus;
+  final String? emailDeliveryReason;
+  final String? emailRecipient;
 }
 
 /// Result of verifying an invitation token before completing registration.
@@ -337,6 +387,8 @@ class EmployeeInvitationVerification {
     this.mobile,
     this.email,
     this.branchId,
+    this.branchCode,
+    this.branchName,
     this.reason,
   });
 
@@ -348,6 +400,10 @@ class EmployeeInvitationVerification {
         email: json['email'] as String?,
         roleCode: json['roleCode'] as String,
         branchId: (json['branchId'] as num?)?.toInt(),
+        // Server-supplied branch metadata (defensive for legacy responses that
+        // predate the enriched verification payload).
+        branchCode: json['branchCode'] as String?,
+        branchName: json['branchName'] as String?,
         reason: json['reason'] as String?,
       );
 
@@ -357,6 +413,15 @@ class EmployeeInvitationVerification {
   final String? email;
   final String roleCode;
   final int? branchId;
+
+  /// Branch code resolved from the invitation's persisted branch, when the
+  /// invitation carries one (e.g. null for SYSTEM_ADMIN invitations).
+  final String? branchCode;
+
+  /// Human-readable branch name resolved from the invitation's persisted
+  /// branch (e.g. "Dabua" / "NIT3"). This is authoritative and read-only; the
+  /// invitee never selects or edits the branch.
+  final String? branchName;
   final String? reason;
 }
 

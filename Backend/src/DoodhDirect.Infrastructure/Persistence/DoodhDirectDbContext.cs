@@ -54,6 +54,7 @@ public sealed class DoodhDirectDbContext(
     public DbSet<SubscriptionDelivery> SubscriptionDeliveries => Set<SubscriptionDelivery>();
     public DbSet<Delivery> Deliveries => Set<Delivery>();
     public DbSet<DeliveryAssignment> DeliveryAssignments => Set<DeliveryAssignment>();
+    public DbSet<DeliveryBatchAllocation> DeliveryBatchAllocations => Set<DeliveryBatchAllocation>();
     public DbSet<MilkProduction> MilkProductions => Set<MilkProduction>();
     public DbSet<MilkBatch> MilkBatches => Set<MilkBatch>();
     public DbSet<MilkUsage> MilkUsages => Set<MilkUsage>();
@@ -106,6 +107,7 @@ public sealed class DoodhDirectDbContext(
         ConfigureSubscriptionDelivery(modelBuilder);
         ConfigureDelivery(modelBuilder, usesSqlite);
         ConfigureDeliveryAssignment(modelBuilder);
+        ConfigureDeliveryBatchAllocation(modelBuilder, usesSqlite);
         ConfigureMilkProduction(modelBuilder, usesSqlite);
         ConfigureMilkBatch(modelBuilder, usesSqlite);
         ConfigureMilkUsage(modelBuilder, usesSqlite);
@@ -219,10 +221,14 @@ public sealed class DoodhDirectDbContext(
         entity.HasIndex(x => x.Email).IsUnique().HasFilter("[Email] IS NOT NULL");
         entity.HasIndex(x => new { x.UserType, x.CreatedAt, x.Id });
         entity.Property(x => x.LastLoginAt).HasColumnName("LastLoginAtUtc");
+        entity.Property(x => x.EmailVerifiedAt).HasColumnName("EmailVerifiedAtUtc");
+        entity.Property(x => x.ArchivedAt).HasColumnName("ArchivedAtUtc");
+        entity.Property(x => x.PendingMobile).HasMaxLength(20);
         entity.Property(x => x.UserType).HasConversion<string>().HasMaxLength(30).IsRequired();
         entity.Property(x => x.DisplayName).HasMaxLength(160);
         entity.Property(x => x.Mobile).HasMaxLength(20);
         entity.Property(x => x.Email).HasMaxLength(320);
+        entity.Property(x => x.PendingEmail).HasMaxLength(320);
         entity.Property(x => x.PasswordHash).HasMaxLength(500);
     }
 
@@ -287,13 +293,15 @@ public sealed class DoodhDirectDbContext(
         ConfigurePublicEntity(entity);
         entity.Property(x => x.Destination).HasMaxLength(320).IsRequired();
         entity.Property(x => x.Purpose).HasConversion<string>().HasMaxLength(30).IsRequired();
-        entity.Property(x => x.CodeHash).HasMaxLength(128).IsRequired();
         entity.Property(x => x.RequestedFromIp).HasMaxLength(64);
+        entity.Property(x => x.ReqId).HasMaxLength(64);
         entity.Property(x => x.CreatedAt).HasColumnName("CreatedAtUtc");
         entity.Property(x => x.ExpiresAt).HasColumnName("ExpiresAtUtc");
         entity.Property(x => x.ConsumedAt).HasColumnName("ConsumedAtUtc");
+        entity.Property(x => x.PasswordResetConsumedAt).HasColumnName("PasswordResetConsumedAtUtc");
         entity.HasIndex(x => new { x.Destination, x.Purpose, x.CreatedAt });
         entity.HasIndex(x => new { x.ExpiresAt, x.ConsumedAt });
+        entity.HasIndex(x => x.ReqId);
     }
 
     private static void ConfigureUserSession(ModelBuilder modelBuilder)
@@ -467,9 +475,8 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.Latitude).HasPrecision(9, 6).IsRequired();
         entity.Property(x => x.Longitude).HasPrecision(9, 6).IsRequired();
         entity.Property(x => x.ServiceRadiusKm).HasPrecision(8, 2);
-        entity.Property(x => x.BranchNumber).HasMaxLength(40);
+        entity.Property(x => x.ArchivedAt).HasColumnName("ArchivedAtUtc");
         entity.HasIndex(x => x.Code).IsUnique();
-        entity.HasIndex(x => x.BranchNumber).IsUnique().HasFilter("[BranchNumber] IS NOT NULL");
         entity.HasIndex(x => new { x.IsActive, x.Name });
     }
 
@@ -533,7 +540,7 @@ public sealed class DoodhDirectDbContext(
         entity.HasIndex(x => new { x.BranchId, x.Status, x.CreatedAt });
         entity.HasIndex(x => x.OrderNumber).IsUnique();
         entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
-        entity.HasOne(x => x.CustomerAddress).WithMany().HasForeignKey(x => x.CustomerAddressId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.CustomerAddress).WithMany().HasForeignKey(x => x.CustomerAddressId).IsRequired(false).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
     }
 
@@ -569,7 +576,8 @@ public sealed class DoodhDirectDbContext(
             table.HasCheckConstraint(
                 "CK_Payment_Target",
                 "([OrderId] IS NOT NULL AND [SubscriptionId] IS NULL) OR " +
-                "([OrderId] IS NULL AND [SubscriptionId] IS NOT NULL)");
+                "([OrderId] IS NULL AND [SubscriptionId] IS NOT NULL) OR " +
+                "([OrderId] IS NULL AND [SubscriptionId] IS NULL)");
         });
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).UseIdentityColumn();
@@ -847,6 +855,26 @@ public sealed class DoodhDirectDbContext(
         entity.HasOne(x => x.AssignedByUser).WithMany().HasForeignKey(x => x.AssignedByUserId).OnDelete(DeleteBehavior.Restrict);
     }
 
+    private static void ConfigureDeliveryBatchAllocation(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<DeliveryBatchAllocation>();
+        entity.ToTable("DeliveryBatchAllocation", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_DeliveryBatchAllocation_QuantityAllocated", "[QuantityAllocated] > 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.QuantityAllocated).HasPrecision(18, 3).IsRequired();
+        entity.HasIndex(x => new { x.DeliveryId, x.BatchId }).IsUnique();
+        entity.HasIndex(x => new { x.BatchId, x.DeliveryId });
+        entity.HasOne(x => x.Delivery).WithMany(x => x.BatchAllocations).HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Batch).WithMany(x => x.Allocations).HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
+    }
+
     private static void ConfigureDeliveryOtp(ModelBuilder modelBuilder)
     {
         var entity = modelBuilder.Entity<DeliveryOtp>();
@@ -957,11 +985,28 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.QuantityUsed).HasPrecision(18, 3).IsRequired();
         entity.Property(x => x.Purpose).HasMaxLength(120).IsRequired();
         entity.Property(x => x.Remarks).HasMaxLength(1000);
+        entity.Property(x => x.Source).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Unit).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.OrderNumber).HasMaxLength(40);
+        entity.Property(x => x.DeliveryNumber).HasMaxLength(40);
+        entity.Property(x => x.ProductName).HasMaxLength(160);
         entity.HasIndex(x => new { x.BranchId, x.UsedAt });
         entity.HasIndex(x => new { x.BatchId, x.UsedAt });
+        entity.HasIndex(x => x.Source);
         entity.HasOne<Branch>().WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Batch).WithMany(x => x.Usages).HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne<User>().WithMany().HasForeignKey(x => x.RecordedByUserId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Delivery).WithMany().HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.SubscriptionDelivery).WithMany().HasForeignKey(x => x.SubscriptionDeliveryId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.OrderItem).WithMany().HasForeignKey(x => x.OrderItemId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.DeliveryBatchAllocation)
+            .WithMany()
+            .HasForeignKey(x => x.DeliveryBatchAllocationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        entity.HasIndex(x => x.DeliveryBatchAllocationId)
+            .IsUnique()
+            .HasFilter("DeliveryBatchAllocationId IS NOT NULL");
     }
 
     private static void ConfigureMilkTest(ModelBuilder modelBuilder, bool usesSqlite)

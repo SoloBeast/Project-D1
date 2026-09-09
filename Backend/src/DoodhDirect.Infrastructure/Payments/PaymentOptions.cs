@@ -7,7 +7,7 @@ public sealed class PaymentOptions : IValidatableObject
     public const string SectionName = "Payments";
 
     [Required]
-    public string Provider { get; init; } = "Mock";
+    public string Provider { get; init; } = "Razorpay";
 
     [Required]
     public string Currency { get; init; } = "INR";
@@ -32,19 +32,21 @@ public sealed class PaymentOptions : IValidatableObject
         !string.IsNullOrWhiteSpace(RazorpayKeyId) &&
         !string.IsNullOrWhiteSpace(RazorpayKeySecret);
 
-    public bool IsValidForEnvironment(bool isDevelopment) =>
-        isDevelopment
-            ? IsMock || IsRazorpay && IsRazorpayConfigured
-            : IsRazorpay && IsRazorpayConfigured;
+    public bool IsValid =>
+        IsRazorpay && IsRazorpayConfigured;
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
-        if (!IsRazorpay && !string.Equals(Provider, "Mock", StringComparison.OrdinalIgnoreCase))
+        if (!IsRazorpay)
         {
             yield return new ValidationResult(
-                "Payments:Provider must be either 'Razorpay' or 'Mock'.",
+                "Payments:Provider must be 'Razorpay'. The Mock provider is only valid for automated test construction and is never accepted in runtime configuration.",
                 [nameof(Provider)]);
         }
+
+        // Razorpay credentials are intentionally NOT validated here. They may be supplied
+        // at runtime through the Integration settings store (Integration.Razorpay.*) rather
+        // than appsettings, so the application must boot even when static options are blank.
 
         if (Currency.Length != 3)
         {
@@ -52,8 +54,5 @@ public sealed class PaymentOptions : IValidatableObject
                 "Payments:Currency must be a three-letter ISO currency code.",
                 [nameof(Currency)]);
         }
-
-        // Missing Razorpay credentials produce an unavailable capability. Requests still
-        // fail closed, without substituting the Development Mock provider.
     }
 }

@@ -233,10 +233,22 @@ class EmployeeController extends Notifier<EmployeeState> {
       if (token != _token) return null;
       final employees = await _repository.list(token);
       if (token != _token) return null;
+      final recipient = invitation.emailRecipient;
+      final savedMessage = switch (invitation.emailDeliveryStatus) {
+        InvitationEmailDeliveryStatus.sent => recipient == null
+            ? 'Invitation link generated and accepted by the SMTP relay.'
+            : 'Invitation link generated and email accepted for $recipient.',
+        InvitationEmailDeliveryStatus.skipped =>
+          'Invitation link generated, but email was not sent: '
+              '${invitation.emailDeliveryReason ?? 'SMTP delivery is not configured.'}',
+        InvitationEmailDeliveryStatus.failed =>
+          'Invitation link generated, but email delivery failed: '
+              '${invitation.emailDeliveryReason ?? 'Unknown SMTP error.'}',
+      };
       state = state.copyWith(
         employees: employees,
         isSaving: false,
-        savedMessage: 'Invitation resent.',
+        savedMessage: savedMessage,
         lastInvitation: invitation,
       );
       return invitation;
@@ -289,6 +301,45 @@ class EmployeeController extends Notifier<EmployeeState> {
     }
   }
 
+  /// Deletes a deactivated employee (admin/owner) and refreshes the list. The
+  /// backend decides between a permanent delete and an archive: only inactive
+  /// employees can be deleted, and accounts referenced by retained operational
+  /// history are archived instead (both outcomes leave the normal employee
+  /// list, which excludes archived rows).
+  Future<bool> deleteEmployee(int employeeId) async {
+    final token = _token;
+    if (token == null) return false;
+
+    state = state.copyWith(isSaving: true, clearError: true, clearSaved: true);
+    try {
+      final result = await _repository.delete(token, employeeId);
+      if (token != _token) return false;
+      final employees = await _repository.list(token);
+      if (token != _token) return false;
+      state = state.copyWith(
+        employees: employees,
+        isSaving: false,
+        savedMessage: result.isArchived
+            ? 'Employee archived.'
+            : 'Employee deleted.',
+      );
+      return true;
+    } on ApiException catch (error) {
+      state = state.copyWith(
+        isSaving: false,
+        errorMessage: error.message,
+        fieldErrors: _fieldErrors(error),
+      );
+      return false;
+    } on Object {
+      state = state.copyWith(
+        isSaving: false,
+        errorMessage: 'Unable to delete the employee. Check your connection and try again.',
+      );
+      return false;
+    }
+  }
+
   // ---- Invitee-facing flow (unauthenticated) ----
 
   /// Sends the OTP for the invitation flow (`purpose: 3`). This is the only
@@ -298,7 +349,6 @@ class EmployeeController extends Notifier<EmployeeState> {
       isSendingOtp: true,
       clearError: true,
       clearSaved: true,
-      clearVerification: true,
     );
     try {
       await _repository.sendInvitationOtp(mobile);

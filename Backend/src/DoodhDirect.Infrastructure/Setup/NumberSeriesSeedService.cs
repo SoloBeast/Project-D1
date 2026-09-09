@@ -17,7 +17,6 @@ public sealed class NumberSeriesSeedService(DoodhDirectDbContext dbContext)
 {
     public const string CustomerCode = "CUSTOMER";
     public const string OrderCode = "ORDER";
-    public const string BranchCode = "BRANCH";
     public const string DeliveryCode = "DELIVERY";
 
     public async Task SeedAsync(CancellationToken cancellationToken)
@@ -50,12 +49,6 @@ public sealed class NumberSeriesSeedService(DoodhDirectDbContext dbContext)
             await EnsureScopedOrderSeriesForAllBranchesAsync(cancellationToken);
 
             await UpgradeLegacyScopedOrderSeriesAsync(cancellationToken);
-
-            await EnsureSeriesAsync(
-                BranchCode,
-                "Branch codes",
-                "BR/{NUMBER:000}",
-                cancellationToken);
 
             await EnsureSeriesAsync(
                 DeliveryCode,
@@ -219,7 +212,10 @@ public sealed class NumberSeriesSeedService(DoodhDirectDbContext dbContext)
                 // Fixed India-local stamp keeps seeding free of a wall-clock dependency;
                 // mirrors the legacy-series deactivation above.
                 new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Unspecified),
-                updatedByUserId: null);
+                updatedByUserId: null,
+                // Preserve the per-branch scope — reconfiguring in place must not
+                // collapse the row back to the legacy global scope.
+                series.ScopeKey);
         }
 
         if (legacyRows.Count > 0)

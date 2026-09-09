@@ -1,8 +1,4 @@
 /// Branch record returned by the Branch Management module.
-///
-/// [branchNumber] is allocated server-side from the centralized `BRANCH`
-/// numbering series. The client never generates or submits a branch number;
-/// it is always read-only and displayed from the backend response.
 class Branch {
   const Branch({
     required this.publicId,
@@ -18,9 +14,10 @@ class Branch {
     required this.longitude,
     required this.serviceRadiusKm,
     required this.isActive,
-    required this.branchNumber,
     required this.createdAt,
     required this.updatedAt,
+    this.isArchived = false,
+    this.archivedAt,
   });
 
   factory Branch.fromJson(Map<String, dynamic> json) => Branch(
@@ -37,7 +34,8 @@ class Branch {
     longitude: (json['longitude'] as num?)?.toDouble() ?? 0,
     serviceRadiusKm: (json['serviceRadiusKm'] as num?)?.toDouble(),
     isActive: json['isActive'] as bool,
-    branchNumber: json['branchNumber'] as String?,
+    isArchived: json['isArchived'] as bool? ?? false,
+    archivedAt: _parseDate(json['archivedAt']),
     createdAt: _parseDate(json['createdAt']),
     updatedAt: _parseDate(json['updatedAt']),
   );
@@ -55,7 +53,8 @@ class Branch {
   final double longitude;
   final double? serviceRadiusKm;
   final bool isActive;
-  final String? branchNumber;
+  final bool isArchived;
+  final DateTime? archivedAt;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -72,31 +71,57 @@ class Branch {
     return parts.isEmpty ? 'No address recorded' : parts.join(', ');
   }
 
-  Branch copyWith({bool? isActive}) => Branch(
-    publicId: publicId,
-    code: code,
-    name: name,
-    addressLine1: addressLine1,
-    addressLine2: addressLine2,
-    locality: locality,
-    city: city,
-    state: state,
-    pinCode: pinCode,
-    latitude: latitude,
-    longitude: longitude,
-    serviceRadiusKm: serviceRadiusKm,
-    isActive: isActive ?? this.isActive,
-    branchNumber: branchNumber,
-    createdAt: createdAt,
-    updatedAt: updatedAt,
-  );
+  Branch copyWith({bool? isActive, bool? isArchived, DateTime? archivedAt}) =>
+      Branch(
+        publicId: publicId,
+        code: code,
+        name: name,
+        addressLine1: addressLine1,
+        addressLine2: addressLine2,
+        locality: locality,
+        city: city,
+        state: state,
+        pinCode: pinCode,
+        latitude: latitude,
+        longitude: longitude,
+        serviceRadiusKm: serviceRadiusKm,
+        isActive: isActive ?? this.isActive,
+        isArchived: isArchived ?? this.isArchived,
+        archivedAt: archivedAt ?? this.archivedAt,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+      );
+}
+
+/// Outcome of deleting a branch. The backend decides between a permanent
+/// delete and an archive: `isDeleted` means the row was removed, while
+/// `isArchived` means the branch carried dependent/historical records and was
+/// archived instead ([branch] then carries the archived record).
+class BranchDeleteResult {
+  const BranchDeleteResult({
+    required this.isDeleted,
+    required this.isArchived,
+    this.branch,
+  });
+
+  factory BranchDeleteResult.fromJson(Map<String, dynamic> json) =>
+      BranchDeleteResult(
+        isDeleted: json['isDeleted'] as bool? ?? false,
+        isArchived: json['isArchived'] as bool? ?? false,
+        branch: json['branch'] == null
+            ? null
+            : Branch.fromJson(json['branch'] as Map<String, dynamic>),
+      );
+
+  final bool isDeleted;
+  final bool isArchived;
+  final Branch? branch;
 }
 
 /// Request used to create or update a branch.
 ///
 /// [code] is the stable business key referenced by order allocations and
-/// scoped numbering series. [branchNumber] is never part of the request — it
-/// is allocated by the backend from the `BRANCH` numbering series.
+/// scoped numbering series.
 class UpsertBranchRequest {
   const UpsertBranchRequest({
     required this.code,

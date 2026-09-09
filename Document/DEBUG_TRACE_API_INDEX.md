@@ -9,7 +9,7 @@ Base URL is `DOOHDIRECT_API_URL`, defaulting to `http://localhost:5209` in [auth
 | Customer | `/customers/me/profile`, `/customers/me/addresses` | Own profile/address permissions |
 | Orders | `/orders/checkout-preview`, `/orders`, `/orders/{id}`, `/orders/{id}/cancel`; `/admin/orders` | Own versus administrative read |
 | Payments | `/payments/create`, `/payments/verify`, `/payments/{id}`, `/payments/{id}/refund`, `/webhooks/razorpay` | Own payment, refund permission, webhook signature/config |
-| Wallet | `/wallet`, `/wallet/transactions`, `/wallet/topup`, `/admin/customers/{id}/wallet/adjust` | Own wallet versus adjustment permission |
+| Wallet | `/wallet`, `/wallet/top-up`, `/wallet/transactions`, `/admin/customers/{id}/wallet/adjust` | Own wallet versus adjustment permission |
 | Subscriptions | `/subscriptions`, `/subscriptions/{id}`, `/subscriptions/{id}/retry-payment`, `/subscriptions/{id}/skip`, `/subscriptions/{id}/calendar`, `/pause`, `/resume`, `/cancel` | Own subscription permissions |
 | Deliveries | `/deliveries`, `/deliveries/{id}`, `/delivery/today`, `/delivery/{id}`, `/delivery-management/branches/{branchId}`, `/delivery-management/{id}` | Own, assigned, or branch scope |
 | Milk tests | `/deliveries/{id}/milk-test`, `/delivery/{id}/milk-test`, `/milk-tests/{id}/images`, `/complete`, `/confirm`, `/reject` | Customer ownership or assigned staff |

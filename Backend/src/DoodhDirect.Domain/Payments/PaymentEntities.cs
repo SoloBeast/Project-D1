@@ -68,9 +68,9 @@ public sealed class Payment : AuditableEntity
         string idempotencyKey,
         DateTime expiresAt)
     {
-        if ((orderId is > 0) == (subscriptionId is > 0))
+        if (orderId is > 0 && subscriptionId is > 0)
         {
-            throw new ArgumentException("A payment must reference exactly one order or subscription.");
+            throw new ArgumentException("A payment cannot reference both an order and a subscription.");
         }
         if (customerId <= 0) throw new ArgumentOutOfRangeException(nameof(customerId));
         if (amount <= 0) throw new ArgumentOutOfRangeException(nameof(amount));
@@ -96,6 +96,15 @@ public sealed class Payment : AuditableEntity
         string idempotencyKey,
         DateTime expiresAt) =>
         new(null, subscriptionId, customerId, method, amount, currency, idempotencyKey, expiresAt);
+
+    public static Payment CreateForWalletTopUp(
+        long customerId,
+        PaymentMethod method,
+        decimal amount,
+        string currency,
+        string idempotencyKey,
+        DateTime expiresAt) =>
+        new(null, null, customerId, method, amount, currency, idempotencyKey, expiresAt);
 
     public long? OrderId { get; private set; }
     public long? SubscriptionId { get; private set; }

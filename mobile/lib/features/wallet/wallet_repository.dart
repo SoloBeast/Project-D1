@@ -1,5 +1,6 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 
+import '../payments/payment_models.dart';
 import 'wallet_models.dart';
 
 class WalletRepository {
@@ -23,17 +24,17 @@ class WalletRepository {
         .toList(growable: false);
   }
 
-  Future<WalletTransaction> topUp({
+  Future<PaymentDetails> topUp({
     required String token,
     required double amount,
     required String idempotencyKey,
   }) async {
     final response = await api.post(
-      '/api/v1/wallet/topup',
-      body: {'amount': amount},
+      '/api/v1/wallet/top-up',
+      body: <String, dynamic>{'amount': amount},
       accessToken: token,
-      extraHeaders: {'Idempotency-Key': idempotencyKey},
+      extraHeaders: <String, String>{'Idempotency-Key': idempotencyKey},
     );
-    return WalletTransaction.fromJson(response['data'] as Map<String, dynamic>);
+    return PaymentDetails.fromJson(response['data'] as Map<String, dynamic>);
   }
 }

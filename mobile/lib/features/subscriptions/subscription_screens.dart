@@ -1,4 +1,3 @@
-import 'package:doodh_direct_mobile/core/config/app_config.dart';
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
@@ -228,11 +227,6 @@ class _SubscriptionSetupScreenState
                 value: PaymentMethod.razorpay,
                 title: Text('Razorpay'),
               ),
-              if (devToolsEnabled)
-                const RadioListTile(
-                  value: PaymentMethod.development,
-                  title: Text('Development payment'),
-                ),
             ],
           ),
         ),
@@ -626,11 +620,6 @@ class _SubscriptionDetailScreenState
                   value: PaymentMethod.razorpay,
                   title: Text('Razorpay'),
                 ),
-                if (devToolsEnabled)
-                  const RadioListTile(
-                    value: PaymentMethod.development,
-                    title: Text('Development payment'),
-                  ),
               ],
             ),
           ),

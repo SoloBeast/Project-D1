@@ -29,9 +29,51 @@ void main() {
       expect(production.batch.status, MilkBatchStatus.available);
       expect(production.shift, 'Morning');
       expect(usage.purpose, 'Dispatch');
+      expect(usage.source, MilkUsageSource.manual);
+      expect(usage.isAutomatic, isFalse);
+      expect(usage.batchPublicId, 'batch-1');
+      expect(usage.batchNumber, 'MB-20260817-001');
+      expect(usage.orderNumber, isNull);
+      expect(usage.deliveryNumber, isNull);
+      expect(usage.productName, isNull);
       expect(availability.quantityProduced - availability.quantityUsed, 18.75);
       expect(dashboard.productionEntryCount, 2);
       expect(MilkBatchStatus.fromApi('EXHAUSTED'), MilkBatchStatus.exhausted);
+    });
+
+    test('parses automatic consumption with null batch reference', () {
+      final usage = MilkUsage.fromJson(automaticUsageJson());
+
+      expect(usage.source, MilkUsageSource.order);
+      expect(usage.isAutomatic, isTrue);
+      expect(usage.batchPublicId, isNull);
+      expect(usage.batchNumber, isNull);
+      expect(usage.orderNumber, 'ORD-DEL-001');
+      expect(usage.deliveryNumber, 'DEL/000001');
+      expect(usage.productName, 'Fresh Milk');
+      expect(usage.quantityUsed, 2.0);
+      expect(usage.unit, 'L');
+      expect(usage.purpose, 'Automatic Order Consumption');
+    });
+
+    test('maps usage sources tolerantly and builds reference lines', () {
+      expect(MilkUsageSource.fromApi('Manual'), MilkUsageSource.manual);
+      expect(MilkUsageSource.fromApi('ORDER'), MilkUsageSource.order);
+      expect(MilkUsageSource.fromApi('Subscription'), MilkUsageSource.subscription);
+      expect(MilkUsageSource.fromApi(null), MilkUsageSource.unknown);
+      expect(MilkUsageSource.fromApi('surprise'), MilkUsageSource.unknown);
+      expect(MilkUsageSource.manual.label, 'Manual');
+      expect(MilkUsageSource.order.label, 'Order');
+      expect(MilkUsageSource.subscription.label, 'Subscription');
+
+      final automatic = MilkUsage.fromJson(automaticUsageJson());
+      expect(
+        usageReference(automatic),
+        'Fresh Milk • Order ORD-DEL-001 • Delivery DEL/000001',
+      );
+
+      final manual = MilkUsage.fromJson(usageJson());
+      expect(usageReference(manual), isEmpty);
     });
 
     test(
@@ -391,6 +433,39 @@ void main() {
         );
       },
     );
+
+    testWidgets(
+      'usage screen shows automatic consumption with source and references',
+      (tester) async {
+        final controller = _SeededDairyController(
+          DairyState(
+            usage: [
+              MilkUsage.fromJson(automaticUsageJson()),
+              MilkUsage.fromJson(usageJson()),
+            ],
+          ),
+        );
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [dairyControllerProvider.overrideWith(() => controller)],
+            child: const MaterialApp(
+              home: DairyUsageScreen(branchId: 7),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('2 L'), findsOneWidget);
+        expect(find.text('5.75 L'), findsOneWidget);
+        expect(find.textContaining('Fresh Milk'), findsOneWidget);
+        expect(find.textContaining('Order ORD-DEL-001'), findsOneWidget);
+        expect(find.textContaining('Delivery DEL/000001'), findsOneWidget);
+        expect(find.textContaining('Order • Automatic Order Consumption'), findsOneWidget);
+        expect(find.textContaining('MB-20260817-001'), findsOneWidget);
+        expect(find.textContaining('Manual • Dispatch'), findsOneWidget);
+        expect(find.byIcon(Icons.receipt_long_outlined), findsOneWidget);
+      },
+    );
   });
 }
 
@@ -433,6 +508,28 @@ Map<String, dynamic> usageJson() => {
   'recordedByUserId': 51,
   'remarks': 'Route 1',
   'createdAt': '2026-08-17T04:46:00Z',
+  'source': 'Manual',
+  'orderNumber': null,
+  'deliveryNumber': null,
+  'productName': null,
+};
+
+Map<String, dynamic> automaticUsageJson() => {
+  'publicId': 'usage-2',
+  'batchPublicId': null,
+  'batchNumber': null,
+  'branchId': 7,
+  'usedAt': '2026-08-17T05:30:00Z',
+  'quantityUsed': 2.0,
+  'unit': 'L',
+  'purpose': 'Automatic Order Consumption',
+  'recordedByUserId': 51,
+  'remarks': null,
+  'createdAt': '2026-08-17T05:31:00Z',
+  'source': 'Order',
+  'orderNumber': 'ORD-DEL-001',
+  'deliveryNumber': 'DEL/000001',
+  'productName': 'Fresh Milk',
 };
 
 Map<String, dynamic> availabilityJson() => {

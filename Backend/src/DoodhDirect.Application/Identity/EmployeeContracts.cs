@@ -20,6 +20,8 @@ public sealed record EmployeeResult(
     long? BranchId,
     string? BranchName,
     bool IsActive,
+    bool IsArchived,
+    DateTime? ArchivedAt,
     EmployeeInvitationStatus? InvitationStatus,
     DateTime? InvitationExpiresAt,
     DateTime? RegisteredAt,
@@ -43,7 +45,7 @@ public sealed record EmployeeBranchOption(
 public sealed record CreateEmployeeRequest(
     string DisplayName,
     string Mobile,
-    string? Email,
+    string Email,
     string RoleCode,
     long? BranchId,
     bool SendInvitation = true,
@@ -66,16 +68,27 @@ public sealed record ResendEmployeeInvitationRequest(
     long InvitationId,
     DateTime? InvitationExpiresAt = null);
 
+public enum InvitationEmailDeliveryStatus
+{
+    Sent,
+    Skipped,
+    Failed
+}
+
 /// <summary>
 /// A fresh invitation token. The raw <see cref="Token"/> is returned exactly once; only its
-/// SHA-256 hash is stored.
+/// SHA-256 hash is stored. <see cref="EmailDeliveryStatus"/> reports the application's SMTP
+/// attempt; <c>Sent</c> means the SMTP relay accepted the message, not guaranteed inbox delivery.
 /// </summary>
 public sealed record EmployeeInvitationResult(
     long InvitationId,
     Guid InvitationPublicId,
     long EmployeeId,
     string Token,
-    DateTime ExpiresAt);
+    DateTime ExpiresAt,
+    InvitationEmailDeliveryStatus EmailDeliveryStatus = InvitationEmailDeliveryStatus.Skipped,
+    string? EmailDeliveryReason = null,
+    string? EmailRecipient = null);
 
 /// <summary>
 /// The outcome of creating an employee. When the administrator opted to send an invitation,
@@ -94,7 +107,9 @@ public sealed record EmployeeInvitationVerificationResult(
     string? Email,
     string RoleCode,
     long? BranchId,
-    string? Reason);
+    string? Reason,
+    string? BranchCode = null,
+    string? BranchName = null);
 
 public sealed record CompleteEmployeeRegistrationRequest(
     string Token,
@@ -108,6 +123,17 @@ public sealed record CompleteEmployeeRegistrationRequest(
 public sealed record CompleteEmployeeRegistrationResult(
     AuthSessionResult Session,
     EmployeeInvitationStatus InvitationStatus);
+
+/// <summary>
+/// Outcome of an administrative delete request for an employee. The server — never the client —
+/// decides whether the account was permanently deleted (<see cref="IsDeleted"/>) because nothing
+/// references it, or archived (<see cref="IsArchived"/> with the retained <see cref="Employee"/>)
+/// because operational or historical records still reference it.
+/// </summary>
+public sealed record EmployeeDeleteResult(
+    bool IsDeleted,
+    bool IsArchived,
+    EmployeeResult? Employee);
 
 /// <summary>
 /// Employee management service. All privileged operations require an authenticated actor
@@ -141,6 +167,19 @@ public interface IEmployeeService
     Task CancelInvitationAsync(
         long employeeId,
         long invitationId,
+        long actorUserId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes or archives a deactivated employee (admin/owner operation). The server decides
+    /// which action is taken: when no operational history references the account it is permanently
+    /// deleted — role assignments, sessions, refresh tokens, devices and notification preferences
+    /// are removed together with the account; when operational history (deliveries, notifications,
+    /// orders and similar) still references the employee the account is archived instead and kept
+    /// in the database so history continues to identify the employee.
+    /// </summary>
+    Task<EmployeeDeleteResult> DeleteAsync(
+        long employeeId,
         long actorUserId,
         CancellationToken cancellationToken);
 

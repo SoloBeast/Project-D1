@@ -250,6 +250,63 @@ void main() {
         expect(location.accuracyMetres, 5.5);
       },
     );
+
+    test('loads and saves batch allocations with bearer auth', () async {
+      final requests = <String>[];
+      final client = MockClient((request) async {
+        requests.add('${request.method} ${request.url.path}');
+        expect(request.headers['Authorization'], 'Bearer delivery-token');
+        if (request.method == 'GET') {
+          return successResponse(batchAllocationsJson());
+        }
+        expect(
+          request.url.path,
+          '/api/v1/delivery-management/delivery-1/batch-allocations',
+        );
+        expect(
+          jsonDecode(request.body),
+          {
+            'allocations': [
+              {'batchId': 1, 'quantityAllocated': 2},
+            ],
+          },
+        );
+        return successResponse(
+          deliveryDetailsJson(
+            status: 'Assigned',
+            batchAllocations: [batchAllocationJson()],
+          ),
+        );
+      });
+      final repository = testRepository(client);
+
+      final info = await repository.getBatchAllocations(
+        'delivery-token',
+        'delivery-1',
+      );
+      final details = await repository.saveBatchAllocations(
+        token: 'delivery-token',
+        deliveryId: 'delivery-1',
+        allocations: [
+          DeliveryBatchAllocation(
+            batchId: 1,
+            batchNumber: 'TEST-001',
+            quantityAllocated: 2,
+            allocatedAt: DateTime(2026, 8, 16, 8),
+            updatedAt: DateTime(2026, 8, 16, 8),
+          ),
+        ],
+      );
+
+      expect(info.totalRequiredQuantity, 2);
+      expect(info.eligibleBatches.single.quantityAvailable, 2);
+      expect(info.allocations.single.batchId, 1);
+      expect(details.batchAllocations.single.quantityAllocated, 2);
+      expect(requests, [
+        'GET /api/v1/delivery-management/delivery-1/batch-allocations',
+        'PUT /api/v1/delivery-management/delivery-1/batch-allocations',
+      ]);
+    });
   });
 
   group('delivery navigation', () {
@@ -640,6 +697,191 @@ void main() {
       expect(controller.assignedEmployeeId, 'employee-2');
       expect(controller.assignmentReason, 'Coverage');
     });
+
+    testWidgets('allocation section shows the empty state and stays editable', (
+      tester,
+    ) async {
+      final controller = _AllocationDeliveryController(
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              status: 'ReadyForAssignment',
+              assigned: false,
+            ),
+          ),
+        ),
+      );
+      await _pumpDeliveryScreen(
+        tester,
+        const DeliveryManagementDetailScreen(deliveryId: 'delivery-1'),
+        controller.initialState,
+        controller: controller,
+      );
+
+      expect(find.text('Batch allocations'), findsOneWidget);
+      expect(find.text('Set allocations'), findsOneWidget);
+      expect(find.text('No allocations yet'), findsOneWidget);
+      expect(
+        find.text(
+          'Select the milk batches that will fulfill this delivery before it is assigned.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('allocation section is read-only after the delivery completes', (
+      tester,
+    ) async {
+      final controller = _AllocationDeliveryController(
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              status: 'Delivered',
+              otpVerified: true,
+              batchAllocations: [batchAllocationJson()],
+            ),
+          ),
+        ),
+      );
+      await _pumpDeliveryScreen(
+        tester,
+        const DeliveryManagementDetailScreen(deliveryId: 'delivery-1'),
+        controller.initialState,
+        controller: controller,
+      );
+
+      expect(find.text('Set allocations'), findsNothing);
+      expect(find.text('TEST-001'), findsOneWidget);
+      expect(find.text('Allocated 2 L'), findsOneWidget);
+      expect(
+        find.text(
+          'These batches were consumed when the delivery was completed.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('failed deliveries show that no milk was consumed', (
+      tester,
+    ) async {
+      final controller = _AllocationDeliveryController(
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(
+            deliveryDetailsJson(status: 'Failed'),
+          ),
+        ),
+      );
+      await _pumpDeliveryScreen(
+        tester,
+        const DeliveryManagementDetailScreen(deliveryId: 'delivery-1'),
+        controller.initialState,
+        controller: controller,
+      );
+
+      expect(find.text('Set allocations'), findsNothing);
+      expect(
+        find.text('No milk was consumed for this delivery.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('manager selects a batch and saves exact allocations', (
+      tester,
+    ) async {
+      final controller = _AllocationDeliveryController(
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              status: 'ReadyForAssignment',
+              assigned: false,
+            ),
+          ),
+        ),
+        includeExistingAllocations: false,
+      );
+      await _pumpDeliveryScreen(
+        tester,
+        const DeliveryManagementDetailScreen(deliveryId: 'delivery-1'),
+        controller.initialState,
+        controller: controller,
+      );
+
+      await tester.tap(find.text('Set allocations'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Set batch allocations'), findsOneWidget);
+      expect(
+        find.text('Required 2 L · Allocated 0 L'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byType(Checkbox));
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), '2');
+      await tester.pump();
+
+      final saveButton = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Save allocations'),
+      );
+      expect(saveButton.onPressed, isNotNull);
+
+      await tester.tap(find.text('Save allocations'));
+      await tester.pumpAndSettle();
+
+      expect(controller.savedDeliveryId, 'delivery-1');
+      expect(controller.savedAllocations, hasLength(1));
+      expect(controller.savedAllocations!.single.batchId, 1);
+      expect(controller.savedAllocations!.single.quantityAllocated, 2);
+      expect(find.text('Batch allocations saved'), findsOneWidget);
+    });
+
+    testWidgets('allocation editor blocks save until totals match availability', (
+      tester,
+    ) async {
+      final controller = _AllocationDeliveryController(
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              status: 'ReadyForAssignment',
+              assigned: false,
+            ),
+          ),
+        ),
+        includeExistingAllocations: false,
+      );
+      await _pumpDeliveryScreen(
+        tester,
+        const DeliveryManagementDetailScreen(deliveryId: 'delivery-1'),
+        controller.initialState,
+        controller: controller,
+      );
+
+      await tester.tap(find.text('Set allocations'));
+      await tester.pumpAndSettle();
+
+      FilledButton saveButton() => tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Save allocations'),
+      );
+      expect(saveButton().onPressed, isNull);
+
+      await tester.tap(find.byType(Checkbox));
+      await tester.pump();
+
+      // Below the 2 L requirement.
+      await tester.enterText(find.byType(TextField), '1');
+      await tester.pump();
+      expect(saveButton().onPressed, isNull);
+
+      // Exceeds the available 2 L.
+      await tester.enterText(find.byType(TextField), '3');
+      await tester.pump();
+      expect(saveButton().onPressed, isNull);
+
+      // Exactly meets the requirement and availability.
+      await tester.enterText(find.byType(TextField), '2');
+      await tester.pump();
+      expect(saveButton().onPressed, isNotNull);
+    });
   });
 }
 
@@ -675,6 +917,7 @@ Map<String, dynamic> deliveryDetailsJson({
   String status = 'Assigned',
   bool otpVerified = false,
   bool assigned = true,
+  List<Map<String, dynamic>> batchAllocations = const [],
 }) => {
   'deliveryId': deliveryId,
   'sourceType': 'OneTimeOrder',
@@ -716,6 +959,47 @@ Map<String, dynamic> deliveryDetailsJson({
           },
         ]
       : <Map<String, dynamic>>[],
+  'batchAllocations': batchAllocations,
+};
+
+Map<String, dynamic> batchAllocationsJson({
+  bool includeAllocations = true,
+}) => {
+  'eligibleBatches': [
+    {
+      'batchId': 1,
+      'batchNumber': 'TEST-001',
+      'productionAt': '2026-08-16T06:00:00.000',
+      'quantityProduced': 2,
+      'quantityAvailable': 2,
+      'unit': 'L',
+      'status': 'Available',
+    },
+  ],
+  'allocations': includeAllocations
+      ? [
+          {
+            'batchId': 1,
+            'batchNumber': 'TEST-001',
+            'quantityAllocated': 2,
+            'allocatedAt': '2026-08-16T08:00:00.000',
+            'updatedAt': '2026-08-16T08:00:00.000',
+          },
+        ]
+      : <Map<String, dynamic>>[],
+  'totalRequiredQuantity': 2,
+};
+
+Map<String, dynamic> batchAllocationJson({
+  int batchId = 1,
+  String batchNumber = 'TEST-001',
+  double quantityAllocated = 2,
+}) => {
+  'batchId': batchId,
+  'batchNumber': batchNumber,
+  'quantityAllocated': quantityAllocated,
+  'allocatedAt': '2026-08-16T08:00:00.000',
+  'updatedAt': '2026-08-16T08:00:00.000',
 };
 
 http.Response successResponse(Object data) => http.Response(
@@ -746,7 +1030,7 @@ Future<void> _pumpDeliveryScreen(
   WidgetTester tester,
   Widget screen,
   DeliveryState state, {
-  _SeededDeliveryController? controller,
+  DeliveryController? controller,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -883,6 +1167,46 @@ class _SeededDeliveryController extends DeliveryController {
     assignedDeliveryId = id;
     assignedEmployeeId = employeeId;
     assignmentReason = reason;
+    return true;
+  }
+}
+
+class _AllocationDeliveryController extends DeliveryController {
+  _AllocationDeliveryController(
+    this.initialState, {
+    this.includeExistingAllocations = true,
+  });
+
+  final DeliveryState initialState;
+  final bool includeExistingAllocations;
+
+  String? savedDeliveryId;
+  List<DeliveryBatchAllocation>? savedAllocations;
+
+  @override
+  DeliveryState build() => initialState;
+
+  @override
+  Future<void> loadManagedDelivery(String id) async {}
+
+  @override
+  Future<bool> loadBatchAllocations(String id) async {
+    final info = DeliveryBatchAllocationsInfo.fromJson(
+      batchAllocationsJson(
+        includeAllocations: includeExistingAllocations,
+      ),
+    );
+    state = state.copyWith(batchAllocations: info);
+    return true;
+  }
+
+  @override
+  Future<bool> saveBatchAllocations(
+    String id,
+    List<DeliveryBatchAllocation> allocations,
+  ) async {
+    savedDeliveryId = id;
+    savedAllocations = allocations;
     return true;
   }
 }

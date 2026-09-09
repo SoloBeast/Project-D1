@@ -5,8 +5,7 @@ namespace DoodhDirect.Api.Middleware;
 
 public sealed class ExceptionHandlingMiddleware(
     RequestDelegate next,
-    ILogger<ExceptionHandlingMiddleware> logger,
-    IWebHostEnvironment environment)
+    ILogger<ExceptionHandlingMiddleware> logger)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -46,13 +45,6 @@ public sealed class ExceptionHandlingMiddleware(
         }
 
         var response = new ApiResponse<object>(false, null, message, errors);
-        if (environment.IsDevelopment() && statusCode >= 500)
-        {
-            response = response with
-            {
-                Errors = [.. errors, new ApiError("DEVELOPMENT_DETAIL", null, exception.Message)]
-            };
-        }
 
         context.Response.StatusCode = statusCode;
         context.Response.ContentType = "application/json";

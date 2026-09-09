@@ -36,6 +36,74 @@ public sealed class OrderServiceTests
     }
 
     [Fact]
+    public async Task PreviewAsync_UsesManualAddressWithoutCreatingProfileAddress()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        var request = harness.ManualRequest(harness.Product.PublicId, 1.5m);
+
+        var result = await harness.Service.PreviewAsync(
+            harness.Customer.Id, request, CancellationToken.None);
+
+        Assert.Null(result.AddressId);
+        Assert.Equal("Manual", result.AddressLabel);
+        Assert.Equal("2 Temporary Road", result.AddressLine1);
+        Assert.Equal(harness.NearBranch.PublicId, result.BranchId);
+        Assert.Equal(120m, result.PayableAmount);
+        Assert.Equal(1, await harness.Db.CustomerAddresses.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateAsync_PersistsManualSnapshotWithoutProfileAddressId()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        var request = harness.ManualRequest(harness.Product.PublicId, 1m);
+
+        var result = await harness.Service.CreateAsync(
+            harness.Customer.Id, request, "manual-checkout-key", CancellationToken.None);
+
+        Assert.Null(result.AddressId);
+        var stored = await harness.Db.Orders.SingleAsync();
+        Assert.Null(stored.CustomerAddressId);
+        Assert.Equal("2 Temporary Road", stored.AddressLine1Snapshot);
+        Assert.Equal("Call on arrival", stored.DeliveryInstructionsSnapshot);
+        Assert.Equal("Temporary Recipient", stored.ContactNameSnapshot);
+        Assert.Equal(12.9720m, stored.LatitudeSnapshot);
+        Assert.Equal(77.5950m, stored.LongitudeSnapshot);
+        Assert.Equal(1, await harness.Db.CustomerAddresses.CountAsync());
+    }
+
+    [Fact]
+    public async Task PreviewAsync_RejectsInvalidManualAddress()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        var validRequest = harness.ManualRequest(harness.Product.PublicId, 1m);
+        var request = validRequest with
+        {
+            ManualAddress = validRequest.ManualAddress! with { PinCode = "12AB" }
+        };
+
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.PreviewAsync(harness.Customer.Id, request, CancellationToken.None));
+
+        Assert.Equal("PinCode", exception.Field);
+    }
+
+    [Fact]
+    public async Task PreviewAsync_RequiresExactlyOneAddressSource()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        var request = new CheckoutRequest(
+            harness.Address.PublicId,
+            harness.ManualRequest(harness.Product.PublicId, 1m).ManualAddress,
+            [new OrderItemRequest(harness.Product.PublicId, 1m)]);
+
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.PreviewAsync(harness.Customer.Id, request, CancellationToken.None));
+
+        Assert.Equal("AddressId", exception.Field);
+    }
+
+    [Fact]
     public async Task PreviewAsync_RejectsAddressOwnedByAnotherCustomer()
     {
         await using var harness = await OrderHarness.CreateAsync();
@@ -238,7 +306,26 @@ public sealed class OrderServiceTests
         public OrderService Service { get; }
 
         public CheckoutRequest Request(Guid addressId, Guid productId, decimal quantity) =>
-            new(addressId, [new OrderItemRequest(productId, quantity)]);
+            new(addressId, null, [new OrderItemRequest(productId, quantity)]);
+
+        public CheckoutRequest ManualRequest(Guid productId, decimal quantity) =>
+            new(
+                null,
+                new CheckoutAddressRequest(
+                    null,
+                    "2 Temporary Road",
+                    null,
+                    "Central",
+                    "Bengaluru",
+                    "Karnataka",
+                    "560001",
+                    "Near Main Road",
+                    "Call on arrival",
+                    "Temporary Recipient",
+                    "8888888888",
+                    12.9720m,
+                    77.5950m),
+                [new OrderItemRequest(productId, quantity)]);
 
         public static async Task<OrderHarness> CreateAsync()
         {

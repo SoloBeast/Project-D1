@@ -13,15 +13,13 @@ using Microsoft.EntityFrameworkCore;
 namespace DoodhDirect.Infrastructure.Branches;
 
 /// <summary>
-/// Administrative branch management. Creation allocates the branch number from the
-/// centralized <c>BRANCH</c> numbering series inside a serializable transaction and
-/// guarantees the branch-scoped ORDER series exists the moment the branch does.
-/// Codes are immutable once a branch is referenced by orders, product availability,
+/// Administrative branch management. Branch codes are manually entered stable business
+/// keys. Creation guarantees the branch-scoped ORDER series exists the moment the branch
+/// does. Codes are immutable once a branch is referenced by orders, product availability,
 /// or a scoped ORDER numbering series.
 /// </summary>
 public sealed class BranchService(
     DoodhDirectDbContext dbContext,
-    INumberSeriesService numberSeriesService,
     NumberSeriesSeedService numberSeriesSeedService,
     IIndiaTimeProvider timeProvider) : IBranchService
 {
@@ -29,9 +27,12 @@ public sealed class BranchService(
     public const string ActionUpdated = "BRANCH.UPDATED";
     public const string ActionActivated = "BRANCH.ACTIVATED";
     public const string ActionDeactivated = "BRANCH.DEACTIVATED";
+    public const string ActionArchived = "BRANCH.ARCHIVED";
+    public const string ActionDeleted = "BRANCH.DELETED";
 
     public async Task<IReadOnlyList<BranchResult>> ListAsync(CancellationToken cancellationToken) =>
         (await dbContext.Branches.AsNoTracking()
+            .Where(branch => !branch.IsArchived)
             .OrderBy(branch => branch.Name)
             .ThenBy(branch => branch.Code)
             .ToListAsync(cancellationToken))
@@ -75,8 +76,6 @@ public sealed class BranchService(
                 request.Latitude,
                 request.Longitude,
                 request.ServiceRadiusKm);
-            branch.AssignBranchNumber(
-                await numberSeriesService.GetNextNumberAsync("BRANCH", actorUserId, cancellationToken));
 
             dbContext.Branches.Add(branch);
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -157,6 +156,10 @@ public sealed class BranchService(
         await ExecuteSerializableAsync(async () =>
         {
             var branch = await FindBranchAsync(branchId, cancellationToken);
+            if (branch.IsArchived && isActive)
+            {
+                throw new BusinessRuleException("An archived branch cannot be reactivated.");
+            }
             if (isActive && !branch.IsActive)
             {
                 branch.Activate();
@@ -173,6 +176,128 @@ public sealed class BranchService(
         }, cancellationToken);
 
         return result!;
+    }
+
+    /// <summary>
+    /// Deletes or archives a branch (admin/owner operation). The server decides which action is
+    /// taken — the client never supplies a "force delete" flag. A branch that is still referenced
+    /// by dependent or historical records is archived so those records keep identifying the branch;
+    /// a deactivated branch with no dependencies is permanently deleted. An active branch can
+    /// neither be deleted nor archived — deactivate it first.
+    /// </summary>
+    public async Task<BranchDeleteResult> DeleteAsync(
+        long actorUserId,
+        Guid branchId,
+        CancellationToken cancellationToken)
+    {
+        BranchDeleteResult? result = null;
+        await ExecuteSerializableAsync(async () =>
+        {
+            var branch = await FindBranchAsync(branchId, cancellationToken);
+
+            // Already archived: retained for history and shown read-only to administrators, so the
+            // endpoint is idempotent and never rewrites the original archive timestamp.
+            if (branch.IsArchived)
+            {
+                result = new BranchDeleteResult(false, true, branch.ToBranchResult());
+                return;
+            }
+
+            if (branch.IsActive)
+            {
+                throw new BusinessRuleException(
+                    "Only a deactivated branch can be deleted or archived. Deactivate the branch first.");
+            }
+
+            var oldSnapshot = BranchSnapshot(branch);
+            if (await HasDependentRecordsAsync(branch, cancellationToken))
+            {
+                var now = timeProvider.Now;
+                branch.Archive(now);
+                dbContext.AddAuditLog(new AuditLog(
+                    actorUserId,
+                    ActionArchived,
+                    "Branch",
+                    branch.PublicId.ToString(),
+                    JsonSerializer.Serialize(oldSnapshot),
+                    JsonSerializer.Serialize(BranchSnapshot(branch)),
+                    null,
+                    null,
+                    "Branch archived because operational or historical records reference it.",
+                    now));
+                await dbContext.SaveChangesAsync(cancellationToken);
+                result = new BranchDeleteResult(false, true, branch.ToBranchResult());
+                return;
+            }
+
+            dbContext.Branches.Remove(branch);
+            dbContext.AddAuditLog(new AuditLog(
+                actorUserId,
+                ActionDeleted,
+                "Branch",
+                branch.PublicId.ToString(),
+                JsonSerializer.Serialize(oldSnapshot),
+                null,
+                null,
+                null,
+                "Branch deleted.",
+                timeProvider.Now));
+            try
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                // The database is the authority on referential history. If a record the pre-check
+                // did not see (for example a concurrently inserted row) blocks the delete, archive
+                // the branch instead so history keeps identifying it.
+                dbContext.ChangeTracker.Clear();
+                var current = await FindBranchAsync(branchId, cancellationToken);
+                var now = timeProvider.Now;
+                current.Archive(now);
+                dbContext.AddAuditLog(new AuditLog(
+                    actorUserId,
+                    ActionArchived,
+                    "Branch",
+                    current.PublicId.ToString(),
+                    JsonSerializer.Serialize(oldSnapshot),
+                    JsonSerializer.Serialize(BranchSnapshot(current)),
+                    null,
+                    null,
+                    "Branch archived because operational or historical records reference it.",
+                    now));
+                await dbContext.SaveChangesAsync(cancellationToken);
+                result = new BranchDeleteResult(false, true, current.ToBranchResult());
+                return;
+            }
+
+            result = new BranchDeleteResult(true, false, null);
+        }, cancellationToken);
+
+        return result!;
+    }
+
+    /// <summary>
+    /// Returns true when any dependent or historical record references the branch. Covers every
+    /// FK-restricted table plus the non-FK logical references (employee assignments and pending
+    /// employee invitations) that must also prevent a permanent delete.
+    /// </summary>
+    private async Task<bool> HasDependentRecordsAsync(Branch branch, CancellationToken cancellationToken)
+    {
+        var branchId = branch.Id;
+        if (await dbContext.Orders.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.ProductBranches.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.Subscriptions.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.SubscriptionDeliveries.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.Deliveries.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.MilkProductions.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.MilkBatches.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.MilkUsages.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.MilkTests.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.Cameras.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.UserRoles.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        if (await dbContext.EmployeeInvitations.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        return false;
     }
 
     private async Task<Branch> FindBranchAsync(Guid branchId, CancellationToken cancellationToken) =>
@@ -207,7 +332,15 @@ public sealed class BranchService(
 
     private static void Validate(UpsertBranchRequest request)
     {
-        ValidateRequired(request.Code, "Code", 20);
+        ValidateRequired(request.Code, "Code", 50);
+        if (!System.Text.RegularExpressions.Regex.IsMatch(
+                request.Code.Trim(),
+                "^[A-Za-z0-9][A-Za-z0-9_-]*$"))
+        {
+            throw new ValidationAppException(
+                "Code may contain only letters, numbers, hyphens, and underscores.",
+                "code");
+        }
         ValidateRequired(request.Name, "Name", 160);
         ValidateRequired(request.City, "City", 80);
         ValidateRequired(request.State, "State", 80);
@@ -282,8 +415,9 @@ public sealed class BranchService(
         branch.Latitude,
         branch.Longitude,
         branch.ServiceRadiusKm,
-        branch.BranchNumber,
-        branch.IsActive
+        branch.IsActive,
+        branch.IsArchived,
+        branch.ArchivedAt
     };
 
     private async Task ExecuteSerializableAsync(Func<Task> operation, CancellationToken cancellationToken)

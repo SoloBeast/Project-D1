@@ -125,12 +125,9 @@ public sealed class IdentitySeedServiceTests
         var passwordHasher = new Pbkdf2PasswordHasher(Options.Create(new IdentityOptions()));
         var identitySeed = new IdentitySeedService(db);
         var timeProvider = new TestClock(new DateTime(2026, 8, 15, 12, 0, 0, DateTimeKind.Unspecified));
-        db.NumberSeries.Add(new NumberSeries(
-            "BRANCH", "Branch Number", "BR/{NUMBER:000}", 1, 1, NumberSeriesResetPolicy.Never));
         await db.SaveChangesAsync();
         var catalogueSeed = new CatalogueSeedService(
             db,
-            new NumberSeriesService(db, timeProvider),
             new NumberSeriesSeedService(db));
         var developmentSeed = new DevelopmentDeliveryStaffSeedService(db, passwordHasher);
 

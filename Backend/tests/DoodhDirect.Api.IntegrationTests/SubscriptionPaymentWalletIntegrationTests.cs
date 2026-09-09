@@ -1,11 +1,5 @@
-using System.Net;
-using System.Net.Http.Json;
-using System.Security.Claims;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.Encodings.Web;
 using DoodhDirect.Application.Common;
-using DoodhDirect.Application.Identity;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Wallets;
 using DoodhDirect.Domain.Catalogue;
@@ -14,20 +8,12 @@ using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Domain.Wallets;
-using DoodhDirect.Infrastructure.Identity;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
 using DoodhDirect.Infrastructure.Wallets;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace DoodhDirect.Api.IntegrationTests;
@@ -38,10 +24,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
     public async Task WalletPayment_UsesSubscriptionAsOnlyTarget_ActivatesAndReplaysIdempotently()
     {
         await using var harness = await SubscriptionPaymentHarness.CreateAsync();
-        await harness.WalletService.TopUpAsync(
-            harness.Customer.Id,
-            new WalletTopUpRequest(1_000m, "subscription-funding-1"),
-            CancellationToken.None);
+        await harness.SeedWalletAsync(1_000m, "subscription-funding-1");
 
         var first = await harness.PaymentService.CreateForSubscriptionAsync(
             harness.Customer.Id,
@@ -116,86 +99,10 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
     }
 
     [Fact]
-    public async Task MockGatewayPayment_VerificationEndpoint_ReturnsSuccessAndActivatesSubscription()
-    {
-        await using var factory = new PaymentApiFactory();
-        using var client = factory.CreateClient();
-
-        Guid paymentId;
-        Guid subscriptionId;
-        string gatewayOrderId;
-        await using (var scope = factory.Services.CreateAsyncScope())
-        {
-            var db = scope.ServiceProvider.GetRequiredService<DoodhDirectDbContext>();
-            var customer = await db.Users.SingleAsync(user => user.Email == DevelopmentCustomerSeedService.Email);
-            var product = await db.Products.FirstAsync();
-            var branch = await db.Branches.FirstAsync();
-            var address = await db.CustomerAddresses.SingleAsync(item => item.UserId == customer.Id && item.IsActive);
-            var subscription = new Subscription(
-                customer.Id,
-                product.Id,
-                address.Id,
-                branch.Id,
-                $"http-subscription-{Guid.NewGuid():N}",
-                DateOnly.FromDateTime(DateTime.UtcNow.Date.AddDays(1)),
-                DateOnly.FromDateTime(DateTime.UtcNow.Date.AddDays(15)),
-                quantity: 1m,
-                unitPrice: product.Price,
-                totalEntitlement: 4,
-                product.Sku,
-                product.Name,
-                product.UnitOfMeasure,
-                branch.Code,
-                branch.Name,
-                "Development test address");
-            db.Subscriptions.Add(subscription);
-            await db.SaveChangesAsync();
-
-            var payment = await scope.ServiceProvider.GetRequiredService<IPaymentService>()
-                .CreateForSubscriptionAsync(
-                    customer.Id,
-                    subscription.Id,
-                    PaymentMethod.Development,
-                    $"http-payment-{Guid.NewGuid():N}",
-                    CancellationToken.None);
-            paymentId = payment.PublicId;
-            subscriptionId = subscription.PublicId;
-            gatewayOrderId = payment.GatewayOrderId!;
-        }
-
-        using var response = await client.PostAsync(
-            $"/api/v1/payments/{paymentId}/complete-development",
-            content: null);
-        var responseBody = await response.Content.ReadAsStringAsync();
-
-        Assert.True(
-            response.StatusCode == HttpStatusCode.OK,
-            $"Expected HTTP 200 but received {(int)response.StatusCode}: {responseBody}");
-        var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-        jsonOptions.Converters.Add(new JsonStringEnumConverter());
-        var envelope = JsonSerializer.Deserialize<ApiResponse<PaymentResult>>(
-            responseBody,
-            jsonOptions);
-        Assert.NotNull(envelope);
-        Assert.True(envelope.Success);
-        Assert.Equal(PaymentStatus.Success, envelope.Data!.Status);
-        Assert.Equal(subscriptionId, envelope.Data.SubscriptionId);
-
-        await using var verificationScope = factory.Services.CreateAsyncScope();
-        var verificationDb = verificationScope.ServiceProvider.GetRequiredService<DoodhDirectDbContext>();
-        Assert.Equal(
-            SubscriptionStatus.Active,
-            (await verificationDb.Subscriptions.SingleAsync(item => item.PublicId == subscriptionId)).Status);
-    }
-
-    [Fact]
     public async Task FailedGatewayPayment_WalletRetryCreatesFreshAttemptAndActivatesSameSubscriptionIdempotently()
     {
         await using var harness = await SubscriptionPaymentHarness.CreateAsync();
-        await harness.WalletService.TopUpAsync(
-            harness.Customer.Id,
-            new WalletTopUpRequest(1_000m, "retry-funding-1"),
-            CancellationToken.None);
+        await harness.SeedWalletAsync(1_000m, "retry-funding-1");
 
         var original = await harness.PaymentService.CreateForSubscriptionAsync(
             harness.Customer.Id,
@@ -264,10 +171,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
     public async Task PendingGatewayPayment_WalletRetryExpiresOriginalAndActivatesSameSubscriptionIdempotently()
     {
         await using var harness = await SubscriptionPaymentHarness.CreateAsync();
-        await harness.WalletService.TopUpAsync(
-            harness.Customer.Id,
-            new WalletTopUpRequest(1_000m, "pending-retry-funding-1"),
-            CancellationToken.None);
+        await harness.SeedWalletAsync(1_000m, "pending-retry-funding-1");
 
         var original = await harness.PaymentService.CreateForSubscriptionAsync(
             harness.Customer.Id,
@@ -319,10 +223,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
     public async Task PendingGatewayPayment_WalletRetryWithInsufficientBalanceLeavesOriginalAttemptRecoverable()
     {
         await using var harness = await SubscriptionPaymentHarness.CreateAsync();
-        await harness.WalletService.TopUpAsync(
-            harness.Customer.Id,
-            new WalletTopUpRequest(100m, "pending-retry-insufficient-funding-1"),
-            CancellationToken.None);
+        await harness.SeedWalletAsync(100m, "pending-retry-insufficient-funding-1");
 
         var original = await harness.PaymentService.CreateForSubscriptionAsync(
             harness.Customer.Id,
@@ -360,10 +261,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
     public async Task FailedGatewayPayment_WalletRetryWithInsufficientBalanceRollsBackAttemptAndSubscriptionTransition()
     {
         await using var harness = await SubscriptionPaymentHarness.CreateAsync();
-        await harness.WalletService.TopUpAsync(
-            harness.Customer.Id,
-            new WalletTopUpRequest(100m, "retry-insufficient-funding-1"),
-            CancellationToken.None);
+        await harness.SeedWalletAsync(100m, "retry-insufficient-funding-1");
 
         var original = await harness.PaymentService.CreateForSubscriptionAsync(
             harness.Customer.Id,
@@ -405,10 +303,7 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
     public async Task WalletPayment_WithInsufficientBalance_DoesNotPersistPaymentOrDebitOrActivate()
     {
         await using var harness = await SubscriptionPaymentHarness.CreateAsync();
-        await harness.WalletService.TopUpAsync(
-            harness.Customer.Id,
-            new WalletTopUpRequest(100m, "insufficient-funding-1"),
-            CancellationToken.None);
+        await harness.SeedWalletAsync(100m, "insufficient-funding-1");
 
         var exception = await Assert.ThrowsAsync<InsufficientWalletBalanceException>(() =>
             harness.PaymentService.CreateForSubscriptionAsync(
@@ -566,79 +461,23 @@ public sealed class SubscriptionPaymentWalletIntegrationTests
                 walletService);
         }
 
+        public async Task SeedWalletAsync(decimal amount, string idempotencyKey)
+        {
+            var wallet = await Db.Wallets.SingleOrDefaultAsync(x => x.CustomerId == Customer.Id);
+            if (wallet is null)
+            {
+                wallet = new Wallet(Customer.Id, "INR");
+                Db.Wallets.Add(wallet);
+            }
+
+            wallet.Credit(WalletTransactionType.TopUp, amount, idempotencyKey, "Wallet top-up", TimeProvider.Now);
+            await Db.SaveChangesAsync();
+        }
+
         public async ValueTask DisposeAsync()
         {
             await Db.DisposeAsync();
             await connection.DisposeAsync();
-        }
-    }
-
-    private sealed class PaymentApiFactory : WebApplicationFactory<Program>
-    {
-        private readonly SqliteConnection connection;
-
-        public PaymentApiFactory()
-        {
-            connection = new SqliteConnection("Data Source=:memory:");
-            connection.Open();
-            var options = new DbContextOptionsBuilder<DoodhDirectDbContext>()
-                .UseSqlite(connection)
-                .Options;
-            using var db = new DoodhDirectDbContext(options);
-            db.Database.EnsureCreated();
-        }
-
-        protected override void ConfigureWebHost(IWebHostBuilder builder)
-        {
-            builder.UseEnvironment("Development");
-            builder.ConfigureAppConfiguration((_, configuration) =>
-                configuration.AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["Payments:Provider"] = "Mock"
-                }));
-            builder.ConfigureServices(services =>
-            {
-                services.RemoveAll<DbContextOptions<DoodhDirectDbContext>>();
-                services.RemoveAll<IDbContextOptionsConfiguration<DoodhDirectDbContext>>();
-                services.RemoveAll<DoodhDirectDbContext>();
-                services.AddDbContext<DoodhDirectDbContext>(options => options.UseSqlite(connection));
-                services.AddAuthentication(options =>
-                    {
-                        options.DefaultAuthenticateScheme = TestAuthenticationHandler.AuthenticationScheme;
-                        options.DefaultChallengeScheme = TestAuthenticationHandler.AuthenticationScheme;
-                        options.DefaultScheme = TestAuthenticationHandler.AuthenticationScheme;
-                    })
-                    .AddScheme<AuthenticationSchemeOptions, TestAuthenticationHandler>(
-                        TestAuthenticationHandler.AuthenticationScheme,
-                        _ => { });
-            });
-        }
-
-        public override async ValueTask DisposeAsync()
-        {
-            await base.DisposeAsync();
-            await connection.DisposeAsync();
-        }
-    }
-
-    private sealed class TestAuthenticationHandler(
-        IOptionsMonitor<AuthenticationSchemeOptions> options,
-        ILoggerFactory logger,
-        UrlEncoder encoder)
-        : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
-    {
-        public const string AuthenticationScheme = "SubscriptionPaymentTest";
-
-        protected override Task<AuthenticateResult> HandleAuthenticateAsync()
-        {
-            var claims = new[]
-            {
-                new Claim("user_id", "1"),
-                new Claim(AuthorizationCodes.PermissionClaim, AuthorizationCodes.PaymentsCreateOwn)
-            };
-            var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, AuthenticationScheme));
-            return Task.FromResult(AuthenticateResult.Success(
-                new AuthenticationTicket(principal, AuthenticationScheme)));
         }
     }
 }

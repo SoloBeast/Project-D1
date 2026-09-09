@@ -84,6 +84,19 @@ class NumberSeriesRepository {
     return NumberSeries.fromJson(response['data'] as Map<String, dynamic>);
   }
 
+  /// Permanently deletes a series (any scope, active or inactive) and reloads
+  /// the remaining list.
+  Future<void> delete(
+    String accessToken,
+    String code, {
+    String? scope,
+  }) async {
+    await _api.delete(
+      _path('/${Uri.encodeComponent(code)}', scope: scope),
+      accessToken: accessToken,
+    );
+  }
+
   /// Builds a path under `_basePath`, appending a `scope` query parameter
   /// when present so scoped operations target the right series instance.
   String _path(String segment, {String? scope}) {

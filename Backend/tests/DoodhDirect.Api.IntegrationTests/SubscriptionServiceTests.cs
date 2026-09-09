@@ -446,6 +446,13 @@ public sealed class SubscriptionServiceTests
                 clock.UtcNow,
                 subscription.PublicId);
         }
+
+        public Task<PaymentResult> CreateWalletTopUpAsync(
+            long customerId,
+            decimal amount,
+            string idempotencyKey,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
         public Task<PaymentResult> RetrySubscriptionAsync(
             long customerId,
             Guid subscriptionId,

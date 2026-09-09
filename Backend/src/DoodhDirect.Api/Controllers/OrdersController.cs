@@ -88,11 +88,46 @@ public sealed class OrderAdministrationController(IOrderService orderService) : 
 }
 
 public sealed record CheckoutApiRequest(
-    Guid AddressId,
+    Guid? AddressId,
+    CheckoutAddressApiRequest? ManualAddress,
     [Required, MinLength(1)] IReadOnlyCollection<OrderItemApiRequest> Items)
 {
     public CheckoutRequest ToApplicationRequest() =>
-        new(AddressId, Items.Select(item => new OrderItemRequest(item.ProductId, item.Quantity)).ToArray());
+        new(
+            AddressId,
+            ManualAddress?.ToApplicationRequest(),
+            Items.Select(item => new OrderItemRequest(item.ProductId, item.Quantity)).ToArray());
+}
+
+public sealed record CheckoutAddressApiRequest(
+    string? Label,
+    string AddressLine1,
+    string? AddressLine2,
+    string Locality,
+    string City,
+    string State,
+    string PinCode,
+    string? Landmark,
+    string? DeliveryInstructions,
+    string ContactName,
+    string ContactMobile,
+    decimal Latitude,
+    decimal Longitude)
+{
+    public CheckoutAddressRequest ToApplicationRequest() => new(
+        Label,
+        AddressLine1,
+        AddressLine2,
+        Locality,
+        City,
+        State,
+        PinCode,
+        Landmark,
+        DeliveryInstructions,
+        ContactName,
+        ContactMobile,
+        Latitude,
+        Longitude);
 }
 
 public sealed record OrderItemApiRequest(Guid ProductId, decimal Quantity);

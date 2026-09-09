@@ -165,6 +165,57 @@ class BranchController extends Notifier<BranchState> {
     }
   }
 
+  /// Deletes a deactivated branch. The backend decides between a permanent
+  /// delete and an archive: a hard delete removes the row from the list, while
+  /// an archive keeps the branch (now flagged archived) so it stays available
+  /// for historical/reporting data but no longer appears in normal lists.
+  Future<bool> delete(String branchId) async {
+    final token = _token;
+    if (token == null) return false;
+    state = state.copyWith(
+      isSaving: true,
+      isOffline: false,
+      isUnauthorized: false,
+      isUnavailable: false,
+      clearError: true,
+      clearSaved: true,
+    );
+    try {
+      final result = await _repository.delete(token, branchId);
+      final archivedBranch = result.isArchived ? result.branch : null;
+      if (archivedBranch != null) {
+        // Archived branches are excluded from the normal branch list (like the
+        // server list endpoint) but remain open in the detail screen in their
+        // view-only archived state.
+        state = state.copyWith(
+          branches: state.branches
+              .where((item) => item.publicId != branchId)
+              .toList(growable: false),
+          selectedBranch: archivedBranch,
+          isSaving: false,
+          clearError: true,
+          savedMessage: 'Branch archived',
+        );
+      } else {
+        state = state.copyWith(
+          branches: state.branches
+              .where((item) => item.publicId != branchId)
+              .toList(growable: false),
+          selectedBranch: state.selectedBranch?.publicId == branchId
+              ? null
+              : state.selectedBranch,
+          isSaving: false,
+          clearError: true,
+          savedMessage: 'Branch deleted',
+        );
+      }
+      return true;
+    } on Object catch (error) {
+      _setFailure(error, saving: true);
+      return false;
+    }
+  }
+
   Future<bool> _save(
     Future<Branch> Function(String token) operation,
   ) async {

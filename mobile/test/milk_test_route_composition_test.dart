@@ -4,6 +4,7 @@ import 'package:doodh_direct_mobile/app/app.dart';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/customer/client_configuration_repository.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_screens.dart';
 import 'package:doodh_direct_mobile/features/customer/google_map_coordinate_picker.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_controller.dart';
@@ -215,6 +216,12 @@ Future<ProviderContainer> _pumpProductionApp(
     overrides: [
       authRepositoryProvider.overrideWithValue(auth),
       orderRepositoryProvider.overrideWithValue(_FakeOrderRepository()),
+      // The address editor fetches the Google Maps Web Client Key at runtime;
+      // a deterministic fake keeps route tests HTTP-free. Returning null keeps
+      // the picker showing its expected "not configured" panel.
+      clientConfigurationRepositoryProvider.overrideWithValue(
+        _FakeClientConfigurationRepository(),
+      ),
       if (milkController != null)
         milkTestControllerProvider.overrideWith(() => milkController),
       if (deliveryController != null)
@@ -311,6 +318,15 @@ class _FakeOrderRepository extends OrderRepository {
 
   @override
   Future<List<OrderSummary>> getMine(String token) async => const [];
+}
+
+class _FakeClientConfigurationRepository extends ClientConfigurationRepository {
+  _FakeClientConfigurationRepository()
+    : super(api: ApiClient(baseUrl: 'https://api.example.test'));
+
+  @override
+  Future<ClientConfiguration> get(String token) async =>
+      const ClientConfiguration();
 }
 
 final _staffSession = AuthSession(

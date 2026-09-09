@@ -1,16 +1,27 @@
-  import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_controller.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
 import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_controller.dart';
+import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
-import 'package:doodh_direct_mobile/features/auth/session_state.dart';
 import 'package:doodh_direct_mobile/features/notifications/notification_controller.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+/// Display label for a branch id: the server-resolved branch name (e.g.
+/// "Dabua"/"NIT3") when the authenticated session carries it, otherwise the
+/// numeric fallback used by legacy cached sessions that predate the enriched
+/// branchDetails metadata.
+String branchDisplayName(List<AuthUserBranchInfo> details, int id) {
+  for (final branch in details) {
+    if (branch.id == id) return branch.name;
+  }
+  return 'Branch $id';
+}
 
 class RoleHomeScreen extends ConsumerWidget {
   const RoleHomeScreen({super.key, required this.role});
@@ -20,32 +31,33 @@ class RoleHomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (role == UserRole.customer) return const _CustomerHomeActions();
+    final user = ref.watch(sessionControllerProvider).session?.user;
     return Scaffold(
       appBar: AppBar(
         title: Text('${role.label} workspace'),
-        actions: [const _NotificationButton(), const _SignOutButton()],
+        actions: [
+          IconButton(
+            tooltip: 'Login & security',
+            onPressed: () => context.push('/security'),
+            icon: const Icon(Icons.account_circle_outlined),
+          ),
+          const _NotificationButton(),
+          const _SignOutButton(),
+        ],
       ),
       body: switch (role) {
         UserRole.customer => const _CustomerHomeActions(),
         UserRole.delivery => _DeliveryHomeActions(
-          roles:
-              ref.watch(sessionControllerProvider).session?.user.roles ??
-              const [],
-          permissions:
-              ref.watch(sessionControllerProvider).session?.user.permissions ??
-              const [],
-          branchIds:
-              ref.watch(sessionControllerProvider).session?.user.branchIds ??
-              const [],
+          roles: user?.roles ?? const [],
+          permissions: user?.permissions ?? const [],
+          branchIds: user?.branchIds ?? const [],
+          branchDetails: user?.branchDetails ?? const [],
         ),
         UserRole.dairy => const _DairyHomeActions(),
         UserRole.owner || UserRole.admin => _AdminHomeActions(
-          permissions:
-              ref.watch(sessionControllerProvider).session?.user.permissions ??
-              const [],
-          branchIds:
-              ref.watch(sessionControllerProvider).session?.user.branchIds ??
-              const [],
+          permissions: user?.permissions ?? const [],
+          branchIds: user?.branchIds ?? const [],
+          branchDetails: user?.branchDetails ?? const [],
         ),
         UserRole.support => const StatePanel(
           icon: Icons.support_agent_outlined,
@@ -373,11 +385,13 @@ class _DeliveryHomeActions extends StatelessWidget {
     required this.roles,
     required this.permissions,
     required this.branchIds,
+    required this.branchDetails,
   });
 
   final List<String> roles;
   final List<String> permissions;
   final List<int> branchIds;
+  final List<AuthUserBranchInfo> branchDetails;
 
   bool get _canManage =>
       roles.contains('DELIVERY_MANAGER') ||
@@ -408,7 +422,9 @@ class _DeliveryHomeActions extends StatelessWidget {
           Card(
             child: ListTile(
               leading: const Icon(Icons.local_shipping_outlined),
-              title: Text('Branch $branchId deliveries'),
+              title: Text(
+                '${branchDisplayName(branchDetails, branchId)} deliveries',
+              ),
               subtitle: const Text(
                 'Assign staff and monitor delivery progress',
               ),
@@ -433,10 +449,10 @@ class _DairyHomeActions extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final branchIds =
-        ref.watch(sessionControllerProvider).session?.user.branchIds ??
-        const <int>[];
+    final user = ref.watch(sessionControllerProvider).session?.user;
+    final branchIds = user?.branchIds ?? const <int>[];
     final branchId = branchIds.isEmpty ? null : branchIds.first;
+    final branchName = branchId == null ? null : user?.branchName(branchId);
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -460,7 +476,9 @@ class _DairyHomeActions extends ConsumerWidget {
           Card(
             child: ListTile(
               leading: const Icon(Icons.agriculture_outlined),
-              title: Text('Branch $branchId dairy dashboard'),
+              title: Text(
+                '${branchName ?? 'Branch $branchId'} dairy dashboard',
+              ),
               subtitle: const Text(
                 'Production, batches, availability, and usage',
               ),
@@ -488,10 +506,15 @@ class _DairyHomeActions extends ConsumerWidget {
 }
 
 class _AdminHomeActions extends ConsumerWidget {
-  const _AdminHomeActions({required this.permissions, required this.branchIds});
+  const _AdminHomeActions({
+    required this.permissions,
+    required this.branchIds,
+    required this.branchDetails,
+  });
 
   final List<String> permissions;
   final List<int> branchIds;
+  final List<AuthUserBranchInfo> branchDetails;
 
   bool get _canReadCameras =>
       permissions.contains('CAMERAS.READ') ||
@@ -500,6 +523,14 @@ class _AdminHomeActions extends ConsumerWidget {
   bool get _canReadNumberSeries =>
       permissions.contains('SETUP.NUMBER_SERIES.READ') ||
       permissions.contains('SETUP.NUMBER_SERIES.MANAGE');
+
+  bool get _canReadOtpProvider =>
+      permissions.contains('SETUP.OTP_PROVIDER.READ') ||
+      permissions.contains('SETUP.OTP_PROVIDER.MANAGE');
+
+  bool get _canReadIntegrations =>
+      permissions.contains('SETUP.INTEGRATIONS.READ') ||
+      permissions.contains('SETUP.INTEGRATIONS.MANAGE');
 
   bool get _canManageEmployees =>
       permissions.contains('EMPLOYEES.READ') ||
@@ -571,16 +602,33 @@ class _AdminHomeActions extends ConsumerWidget {
             ],
           ),
         ],
-        if (_canReadNumberSeries) ...[
+        if (_canReadNumberSeries ||
+            _canReadOtpProvider ||
+            _canReadIntegrations) ...[
           const _AdminSectionHeader('System Setup'),
           _AdminTileGrid(
             items: [
-              _AdminTileData(
-                icon: Icons.numbers_outlined,
-                label: 'Number Series',
-                subtitle: 'Templates & reset policies',
-                onTap: () => context.push('/admin/setup/number-series'),
-              ),
+              if (_canReadNumberSeries)
+                _AdminTileData(
+                  icon: Icons.numbers_outlined,
+                  label: 'Number Series',
+                  subtitle: 'Templates & reset policies',
+                  onTap: () => context.push('/admin/setup/number-series'),
+                ),
+              if (_canReadOtpProvider)
+                _AdminTileData(
+                  icon: Icons.sms_outlined,
+                  label: 'OTP Provider',
+                  subtitle: 'MSG91 widget & auth key',
+                  onTap: () => context.push('/admin/setup/otp-provider'),
+                ),
+              if (_canReadIntegrations)
+                _AdminTileData(
+                  icon: Icons.plumbing_outlined,
+                  label: 'Integrations',
+                  subtitle: 'SMTP, Razorpay & Maps keys',
+                  onTap: () => context.push('/admin/setup/integrations'),
+                ),
             ],
           ),
         ],
@@ -606,14 +654,16 @@ class _AdminHomeActions extends ConsumerWidget {
                 _AdminTileData(
                   icon: Icons.agriculture_outlined,
                   label: 'Dairy operations',
-                  subtitle: 'Branch ${branchIds.first} activity',
+                  subtitle:
+                      '${branchDisplayName(branchDetails, branchIds.first)} activity',
                   onTap: () => context.push('/dairy/dashboard'),
                 ),
               if (branchIds.isNotEmpty)
                 _AdminTileData(
                   icon: Icons.local_shipping_outlined,
                   label: 'Deliveries',
-                  subtitle: 'Assign & monitor branch ${branchIds.first}',
+                  subtitle:
+                      'Assign & monitor ${branchDisplayName(branchDetails, branchIds.first)}',
                   onTap: () => context.push(
                     '/delivery-management/branch/${branchIds.first}',
                   ),
@@ -761,4 +811,138 @@ class _AdminTileData {
   final String label;
   final String? subtitle;
   final VoidCallback onTap;
+}
+
+/// The browsing-only home shown to guests. It exposes only the public
+/// storefront (home, catalogue, product details, cart, checkout review) and a
+/// contextual sign-in prompt. No customer-specific data is fetched or shown —
+/// protected quick actions simply route to the sign-in flow with a
+/// return-intent, so the guest is never shown fabricated account state.
+class GuestHomeScreen extends ConsumerWidget {
+  const GuestHomeScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('DoodhDirect'),
+        actions: const [_GuestSignInButton(), _CartButton()],
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            const _GuestGreetingHeader(),
+            const SizedBox(height: 20),
+            DoodhHeroCard(onBuy: () => context.push('/catalogue')),
+            const SizedBox(height: 24),
+            const DoodhSectionHeader(title: 'Explore'),
+            const SizedBox(height: 12),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final columns = constraints.maxWidth >= 720 ? 4 : 2;
+                return GridView.count(
+                  crossAxisCount: columns,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: constraints.maxWidth >= 720 ? 1.7 : 1.35,
+                  children: [
+                    _QuickAction(
+                      icon: Icons.shopping_bag_outlined,
+                      label: 'Browse',
+                      onTap: () => context.push('/catalogue'),
+                    ),
+                    _QuickAction(
+                      icon: Icons.shopping_cart_outlined,
+                      label: 'My cart',
+                      onTap: () => context.go('/checkout'),
+                    ),
+                    _QuickAction(
+                      icon: Icons.lock_outline,
+                      label: 'Orders',
+                      onTap: () => context.go('/orders'),
+                    ),
+                    _QuickAction(
+                      icon: Icons.account_balance_wallet_outlined,
+                      label: 'Wallet',
+                      onTap: () => context.go('/wallet'),
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+            const _GuestLoginPromptCard(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GuestSignInButton extends ConsumerWidget {
+  const _GuestSignInButton();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => TextButton.icon(
+    onPressed: () => context.go('/login'),
+    icon: const Icon(Icons.login),
+    label: const Text('Sign in'),
+  );
+}
+
+class _GuestGreetingHeader extends StatelessWidget {
+  const _GuestGreetingHeader();
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Welcome to DoodhDirect',
+        style: Theme.of(context).textTheme.headlineSmall,
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Fresh dairy, delivered with care. Browse now — sign in when you '
+        'are ready to order.',
+      ),
+    ],
+  );
+}
+
+class _GuestLoginPromptCard extends StatelessWidget {
+  const _GuestLoginPromptCard();
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Sign in for orders, payments and more',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Your cart is saved on this device and will be there after you '
+            'sign in.',
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              FilledButton(
+                onPressed: () => context.go('/login'),
+                child: const Text('Sign in'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
 }

@@ -54,6 +54,59 @@ void main() {
       expect(storage['accessTokenExpiresAtUtc'], endsWith('Z'));
       expect(storage['refreshTokenExpiresAtUtc'], endsWith('Z'));
     });
+
+    test('parses branchDetails into the authenticated user', () {
+      final session = AuthSession.fromJson(
+        _loginData(
+          accessTokenExpiresKey: 'accessTokenExpiresAt',
+          refreshTokenExpiresKey: 'refreshTokenExpiresAt',
+          branchDetails: const [
+            {'id': 7, 'code': 'MAIN', 'name': 'Dabua'},
+            {'id': 3, 'code': 'NIT3', 'name': 'NIT3'},
+          ],
+        ),
+      );
+
+      expect(session.user.branchDetails, hasLength(2));
+      expect(session.user.branchDetails.first.id, 7);
+      expect(session.user.branchDetails.first.code, 'MAIN');
+      expect(session.user.branchDetails.first.name, 'Dabua');
+      expect(session.user.branchName(7), 'Dabua');
+      expect(session.user.branchName(3), 'NIT3');
+      // Unknown id resolves to null (never a fabricated default branch).
+      expect(session.user.branchName(99), isNull);
+    });
+
+    test('branchDetails round-trips through toJson', () {
+      final session = AuthSession.fromJson(
+        _loginData(
+          accessTokenExpiresKey: 'accessTokenExpiresAt',
+          refreshTokenExpiresKey: 'refreshTokenExpiresAt',
+          branchDetails: const [
+            {'id': 7, 'code': 'MAIN', 'name': 'Dabua'},
+          ],
+        ),
+      );
+
+      final stored = session.user.toJson();
+      expect(stored['branchDetails'], [
+        {'id': 7, 'code': 'MAIN', 'name': 'Dabua'},
+      ]);
+    });
+
+    test('legacy sessions without branchDetails fall back to empty', () {
+      // _loginData omits the branchDetails key by default, matching cached
+      // sessions created before the field existed.
+      final session = AuthSession.fromJson(
+        _loginData(
+          accessTokenExpiresKey: 'accessTokenExpiresAt',
+          refreshTokenExpiresKey: 'refreshTokenExpiresAt',
+        ),
+      );
+
+      expect(session.user.branchDetails, isEmpty);
+      expect(session.user.branchName(7), isNull);
+    });
   });
 
   test('login success transitions session state to authenticated', () async {
@@ -130,6 +183,7 @@ void main() {
 Map<String, dynamic> _loginData({
   required String accessTokenExpiresKey,
   required String refreshTokenExpiresKey,
+  List<Map<String, dynamic>> branchDetails = const [],
 }) => {
   'user': {
     'publicUserId': 'customer-1',
@@ -139,6 +193,7 @@ Map<String, dynamic> _loginData({
     'roles': ['CUSTOMER'],
     'permissions': [],
     'branchIds': [],
+    if (branchDetails.isNotEmpty) 'branchDetails': branchDetails,
   },
   'tokens': {
     'accessToken': 'access-token-test-value',

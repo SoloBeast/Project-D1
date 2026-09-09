@@ -224,6 +224,24 @@ public sealed class DeliveryManagementController(IDeliveryService deliveryServic
         Ok(ApiResponse<DeliveryResult>.Ok(await deliveryService.GetForOperationsAsync(
             RequireActor(), deliveryId, requireAssignment: false, cancellationToken)));
 
+    [HttpGet("{deliveryId:guid}/batch-allocations")]
+    [ProducesResponseType(typeof(ApiResponse<DeliveryBatchAllocationsResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<DeliveryBatchAllocationsResult>>> GetBatchAllocations(
+        Guid deliveryId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<DeliveryBatchAllocationsResult>.Ok(await deliveryService.GetBatchAllocationsAsync(
+            RequireActor(), deliveryId, cancellationToken)));
+
+    [HttpPut("{deliveryId:guid}/batch-allocations")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.DeliveriesAssignBranch)]
+    [ProducesResponseType(typeof(ApiResponse<DeliveryResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<DeliveryResult>>> SaveBatchAllocations(
+        Guid deliveryId,
+        [FromBody] SaveDeliveryBatchAllocationsRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<DeliveryResult>.Ok(await deliveryService.SaveBatchAllocationsAsync(
+            RequireActor(), deliveryId, request, cancellationToken)));
+
     [HttpPost("{deliveryId:guid}/assign")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.DeliveriesAssignBranch)]
     [ProducesResponseType(typeof(ApiResponse<DeliveryResult>), StatusCodes.Status200OK)]

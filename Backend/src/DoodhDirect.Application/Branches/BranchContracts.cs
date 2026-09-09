@@ -4,8 +4,6 @@ namespace DoodhDirect.Application.Branches;
 
 /// <summary>
 /// Administrative branch record returned by the Branch Management module.
-/// <see cref="BranchNumber"/> is allocated server-side from the centralized
-/// <c>BRANCH</c> numbering series and is never supplied by the client.
 /// </summary>
 public sealed record BranchResult(
     Guid PublicId,
@@ -21,9 +19,21 @@ public sealed record BranchResult(
     decimal Longitude,
     decimal? ServiceRadiusKm,
     bool IsActive,
-    string? BranchNumber,
+    bool IsArchived,
+    DateTime? ArchivedAt,
     DateTime? CreatedAt,
     DateTime? UpdatedAt);
+
+/// <summary>
+/// Outcome of an administrative delete request for a branch. The server — never the client —
+/// decides whether the branch was permanently deleted (<see cref="IsDeleted"/>) because nothing
+/// references it, or archived (<see cref="IsArchived"/> with the retained <see cref="Branch"/>)
+/// because operational or historical records still reference it.
+/// </summary>
+public sealed record BranchDeleteResult(
+    bool IsDeleted,
+    bool IsArchived,
+    BranchResult? Branch);
 
 /// <summary>
 /// Request used to create or update a branch. <see cref="Code"/> is the stable
@@ -53,6 +63,14 @@ public interface IBranchService
     Task<BranchResult> UpdateAsync(long actorUserId, Guid branchId, UpsertBranchRequest request, CancellationToken cancellationToken);
 
     Task<BranchResult> SetActiveAsync(long actorUserId, Guid branchId, bool isActive, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes or archives a branch (admin/owner operation). The server decides which action is
+    /// taken: a deactivated branch with no dependent or historical records is permanently deleted,
+    /// while a deactivated branch still referenced by operational history is archived instead. An
+    /// active branch can neither be deleted nor archived — deactivate it first.
+    /// </summary>
+    Task<BranchDeleteResult> DeleteAsync(long actorUserId, Guid branchId, CancellationToken cancellationToken);
 }
 
 public static class BranchMappings
@@ -72,7 +90,8 @@ public static class BranchMappings
             branch.Longitude,
             branch.ServiceRadiusKm,
             branch.IsActive,
-            branch.BranchNumber,
+            branch.IsArchived,
+            branch.ArchivedAt,
             branch.CreatedAt,
             branch.UpdatedAt);
 }

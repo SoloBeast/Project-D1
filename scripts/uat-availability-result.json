@@ -1,0 +1,61 @@
+﻿{
+    "nit3":  {
+                 "availability":  {
+                                      "Path":  "/api/v1/dairy/branches/5/availability",
+                                      "Http":  403,
+                                      "Data":  null
+                                  }
+             },
+    "dabua":  {
+                  "dashboard":  {
+                                    "Path":  "/api/v1/dairy/branches/6/dashboard",
+                                    "Http":  200,
+                                    "Data":  "{\"branchId\":6,\"productionDate\":\"2026-09-09\",\"quantityProduced\":0,\"availableQuantity\":3.000,\"unit\":\"L\",\"productionEntryCount\":0,\"availableBatchCount\":1,\"calculatedAt\":\"2026-09-09T14:48:06.570\"}"
+                                },
+                  "availability":  {
+                                       "Path":  "/api/v1/dairy/branches/6/availability",
+                                       "Http":  200,
+                                       "Data":  "{\"branchId\":6,\"quantityProduced\":20.000,\"quantityUsed\":17.000,\"availableQuantity\":3.000,\"unit\":\"L\",\"availableBatchCount\":1,\"calculatedAt\":\"2026-09-09T14:48:06.479\"}"
+                                   }
+              },
+    "login":  {
+                  "publicUserId":  "3c328508-2a82-400c-ab4f-560b16dd6429",
+                  "displayName":  "Hemant Sharma",
+                  "email":  null,
+                  "mobile":  "+919354816929",
+                  "emailVerified":  false,
+                  "hasPassword":  true,
+                  "pendingEmail":  null,
+                  "pendingMobile":  null,
+                  "roles":  [
+                                "DAIRY_MANAGER"
+                            ],
+                  "permissions":  [
+                                      "IDENTITY.PROFILE.READ_OWN",
+                                      "IDENTITY.PROFILE.UPDATE_OWN",
+                                      "IDENTITY.SESSIONS.MANAGE_OWN",
+                                      "IDENTITY.USERS.READ",
+                                      "IDENTITY.BRANCH.ACCESS",
+                                      "DELIVERIES.READ_BRANCH",
+                                      "DELIVERIES.ASSIGN_BRANCH",
+                                      "DAIRY.READ",
+                                      "DAIRY.MANAGE",
+                                      "CAMERAS.READ",
+                                      "CAMERAS.MANAGE",
+                                      "REPORTS.DASHBOARD.READ",
+                                      "REPORTS.OPERATIONS.READ",
+                                      "REPORTS.MILK_TESTS.READ",
+                                      "REPORTS.EXPORT"
+                                  ],
+                  "branchIds":  [
+                                    6
+                                ],
+                  "branchDetails":  [
+                                        {
+                                            "id":  6,
+                                            "code":  "DB0001",
+                                            "name":  "Dabua"
+                                        }
+                                    ]
+              }
+}

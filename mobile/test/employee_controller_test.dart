@@ -166,8 +166,13 @@ void main() {
       expect(state.isSaving, isFalse);
     });
 
-    test('resends an invitation', () async {
-      final repository = _FakeEmployeeRepository();
+    test('resends an invitation and reports SMTP acceptance', () async {
+      final repository = _FakeEmployeeRepository(
+        invitation: _invitation(
+          emailDeliveryStatus: InvitationEmailDeliveryStatus.sent,
+          emailRecipient: 'ramesh@example.test',
+        ),
+      );
       final container = await _authenticatedContainer(repository);
       addTearDown(container.dispose);
       final controller = container.read(employeeControllerProvider.notifier);
@@ -176,11 +181,52 @@ void main() {
       final state = container.read(employeeControllerProvider);
 
       expect(invitation?.token, 'inv-token-9');
-      expect(state.savedMessage, 'Invitation resent.');
+      expect(
+        state.savedMessage,
+        'Invitation link generated and email accepted for ramesh@example.test.',
+      );
       expect(state.lastInvitation?.invitationId, 9);
       expect(repository.lastEmployeeId, 42);
       expect(repository.lastInvitationId, 9);
       expect(state.isSaving, isFalse);
+    });
+
+    test('reports skipped invitation email delivery', () async {
+      final repository = _FakeEmployeeRepository(
+        invitation: _invitation(
+          emailDeliveryStatus: InvitationEmailDeliveryStatus.skipped,
+          emailDeliveryReason: 'SMTP delivery is not configured.',
+        ),
+      );
+      final container = await _authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(employeeControllerProvider.notifier);
+
+      await controller.resendInvitation(42, 9);
+
+      expect(
+        container.read(employeeControllerProvider).savedMessage,
+        'Invitation link generated, but email was not sent: SMTP delivery is not configured.',
+      );
+    });
+
+    test('reports failed invitation email delivery', () async {
+      final repository = _FakeEmployeeRepository(
+        invitation: _invitation(
+          emailDeliveryStatus: InvitationEmailDeliveryStatus.failed,
+          emailDeliveryReason: 'SMTP authentication failed.',
+        ),
+      );
+      final container = await _authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(employeeControllerProvider.notifier);
+
+      await controller.resendInvitation(42, 9);
+
+      expect(
+        container.read(employeeControllerProvider).savedMessage,
+        'Invitation link generated, but email delivery failed: SMTP authentication failed.',
+      );
     });
 
     test('cancels an invitation', () async {
@@ -254,7 +300,9 @@ void main() {
       expect(repository.lastCompleteRequest?.otpCode, '123456');
       // The device payload comes from the overridden device() — no platform
       // channels are touched.
-      expect(repository.lastCompleteRequest?.device, {'deviceId': 'test-device'});
+      expect(repository.lastCompleteRequest?.device, {
+        'deviceId': 'test-device',
+      });
       // The employee is authenticated with the session returned by the backend,
       // routed to their assigned role workspace.
       final sessionState = container.read(sessionControllerProvider);
@@ -263,33 +311,36 @@ void main() {
       expect(sessionState.session?.user.roles, ['DELIVERY_STAFF']);
     });
 
-    test('surfaces the server message when completing registration fails', () async {
-      final repository = _FailingEmployeeRepository(
-        ApiException(
-          422,
-          'validation',
-          'The invitation has expired.',
-          field: 'Token',
-        ),
-      );
-      final container = await _authenticatedContainer(repository);
-      addTearDown(container.dispose);
-      final controller = container.read(employeeControllerProvider.notifier);
+    test(
+      'surfaces the server message when completing registration fails',
+      () async {
+        final repository = _FailingEmployeeRepository(
+          ApiException(
+            422,
+            'validation',
+            'The invitation has expired.',
+            field: 'Token',
+          ),
+        );
+        final container = await _authenticatedContainer(repository);
+        addTearDown(container.dispose);
+        final controller = container.read(employeeControllerProvider.notifier);
 
-      final completed = await controller.completeRegistration(
-        token: 'inv-token-expired',
-        displayName: 'Ramesh Kumar',
-        mobile: '9876543210',
-        password: 'Password@123',
-        otpCode: '123456',
-      );
-      final state = container.read(employeeControllerProvider);
+        final completed = await controller.completeRegistration(
+          token: 'inv-token-expired',
+          displayName: 'Ramesh Kumar',
+          mobile: '9876543210',
+          password: 'Password@123',
+          otpCode: '123456',
+        );
+        final state = container.read(employeeControllerProvider);
 
-      expect(completed, isFalse);
-      expect(state.errorMessage, 'The invitation has expired.');
-      expect(state.fieldErrors['token'], 'The invitation has expired.');
-      expect(state.isCompleting, isFalse);
-    });
+        expect(completed, isFalse);
+        expect(state.errorMessage, 'The invitation has expired.');
+        expect(state.fieldErrors['token'], 'The invitation has expired.');
+        expect(state.isCompleting, isFalse);
+      },
+    );
 
     test('surfaces a network message when completing registration fails', () async {
       final repository = _FailingEmployeeRepository(StateError('boom'));
@@ -360,8 +411,11 @@ class _UnauthenticatedRepository extends AuthRepository {
 }
 
 class _FakeEmployeeRepository extends EmployeeRepository {
-  _FakeEmployeeRepository()
-    : super(api: ApiClient(baseUrl: 'https://api.example.test'));
+  _FakeEmployeeRepository({EmployeeInvitationResult? invitation})
+    : _invitationResult = invitation,
+      super(api: ApiClient(baseUrl: 'https://api.example.test'));
+
+  final EmployeeInvitationResult? _invitationResult;
 
   int callCount = 0;
   int loadCount = 0;
@@ -449,7 +503,8 @@ class _FakeEmployeeRepository extends EmployeeRepository {
     lastToken = token;
     lastEmployeeId = employeeId;
     lastInvitationId = invitationId;
-    return _invitation(invitationId: invitationId, employeeId: employeeId);
+    return _invitationResult ??
+        _invitation(invitationId: invitationId, employeeId: employeeId);
   }
 
   @override
@@ -601,14 +656,23 @@ EmployeeBranchOption _branchOption({int id = 7}) => EmployeeBranchOption(
   isActive: true,
 );
 
-EmployeeInvitationResult _invitation({int invitationId = 9, int employeeId = 42}) =>
-    EmployeeInvitationResult(
-      invitationId: invitationId,
-      invitationPublicId: 'inv-$invitationId',
-      employeeId: employeeId,
-      token: 'inv-token-$invitationId',
-      expiresAt: DateTime.utc(2026, 9, 1, 10),
-    );
+EmployeeInvitationResult _invitation({
+  int invitationId = 9,
+  int employeeId = 42,
+  InvitationEmailDeliveryStatus emailDeliveryStatus =
+      InvitationEmailDeliveryStatus.skipped,
+  String? emailDeliveryReason,
+  String? emailRecipient,
+}) => EmployeeInvitationResult(
+  invitationId: invitationId,
+  invitationPublicId: 'inv-$invitationId',
+  employeeId: employeeId,
+  token: 'inv-token-$invitationId',
+  expiresAt: DateTime.utc(2026, 9, 1, 10),
+  emailDeliveryStatus: emailDeliveryStatus,
+  emailDeliveryReason: emailDeliveryReason,
+  emailRecipient: emailRecipient,
+);
 
 EmployeeInvitationVerification _verification({bool isValid = true}) =>
     EmployeeInvitationVerification(
@@ -646,6 +710,7 @@ CompleteEmployeeRegistrationResult _completeResult() =>
 const _createRequest = CreateEmployeeRequest(
   displayName: 'Ramesh Kumar',
   mobile: '9876543210',
+  email: 'ramesh@example.com',
   roleCode: 'DELIVERY_STAFF',
   branchId: 7,
   sendInvitation: true,

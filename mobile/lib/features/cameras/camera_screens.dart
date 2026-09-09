@@ -512,6 +512,7 @@ class _CameraFormDialogState extends ConsumerState<_CameraFormDialog> {
   late bool _isPublic;
   late bool _isActive;
   late CameraStreamProtocol _protocol;
+  Map<int, String> _branchNames = const {};
 
   bool get _isEditing => widget.camera != null;
 
@@ -603,6 +604,14 @@ class _CameraFormDialogState extends ConsumerState<_CameraFormDialog> {
   @override
   Widget build(BuildContext context) {
     final saving = ref.watch(cameraControllerProvider).isSaving;
+    final session = ref.watch(sessionControllerProvider).session;
+    final branchDetails = session?.user.branchDetails ?? const [];
+    // Map each assigned branch id to its authoritative name from the session
+    // (fall back to a numeric label when branchDetails is unavailable, e.g.
+    // legacy/test sessions).
+    _branchNames = {
+      for (final branch in branchDetails) branch.id: branch.name,
+    };
     return AlertDialog(
       title: Text(_isEditing ? 'Edit camera' : 'Add camera'),
       content: SizedBox(
@@ -760,7 +769,7 @@ class _CameraFormDialogState extends ConsumerState<_CameraFormDialog> {
           .map(
             (branchId) => DropdownMenuItem(
               value: branchId,
-              child: Text('Branch $branchId'),
+              child: Text(_branchNames[branchId] ?? 'Branch $branchId'),
             ),
           )
           .toList(),

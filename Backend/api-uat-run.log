@@ -1,0 +1,158 @@
+Using launch settings from src\DoodhDirect.Api\Properties\launchSettings.json...
+[01:56:56 INF] Now listening on: http://localhost:5209
+[01:56:56 INF] Application started. Press Ctrl+C to shut down.
+[01:56:56 INF] Hosting environment: Development
+[01:56:56 INF] Content root path: c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api
+[01:58:01 WRN] Failed to determine the https port for redirect.
+[01:58:01 INF] HTTP GET /health/ready responded 200 in 105.3451 ms
+[01:59:20 INF] HTTP POST /api/v1/auth/login responded 400 in 60.1694 ms
+[02:25:39 WRN] Compiling a query which loads related collections for more than one collection navigation, either via 'Include' or through projection, but no 'QuerySplittingBehavior' has been configured. By default, Entity Framework will use 'QuerySplittingBehavior.SingleQuery', which can potentially result in slow query performance. See https://go.microsoft.com/fwlink/?linkid=2134277 for more information. To identify the query that's triggering this warning call 'ConfigureWarnings(w => w.Throw(RelationalEventId.MultipleCollectionIncludeWarning))'.
+[02:25:39 WRN] Request failed with status 401. CorrelationId: 46ca54bb-372b-4ca3-b79c-bd36ded5ff5e
+DoodhDirect.Application.Common.UnauthorizedAppException: Authentication failed.
+   at DoodhDirect.Infrastructure.Identity.AuthenticationService.LoginAsync(PasswordLoginRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Infrastructure\Identity\AuthenticationService.cs:line 64
+   at DoodhDirect.Api.Controllers.AuthController.Login(PasswordLoginApiRequest request, CancellationToken cancellationToken) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Controllers\AuthController.cs:line 48
+   at lambda_method22(Closure, Object)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.AwaitableObjectResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeInnerFilterAsync>g__Awaited|13_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeFilterPipelineAsync>g__Awaited|20_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+   at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
+   at Microsoft.AspNetCore.Authentication.AuthenticationMiddleware.Invoke(HttpContext context)
+   at DoodhDirect.Api.Middleware.ExceptionHandlingMiddleware.InvokeAsync(HttpContext context) in c:\Hemant\Project-D1\Backend\src\DoodhDirect.Api\Middleware\ExceptionHandlingMiddleware.cs:line 16
+[02:25:39 INF] HTTP POST /api/v1/auth/login responded 401 in 328.3745 ms
+[03:04:22 INF] HTTP OPTIONS /api/v1/auth/login responded 204 in 1.5041 ms
+[03:04:22 INF] HTTP POST /api/v1/auth/login responded 200 in 394.7678 ms
+[03:04:22 INF] HTTP OPTIONS /api/v1/notifications responded 204 in 0.1142 ms
+[03:04:23 INF] HTTP GET /api/v1/notifications responded 200 in 112.4269 ms
+[03:04:23 INF] HTTP OPTIONS /api/v1/notifications/unread-count responded 204 in 0.0793 ms
+[03:04:23 INF] HTTP GET /api/v1/notifications/unread-count responded 200 in 18.7053 ms
+[03:04:23 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[03:04:23 INF] Notification cycle processed 1 events and 0 deliveries.
+[03:04:24 INF] HTTP OPTIONS /api/v1/admin/employees responded 204 in 0.1724 ms
+[03:04:24 INF] HTTP GET /api/v1/admin/employees responded 200 in 114.2385 ms
+[03:04:28 INF] HTTP OPTIONS /api/v1/admin/employees/branches responded 204 in 0.1058 ms
+[03:04:28 INF] HTTP GET /api/v1/admin/employees/branches responded 200 in 46.5880 ms
+[03:07:17 INF] HTTP OPTIONS /api/v1/auth/logout responded 204 in 0.1827 ms
+[03:07:17 INF] HTTP POST /api/v1/auth/logout responded 200 in 43.1656 ms
+[03:08:03 INF] HTTP OPTIONS /api/v1/auth/send-otp responded 204 in 0.1378 ms
+[03:08:03 INF] Start processing HTTP request POST https://api.msg91.com/api/v5/widget/sendOtp
+[03:08:03 INF] Sending HTTP request POST https://api.msg91.com/api/v5/widget/sendOtp
+[03:08:04 INF] Received HTTP response headers after 728.5024ms - 200
+[03:08:04 INF] End processing HTTP request after 734.5065ms - 200
+[03:08:04 DBG] MSG91 widget response body (sensitive values redacted): {"message":"366965754c63363035323235","type":"success"}
+[03:08:04 INF] HTTP POST /api/v1/auth/send-otp responded 200 in 840.1306 ms
+[03:08:17 INF] HTTP OPTIONS /api/v1/auth/verify-otp responded 204 in 0.0865 ms
+[03:08:17 INF] Start processing HTTP request POST https://api.msg91.com/api/v5/widget/verifyOtp
+[03:08:17 INF] Sending HTTP request POST https://api.msg91.com/api/v5/widget/verifyOtp
+[03:08:18 INF] Received HTTP response headers after 385.8707ms - 200
+[03:08:18 INF] End processing HTTP request after 386.6647ms - 200
+[03:08:18 DBG] MSG91 widget response body (sensitive values redacted): {"message":"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyZXF1ZXN0SWQiOiIzNjY5NjU3NTRjNjMzNjMwMzUzMjMyMzUiLCJjb21wYW55SWQiOjU2NjEzMn0.Sj-ldi1s3WCZbji7OwaqDBLY9vpVKTBI3XPecN5drvU","type":"success"}
+[03:08:18 INF] Start processing HTTP request POST https://api.msg91.com/api/v5/widget/verifyAccessToken
+[03:08:18 INF] Sending HTTP request POST https://api.msg91.com/api/v5/widget/verifyAccessToken
+[03:08:18 INF] Received HTTP response headers after 378.1452ms - 200
+[03:08:18 INF] End processing HTTP request after 378.7253ms - 200
+[03:08:18 DBG] MSG91 widget response body (sensitive values redacted): {"message":"[REDACTED]","type":"success"}
+[03:08:18 WRN] Compiling a query which loads related collections for more than one collection navigation, either via 'Include' or through projection, but no 'QuerySplittingBehavior' has been configured. By default, Entity Framework will use 'QuerySplittingBehavior.SingleQuery', which can potentially result in slow query performance. See https://go.microsoft.com/fwlink/?linkid=2134277 for more information. To identify the query that's triggering this warning call 'ConfigureWarnings(w => w.Throw(RelationalEventId.MultipleCollectionIncludeWarning))'.
+[03:08:18 INF] HTTP POST /api/v1/auth/verify-otp responded 200 in 886.5447 ms
+[03:08:18 INF] HTTP OPTIONS /api/v1/notifications responded 204 in 0.1106 ms
+[03:08:18 INF] HTTP GET /api/v1/notifications responded 200 in 7.8472 ms
+[03:08:18 INF] HTTP OPTIONS /api/v1/customers/me responded 204 in 0.1194 ms
+[03:08:18 INF] HTTP OPTIONS /api/v1/customers/me/addresses responded 204 in 0.1205 ms
+[03:08:18 INF] HTTP OPTIONS /api/v1/product-categories responded 204 in 0.0784 ms
+[03:08:18 INF] HTTP OPTIONS /api/v1/products responded 204 in 0.0260 ms
+[03:08:18 INF] HTTP OPTIONS /api/v1/wallet responded 204 in 0.0589 ms
+[03:08:18 INF] HTTP OPTIONS /api/v1/orders responded 204 in 0.0764 ms
+[03:08:18 INF] HTTP OPTIONS /api/v1/wallet/transactions responded 204 in 0.0454 ms
+[03:08:18 INF] HTTP GET /api/v1/customers/me responded 200 in 54.5222 ms
+[03:08:18 INF] HTTP GET /api/v1/customers/me/addresses responded 200 in 58.3525 ms
+[03:08:18 INF] HTTP OPTIONS /api/v1/notifications/unread-count responded 204 in 0.1000 ms
+[03:08:18 INF] HTTP GET /api/v1/notifications/unread-count responded 200 in 9.8513 ms
+[03:08:18 INF] HTTP GET /api/v1/product-categories responded 200 in 78.2827 ms
+[03:08:18 INF] HTTP GET /api/v1/wallet responded 200 in 73.3389 ms
+[03:08:18 INF] HTTP GET /api/v1/products responded 200 in 127.5401 ms
+[03:08:18 INF] HTTP GET /api/v1/wallet/transactions responded 200 in 131.6188 ms
+[03:08:18 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[03:08:18 INF] Notification cycle processed 1 events and 0 deliveries.
+[03:08:18 INF] HTTP GET /api/v1/orders responded 200 in 386.4011 ms
+[03:08:26 INF] HTTP OPTIONS /api/v1/customers/me/addresses responded 204 in 0.0336 ms
+[03:08:26 INF] HTTP OPTIONS /api/v1/customers/me responded 204 in 0.2220 ms
+[03:08:26 INF] HTTP GET /api/v1/customers/me/addresses responded 200 in 4.9903 ms
+[03:08:26 INF] HTTP GET /api/v1/customers/me responded 200 in 4.9649 ms
+[03:08:31 INF] HTTP OPTIONS /api/v1/product-categories responded 204 in 0.1169 ms
+[03:08:31 INF] HTTP OPTIONS /api/v1/products responded 204 in 0.1110 ms
+[03:08:31 INF] HTTP GET /api/v1/product-categories responded 200 in 2.5242 ms
+[03:08:31 INF] HTTP GET /api/v1/products responded 200 in 2.6209 ms
+[03:08:32 INF] HTTP OPTIONS /api/v1/customers/me responded 204 in 0.0767 ms
+[03:08:32 INF] HTTP OPTIONS /api/v1/customers/me/addresses responded 204 in 0.0587 ms
+[03:08:32 INF] HTTP OPTIONS /api/v1/orders responded 204 in 0.0309 ms
+[03:08:32 INF] HTTP GET /api/v1/product-categories responded 200 in 1.5994 ms
+[03:08:32 INF] HTTP GET /api/v1/customers/me responded 200 in 1.1680 ms
+[03:08:32 INF] HTTP GET /api/v1/products responded 200 in 1.7724 ms
+[03:08:32 INF] HTTP GET /api/v1/customers/me/addresses responded 200 in 1.0979 ms
+[03:08:32 INF] HTTP OPTIONS /api/v1/wallet responded 204 in 0.0393 ms
+[03:08:32 INF] HTTP OPTIONS /api/v1/wallet/transactions responded 204 in 0.0447 ms
+[03:08:32 INF] HTTP GET /api/v1/wallet responded 200 in 2.8910 ms
+[03:08:32 INF] HTTP GET /api/v1/orders responded 200 in 5.0471 ms
+[03:08:32 INF] HTTP GET /api/v1/wallet/transactions responded 200 in 2.8787 ms
+[03:08:34 INF] HTTP GET /api/v1/customers/me/addresses responded 200 in 1.9346 ms
+[03:08:34 INF] HTTP GET /api/v1/customers/me responded 200 in 1.9349 ms
+[03:11:13 INF] HTTP OPTIONS /api/v1/notifications responded 204 in 0.0661 ms
+[03:11:13 INF] HTTP GET /api/v1/notifications responded 200 in 5.2076 ms
+[03:11:13 INF] HTTP OPTIONS /api/v1/notifications/unread-count responded 204 in 0.0604 ms
+[03:11:13 INF] HTTP GET /api/v1/notifications/unread-count responded 200 in 2.3305 ms
+[03:11:14 INF] HTTP GET /api/v1/notifications responded 200 in 1.9753 ms
+[03:11:14 INF] HTTP GET /api/v1/notifications/unread-count responded 200 in 1.4120 ms
+[03:11:14 INF] HTTP GET /api/v1/notifications responded 200 in 2.3246 ms
+[03:11:14 INF] HTTP GET /api/v1/notifications/unread-count responded 200 in 1.6993 ms
+[03:11:19 INF] HTTP OPTIONS /api/v1/customers/me responded 204 in 0.0931 ms
+[03:11:19 INF] HTTP OPTIONS /api/v1/customers/me/addresses responded 204 in 0.0573 ms
+[03:11:19 INF] HTTP OPTIONS /api/v1/product-categories responded 204 in 0.0084 ms
+[03:11:19 INF] HTTP OPTIONS /api/v1/products responded 204 in 0.0204 ms
+[03:11:19 INF] HTTP OPTIONS /api/v1/orders responded 204 in 0.0094 ms
+[03:11:19 INF] HTTP OPTIONS /api/v1/wallet responded 204 in 0.1802 ms
+[03:11:19 INF] HTTP OPTIONS /api/v1/wallet/transactions responded 204 in 0.0251 ms
+[03:11:19 INF] HTTP GET /api/v1/customers/me responded 200 in 7.8539 ms
+[03:11:19 INF] HTTP GET /api/v1/customers/me/addresses responded 200 in 7.6313 ms
+[03:11:19 INF] HTTP GET /api/v1/wallet responded 200 in 4.9067 ms
+[03:11:19 INF] HTTP GET /api/v1/wallet/transactions responded 200 in 13.8259 ms
+[03:11:19 INF] HTTP GET /api/v1/orders responded 200 in 26.0095 ms
+[03:11:19 INF] HTTP GET /api/v1/product-categories responded 200 in 80.1186 ms
+[03:11:19 INF] HTTP GET /api/v1/products responded 200 in 79.2869 ms
+[03:11:20 INF] HTTP OPTIONS /api/v1/auth/logout responded 204 in 0.0652 ms
+[03:11:20 INF] HTTP POST /api/v1/auth/logout responded 200 in 12.9718 ms
+[03:11:40 INF] HTTP OPTIONS /api/v1/auth/login responded 204 in 0.0300 ms
+[03:11:40 INF] HTTP POST /api/v1/auth/login responded 200 in 96.8965 ms
+[03:11:40 INF] HTTP OPTIONS /api/v1/notifications responded 204 in 0.0283 ms
+[03:11:40 INF] HTTP GET /api/v1/notifications responded 200 in 5.4475 ms
+[03:11:40 INF] HTTP OPTIONS /api/v1/notifications/unread-count responded 204 in 0.0310 ms
+[03:11:40 INF] HTTP GET /api/v1/notifications/unread-count responded 200 in 2.1798 ms
+[03:11:41 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[03:11:41 INF] Notification cycle processed 1 events and 0 deliveries.
+[03:11:43 INF] HTTP OPTIONS /api/v1/admin/branches responded 204 in 0.0803 ms
+[03:11:43 INF] HTTP GET /api/v1/admin/branches responded 200 in 36.1942 ms
+[03:11:46 INF] HTTP OPTIONS /api/v1/admin/branches/2edd9d0b-1d41-4204-889c-e9330597ef04 responded 204 in 0.0866 ms
+[03:11:46 INF] HTTP GET /api/v1/admin/branches/2edd9d0b-1d41-4204-889c-e9330597ef04 responded 200 in 21.7933 ms
+[03:11:50 INF] HTTP OPTIONS /api/v1/admin/branches/2edd9d0b-1d41-4204-889c-e9330597ef04/deactivate responded 204 in 0.0521 ms
+[03:11:50 WRN] Savepoints are disabled because Multiple Active Result Sets (MARS) is enabled. If 'SaveChanges' fails, then the transaction cannot be automatically rolled back to a known clean state. Instead, the transaction should be rolled back by the application before retrying 'SaveChanges'. See https://go.microsoft.com/fwlink/?linkid=2149338 for more information and examples. To identify the code which triggers this warning, call 'ConfigureWarnings(w => w.Throw(SqlServerEventId.SavepointsDisabledBecauseOfMARS))'.
+[03:11:50 INF] HTTP POST /api/v1/admin/branches/2edd9d0b-1d41-4204-889c-e9330597ef04/deactivate responded 200 in 33.9684 ms
+[03:11:59 INF] HTTP OPTIONS /api/v1/admin/branches/2edd9d0b-1d41-4204-889c-e9330597ef04 responded 204 in 0.0382 ms
+[03:11:59 INF] HTTP GET /api/v1/admin/branches/2edd9d0b-1d41-4204-889c-e9330597ef04 responded 200 in 1.7360 ms
+[03:12:04 INF] HTTP OPTIONS /api/v1/client-config responded 204 in 0.0556 ms
+[03:12:04 INF] HTTP GET /api/v1/client-config responded 200 in 21.3670 ms
+[03:12:48 INF] HTTP OPTIONS /api/v1/admin/setup/number-series responded 204 in 0.2025 ms
+[03:12:48 INF] HTTP GET /api/v1/admin/setup/number-series responded 200 in 40.5899 ms
+[03:13:03 INF] HTTP OPTIONS /api/v1/admin/setup/number-series responded 204 in 0.0406 ms
+[03:13:03 INF] HTTP GET /api/v1/admin/setup/number-series responded 200 in 2.0858 ms
+[03:13:40 INF] HTTP OPTIONS /api/v1/product-categories responded 204 in 0.0878 ms
+[03:13:40 INF] HTTP OPTIONS /api/v1/products responded 204 in 0.0337 ms
+[03:13:40 INF] HTTP GET /api/v1/products responded 200 in 35.0119 ms
+[03:13:40 INF] HTTP GET /api/v1/product-categories responded 200 in 38.7801 ms
+[03:13:44 INF] HTTP OPTIONS /api/v1/admin/setup/otp-provider responded 204 in 0.0478 ms
+[03:13:44 INF] HTTP GET /api/v1/admin/setup/otp-provider responded 200 in 30.4677 ms
+[03:14:01 INF] HTTP OPTIONS /api/v1/admin/setup/integrations responded 204 in 0.0460 ms
+[03:14:01 INF] HTTP GET /api/v1/admin/setup/integrations responded 200 in 31.5442 ms

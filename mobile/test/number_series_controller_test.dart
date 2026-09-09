@@ -147,6 +147,54 @@ void main() {
       expect(repository.lastScope, 'MAIN');
     });
 
+    test('delete removes the series and refreshes the list', () async {
+      final repository = _FakeNumberSeriesRepository();
+      final container = await _authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(numberSeriesControllerProvider.notifier);
+
+      final deleted = await controller.delete('CUST');
+      final state = container.read(numberSeriesControllerProvider);
+
+      expect(deleted, isTrue);
+      expect(state.savedMessage, 'Series CUST deleted.');
+      expect(repository.lastCode, 'CUST');
+      expect(repository.lastScope, isNull);
+      expect(repository.deleteCount, 1);
+      expect(repository.listCount, 1);
+      expect(state.isSaving, isFalse);
+    });
+
+    test('delete forwards the scope for scoped series', () async {
+      final repository = _FakeNumberSeriesRepository();
+      final container = await _authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(numberSeriesControllerProvider.notifier);
+
+      final deleted = await controller.delete('ORD', scope: 'MAIN');
+
+      expect(deleted, isTrue);
+      expect(repository.lastCode, 'ORD');
+      expect(repository.lastScope, 'MAIN');
+    });
+
+    test('delete failure surfaces the error message', () async {
+      final container = await _authenticatedContainer(
+        _FailingNumberSeriesRepository(
+          const ApiException(400, 'CONFLICT', 'Cannot delete the series.'),
+        ),
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(numberSeriesControllerProvider.notifier);
+
+      final deleted = await controller.delete('CUST');
+      final state = container.read(numberSeriesControllerProvider);
+
+      expect(deleted, isFalse);
+      expect(state.errorMessage, 'Cannot delete the series.');
+      expect(state.isSaving, isFalse);
+    });
+
     test('maps ApiException field errors into state.fieldErrors', () async {
       final container = await _authenticatedContainer(
         _FailingNumberSeriesRepository(
@@ -185,6 +233,9 @@ void main() {
       await container
           .read(numberSeriesControllerProvider.notifier)
           .create(_createRequest);
+      await container
+          .read(numberSeriesControllerProvider.notifier)
+          .delete('CUST');
 
       expect(repository.callCount, 0);
     });
@@ -228,6 +279,7 @@ class _FakeNumberSeriesRepository extends NumberSeriesRepository {
   CreateNumberSeriesRequest? lastCreateRequest;
   UpdateNumberSeriesRequest? lastUpdateRequest;
   NumberSeriesPreviewRequest? lastPreviewRequest;
+  int deleteCount = 0;
 
   @override
   Future<List<NumberSeries>> list(String token) async {
@@ -304,6 +356,15 @@ class _FakeNumberSeriesRepository extends NumberSeriesRepository {
     lastIsActive = isActive;
     return _series(code: code, isActive: isActive, scope: scope);
   }
+
+  @override
+  Future<void> delete(String token, String code, {String? scope}) async {
+    callCount++;
+    deleteCount++;
+    lastToken = token;
+    lastCode = code;
+    lastScope = scope;
+  }
 }
 
 class _FailingNumberSeriesRepository extends NumberSeriesRepository {
@@ -346,6 +407,10 @@ class _FailingNumberSeriesRepository extends NumberSeriesRepository {
     bool isActive, {
     String? scope,
   }) async => throw failure;
+
+  @override
+  Future<void> delete(String token, String code, {String? scope}) async =>
+      throw failure;
 }
 
 NumberSeries _series({

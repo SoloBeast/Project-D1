@@ -76,7 +76,9 @@ class _RazorpayPaymentGatewayLauncher implements PaymentGatewayLauncher {
         'amount': (payment.amount * 100).round(),
         'currency': payment.currency,
         'name': 'DoodhDirect',
-        'description': 'Order ${payment.orderNumber}',
+        'description': payment.hasValidTarget
+            ? 'Order ${payment.orderNumber}'
+            : 'Wallet top-up',
         'retry': {'enabled': true, 'max_count': 2},
         'theme': {'color': '#087F8C'},
       });

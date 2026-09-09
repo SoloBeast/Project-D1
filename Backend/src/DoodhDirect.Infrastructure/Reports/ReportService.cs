@@ -219,7 +219,7 @@ public sealed class ReportService(DoodhDirectDbContext db, IIndiaTimeProvider ti
                 BranchName = db.Branches.Where(b => b.Id == x.BranchId).Select(b => b.Name).First(),
                 OccurredAt = x.UsedAt,
                 Quantity = x.QuantityUsed,
-                x.Batch.Unit,
+                x.Unit,
                 Purpose = (string?)x.Purpose
             });
         var query = production.Concat(usage);

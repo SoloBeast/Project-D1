@@ -102,6 +102,22 @@ public sealed class NumberSeriesController(INumberSeriesService numberSeriesServ
                 cancellationToken,
                 scope)));
 
+    [HttpDelete("{code}")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.SetupNumberSeriesManage)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<object>>> Delete(
+        string code,
+        [FromQuery] string? scope,
+        CancellationToken cancellationToken)
+    {
+        await numberSeriesService.DeleteAsync(
+            code,
+            RequireUserId(),
+            cancellationToken,
+            scope);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
     private long RequireUserId()
     {
         var value = User.FindFirstValue("user_id");

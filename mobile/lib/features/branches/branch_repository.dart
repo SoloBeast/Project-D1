@@ -65,6 +65,19 @@ class BranchRepository {
             as Map<String, dynamic>,
       );
 
+  /// Deletes a deactivated branch. The backend decides between a permanent
+  /// delete and an archive: an inactive branch with no dependent/historical
+  /// records is removed, while one that still carries historical records is
+  /// archived and returned in [BranchDeleteResult.branch].
+  Future<BranchDeleteResult> delete(String token, String branchId) async =>
+      BranchDeleteResult.fromJson(
+        (await api.delete(
+              '/api/v1/admin/branches/$branchId',
+              accessToken: token,
+            ))['data']
+            as Map<String, dynamic>,
+      );
+
   List<Map<String, dynamic>> _list(Map<String, dynamic> response) =>
       (response['data'] as List<dynamic>? ?? const [])
           .cast<Map<String, dynamic>>();

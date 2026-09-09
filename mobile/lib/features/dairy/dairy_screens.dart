@@ -47,8 +47,15 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
   Widget build(BuildContext context) {
     final session = ref.watch(sessionControllerProvider).session;
     final branches = session?.user.branchIds ?? const <int>[];
+    final branchDetails = session?.user.branchDetails ?? const [];
     final state = ref.watch(dairyControllerProvider);
     final branch = _selectedBranch;
+    String branchLabel(int id) {
+      for (final b in branchDetails) {
+        if (b.id == id) return b.name;
+      }
+      return 'Branch $id';
+    }
 
     if (branch == null) {
       return const Scaffold(
@@ -77,7 +84,7 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
                     .map(
                       (id) => DropdownMenuItem(
                         value: id,
-                        child: Text('Branch $id'),
+                        child: Text(branchLabel(id)),
                       ),
                     )
                     .toList(growable: false),
@@ -223,6 +230,12 @@ class _DairyProductionEntryScreenState
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(dairyControllerProvider);
+    final session = ref.watch(sessionControllerProvider).session;
+    var branchTitle = 'Branch ${widget.branchId}';
+    final match = session?.user.branchDetails
+        .where((b) => b.id == widget.branchId)
+        .toList();
+    if (match != null && match.isNotEmpty) branchTitle = match.first.name;
     return Scaffold(
       appBar: const _DairyAppBar(title: 'Record production'),
       body: Form(
@@ -231,7 +244,7 @@ class _DairyProductionEntryScreenState
           padding: const EdgeInsets.all(16),
           children: [
             Text(
-              'Branch ${widget.branchId}',
+              branchTitle,
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 16),
@@ -657,7 +670,8 @@ class _DairyUsageScreenState extends ConsumerState<DairyUsageScreen> {
         errorMessage: state.errorMessage,
         isEmpty: state.usage.isEmpty,
         emptyTitle: 'No usage recorded',
-        emptyMessage: 'Append-only batch usage will appear here.',
+        emptyMessage:
+            'Manual batch usage and automatic delivery consumption will appear here.',
         onRetry: _load,
         child: RefreshIndicator(
           onRefresh: _load,
@@ -666,14 +680,29 @@ class _DairyUsageScreenState extends ConsumerState<DairyUsageScreen> {
             itemCount: state.usage.length,
             itemBuilder: (context, index) {
               final usage = state.usage[index];
+              final reference = usageReference(usage);
               return Card(
                 child: ListTile(
-                  leading: const Icon(Icons.local_drink_outlined),
+                  leading: Icon(
+                    usage.isAutomatic
+                        ? Icons.receipt_long_outlined
+                        : Icons.local_drink_outlined,
+                    color: usage.isAutomatic
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                  ),
                   title: Text(
                     formatMilkQuantity(usage.quantityUsed, usage.unit),
                   ),
                   subtitle: Text(
-                    '${usage.batchNumber}\n${usage.purpose} • ${formatDairyDateTime(usage.usedAt)}',
+                    [
+                      if (reference.isNotEmpty)
+                        reference
+                      else if (usage.batchNumber != null &&
+                          usage.batchNumber!.isNotEmpty)
+                        usage.batchNumber!,
+                      '${usage.source.label} • ${usage.purpose} • ${formatDairyDateTime(usage.usedAt)}',
+                    ].join('\n'),
                   ),
                   isThreeLine: true,
                 ),

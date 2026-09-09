@@ -201,6 +201,7 @@ public sealed class DairyService(
             var usage = new MilkUsage(
                 batch.BranchId,
                 batch.Id,
+                batch.Unit,
                 request.UsedAt,
                 request.QuantityUsed,
                 request.Purpose,
@@ -212,7 +213,7 @@ public sealed class DairyService(
 
             await dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            result = MapUsage(usage, batch);
+            result = MapUsage(usage);
         });
 
         return result!;
@@ -238,7 +239,7 @@ public sealed class DairyService(
             .OrderByDescending(x => x.UsedAt)
             .ThenByDescending(x => x.Id)
             .ToListAsync(cancellationToken);
-        return usages.Select(x => MapUsage(x, x.Batch)).ToArray();
+        return usages.Select(MapUsage).ToArray();
     }
 
     private async Task<MilkAvailabilityResult> CalculateAvailabilityAsync(
@@ -251,7 +252,13 @@ public sealed class DairyService(
             .Where(x => x.BranchId == branchId)
             .ToListAsync(cancellationToken);
         var produced = batches.Sum(x => x.QuantityProduced);
-        var used = batches.Sum(x => x.Usages.Sum(usage => usage.QuantityUsed));
+        // Total consumed = every MilkUsage record for this branch (manual batch usages AND
+        // automatic Order/Subscription consumption). Each record is counted exactly once, so
+        // there is no double counting between batch-linked usages and automatic usages.
+        var used = await dbContext.MilkUsages
+            .AsNoTracking()
+            .Where(x => x.BranchId == branchId)
+            .SumAsync(x => x.QuantityUsed, cancellationToken);
         var availableBatchCount = batches.Count(x => x.QuantityProduced > x.Usages.Sum(usage => usage.QuantityUsed));
         return new MilkAvailabilityResult(
             branchId,
@@ -396,16 +403,20 @@ public sealed class DairyService(
             batch.CreatedAt);
     }
 
-    private static MilkUsageResult MapUsage(MilkUsage usage, MilkBatch batch) => new(
+    private static MilkUsageResult MapUsage(MilkUsage usage) => new(
         usage.PublicId,
-        batch.PublicId,
-        batch.BatchNumber,
+        usage.Batch?.PublicId,
+        usage.Batch?.BatchNumber,
         usage.BranchId,
         usage.UsedAt,
         usage.QuantityUsed,
-        batch.Unit,
+        usage.Unit,
         usage.Purpose,
         usage.RecordedByUserId,
         usage.Remarks,
-        usage.CreatedAt);
+        usage.CreatedAt,
+        usage.Source,
+        usage.OrderNumber,
+        usage.DeliveryNumber,
+        usage.ProductName);
 }

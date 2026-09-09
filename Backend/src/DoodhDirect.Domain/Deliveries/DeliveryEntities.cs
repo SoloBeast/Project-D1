@@ -1,5 +1,6 @@
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Common;
+using DoodhDirect.Domain.Dairy;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Subscriptions;
@@ -176,6 +177,7 @@ public sealed class Delivery : AuditableEntity
     public User Customer { get; private set; } = null!;
     public User? AssignedEmployee { get; private set; }
     public ICollection<DeliveryAssignment> Assignments { get; private set; } = [];
+    public ICollection<DeliveryBatchAllocation> BatchAllocations { get; private set; } = [];
     public ICollection<DeliveryOtp> Otps { get; private set; } = [];
     public ICollection<DeliveryLocation> Locations { get; private set; } = [];
 
@@ -354,6 +356,33 @@ public sealed class Delivery : AuditableEntity
                 parameterName);
         }
     }
+}
+
+public sealed class DeliveryBatchAllocation : AuditableEntity
+{
+    private DeliveryBatchAllocation() { }
+
+    public DeliveryBatchAllocation(long deliveryId, long batchId, decimal quantityAllocated)
+    {
+        if (deliveryId <= 0) throw new ArgumentOutOfRangeException(nameof(deliveryId));
+        if (batchId <= 0) throw new ArgumentOutOfRangeException(nameof(batchId));
+        if (quantityAllocated <= 0) throw new ArgumentOutOfRangeException(nameof(quantityAllocated));
+        if (decimal.Round(quantityAllocated, 3) != quantityAllocated)
+        {
+            throw new ArgumentException("Allocation quantity cannot exceed three decimal places.", nameof(quantityAllocated));
+        }
+
+        DeliveryId = deliveryId;
+        BatchId = batchId;
+        QuantityAllocated = quantityAllocated;
+    }
+
+    public long DeliveryId { get; private set; }
+    public long BatchId { get; private set; }
+    public decimal QuantityAllocated { get; private set; }
+
+    public Delivery Delivery { get; private set; } = null!;
+    public MilkBatch Batch { get; private set; } = null!;
 }
 
 public sealed class DeliveryAssignment : Entity

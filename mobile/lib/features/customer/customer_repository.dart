@@ -2,12 +2,12 @@ import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
 
 class CustomerRepository {
-  CustomerRepository({required this._api});
+  CustomerRepository({required this.api});
 
-  final ApiClient _api;
+  final ApiClient api;
 
   Future<CustomerProfile> getProfile(String token) async {
-    final response = await _api.get('/api/v1/customers/me', accessToken: token);
+    final response = await api.get('/api/v1/customers/me', accessToken: token);
     return CustomerProfile.fromJson(response['data'] as Map<String, dynamic>);
   }
 
@@ -15,7 +15,7 @@ class CustomerRepository {
     String token,
     UpdateCustomerProfile request,
   ) async {
-    final response = await _api.patch(
+    final response = await api.patch(
       '/api/v1/customers/me',
       body: request.toJson(),
       accessToken: token,
@@ -24,7 +24,7 @@ class CustomerRepository {
   }
 
   Future<List<CustomerAddress>> getAddresses(String token) async {
-    final response = await _api.get(
+    final response = await api.get(
       '/api/v1/customers/me/addresses',
       accessToken: token,
     );
@@ -39,7 +39,7 @@ class CustomerRepository {
     String token,
     AddressDraft request,
   ) async {
-    final response = await _api.post(
+    final response = await api.post(
       '/api/v1/customers/me/addresses',
       body: request.toJson(),
       accessToken: token,
@@ -52,7 +52,7 @@ class CustomerRepository {
     String addressId,
     AddressDraft request,
   ) async {
-    final response = await _api.patch(
+    final response = await api.patch(
       '/api/v1/customers/me/addresses/$addressId',
       body: request.toJson(),
       accessToken: token,
@@ -61,7 +61,7 @@ class CustomerRepository {
   }
 
   Future<void> deactivateAddress(String token, String addressId) async {
-    await _api.delete(
+    await api.delete(
       '/api/v1/customers/me/addresses/$addressId',
       accessToken: token,
     );
@@ -72,7 +72,7 @@ class CustomerRepository {
     double latitude,
     double longitude,
   ) async {
-    final response = await _api.get(
+    final response = await api.get(
       '/api/v1/customers/me/address-lookup/reverse'
       '?latitude=$latitude&longitude=$longitude',
       accessToken: token,

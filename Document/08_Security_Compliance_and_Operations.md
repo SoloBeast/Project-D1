@@ -307,3 +307,14 @@ Create runbooks for:
 - Replacement backlog
 - Security incident
 - Data restore
+
+---
+
+## 16. Guest Customer / Deferred Login Security
+
+- Guests hold no session, no refresh token, and no JWT. The client never stores an access token for a guest and never attempts token refresh or protected API calls in guest mode.
+- The backend fallback authorization policy requires an authenticated user on every endpoint without `[AllowAnonymous]`, so all protected endpoints return `401 Unauthorized` to guests. Guest authorization is never granted server-side.
+- The anonymous surface stays minimal: catalogue reads, authentication entry points, the Razorpay webhook, employee-invitation verify/complete, and `/health/live`.
+- The guest cart is device-local under `identity.guest.cart.v1` and is identity-scoped (null user id while guest, customer public id after sign-in), preventing cross-user cart leakage and leaving no server-side records while a user remains a guest.
+- Cameras remain login-required: guest access to live dairy is routed to a sign-in prompt rather than bypassing `CAMERAS.VIEW_PUBLIC` authorization.
+- Negative authorization coverage asserts the guest boundary holds (`Backend/tests/DoodhDirect.Api.IntegrationTests/GuestAuthorizationTests.cs`): protected endpoints 401, the anonymous surface reachable, and all permission/allow-anonymous policy attributes intact.

@@ -362,7 +362,7 @@ const reportModules = <ReportModuleDescriptor>[
   ),
 ];
 
-const _created = ReportSortOption('createdAtUtc', 'Created');
+const _created = ReportSortOption('createdAt', 'Created');
 const _name = ReportSortOption('displayName', 'Name');
 const _active = ReportSortOption('isActive', 'Active');
 const _orderNumber = ReportSortOption('orderNumber', 'Order number');
@@ -376,9 +376,9 @@ const _balance = ReportSortOption('balance', 'Balance');
 const _customerNameSort = ReportSortOption('customerName', 'Customer');
 const _transactions = ReportSortOption('transactionCount', 'Transactions');
 const _scheduled = ReportSortOption('scheduledDate', 'Scheduled');
-const _completed = ReportSortOption('completedAtUtc', 'Completed');
-const _occurred = ReportSortOption('occurredAtUtc', 'Occurred');
-const _requested = ReportSortOption('requestedAtUtc', 'Requested');
+const _completed = ReportSortOption('completedAt', 'Completed');
+const _occurred = ReportSortOption('occurredAt', 'Occurred');
+const _requested = ReportSortOption('requestedAt', 'Requested');
 const _branchName = ReportSortOption('branchName', 'Branch');
 const _displayOrder = ReportSortOption('displayOrder', 'Display order');
 const _displayName = ReportSortOption('displayName', 'Name');

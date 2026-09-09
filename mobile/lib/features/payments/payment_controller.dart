@@ -204,28 +204,6 @@ class PaymentController extends Notifier<PaymentState> {
     return false;
   }
 
-  Future<bool> completeDevelopment() async {
-    final token = _token;
-    final current = state.payment;
-    if (token == null || current == null || !current.usesDevelopmentMock) {
-      return false;
-    }
-
-    state = state.copyWith(isLoading: true, clearError: true);
-    try {
-      final payment = await _repository.completeDevelopment(
-        token: token,
-        paymentId: current.publicId,
-      );
-      state = state.copyWith(payment: payment, isLoading: false);
-      return true;
-    } on ApiException catch (error) {
-      state = state.copyWith(isLoading: false, errorMessage: error.message);
-    } on Object {
-      state = state.copyWith(isLoading: false, errorMessage: _offlineMessage);
-    }
-    return false;
-  }
 }
 
 String _paymentErrorMessage(ApiException error) {

@@ -66,6 +66,7 @@ void main() {
       categoryId: 'category-1',
       unitOfMeasure: 'litre',
       price: 80.25,
+      branchIds: ['branch-1', 'branch-2'],
     );
     const category = CategoryDraft(
       code: ' MILK ',
@@ -80,12 +81,53 @@ void main() {
       'categoryId': 'category-1',
       'unitOfMeasure': 'litre',
       'price': 80.25,
+      'branchIds': ['branch-1', 'branch-2'],
     });
     expect(category.toJson(), {
       'code': 'MILK',
       'name': 'Milk',
       'description': 'Fresh dairy products',
     });
+  });
+
+  test('product draft from product carries every assigned branch id', () {
+    final product = CatalogueProduct.fromJson({
+      'publicId': 'product-1',
+      'sku': 'MILK-001',
+      'name': 'Fresh Buffalo Milk',
+      'description': null,
+      'category': {
+        'publicId': 'category-1',
+        'code': 'MILK',
+        'name': 'Milk',
+        'description': null,
+        'isActive': true,
+      },
+      'unitOfMeasure': 'litre',
+      'price': 80,
+      'isActive': true,
+      'branchAvailability': [
+        {
+          'branchId': 'branch-1',
+          'branchCode': 'MAIN',
+          'branchName': 'Main Branch',
+          'isAvailable': true,
+          'maxDailyQuantity': null,
+        },
+        {
+          'branchId': 'branch-2',
+          'branchCode': 'NIT3',
+          'branchName': 'NIT 3',
+          'isAvailable': true,
+          'maxDailyQuantity': 50,
+        },
+      ],
+    });
+
+    final draft = ProductDraft.fromProduct(product);
+
+    expect(draft.branchIds, ['branch-1', 'branch-2']);
+    expect(draft.toJson()['branchIds'], ['branch-1', 'branch-2']);
   });
 
   test(

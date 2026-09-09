@@ -12,7 +12,7 @@ Role code `CUSTOMER` maps to `UserRole.customer` in [roleFromCodes()](../mobile/
 | Browse products | `/catalogue` -> catalogue controller -> public category/product GETs -> catalogue service -> `ProductCategory`, `Product`, `ProductBranch` | Product list; tap opens `/catalogue/products/{id}` |
 | Buy product | product detail validates positive quantity -> `/checkout` -> checkout preview/create -> order service -> order entities | Success navigates `/orders/{id}/payment` |
 | Pay | payment method -> create payment -> wallet or gateway flow -> payment result route | Poll/verify updates result; valid target goes to order/subscription |
-| Wallet | `/wallet` -> wallet and transaction GETs; development top-up POST | Balance and ledger refresh |
+| Wallet | `/wallet` -> wallet and transaction GETs | Balance and ledger refresh |
 | Orders | `/orders` -> own list; detail -> GET; cancel -> POST | Ownership enforced; state reloads after cancel |
 | Subscriptions | list/setup/detail/calendar -> create/update/action/retry/skip calls | Payment result and subscription/calendar reloads |
 | Deliveries | `/deliveries` -> own deliveries; detail -> tracking snapshot | Eligible delivery opens milk-test route |

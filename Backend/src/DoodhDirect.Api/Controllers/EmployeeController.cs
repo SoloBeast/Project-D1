@@ -78,6 +78,25 @@ public sealed class EmployeeController(IEmployeeService employeeService) : Contr
                 RequireUserId(),
                 cancellationToken)));
 
+    /// <summary>
+    /// Deletes or archives a deactivated employee. Admin/owner operation; deleting a
+    /// SYSTEM_ADMIN additionally requires the owner-only administrators permission.
+    /// A deactivated employee with no operational history is removed permanently; when
+    /// operational records reference the account the server archives it instead so the
+    /// history keeps a stable identity. The response indicates which action occurred.
+    /// </summary>
+    [HttpDelete("{employeeId:long}")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.EmployeesManage)]
+    [ProducesResponseType(typeof(ApiResponse<EmployeeDeleteResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<EmployeeDeleteResult>>> Delete(
+        long employeeId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<EmployeeDeleteResult>.Ok(
+            await employeeService.DeleteAsync(
+                employeeId,
+                RequireUserId(),
+                cancellationToken)));
+
     [HttpPost("{employeeId:long}/invitations/{invitationId:long}/resend")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.EmployeesManage)]
     [ProducesResponseType(typeof(ApiResponse<EmployeeInvitationResult>), StatusCodes.Status200OK)]

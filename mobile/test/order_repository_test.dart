@@ -93,6 +93,86 @@ void main() {
     expect(preview.items.single.quantity, 1.125);
   });
 
+  test('manual preview posts the complete one-time address without address id', () async {
+    final client = MockClient((request) async {
+      expect(jsonDecode(request.body), {
+        'manualAddress': {
+          'label': 'One-time',
+          'addressLine1': '1 Main Road',
+          'addressLine2': null,
+          'locality': 'Central',
+          'city': 'Bengaluru',
+          'state': 'Karnataka',
+          'pinCode': '560001',
+          'landmark': null,
+          'deliveryInstructions': 'Call on arrival',
+          'contactName': 'Customer',
+          'contactMobile': '9999999999',
+          'latitude': 12.9716,
+          'longitude': 77.5946,
+        },
+        'items': [
+          {'productId': 'product-1', 'quantity': 1.0},
+        ],
+      });
+      return http.Response(
+        jsonEncode({
+          'success': true,
+          'data': {
+            'addressId': null,
+            'addressLabel': 'One-time',
+            'addressLine1': '1 Main Road',
+            'addressLine2': null,
+            'locality': 'Central',
+            'city': 'Bengaluru',
+            'state': 'Karnataka',
+            'pinCode': '560001',
+            'contactName': 'Customer',
+            'contactMobile': '9999999999',
+            'branchId': 'branch-1',
+            'branchCode': 'MAIN',
+            'branchName': 'Main Branch',
+            'distanceKm': 4.25,
+            'items': [],
+            'subtotal': 80,
+            'discountAmount': 0,
+            'payableAmount': 80,
+          },
+          'errors': [],
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final repository = OrderRepository(
+      api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
+    );
+
+    final preview = await repository.preview(
+      'customer-token',
+      const CheckoutRequest(
+        manualAddress: CheckoutAddressDraft(
+          label: 'One-time',
+          addressLine1: '1 Main Road',
+          addressLine2: null,
+          locality: 'Central',
+          city: 'Bengaluru',
+          state: 'Karnataka',
+          pinCode: '560001',
+          deliveryInstructions: 'Call on arrival',
+          contactName: 'Customer',
+          contactMobile: '9999999999',
+          latitude: 12.9716,
+          longitude: 77.5946,
+        ),
+        items: [OrderItemInput(productId: 'product-1', quantity: 1)],
+      ),
+    );
+
+    expect(preview.addressId, isNull);
+    expect(preview.payableAmount, 80);
+  });
+
   test('create sends bearer token and customer idempotency key', () async {
     final client = MockClient((request) async {
       expect(request.method, 'POST');

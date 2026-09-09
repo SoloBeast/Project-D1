@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:doodh_direct_mobile/core/config/app_config.dart';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
@@ -69,6 +70,31 @@ Map<String, dynamic> exactSuccessfulWalletPaymentJson() => {
   'subscriptionId': null,
 };
 
+Map<String, dynamic> walletTopUpPaymentJson({
+  String status = 'Pending',
+  double amount = 250,
+  String? failureMessage,
+}) => {
+  'publicId': 'payment-wallet-topup-1',
+  'orderId': null,
+  'orderNumber': null,
+  'subscriptionId': null,
+  'method': 'Razorpay',
+  'provider': 'Razorpay',
+  'status': status,
+  'amount': amount,
+  'refundedAmount': 0,
+  'currency': 'INR',
+  'gatewayOrderId': 'order_wallet_topup_1',
+  'gatewayPaymentId': null,
+  'gatewayKeyId': 'rzp_test_key',
+  'failureCode': null,
+  'failureMessage': failureMessage,
+  'expiresAtUtc': '2026-08-16T01:00:00Z',
+  'verifiedAtUtc': null,
+  'createdAtUtc': '2026-08-16T00:00:00Z',
+};
+
 Map<String, dynamic> walletJson() => {
   'publicId': 'wallet-1',
   'balance': 410.5,
@@ -84,7 +110,7 @@ Map<String, dynamic> walletTransactionJson({double amount = 500}) => {
   'amount': amount,
   'balanceAfter': amount,
   'currency': 'INR',
-  'description': 'Development wallet top-up',
+  'description': 'Wallet top-up',
   'occurredAt': '2026-08-16T07:35:00.000',
   'paymentId': null,
   'orderId': null,
@@ -649,31 +675,10 @@ void main() {
       expect(requestCount, 2);
     });
 
-    test('top-up sends amount and idempotency key', () async {
-      final client = MockClient((request) async {
-        expect(request.method, 'POST');
-        expect(request.url.path, '/api/v1/wallet/topup');
-        expect(request.headers['Authorization'], 'Bearer customer-token');
-        expect(request.headers['Idempotency-Key'], 'wallet-topup-1');
-        expect(jsonDecode(request.body), {'amount': 500.0});
-        return successResponse(walletTransactionJson());
-      });
-      final repository = WalletRepository(
-        api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
-      );
-
-      final transaction = await repository.topUp(
-        token: 'customer-token',
-        amount: 500,
-        idempotencyKey: 'wallet-topup-1',
-      );
-
-      expect(transaction.amount, 500);
-      expect(transaction.isReconciled, isTrue);
-    });
-
-    testWidgets('shows development top-up in debug builds', (tester) async {
-      expect(developmentWalletTopUpEnabled, isTrue);
+    testWidgets('does not show development top-up in normal builds', (
+      tester,
+    ) async {
+      expect(devToolsEnabled, isFalse);
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -688,8 +693,284 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Development top-up'), findsOneWidget);
+      expect(find.text('Development top-up'), findsNothing);
       expect(find.text('₹410.50'), findsOneWidget);
+    });
+  });
+
+  group('wallet top-up flow', () {
+    test('topUp posts amount and idempotency key and parses PaymentDetails', () async {
+      final client = MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/api/v1/wallet/top-up');
+        expect(request.headers['Authorization'], 'Bearer customer-token');
+        expect(request.headers['Idempotency-Key'], 'wallet-top-up-42');
+        expect(jsonDecode(request.body), {'amount': 250.0});
+        return successResponse(walletTopUpPaymentJson(), statusCode: 201);
+      });
+      final repository = WalletRepository(
+        api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
+      );
+
+      final payment = await repository.topUp(
+        token: 'customer-token',
+        amount: 250,
+        idempotencyKey: 'wallet-top-up-42',
+      );
+
+      expect(payment.publicId, 'payment-wallet-topup-1');
+      expect(payment.amount, 250);
+      expect(payment.status, PaymentStatus.pending);
+      expect(payment.usesRazorpay, isTrue);
+      expect(payment.hasValidTarget, isFalse);
+    });
+
+    test('topUp returns null without touching the repository for invalid amounts', () async {
+      final repository = _WalletTopUpRepository(
+        topUpResult: PaymentDetails.fromJson(walletTopUpPaymentJson()),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            _AuthenticatedAuthRepository(),
+          ),
+          walletRepositoryProvider.overrideWithValue(repository),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(sessionControllerProvider);
+      await Future<void>.delayed(Duration.zero);
+
+      final message = await container
+          .read(walletControllerProvider.notifier)
+          .topUp(0);
+      final state = container.read(walletControllerProvider);
+
+      expect(message, isNull);
+      expect(repository.topUpAmount, isNull);
+      expect(state.isSaving, isFalse);
+    });
+
+    test(
+      'runs Razorpay checkout, verifies with backend and refreshes wallet',
+      () async {
+        final created = PaymentDetails.fromJson(walletTopUpPaymentJson());
+        final verified = PaymentDetails.fromJson(
+          walletTopUpPaymentJson(status: 'Success'),
+        );
+        final repository = _WalletTopUpRepository(topUpResult: created);
+        final paymentRepository = _GatewayFlowPaymentRepository(
+          verifyResult: verified,
+        );
+        final launcher = _RecordingPaymentGatewayLauncher.success(
+          const PaymentGatewayCallback(
+            gatewayPaymentId: 'pay_wallet_topup_callback',
+            gatewayOrderId: 'order_wallet_topup_callback',
+            signature: 'wallet-signature',
+          ),
+        );
+        final container = ProviderContainer(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _AuthenticatedAuthRepository(),
+            ),
+            walletRepositoryProvider.overrideWithValue(repository),
+            paymentRepositoryProvider.overrideWithValue(paymentRepository),
+            paymentGatewayLauncherProvider.overrideWithValue(launcher),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        container.read(sessionControllerProvider);
+        await Future<void>.delayed(Duration.zero);
+
+        final message = await container
+            .read(walletControllerProvider.notifier)
+            .topUp(250);
+        final state = container.read(walletControllerProvider);
+
+        expect(message, '₹250.00 added to your wallet.');
+        expect(repository.topUpAmount, 250);
+        expect(
+          repository.topUpIdempotencyKey,
+          startsWith('wallet-top-up-'),
+        );
+        expect(launcher.openedPayment, same(created));
+        expect(paymentRepository.verifiedPaymentId, created.publicId);
+        expect(
+          paymentRepository.verifiedGatewayOrderId,
+          'order_wallet_topup_callback',
+        );
+        expect(
+          paymentRepository.verifiedGatewayPaymentId,
+          'pay_wallet_topup_callback',
+        );
+        expect(paymentRepository.verifiedSignature, 'wallet-signature');
+        expect(repository.loadCalls, 2);
+        expect(state.wallet?.balance, 410.5);
+        expect(state.transactions.single.description, 'Wallet top-up');
+        expect(state.isSaving, isFalse);
+        expect(state.errorMessage, isNull);
+      },
+    );
+
+    test('persists cancellation and surfaces the gateway message on SDK error', () async {
+      final created = PaymentDetails.fromJson(walletTopUpPaymentJson());
+      final cancelled = PaymentDetails.fromJson(
+        walletTopUpPaymentJson(status: 'Cancelled'),
+      );
+      final repository = _WalletTopUpRepository(topUpResult: created);
+      final paymentRepository = _GatewayFlowPaymentRepository(
+        cancelResult: cancelled,
+      );
+      final launcher = _RecordingPaymentGatewayLauncher.failure(
+        const PaymentGatewayException('Payment window was closed.'),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            _AuthenticatedAuthRepository(),
+          ),
+          walletRepositoryProvider.overrideWithValue(repository),
+          paymentRepositoryProvider.overrideWithValue(paymentRepository),
+          paymentGatewayLauncherProvider.overrideWithValue(launcher),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(sessionControllerProvider);
+      await Future<void>.delayed(Duration.zero);
+
+      final message = await container
+          .read(walletControllerProvider.notifier)
+          .topUp(250);
+      final state = container.read(walletControllerProvider);
+
+      expect(message, 'Payment window was closed.');
+      expect(launcher.openedPayment, same(created));
+      expect(paymentRepository.cancelledPaymentId, created.publicId);
+      expect(repository.loadCalls, 0);
+      expect(state.wallet, isNull);
+      expect(state.isSaving, isFalse);
+      expect(state.errorMessage, 'Payment window was closed.');
+    });
+
+    test('does not refresh the wallet when the backend verification fails', () async {
+      final created = PaymentDetails.fromJson(walletTopUpPaymentJson());
+      final failed = PaymentDetails.fromJson(
+        walletTopUpPaymentJson(
+          status: 'Failed',
+          failureMessage: 'Payment failed at the gateway.',
+        ),
+      );
+      final repository = _WalletTopUpRepository(topUpResult: created);
+      final paymentRepository = _GatewayFlowPaymentRepository(
+        verifyResult: failed,
+      );
+      final launcher = _RecordingPaymentGatewayLauncher.success(
+        const PaymentGatewayCallback(
+          gatewayPaymentId: 'pay_cb',
+          gatewayOrderId: 'order_cb',
+          signature: 'sig',
+        ),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            _AuthenticatedAuthRepository(),
+          ),
+          walletRepositoryProvider.overrideWithValue(repository),
+          paymentRepositoryProvider.overrideWithValue(paymentRepository),
+          paymentGatewayLauncherProvider.overrideWithValue(launcher),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(sessionControllerProvider);
+      await Future<void>.delayed(Duration.zero);
+
+      final message = await container
+          .read(walletControllerProvider.notifier)
+          .topUp(250);
+      final state = container.read(walletControllerProvider);
+
+      expect(message, 'Payment failed at the gateway.');
+      expect(repository.loadCalls, 0);
+      expect(state.wallet, isNull);
+      expect(state.isSaving, isFalse);
+      expect(state.errorMessage, 'Payment failed at the gateway.');
+    });
+
+    test('surfaces a terminal payment at creation without opening checkout', () async {
+      final failed = PaymentDetails.fromJson(
+        walletTopUpPaymentJson(
+          status: 'Failed',
+          failureMessage: 'Gateway order could not be created.',
+        ),
+      );
+      final repository = _WalletTopUpRepository(topUpResult: failed);
+      final launcher = _RecordingPaymentGatewayLauncher.success(
+        const PaymentGatewayCallback(
+          gatewayPaymentId: 'pay_cb',
+          gatewayOrderId: 'order_cb',
+          signature: 'sig',
+        ),
+      );
+      final container = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            _AuthenticatedAuthRepository(),
+          ),
+          walletRepositoryProvider.overrideWithValue(repository),
+          paymentGatewayLauncherProvider.overrideWithValue(launcher),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(sessionControllerProvider);
+      await Future<void>.delayed(Duration.zero);
+
+      final message = await container
+          .read(walletControllerProvider.notifier)
+          .topUp(250);
+      final state = container.read(walletControllerProvider);
+
+      expect(message, 'Gateway order could not be created.');
+      expect(launcher.openedPayment, isNull);
+      expect(repository.loadCalls, 0);
+      expect(state.wallet, isNull);
+      expect(state.errorMessage, 'Gateway order could not be created.');
+    });
+
+    test('refreshes the wallet for an already successful payment (idempotent replay)', () async {
+      final succeeded = PaymentDetails.fromJson(
+        walletTopUpPaymentJson(status: 'Success', amount: 250),
+      );
+      final repository = _WalletTopUpRepository(topUpResult: succeeded);
+      final container = ProviderContainer(
+        overrides: [
+          authRepositoryProvider.overrideWithValue(
+            _AuthenticatedAuthRepository(),
+          ),
+          walletRepositoryProvider.overrideWithValue(repository),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      container.read(sessionControllerProvider);
+      await Future<void>.delayed(Duration.zero);
+
+      final message = await container
+          .read(walletControllerProvider.notifier)
+          .topUp(250);
+      final state = container.read(walletControllerProvider);
+
+      expect(message, '₹250.00 added to your wallet.');
+      expect(repository.loadCalls, 2);
+      expect(state.wallet?.balance, 410.5);
+      expect(state.isSaving, isFalse);
+      expect(state.errorMessage, isNull);
     });
   });
 }
@@ -880,6 +1161,45 @@ class _GatewayFlowPaymentRepository extends PaymentRepository {
     final error = cancelError;
     if (error != null) throw error;
     return cancelResult!;
+  }
+}
+
+class _WalletTopUpRepository extends WalletRepository {
+  _WalletTopUpRepository({required this.topUpResult})
+    : super(
+        api: ApiClient(
+          client: MockClient((_) async => http.Response('', 500)),
+          baseUrl: 'https://api.example.test',
+        ),
+      );
+
+  final PaymentDetails topUpResult;
+  double? topUpAmount;
+  String? topUpIdempotencyKey;
+  int loadCalls = 0;
+
+  @override
+  Future<PaymentDetails> topUp({
+    required String token,
+    required double amount,
+    required String idempotencyKey,
+  }) async {
+    expect(token, 'customer-token');
+    topUpAmount = amount;
+    topUpIdempotencyKey = idempotencyKey;
+    return topUpResult;
+  }
+
+  @override
+  Future<WalletDetails> get(String token) async {
+    loadCalls++;
+    return WalletDetails.fromJson(walletJson());
+  }
+
+  @override
+  Future<List<WalletTransaction>> getTransactions(String token) async {
+    loadCalls++;
+    return [WalletTransaction.fromJson(walletTransactionJson())];
   }
 }
 

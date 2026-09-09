@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/auth/session_state.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'guest_cart_storage.dart';
 import 'order_models.dart';
 import 'order_repository.dart';
 
@@ -18,6 +22,7 @@ final orderControllerProvider = NotifierProvider<OrderController, OrderState>(
 class OrderState {
   const OrderState({
     this.cart = const <OrderCartItem>[],
+    this.checkoutAddress,
     this.preview,
     this.orders = const <OrderSummary>[],
     this.selectedOrder,
@@ -27,6 +32,7 @@ class OrderState {
   });
 
   final List<OrderCartItem> cart;
+  final CheckoutAddressSelection? checkoutAddress;
   final CheckoutPreview? preview;
   final List<OrderSummary> orders;
   final OrderSummary? selectedOrder;
@@ -36,6 +42,8 @@ class OrderState {
 
   OrderState copyWith({
     List<OrderCartItem>? cart,
+    CheckoutAddressSelection? checkoutAddress,
+    bool clearCheckoutAddress = false,
     CheckoutPreview? preview,
     bool clearPreview = false,
     List<OrderSummary>? orders,
@@ -47,6 +55,9 @@ class OrderState {
     bool clearError = false,
   }) => OrderState(
     cart: cart ?? this.cart,
+    checkoutAddress: clearCheckoutAddress
+        ? null
+        : checkoutAddress ?? this.checkoutAddress,
     preview: clearPreview ? null : preview ?? this.preview,
     orders: orders ?? this.orders,
     selectedOrder: clearSelectedOrder
@@ -66,11 +77,115 @@ class OrderController extends Notifier<OrderState> {
   @override
   OrderState build() {
     _checkoutIdempotencyKey = _newCheckoutIdempotencyKey();
+
+    // Track the auth state so the device-local cart is managed correctly:
+    //  * guest         → adopt the unowned guest cart (survives restarts) and
+    //                    never the items of a previously signed-in account;
+    //  * authenticated → restore the cart scoped to this user (survives
+    //                    guest → login and app/browser restarts) and re-scope
+    //                    the snapshot created before sign-in;
+    //  * leaving auth  → the in-memory cart belongs to the previous account
+    //                    and is dropped so it cannot leak into guest browsing
+    //                    or another user. The persisted snapshot survives
+    //                    until an explicit sign-out or a successful payment.
+    ref.listen<SessionState>(
+      sessionControllerProvider,
+      (previous, next) {
+        if (next.isGuest) {
+          unawaited(_adoptGuestCart());
+        } else if (next.isAuthenticated) {
+          unawaited(_restoreGuestCart(next.publicUserId));
+          if (previous != null && previous.isGuest) {
+            // The cart was just carried from guest to signed-in: re-scope the
+            // persisted snapshot to this user so it survives a restart.
+            _persistGuestCart();
+          }
+        } else if (previous != null && previous.isAuthenticated) {
+          _dropInMemoryCart();
+        }
+      },
+      fireImmediately: true,
+    );
+
     return const OrderState();
   }
 
+  GuestCartStorage get _guestCartStorage =>
+      ref.read(guestCartStorageProvider);
+
   String? get _token =>
       ref.read(sessionControllerProvider).session?.accessToken;
+
+  /// Restores the persisted cart for [userId] (null = guest) when the stored
+  /// snapshot belongs to that same identity. A snapshot owned by another
+  /// identity is removed from the device so it can never leak. A failed
+  /// restore must never block the app — the current cart is kept.
+  Future<void> _restoreGuestCart(String? userId) async {
+    try {
+      final snapshot = await _guestCartStorage.read();
+      // The read is async and yields, so a mutation made while it was in
+      // flight must never be clobbered: only adopt the snapshot when the
+      // in-memory cart is still empty.
+      if (state.cart.isNotEmpty) return;
+      if (snapshot.userId == userId) {
+        if (snapshot.items.isNotEmpty) {
+          state = state.copyWith(cart: snapshot.items, clearPreview: true);
+        }
+      } else if (snapshot.userId == null &&
+          userId != null &&
+          snapshot.items.isNotEmpty) {
+        // A guest snapshot left on this device is adopted when the user signs
+        // in (deferred login): `_persistGuestCart` then re-scopes the payload
+        // to this account so the exact items survive a restart after login.
+        state = state.copyWith(cart: snapshot.items, clearPreview: true);
+      } else if (snapshot.userId != null && snapshot.userId != userId) {
+        // Identity change on this device: another user's cart must not leak
+        // into the current session (or guest mode).
+        await _guestCartStorage.clear();
+      }
+    } on Object {
+      // A failed restore must never block the app; keep the current cart.
+    }
+  }
+
+  /// Adopts the unowned guest cart when entering guest browsing. A snapshot
+  /// owned by a signed-in account is never surfaced to a guest and is removed
+  /// so the guest cannot pick up the previous customer's items.
+  Future<void> _adoptGuestCart() async {
+    try {
+      final snapshot = await _guestCartStorage.read();
+      if (snapshot.userId != null) {
+        _dropInMemoryCart();
+        await _guestCartStorage.clear();
+        return;
+      }
+      // The read is async and yields, so a mutation made while it was in
+      // flight must never be clobbered: only adopt the snapshot when the
+      // in-memory cart is still empty.
+      if (state.cart.isEmpty) {
+        state = state.copyWith(cart: snapshot.items, clearPreview: true);
+      }
+    } on Object {
+      // A failed restore must never block the app; keep the current cart.
+    }
+  }
+
+  /// Persists the current cart under the active identity's scope — null while
+  /// guest, the customer's public id once signed in — so the exact items built
+  /// before sign-in survive a restart after login and never leak across users.
+  void _persistGuestCart() {
+    final session = ref.read(sessionControllerProvider);
+    if (!session.isGuest && !session.isAuthenticated) return;
+    final userId = session.isGuest ? null : session.publicUserId;
+    unawaited(_guestCartStorage.write(userId: userId, items: state.cart));
+  }
+
+  /// Drops the in-memory cart so items belonging to a previous account can
+  /// never surface in guest browsing or under another user.
+  void _dropInMemoryCart() {
+    if (state.cart.isEmpty) return;
+    state = state.copyWith(cart: const <OrderCartItem>[], clearPreview: true);
+  }
 
   void setCartItem(CatalogueProduct product, double quantity) {
     final items = [...state.cart];
@@ -88,6 +203,7 @@ class OrderController extends Notifier<OrderState> {
       clearPreview: true,
       clearError: true,
     );
+    _persistGuestCart();
   }
 
   void updateCartQuantity(String productId, double quantity) {
@@ -103,6 +219,7 @@ class OrderController extends Notifier<OrderState> {
         )
         .toList(growable: false);
     state = state.copyWith(cart: items, clearPreview: true, clearError: true);
+    _persistGuestCart();
   }
 
   void incrementCartItem(String productId) {
@@ -122,35 +239,77 @@ class OrderController extends Notifier<OrderState> {
           .toList(growable: false),
       clearPreview: true,
     );
+    _persistGuestCart();
   }
 
   void clearCartAfterSuccessfulPayment() {
     if (state.cart.isEmpty) return;
     state = state.copyWith(cart: const <OrderCartItem>[], clearPreview: true);
+    unawaited(_guestCartStorage.clear());
   }
 
   void clearPreview() {
     state = state.copyWith(clearPreview: true);
   }
 
-  CheckoutRequest requestFor(String addressId) => CheckoutRequest(
-    addressId: addressId,
-    items: state.cart
-        .map(
-          (item) => OrderItemInput(
-            productId: item.product.publicId,
-            quantity: item.quantity,
-          ),
-        )
-        .toList(growable: false),
-  );
+  void selectSavedAddress(String addressId) {
+    final normalized = addressId.trim();
+    if (normalized.isEmpty) return;
+    state = state.copyWith(
+      checkoutAddress: CheckoutAddressSelection.saved(normalized),
+      clearPreview: true,
+      clearError: true,
+    );
+  }
 
-  Future<bool> previewFor(String addressId) async {
+  void selectManualAddress(CheckoutAddressDraft draft) {
+    state = state.copyWith(
+      checkoutAddress: CheckoutAddressSelection.manual(draft),
+      clearPreview: true,
+      clearError: true,
+    );
+  }
+
+  void clearCheckoutAddress() {
+    state = state.copyWith(
+      clearCheckoutAddress: true,
+      clearPreview: true,
+      clearError: true,
+    );
+  }
+
+  CheckoutAddressSelection? _resolveSelection(Object address) {
+    if (address is CheckoutAddressSelection && address.isValid) return address;
+    if (address is String && address.trim().isNotEmpty) {
+      return CheckoutAddressSelection.saved(address.trim());
+    }
+    return null;
+  }
+
+  CheckoutRequest? requestFor(Object address) {
+    final selection = _resolveSelection(address) ?? state.checkoutAddress;
+    if (selection == null || !selection.isValid) return null;
+    return CheckoutRequest(
+      addressId: selection.addressId,
+      manualAddress: selection.manualAddress,
+      items: state.cart
+          .map(
+            (item) => OrderItemInput(
+              productId: item.product.publicId,
+              quantity: item.quantity,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  Future<bool> previewFor(Object address) async {
     final token = _token;
-    if (token == null || state.cart.isEmpty) return false;
+    final request = requestFor(address);
+    if (token == null || request == null || state.cart.isEmpty) return false;
     state = state.copyWith(isSaving: true, clearError: true);
     try {
-      final preview = await _repository.preview(token, requestFor(addressId));
+      final preview = await _repository.preview(token, request);
       state = state.copyWith(preview: preview, isSaving: false);
       return true;
     } on ApiException catch (error) {
@@ -161,14 +320,15 @@ class OrderController extends Notifier<OrderState> {
     return false;
   }
 
-  Future<OrderSummary?> create(String addressId) async {
+  Future<OrderSummary?> create(Object address) async {
     final token = _token;
-    if (token == null || state.cart.isEmpty) return null;
+    final request = requestFor(address);
+    if (token == null || request == null || state.cart.isEmpty) return null;
     state = state.copyWith(isSaving: true, clearError: true);
     try {
       final order = await _repository.create(
         token,
-        requestFor(addressId),
+        request,
         _checkoutIdempotencyKey,
       );
       state = state.copyWith(

@@ -77,6 +77,32 @@ class DeliveryRepository {
             ))['data']
             as Map<String, dynamic>,
       );
+  Future<DeliveryBatchAllocationsInfo> getBatchAllocations(
+    String token,
+    String id,
+  ) async => DeliveryBatchAllocationsInfo.fromJson(
+    (await api.get(
+          '/api/v1/delivery-management/$id/batch-allocations',
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+  Future<DeliveryDetails> saveBatchAllocations({
+    required String token,
+    required String deliveryId,
+    required List<DeliveryBatchAllocation> allocations,
+  }) async => DeliveryDetails.fromJson(
+    (await api.put(
+          '/api/v1/delivery-management/$deliveryId/batch-allocations',
+          body: {
+            'allocations': allocations
+                .map((allocation) => allocation.toSaveJson())
+                .toList(growable: false),
+          },
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
   Future<DeliveryMaterialization> materialize(
     String token,
     DateTime throughDate,

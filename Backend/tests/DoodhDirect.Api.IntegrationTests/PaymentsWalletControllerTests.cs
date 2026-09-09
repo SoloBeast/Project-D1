@@ -11,11 +11,8 @@ using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.Wallets;
 using DoodhDirect.Infrastructure.Payments;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Options;
 
 namespace DoodhDirect.Api.IntegrationTests;
 
@@ -29,7 +26,6 @@ public sealed class PaymentsWalletControllerTests
     [InlineData(typeof(PaymentsController), nameof(PaymentsController.Refund), AuthorizationCodes.PaymentsRefund)]
     [InlineData(typeof(WalletController), nameof(WalletController.Get), AuthorizationCodes.WalletReadOwn)]
     [InlineData(typeof(WalletController), nameof(WalletController.GetTransactions), AuthorizationCodes.WalletReadOwn)]
-    [InlineData(typeof(WalletController), nameof(WalletController.TopUp), AuthorizationCodes.WalletTopUpOwn)]
     [InlineData(typeof(WalletAdministrationController), nameof(WalletAdministrationController.Adjust), AuthorizationCodes.WalletAdjust)]
     public void FinancialRoute_RequiresExpectedPermission(Type controllerType, string methodName, string permission)
     {
@@ -119,43 +115,12 @@ public sealed class PaymentsWalletControllerTests
     }
 
     [Fact]
-    public async Task TopUp_InDevelopmentWithMockProvider_ForwardsAuthenticatedCustomerAndIdempotencyKey()
+    public void PaymentOptions_RazorpayWithoutCredentials_PassesStaticValidationButIsNotRuntimeReady()
     {
-        var walletService = new CapturingWalletService();
-        var controller = CreateWalletController(walletService, "Development", "Mock", userId: 73);
-
-        var response = await controller.TopUp(
-            new WalletTopUpApiRequest(125.50m),
-            "topup-73-1",
-            CancellationToken.None);
-
-        Assert.IsType<OkObjectResult>(response.Result);
-        Assert.Equal(73, walletService.TopUpCustomerId);
-        Assert.Equal(new WalletTopUpRequest(125.50m, "topup-73-1"), walletService.TopUpRequest);
-        Assert.Equal(1, walletService.TopUpCalls);
-    }
-
-    [Theory]
-    [InlineData("Production", "Mock")]
-    [InlineData("Development", "Razorpay")]
-    public async Task TopUp_OutsideDevelopmentMockBoundary_IsNotAvailable(string environment, string provider)
-    {
-        var walletService = new CapturingWalletService();
-        var controller = CreateWalletController(walletService, environment, provider, userId: 73);
-
-        var exception = await Assert.ThrowsAsync<NotFoundException>(() =>
-            controller.TopUp(
-                new WalletTopUpApiRequest(125.50m),
-                "topup-73-1",
-                CancellationToken.None));
-
-        Assert.Equal("The development wallet top-up endpoint is not available.", exception.Message);
-        Assert.Equal(0, walletService.TopUpCalls);
-    }
-
-    [Fact]
-    public void PaymentOptions_RazorpayWithoutCredentials_IsUnavailable()
-    {
+        // §11 relaxation: Razorpay credentials may be supplied at runtime through the
+        // Integration settings store (Integration.Razorpay.*), so blank static values
+        // must NOT fail boot-time validation. Per-call availability is resolved at
+        // runtime instead (IsRazorpayConfigured / IsValid remain false here).
         var options = new PaymentOptions
         {
             Provider = "Razorpay",
@@ -176,12 +141,13 @@ public sealed class PaymentsWalletControllerTests
         Assert.True(isValid);
         Assert.Empty(results);
         Assert.False(options.IsRazorpayConfigured);
+        Assert.False(options.IsValid);
         Assert.DoesNotContain(results, result =>
             result.MemberNames.Contains(nameof(PaymentOptions.RazorpayWebhookSecret)));
     }
 
     [Fact]
-    public void PaymentOptions_DevelopmentWithRazorpayCredentials_UsesRazorpay()
+    public void PaymentOptions_RazorpayWithCredentials_IsValid()
     {
         var options = new PaymentOptions
         {
@@ -193,12 +159,12 @@ public sealed class PaymentsWalletControllerTests
             MockSigningSecret = "development-test-signing-secret"
         };
 
-        Assert.True(options.IsValidForEnvironment(isDevelopment: true));
+        Assert.True(options.IsValid);
         Assert.True(options.IsRazorpayConfigured);
     }
 
     [Fact]
-    public void PaymentOptions_DevelopmentWithoutRazorpayCredentials_UsesMock()
+    public void PaymentOptions_MockProvider_IsInvalidEverywhere()
     {
         var options = new PaymentOptions
         {
@@ -208,13 +174,13 @@ public sealed class PaymentsWalletControllerTests
             MockSigningSecret = "development-test-signing-secret"
         };
 
-        Assert.True(options.IsValidForEnvironment(isDevelopment: true));
+        Assert.False(options.IsValid);
         Assert.True(options.IsMock);
         Assert.False(options.IsRazorpayConfigured);
     }
 
     [Fact]
-    public void PaymentOptions_ProductionWithoutRazorpayCredentials_FailsClosed()
+    public void PaymentOptions_RazorpayWithoutCredentials_FailsClosed()
     {
         var options = new PaymentOptions
         {
@@ -224,12 +190,12 @@ public sealed class PaymentsWalletControllerTests
             MockSigningSecret = "production-secret-placeholder"
         };
 
-        Assert.False(options.IsValidForEnvironment(isDevelopment: false));
+        Assert.False(options.IsValid);
         Assert.False(options.IsRazorpayConfigured);
     }
 
     [Fact]
-    public void PaymentOptions_ProductionMockProvider_IsRejected()
+    public void PaymentOptions_MockProvider_IsRejected()
     {
         var options = new PaymentOptions
         {
@@ -239,7 +205,7 @@ public sealed class PaymentsWalletControllerTests
             MockSigningSecret = "production-secret-placeholder"
         };
 
-        Assert.False(options.IsValidForEnvironment(isDevelopment: false));
+        Assert.False(options.IsValid);
     }
 
     private static PaymentsController CreatePaymentsController(
@@ -247,32 +213,6 @@ public sealed class PaymentsWalletControllerTests
         long userId)
     {
         var controller = new PaymentsController(paymentService);
-        var context = new DefaultHttpContext();
-        context.User = new ClaimsPrincipal(new ClaimsIdentity(
-            [new Claim("user_id", userId.ToString())],
-            authenticationType: "Test"));
-        controller.ControllerContext = new ControllerContext { HttpContext = context };
-        return controller;
-    }
-
-    private static WalletController CreateWalletController(
-        IWalletService walletService,
-        string environmentName,
-        string provider,
-        long userId)
-    {
-        var controller = new WalletController(
-            walletService,
-            new TestWebHostEnvironment { EnvironmentName = environmentName },
-            Options.Create(new PaymentOptions
-            {
-                Provider = provider,
-                Currency = "INR",
-                MockSigningSecret = "test-signing-secret",
-                RazorpayKeyId = provider == "Razorpay" ? "rzp_test" : null,
-                RazorpayKeySecret = provider == "Razorpay" ? "key-secret" : null,
-                RazorpayWebhookSecret = provider == "Razorpay" ? "webhook-secret" : null
-            }));
         var context = new DefaultHttpContext();
         context.User = new ClaimsPrincipal(new ClaimsIdentity(
             [new Claim("user_id", userId.ToString())],
@@ -343,6 +283,13 @@ public sealed class PaymentsWalletControllerTests
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<PaymentResult> CreateWalletTopUpAsync(
+            long customerId,
+            decimal amount,
+            string idempotencyKey,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<PaymentResult> CompleteDevelopmentAsync(
             long customerId,
             Guid paymentId,
@@ -394,21 +341,30 @@ public sealed class PaymentsWalletControllerTests
     {
         private static readonly DateTime OccurredAt = new(2026, 8, 16, 7, 30, 0, DateTimeKind.Unspecified);
 
-        public long? TopUpCustomerId { get; private set; }
-        public WalletTopUpRequest? TopUpRequest { get; private set; }
-        public int TopUpCalls { get; private set; }
+        public long? CreditWalletTopUpCustomerId { get; private set; }
+        public long? CreditWalletTopUpPaymentId { get; private set; }
+        public decimal? CreditWalletTopUpAmount { get; private set; }
+        public string? CreditWalletTopUpIdempotencyKey { get; private set; }
+        public int CreditWalletTopUpCalls { get; private set; }
 
-        public Task<WalletTransactionResult> TopUpAsync(long customerId, WalletTopUpRequest request, CancellationToken cancellationToken)
+        public Task<WalletTransactionResult> CreditWalletTopUpAsync(
+            long customerId,
+            long paymentId,
+            decimal amount,
+            string idempotencyKey,
+            CancellationToken cancellationToken)
         {
-            TopUpCustomerId = customerId;
-            TopUpRequest = request;
-            TopUpCalls++;
+            CreditWalletTopUpCustomerId = customerId;
+            CreditWalletTopUpPaymentId = paymentId;
+            CreditWalletTopUpAmount = amount;
+            CreditWalletTopUpIdempotencyKey = idempotencyKey;
+            CreditWalletTopUpCalls++;
             return Task.FromResult(new WalletTransactionResult(
                 Guid.NewGuid(),
                 WalletTransactionType.TopUp,
                 0,
-                request.Amount,
-                request.Amount,
+                amount,
+                amount,
                 "INR",
                 "Wallet top-up",
                 OccurredAt,
@@ -430,15 +386,5 @@ public sealed class PaymentsWalletControllerTests
 
         public Task<WalletTransactionResult> CreditRefundAsync(long customerId, long orderId, long paymentId, decimal amount, string idempotencyKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
-    }
-
-    private sealed class TestWebHostEnvironment : IWebHostEnvironment
-    {
-        public string ApplicationName { get; set; } = "DoodhDirect.Api.IntegrationTests";
-        public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
-        public string WebRootPath { get; set; } = string.Empty;
-        public string EnvironmentName { get; set; } = "Development";
-        public string ContentRootPath { get; set; } = string.Empty;
-        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 }

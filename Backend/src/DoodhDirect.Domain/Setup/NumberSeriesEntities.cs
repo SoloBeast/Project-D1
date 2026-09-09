@@ -114,7 +114,8 @@ public sealed class NumberSeries : AuditableEntity
         int incrementBy,
         NumberSeriesResetPolicy resetPolicy,
         DateTime indiaLocalNow,
-        long? updatedByUserId)
+        long? updatedByUserId,
+        string? scopeKey = null)
     {
         EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
 
@@ -123,6 +124,7 @@ public sealed class NumberSeries : AuditableEntity
         StartingNumber = startingNumber;
         IncrementBy = incrementBy;
         ResetPolicy = resetPolicy;
+        ScopeKey = NormalizeScope(scopeKey);
         UpdatedByUserId = updatedByUserId;
         SetUpdated(indiaLocalNow);
     }

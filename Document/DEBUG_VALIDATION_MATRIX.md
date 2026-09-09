@@ -10,7 +10,7 @@
 | Checkout/order | address/product/quantity | allocation, stock/availability, order state | order/items/events | business rule |
 | Payment | target and gateway form | amount/target/state/expiry/idempotency | payment, gateway order, events | gateway/business error |
 | Webhook | raw payload/signature | signature, duplicate webhook, payment state | webhook and payment transition | rejected or processed once |
-| Wallet top-up | positive amount | development-only/provider rules | wallet ledger and balance | forbidden/business error |
+| Wallet top-up | positive amount | Razorpay order + server-side payment verify (amount/target/ownership/state/expiry), idempotency key, min ₹1 (ToMinorUnits) | payment + gateway order; wallet credited exactly once only after verified success | gateway/business error; no credit on failure/cancel/expiry |
 | Refund | valid amount/reason | successful payment, duplicate/idempotency, gateway | refund/payment/wallet/order events | refund failure |
 | Subscription | plan/date/quantity/slot | schedule, balance/payment, updateable state, Morning/Evening slot | subscription/schedule/slot snapshots | invalid state |
 | Payment-to-delivery | payment target/gateway response | successful terminal confirmation, cancelled terminal state, order ownership, duplicate prevention | payment/order and exactly one `ReadyForAssignment` one-time delivery in one transaction | failed/cancelled creates none; replay processes once |

@@ -62,7 +62,7 @@ class _ProductCatalogueScreenState
                   SliverToBoxAdapter(child: _CategoryFilter(state: state)),
                   if (state.products.isEmpty)
                     const SliverFillRemaining(
-                      hasScrollBody: false,
+                      hasScrollBody: true,
                       child: EmptyStatePanel(
                         title: 'No products available',
                         message: 'There are no products in this category yet.',
@@ -466,14 +466,10 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
 
   String _branchSummary(CatalogueProduct product) {
     if (product.branchAvailability.isEmpty) return 'No branch assigned';
-    final main = product.branchAvailability
-        .where((branch) => branch.branchCode.toUpperCase() == 'MAIN')
-        .firstOrNull;
-    if (main != null) {
-      return 'MAIN: ${main.isAvailable ? 'Available' : 'Unavailable'}';
-    }
-    return '${product.branchAvailability.length} branch assignment'
-        '${product.branchAvailability.length == 1 ? '' : 's'}';
+    final codes = product.branchAvailability
+        .map((branch) => branch.branchCode)
+        .join(', ');
+    return 'Branches: $codes';
   }
 
   Future<void> _editProduct(
@@ -483,8 +479,11 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
     final state = ref.read(adminCatalogueControllerProvider);
     final result = await showDialog<ProductDraft>(
       context: context,
-      builder: (_) =>
-          _ProductDialog(categories: state.categories, product: product),
+      builder: (_) => _ProductDialog(
+        categories: state.categories,
+        branches: state.branches,
+        product: product,
+      ),
     );
     if (result != null && context.mounted) {
       await ref
@@ -601,8 +600,17 @@ class _CategoryDialogState extends State<_CategoryDialog> {
 }
 
 class _ProductDialog extends StatefulWidget {
-  const _ProductDialog({required this.categories, this.product});
+  const _ProductDialog({
+    required this.categories,
+    required this.branches,
+    this.product,
+  });
   final List<ProductCategory> categories;
+
+  /// Active, selectable branches. Archived/inactive branches are not offered
+  /// for (re-)assignment and appear only as reference chips when a product
+  /// already holds a historical link to them.
+  final List<CatalogueBranch> branches;
   final CatalogueProduct? product;
   @override
   State<_ProductDialog> createState() => _ProductDialogState();
@@ -621,6 +629,9 @@ class _ProductDialogState extends State<_ProductDialog> {
       widget.product?.category.publicId ??
       widget.categories.firstOrNull?.publicId;
   late String _unit = widget.product?.unitOfMeasure ?? 'litre';
+  late final Set<String> _selectedBranchIds = _initialBranchSelection();
+  String? _branchError;
+
   @override
   void dispose() {
     _sku.dispose();
@@ -630,12 +641,50 @@ class _ProductDialogState extends State<_ProductDialog> {
     super.dispose();
   }
 
+  Set<String> _initialBranchSelection() {
+    final product = widget.product;
+    if (product == null) return {};
+    final selectable = widget.branches
+        .map((branch) => branch.publicId)
+        .toSet();
+    return product.branchAvailability
+        .where((branch) => selectable.contains(branch.branchId))
+        .map((branch) => branch.branchId)
+        .toSet();
+  }
+
+  /// Historical assignments to branches that are no longer selectable
+  /// (archived/inactive). They stay visible for reference and are not sent
+  /// in `branchIds` — the server preserves archived links automatically.
+  List<BranchAvailability> get _lockedBranches {
+    final product = widget.product;
+    if (product == null) return const [];
+    final selectable = widget.branches
+        .map((branch) => branch.publicId)
+        .toSet();
+    return product.branchAvailability
+        .where((branch) => !selectable.contains(branch.branchId))
+        .toList(growable: false);
+  }
+
+  void _toggleBranch(String branchId, bool selected) {
+    setState(() {
+      _branchError = null;
+      if (selected) {
+        _selectedBranchIds.add(branchId);
+      } else {
+        _selectedBranchIds.remove(branchId);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) => AlertDialog(
     title: Text(widget.product == null ? 'New product' : 'Edit product'),
     content: SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           TextField(
             controller: _sku,
@@ -676,6 +725,40 @@ class _ProductDialogState extends State<_ProductDialog> {
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: const InputDecoration(labelText: 'Price'),
           ),
+          const SizedBox(height: 16),
+          const Text('Branches'),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              for (final branch in widget.branches)
+                FilterChip(
+                  label: Text('${branch.code} · ${branch.name}'),
+                  selected: _selectedBranchIds.contains(branch.publicId),
+                  onSelected: (selected) =>
+                      _toggleBranch(branch.publicId, selected),
+                ),
+              for (final locked in _lockedBranches)
+                Tooltip(
+                  message: 'No longer assignable; kept for history',
+                  child: Chip(
+                    label: Text('${locked.branchCode} (reference)'),
+                    backgroundColor: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
+                  ),
+                ),
+            ],
+          ),
+          if (_branchError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _branchError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
         ],
       ),
     ),
@@ -688,6 +771,12 @@ class _ProductDialogState extends State<_ProductDialog> {
         onPressed: () {
           final price = double.tryParse(_price.text);
           if (_categoryId != null && price != null) {
+            if (_selectedBranchIds.isEmpty) {
+              setState(
+                () => _branchError = 'Select at least one branch.',
+              );
+              return;
+            }
             Navigator.pop(
               context,
               ProductDraft(
@@ -697,6 +786,7 @@ class _ProductDialogState extends State<_ProductDialog> {
                 categoryId: _categoryId!,
                 unitOfMeasure: _unit,
                 price: price,
+                branchIds: _selectedBranchIds.toList(growable: false),
               ),
             );
           }

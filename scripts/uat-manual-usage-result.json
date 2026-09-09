@@ -1,0 +1,21 @@
+﻿{
+    "scenario":  "manual-usage-reduces-availability-once",
+    "before":  {
+                   "branchId":  6,
+                   "quantityProduced":  20.000,
+                   "quantityUsed":  0.000,
+                   "availableQuantity":  20.000,
+                   "unit":  "L",
+                   "availableBatchCount":  1,
+                   "calculatedAt":  "2026-09-09T01:21:08.627"
+               },
+    "after":  {
+                  "branchId":  6,
+                  "quantityProduced":  20.000,
+                  "quantityUsed":  2.000,
+                  "availableQuantity":  18.000,
+                  "unit":  "L",
+                  "availableBatchCount":  1,
+                  "calculatedAt":  "2026-09-09T01:21:08.802"
+              }
+}

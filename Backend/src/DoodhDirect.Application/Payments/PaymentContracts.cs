@@ -120,17 +120,19 @@ public sealed record GatewayWebhookEvent(
 public interface IPaymentGateway
 {
     string ProviderName { get; }
-    string? PublicKeyId { get; }
     bool IsLive { get; }
 
     Task<GatewayOrderResult> CreateOrderAsync(
         GatewayOrderRequest request,
         CancellationToken cancellationToken);
 
-    bool VerifyPaymentSignature(
+    Task<string?> GetPublicKeyIdAsync(CancellationToken cancellationToken);
+
+    Task<bool> VerifyPaymentSignatureAsync(
         string gatewayOrderId,
         string gatewayPaymentId,
-        string signature);
+        string signature,
+        CancellationToken cancellationToken);
 
     Task<GatewayPaymentStatusResult> GetPaymentStatusAsync(
         string gatewayPaymentId,
@@ -140,9 +142,10 @@ public interface IPaymentGateway
         string gatewayOrderId,
         CancellationToken cancellationToken);
 
-    bool VerifyWebhookSignature(
+    Task<bool> VerifyWebhookSignatureAsync(
         ReadOnlySpan<byte> payload,
-        string signature);
+        string signature,
+        CancellationToken cancellationToken);
 
     GatewayWebhookEvent ParseWebhook(ReadOnlySpan<byte> payload);
 
@@ -172,6 +175,12 @@ public interface IPaymentService
         long customerId,
         Guid subscriptionId,
         PaymentMethod method,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
+    Task<PaymentResult> CreateWalletTopUpAsync(
+        long customerId,
+        decimal amount,
         string idempotencyKey,
         CancellationToken cancellationToken);
 

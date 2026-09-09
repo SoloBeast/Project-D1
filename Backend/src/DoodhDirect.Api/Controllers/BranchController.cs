@@ -10,9 +10,12 @@ using Microsoft.AspNetCore.Mvc;
 namespace DoodhDirect.Api.Controllers;
 
 /// <summary>
-/// Administrative branch management: list, get, create, update, activate, and
-/// deactivate branch records. Branch numbers are allocated server-side from the
-/// centralized <c>BRANCH</c> numbering series and are never supplied by the client.
+/// Administrative branch management: list, get, create, update, activate, deactivate,
+/// and delete-or-archive branch records. Branch numbers are allocated server-side from
+/// the centralized <c>BRANCH</c> numbering series and are never supplied by the client.
+/// Deleting a deactivated branch with no dependent or historical records removes it
+/// permanently; when history exists the server archives the branch instead so records
+/// keep a stable identity.
 /// </summary>
 [ApiController]
 [Route("api/v1/admin/branches")]
@@ -82,6 +85,16 @@ public sealed class BranchController(IBranchService branchService) : ControllerB
         Ok(ApiResponse<BranchResult>.Ok(
             await branchService.SetActiveAsync(
                 RequireUserId(), branchId, false, cancellationToken)));
+
+    [HttpDelete("{branchId:guid}")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.BranchesManage)]
+    [ProducesResponseType(typeof(ApiResponse<BranchDeleteResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<BranchDeleteResult>>> Delete(
+        Guid branchId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<BranchDeleteResult>.Ok(
+            await branchService.DeleteAsync(
+                RequireUserId(), branchId, cancellationToken)));
 
     private long RequireUserId()
     {

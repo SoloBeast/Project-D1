@@ -6,10 +6,8 @@ using DoodhDirect.Application.Identity;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Wallets;
 using DoodhDirect.Domain.Payments;
-using DoodhDirect.Infrastructure.Payments;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
 
 namespace DoodhDirect.Api.Controllers;
 
@@ -57,15 +55,6 @@ public sealed class PaymentsController(IPaymentService paymentService) : Control
                 request.GatewayPaymentId,
                 request.Signature),
             cancellationToken)));
-
-    [HttpPost("{paymentId:guid}/complete-development")]
-    [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsCreateOwn)]
-    [ProducesResponseType(typeof(ApiResponse<PaymentResult>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<ApiResponse<PaymentResult>>> CompleteDevelopment(
-        Guid paymentId,
-        CancellationToken cancellationToken) =>
-        Ok(ApiResponse<PaymentResult>.Ok(await paymentService.CompleteDevelopmentAsync(
-            RequireUserId(), paymentId, cancellationToken)));
 
     [HttpPost("{paymentId:guid}/cancel")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsCreateOwn)]
@@ -168,14 +157,35 @@ public sealed class RazorpayWebhooksController(IPaymentService paymentService) :
 [Produces("application/json")]
 public sealed class WalletController(
     IWalletService walletService,
-    IWebHostEnvironment environment,
-    IOptions<PaymentOptions> paymentOptions) : ControllerBase
+    IPaymentService paymentService) : ControllerBase
 {
     [HttpGet]
     [Authorize(Policy = "permission:" + AuthorizationCodes.WalletReadOwn)]
     [ProducesResponseType(typeof(ApiResponse<WalletResult>), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<WalletResult>>> Get(CancellationToken cancellationToken) =>
         Ok(ApiResponse<WalletResult>.Ok(await walletService.GetAsync(RequireUserId(), cancellationToken)));
+
+    /// <summary>
+    /// Starts a customer wallet top-up. The server records the authoritative amount,
+    /// creates a pending Razorpay wallet-top-up payment and gateway order, and returns
+    /// the checkout details. The wallet is NOT credited here; it is credited only after
+    /// the payment is verified successfully on the server.
+    /// </summary>
+    [HttpPost("top-up")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.WalletTopUpOwn)]
+    [ProducesResponseType(typeof(ApiResponse<PaymentResult>), StatusCodes.Status201Created)]
+    public async Task<ActionResult<ApiResponse<PaymentResult>>> TopUp(
+        [FromBody] WalletTopUpApiRequest request,
+        [FromHeader(Name = "Idempotency-Key"), Required, MaxLength(100)] string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var result = await paymentService.CreateWalletTopUpAsync(
+            RequireUserId(),
+            request.Amount,
+            idempotencyKey,
+            cancellationToken);
+        return StatusCode(StatusCodes.Status201Created, ApiResponse<PaymentResult>.Ok(result));
+    }
 
     [HttpGet("transactions")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.WalletReadOwn)]
@@ -184,24 +194,6 @@ public sealed class WalletController(
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<IReadOnlyList<WalletTransactionResult>>.Ok(
             await walletService.GetTransactionsAsync(RequireUserId(), cancellationToken)));
-
-    [HttpPost("topup")]
-    [Authorize(Policy = "permission:" + AuthorizationCodes.WalletTopUpOwn)]
-    [ProducesResponseType(typeof(ApiResponse<WalletTransactionResult>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<ApiResponse<WalletTransactionResult>>> TopUp(
-        [FromBody] WalletTopUpApiRequest request,
-        [FromHeader(Name = "Idempotency-Key"), Required, MaxLength(100)] string idempotencyKey,
-        CancellationToken cancellationToken)
-    {
-        if (!environment.IsDevelopment() || paymentOptions.Value.IsRazorpay)
-        {
-            throw new NotFoundException("The development wallet top-up endpoint is not available.");
-        }
-
-        var result = await walletService.TopUpAsync(
-            RequireUserId(), new WalletTopUpRequest(request.Amount, idempotencyKey), cancellationToken);
-        return Ok(ApiResponse<WalletTransactionResult>.Ok(result));
-    }
 
     private long RequireUserId()
     {
@@ -260,9 +252,9 @@ public sealed record RefundPaymentApiRequest(
     [Range(typeof(decimal), "0.01", "9999999999.99")] decimal? Amount,
     [Required, MaxLength(500)] string Reason);
 
-public sealed record WalletTopUpApiRequest(
-    [Range(typeof(decimal), "0.01", "9999999999.99")] decimal Amount);
-
 public sealed record WalletAdjustmentApiRequest(
     decimal Amount,
     [Required, MaxLength(500)] string Reason);
+
+public sealed record WalletTopUpApiRequest(
+    [Range(typeof(decimal), "0.01", "9999999999.99")] decimal Amount);

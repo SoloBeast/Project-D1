@@ -1,3 +1,4 @@
+using DoodhDirect.Domain.Dairy;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Subscriptions;
@@ -32,12 +33,45 @@ public sealed record DeliveryLocationResult(
     decimal? AccuracyMetres,
     DateTime RecordedAt);
 
+public sealed record DeliveryBatchAllocationResult(
+    long BatchId,
+    string BatchNumber,
+    decimal QuantityAllocated,
+    DateTime AllocatedAt,
+    DateTime UpdatedAt);
+
+public sealed record EligibleDeliveryBatchResult(
+    long BatchId,
+    string BatchNumber,
+    DateTime ProductionAt,
+    decimal QuantityProduced,
+    decimal QuantityAvailable,
+    string Unit,
+    MilkBatchStatus Status);
+
+public sealed record SaveDeliveryBatchAllocationsRequest(
+    IReadOnlyCollection<DeliveryBatchAllocationRequest> Allocations);
+
+public sealed record DeliveryBatchAllocationRequest(
+    long BatchId,
+    decimal QuantityAllocated);
+
+public sealed record DeliveryBatchAllocationSummary(
+    long BatchId,
+    string BatchNumber,
+    decimal QuantityAllocated);
+
 public sealed record DeliveryAssignmentResult(
     Guid EmployeeId,
     string? EmployeeName,
     Guid AssignedByUserId,
     DateTime AssignedAt,
     string? Reason);
+
+public sealed record DeliveryBatchAllocationsResult(
+    IReadOnlyList<EligibleDeliveryBatchResult> EligibleBatches,
+    IReadOnlyList<DeliveryBatchAllocationResult> Allocations,
+    decimal TotalRequiredQuantity);
 
 public sealed record DeliveryResult(
     Guid DeliveryId,
@@ -68,6 +102,7 @@ public sealed record DeliveryResult(
     bool IsTrackingActive,
     DeliveryLocationResult? LatestLocation,
     IReadOnlyCollection<DeliveryAssignmentResult> Assignments,
+    IReadOnlyCollection<DeliveryBatchAllocationResult> BatchAllocations,
     SubscriptionDeliverySlot? SubscriptionSlot = null,
     decimal? Quantity = null,
     DeliveryOrderSummary? OrderSummary = null);
@@ -94,6 +129,17 @@ public sealed record DeliveryEmployeeResult(
     long BranchId);
 
 public sealed record DeliveryMaterializationResult(int OrdersCreated, int SubscriptionOccurrencesCreated);
+
+/// <summary>
+/// Transport used to hand a delivery OTP to its consumer. Delivery OTPs are
+/// generated and verified in-app by DoodhDirect; this service is reserved for
+/// the in-app delivery handoff and is never routed through MSG91. MSG91
+/// (<c>IMsg91OtpProvider</c>) is used only for identity/onboarding OTP.
+/// </summary>
+public interface IOtpDeliveryService
+{
+    Task SendAsync(string destination, string code, CancellationToken cancellationToken);
+}
 
 public interface IOneTimeDeliveryCreator
 {
@@ -197,6 +243,17 @@ public interface IDeliveryService : IOneTimeDeliveryCreator
         DeliveryActor actor,
         Guid deliveryId,
         DeliveryLocationRequest request,
+        CancellationToken cancellationToken);
+
+    Task<DeliveryBatchAllocationsResult> GetBatchAllocationsAsync(
+        DeliveryActor actor,
+        Guid deliveryId,
+        CancellationToken cancellationToken);
+
+    Task<DeliveryResult> SaveBatchAllocationsAsync(
+        DeliveryActor actor,
+        Guid deliveryId,
+        SaveDeliveryBatchAllocationsRequest request,
         CancellationToken cancellationToken);
 }
 

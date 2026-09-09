@@ -16,6 +16,14 @@ class ProductCategory {
         isActive: json['isActive'] as bool,
       );
 
+  Map<String, dynamic> toJson() => {
+    'publicId': publicId,
+    'code': code,
+    'name': name,
+    'description': description,
+    'isActive': isActive,
+  };
+
   final String publicId;
   final String code;
   final String name;
@@ -40,6 +48,14 @@ class BranchAvailability {
         isAvailable: json['isAvailable'] as bool,
         maxDailyQuantity: (json['maxDailyQuantity'] as num?)?.toDouble(),
       );
+
+  Map<String, dynamic> toJson() => {
+    'branchId': branchId,
+    'branchCode': branchCode,
+    'branchName': branchName,
+    'isAvailable': isAvailable,
+    'maxDailyQuantity': maxDailyQuantity,
+  };
 
   final String branchId;
   final String branchCode;
@@ -80,6 +96,20 @@ class CatalogueProduct {
             )
             .toList(growable: false),
       );
+
+  Map<String, dynamic> toJson() => {
+    'publicId': publicId,
+    'sku': sku,
+    'name': name,
+    'description': description,
+    'category': category.toJson(),
+    'unitOfMeasure': unitOfMeasure,
+    'price': price,
+    'isActive': isActive,
+    'branchAvailability': branchAvailability
+        .map((item) => item.toJson())
+        .toList(growable: false),
+  };
 
   final String publicId;
   final String sku;
@@ -131,6 +161,7 @@ class ProductDraft {
     required this.categoryId,
     required this.unitOfMeasure,
     required this.price,
+    this.branchIds = const [],
   });
 
   factory ProductDraft.fromProduct(CatalogueProduct product) => ProductDraft(
@@ -140,6 +171,9 @@ class ProductDraft {
     categoryId: product.category.publicId,
     unitOfMeasure: product.unitOfMeasure,
     price: product.price,
+    branchIds: product.branchAvailability
+        .map((branch) => branch.branchId)
+        .toList(growable: false),
   );
 
   final String sku;
@@ -149,6 +183,11 @@ class ProductDraft {
   final String unitOfMeasure;
   final double price;
 
+  /// Public ids of every branch this product is assigned to. Sent as
+  /// `branchIds` on create/update so the server can apply multi-branch
+  /// replace semantics via the ProductBranch association.
+  final List<String> branchIds;
+
   Map<String, dynamic> toJson() => {
     'sku': sku.trim(),
     'name': name.trim(),
@@ -156,6 +195,7 @@ class ProductDraft {
     'categoryId': categoryId,
     'unitOfMeasure': unitOfMeasure,
     'price': price,
+    'branchIds': branchIds,
   };
 }
 

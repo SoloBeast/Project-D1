@@ -77,14 +77,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy(corsPolicyName, policy =>
     {
-        if (builder.Environment.IsDevelopment())
-        {
-            policy.SetIsOriginAllowed(origin =>
-                Uri.TryCreate(origin, UriKind.Absolute, out var uri)
-                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-                && uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase));
-        }
-        else if (configuredCorsOrigins.Length > 0)
+        if (configuredCorsOrigins.Length > 0)
         {
             policy.WithOrigins(configuredCorsOrigins);
         }
@@ -184,41 +177,6 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 });
 
 var app = builder.Build();
-
-await using (var scope = app.Services.CreateAsyncScope())
-{
-    var cancellationToken = CancellationToken.None;
-    await scope.ServiceProvider
-        .GetRequiredService<IdentitySeedService>()
-        .SeedAsync(cancellationToken);
-    await scope.ServiceProvider
-        .GetRequiredService<NumberSeriesSeedService>()
-        .SeedAsync(cancellationToken);
-    if (app.Environment.IsDevelopment())
-    {
-        await scope.ServiceProvider
-            .GetRequiredService<DevelopmentCustomerSeedService>()
-            .SeedAsync(cancellationToken);
-    }
-    await scope.ServiceProvider
-        .GetRequiredService<CatalogueSeedService>()
-        .SeedAsync(cancellationToken);
-    await scope.ServiceProvider
-        .GetRequiredService<NotificationTemplateSeedService>()
-        .SeedAsync(cancellationToken);
-    if (app.Environment.IsDevelopment())
-    {
-        await scope.ServiceProvider
-            .GetRequiredService<DevelopmentDeliveryStaffSeedService>()
-            .SeedAsync(cancellationToken);
-        await scope.ServiceProvider
-            .GetRequiredService<DevelopmentDairyManagerSeedService>()
-            .SeedAsync(cancellationToken);
-        await scope.ServiceProvider
-            .GetRequiredService<DevelopmentUatUserSeedService>()
-            .SeedAsync(cancellationToken);
-    }
-}
 
 app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseSerilogRequestLogging(options =>
@@ -372,6 +330,12 @@ internal static class LocalDotEnvLoader
                 if (!string.IsNullOrWhiteSpace(geocodingApiKey))
                 {
                     mapped["AddressGeocoding:ApiKey"] = geocodingApiKey;
+                }
+
+                values.TryGetValue("ADDRESS_GEOCODING__WEB_CLIENT_API_KEY", out var geocodingWebClientApiKey);
+                if (!string.IsNullOrWhiteSpace(geocodingWebClientApiKey))
+                {
+                    mapped["AddressGeocoding:WebClientApiKey"] = geocodingWebClientApiKey;
                 }
 
                 configuration.AddInMemoryCollection(mapped);

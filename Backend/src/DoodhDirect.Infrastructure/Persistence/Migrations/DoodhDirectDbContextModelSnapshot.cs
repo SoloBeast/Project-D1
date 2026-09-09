@@ -209,9 +209,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("nvarchar(300)");
 
-                    b.Property<string>("BranchNumber")
-                        .HasMaxLength(40)
-                        .HasColumnType("nvarchar(40)");
+                    b.Property<DateTime?>("ArchivedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ArchivedAtUtc");
 
                     b.Property<string>("City")
                         .IsRequired()
@@ -228,6 +228,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnName("CreatedAtUtc");
 
                     b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsArchived")
                         .HasColumnType("bit");
 
                     b.Property<decimal>("Latitude")
@@ -270,10 +273,6 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnName("UpdatedAtUtc");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("BranchNumber")
-                        .IsUnique()
-                        .HasFilter("[BranchNumber] IS NOT NULL");
 
                     b.HasIndex("Code")
                         .IsUnique();
@@ -812,7 +811,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<long>("BatchId")
+                    b.Property<long?>("BatchId")
                         .HasColumnType("bigint");
 
                     b.Property<long>("BranchId")
@@ -821,6 +820,30 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAtUtc");
+
+                    b.Property<long?>("DeliveryBatchAllocationId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("DeliveryId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("DeliveryNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<long?>("OrderId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("OrderItemId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("OrderNumber")
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("ProductName")
+                        .HasMaxLength(160)
+                        .HasColumnType("nvarchar(160)");
 
                     b.Property<Guid>("PublicId")
                         .ValueGeneratedOnAdd()
@@ -843,6 +866,19 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
 
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<long?>("SubscriptionDeliveryId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Unit")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("UpdatedAtUtc");
@@ -853,10 +889,24 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("DeliveryBatchAllocationId")
+                        .IsUnique()
+                        .HasFilter("DeliveryBatchAllocationId IS NOT NULL");
+
+                    b.HasIndex("DeliveryId");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("OrderItemId");
+
                     b.HasIndex("PublicId")
                         .IsUnique();
 
                     b.HasIndex("RecordedByUserId");
+
+                    b.HasIndex("Source");
+
+                    b.HasIndex("SubscriptionDeliveryId");
 
                     b.HasIndex("BatchId", "UsedAt");
 
@@ -1077,6 +1127,53 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.ToTable("DeliveryAssignment", "dbo");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Deliveries.DeliveryBatchAllocation", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("BatchId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
+
+                    b.Property<long>("DeliveryId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<decimal>("QuantityAllocated")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("decimal(18,3)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("BatchId", "DeliveryId");
+
+                    b.HasIndex("DeliveryId", "BatchId")
+                        .IsUnique();
+
+                    b.ToTable("DeliveryBatchAllocation", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_DeliveryBatchAllocation_QuantityAllocated", "[QuantityAllocated] > 0");
+                        });
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Deliveries.DeliveryLocation", b =>
                 {
                     b.Property<long>("Id")
@@ -1294,11 +1391,6 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
-                    b.Property<string>("CodeHash")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
-
                     b.Property<DateTime?>("ConsumedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("ConsumedAtUtc");
@@ -1322,6 +1414,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<int>("MaxAttempts")
                         .HasColumnType("int");
 
+                    b.Property<DateTime?>("PasswordResetConsumedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("PasswordResetConsumedAtUtc");
+
                     b.Property<Guid>("PublicId")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier")
@@ -1332,6 +1428,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
+                    b.Property<string>("ReqId")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<string>("RequestedFromIp")
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)");
@@ -1340,6 +1440,8 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PublicId")
                         .IsUnique();
+
+                    b.HasIndex("ReqId");
 
                     b.HasIndex("ExpiresAt", "ConsumedAt");
 
@@ -1514,6 +1616,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
+                    b.Property<DateTime?>("ArchivedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("ArchivedAtUtc");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAtUtc");
@@ -1526,7 +1632,14 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(320)
                         .HasColumnType("nvarchar(320)");
 
+                    b.Property<DateTime?>("EmailVerifiedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("EmailVerifiedAtUtc");
+
                     b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsArchived")
                         .HasColumnType("bit");
 
                     b.Property<DateTime?>("LastLoginAt")
@@ -1540,6 +1653,14 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<string>("PasswordHash")
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("PendingEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<string>("PendingMobile")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
 
                     b.Property<Guid>("PublicId")
                         .ValueGeneratedOnAdd()
@@ -2397,7 +2518,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAtUtc");
 
-                    b.Property<long>("CustomerAddressId")
+                    b.Property<long?>("CustomerAddressId")
                         .HasColumnType("bigint");
 
                     b.Property<long>("CustomerId")
@@ -2687,7 +2808,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                             t.HasCheckConstraint("CK_Payment_RefundedAmount", "[RefundedAmount] >= 0 AND [RefundedAmount] <= [Amount]");
 
-                            t.HasCheckConstraint("CK_Payment_Target", "([OrderId] IS NOT NULL AND [SubscriptionId] IS NULL) OR ([OrderId] IS NULL AND [SubscriptionId] IS NOT NULL)");
+                            t.HasCheckConstraint("CK_Payment_Target", "([OrderId] IS NOT NULL AND [SubscriptionId] IS NULL) OR ([OrderId] IS NULL AND [SubscriptionId] IS NOT NULL) OR ([OrderId] IS NULL AND [SubscriptionId] IS NULL)");
                         });
                 });
 
@@ -3438,8 +3559,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasOne("DoodhDirect.Domain.Dairy.MilkBatch", "Batch")
                         .WithMany("Usages")
                         .HasForeignKey("BatchId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("DoodhDirect.Domain.Catalogue.Branch", null)
                         .WithMany()
@@ -3447,13 +3567,48 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("DoodhDirect.Domain.Deliveries.DeliveryBatchAllocation", "DeliveryBatchAllocation")
+                        .WithMany()
+                        .HasForeignKey("DeliveryBatchAllocationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoodhDirect.Domain.Deliveries.Delivery", "Delivery")
+                        .WithMany()
+                        .HasForeignKey("DeliveryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoodhDirect.Domain.Orders.Order", "Order")
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoodhDirect.Domain.Orders.OrderItem", "OrderItem")
+                        .WithMany()
+                        .HasForeignKey("OrderItemId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("DoodhDirect.Domain.Identity.User", null)
                         .WithMany()
                         .HasForeignKey("RecordedByUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("DoodhDirect.Domain.Subscriptions.SubscriptionDelivery", "SubscriptionDelivery")
+                        .WithMany()
+                        .HasForeignKey("SubscriptionDeliveryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("Batch");
+
+                    b.Navigation("Delivery");
+
+                    b.Navigation("DeliveryBatchAllocation");
+
+                    b.Navigation("Order");
+
+                    b.Navigation("OrderItem");
+
+                    b.Navigation("SubscriptionDelivery");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Deliveries.Delivery", b =>
@@ -3528,6 +3683,25 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Navigation("Employee");
 
                     b.Navigation("PreviousEmployee");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Deliveries.DeliveryBatchAllocation", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Dairy.MilkBatch", "Batch")
+                        .WithMany("Allocations")
+                        .HasForeignKey("BatchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Deliveries.Delivery", "Delivery")
+                        .WithMany("BatchAllocations")
+                        .HasForeignKey("DeliveryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Batch");
+
+                    b.Navigation("Delivery");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Deliveries.DeliveryLocation", b =>
@@ -3789,8 +3963,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasOne("DoodhDirect.Domain.Customer.CustomerAddress", "CustomerAddress")
                         .WithMany()
                         .HasForeignKey("CustomerAddressId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("DoodhDirect.Domain.Identity.User", "Customer")
                         .WithMany()
@@ -4006,6 +4179,8 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("DoodhDirect.Domain.Dairy.MilkBatch", b =>
                 {
+                    b.Navigation("Allocations");
+
                     b.Navigation("Usages");
                 });
 
@@ -4017,6 +4192,8 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("DoodhDirect.Domain.Deliveries.Delivery", b =>
                 {
                     b.Navigation("Assignments");
+
+                    b.Navigation("BatchAllocations");
 
                     b.Navigation("Locations");
 

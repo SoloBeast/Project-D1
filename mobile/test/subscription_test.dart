@@ -568,7 +568,7 @@ void main() {
         expect(find.text('Complete Payment'), findsNWidgets(2));
         expect(find.text('DoodhDirect Wallet'), findsOneWidget);
         expect(find.text('Razorpay'), findsOneWidget);
-        expect(find.text('Development payment'), findsOneWidget);
+        expect(find.text('Development payment'), findsNothing);
         expect(find.text('Retry Payment'), findsNothing);
       },
     );
@@ -596,7 +596,7 @@ void main() {
       expect(find.text('Retry Payment'), findsNWidgets(2));
       expect(find.text('DoodhDirect Wallet'), findsOneWidget);
       expect(find.text('Razorpay'), findsOneWidget);
-      expect(find.text('Development payment'), findsOneWidget);
+      expect(find.text('Development payment'), findsNothing);
       expect(find.text('Pause subscription'), findsNothing);
       expect(find.text('Resume subscription'), findsNothing);
     });
