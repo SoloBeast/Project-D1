@@ -5,7 +5,8 @@ namespace DoodhDirect.Application.MilkTesting;
 public sealed record MilkTestActor(
     long UserId,
     IReadOnlySet<long> BranchIds,
-    bool HasGlobalAccess);
+    bool HasGlobalAccess,
+    bool CanReadBranch = false);
 
 public sealed record MilkTestParameterRequest(
     string Code,
@@ -40,9 +41,12 @@ public sealed record StaffMilkTestResult(
     MilkTestCustomerDecision CustomerDecision,
     DateTime RequestedAt,
     DateTime? CompletedAt,
+    Guid? CompletedByUserId,
+    string? CompletedByName,
     string? StaffRemarks,
     DateTime? ConfirmedAt,
     DateTime? RejectedAt,
+    DateTime? CancelledAt,
     string? CustomerRemarks,
     IReadOnlyCollection<MilkTestParameterResult> Parameters,
     IReadOnlyCollection<MilkTestImageResult> Images);
@@ -56,6 +60,7 @@ public sealed record CustomerMilkTestResult(
     DateTime? CompletedAt,
     DateTime? ConfirmedAt,
     DateTime? RejectedAt,
+    DateTime? CancelledAt,
     string? CustomerRemarks,
     IReadOnlyCollection<MilkTestImageResult> Images);
 
@@ -126,6 +131,11 @@ public interface IMilkTestService
         Guid deliveryId,
         CancellationToken cancellationToken);
 
+    Task<StaffMilkTestResult?> GetForBranchAsync(
+        MilkTestActor actor,
+        Guid deliveryId,
+        CancellationToken cancellationToken);
+
     Task<MilkTestImageResult> UploadImageAsync(
         MilkTestActor actor,
         Guid milkTestId,
@@ -168,6 +178,12 @@ public interface IMilkTestService
         CancellationToken cancellationToken);
 
     Task<CustomerMilkTestResult> RejectAsync(
+        MilkTestActor actor,
+        Guid milkTestId,
+        DecideMilkTestRequest request,
+        CancellationToken cancellationToken);
+
+    Task<CustomerMilkTestResult> CancelAsync(
         MilkTestActor actor,
         Guid milkTestId,
         DecideMilkTestRequest request,

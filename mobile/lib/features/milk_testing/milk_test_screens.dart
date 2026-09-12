@@ -7,6 +7,7 @@ import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'milk_test_controller.dart';
@@ -23,6 +24,21 @@ class ApiByteUnauthenticatedException implements Exception {
 
   @override
   String toString() => 'No authenticated session for protected image content.';
+}
+
+/// Human-readable label for the staff member who performed (completed) a dairy
+/// doorstep milk test.
+///
+/// The authoritative relationship is [StaffMilkTest.completedByName] backed by
+/// `MilkTest.CompletedByUserId`. The label never falls back to the current
+/// viewer; when the server did not persist a performer name it states so
+/// explicitly instead of guessing.
+String milkTestPerformerLabel(StaffMilkTest test) {
+  final name = test.completedByName;
+  if (name != null && name.trim().isNotEmpty) return name;
+  final id = test.completedByUserId;
+  if (id != null && id.trim().isNotEmpty) return 'Employee $id';
+  return 'Not recorded';
 }
 
 mixin _MilkTestImagePicking<T extends ConsumerStatefulWidget>
@@ -228,6 +244,12 @@ class _CustomerMilkTestScreenState
                         label: 'Rejected',
                         value: formatMilkTestDateTime(test.rejectedAtUtc!),
                       ),
+                    if (test.cancelledAtUtc != null)
+                      _TimelineRow(
+                        icon: Icons.cancel_outlined,
+                        label: 'Cancelled',
+                        value: formatMilkTestDateTime(test.cancelledAtUtc!),
+                      ),
                     if (state.errorMessage != null)
                       _InlineError(message: state.errorMessage!),
                     if (test.status == MilkTestStatus.unknown ||
@@ -237,11 +259,29 @@ class _CustomerMilkTestScreenState
                         icon: Icons.info_outline,
                         text: 'This milk test has a status the app does not yet support. Refresh later or contact support.',
                       ),
-                    if (test.status == MilkTestStatus.requested)
+                    if (test.status == MilkTestStatus.requested &&
+                        test.customerDecision !=
+                            MilkTestCustomerDecision.cancelled)
                       const _Notice(
                         icon: Icons.hourglass_top,
                         text: 'The assigned delivery employee will perform the test at your doorstep.',
                       ),
+                    if (test.customerDecision ==
+                        MilkTestCustomerDecision.cancelled)
+                      const _Notice(
+                        icon: Icons.cancel_outlined,
+                        text: 'You cancelled this test request. The delivery can now be completed without a test.',
+                      ),
+                    if (test.canCancel) ...[
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: state.isSaving
+                            ? null
+                            : () => _showCancelRequest(test),
+                        icon: const Icon(Icons.cancel_outlined),
+                        label: const Text('Cancel Test Request'),
+                      ),
+                    ],
                     if (test.status == MilkTestStatus.completed) ...[
                       const SizedBox(height: 20),
                       Text(
@@ -343,11 +383,66 @@ class _CustomerMilkTestScreenState
         remarks: value.isEmpty ? null : value,
       );
     } else {
-      await controller.reject(
+      final rejected = await controller.reject(
         test.milkTestId,
         remarks: value.isEmpty ? null : value,
       );
+      // A rejected doorstep milk test immediately unlocks the refund/replacement
+      // request for this delivery, regardless of the normal post-delivery
+      // window. The request is pre-linked to the rejected test and requires no
+      // proof image; the backend still re-validates eligibility on submit.
+      if (rejected && mounted) {
+        await context.push(
+          '/deliveries/${test.deliveryId}/refund-replacement'
+          '?milkTestId=${Uri.encodeQueryComponent(test.milkTestId)}',
+        );
+      }
     }
+  }
+
+  Future<void> _showCancelRequest(CustomerMilkTest test) async {
+    var remarks = '';
+    final cancelled = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Cancel test request?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'The delivery can then be completed without a doorstep milk test.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              onChanged: (value) => remarks = value,
+              maxLength: 500,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Reason (optional)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep Test'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Cancel Request'),
+          ),
+        ],
+      ),
+    );
+    final value = remarks.trim();
+    if (cancelled != true || !mounted) return;
+    final done = await ref
+        .read(milkTestControllerProvider.notifier)
+        .cancel(test.milkTestId, remarks: value.isEmpty ? null : value);
+    if (done && mounted) _showMessage('Test request cancelled.');
   }
 
   Future<void> _replaceImage(CustomerMilkTest test, MilkTestImage image) async {
@@ -364,6 +459,128 @@ class _CustomerMilkTestScreenState
           contentType: candidate.contentType,
         );
     if (replaced && mounted) _showMessage('Test image replaced.');
+  }
+}
+
+class BranchMilkTestInspectionScreen extends ConsumerStatefulWidget {
+  const BranchMilkTestInspectionScreen({
+    super.key,
+    required this.deliveryId,
+  });
+
+  final String deliveryId;
+
+  @override
+  ConsumerState<BranchMilkTestInspectionScreen> createState() =>
+      _BranchMilkTestInspectionScreenState();
+}
+
+class _BranchMilkTestInspectionScreenState
+    extends ConsumerState<BranchMilkTestInspectionScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  Future<void> _load() => ref
+      .read(milkTestControllerProvider.notifier)
+      .loadForBranch(widget.deliveryId);
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(milkTestControllerProvider);
+    final test = state.staffTest?.deliveryId == widget.deliveryId
+        ? state.staffTest
+        : null;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Milk test inspection')),
+      body: _MilkTestBodyState(
+        state: state,
+        hasData: test != null,
+        onRetry: _load,
+        child: test == null
+            ? const EmptyStatePanel(
+                title: 'No milk test found',
+                message: 'This delivery has no accessible milk test.',
+              )
+            : RefreshIndicator(
+                onRefresh: _load,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    _StatusHeader(
+                      status: test.status,
+                      decision: test.customerDecision,
+                    ),
+                    const SizedBox(height: 16),
+                    _TimelineRow(
+                      icon: Icons.outbox_outlined,
+                      label: 'Requested',
+                      value: formatMilkTestDateTime(test.requestedAtUtc),
+                    ),
+                    if (test.completedAtUtc != null)
+                      _TimelineRow(
+                        icon: Icons.task_alt,
+                        label: 'Completed',
+                        value: formatMilkTestDateTime(test.completedAtUtc!),
+                      ),
+                    if (test.completedAtUtc != null)
+                      _TimelineRow(
+                        icon: Icons.badge_outlined,
+                        label: 'Milk test performed by',
+                        value: milkTestPerformerLabel(test),
+                      ),
+                    if (state.errorMessage != null)
+                      _InlineError(message: state.errorMessage!),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Recorded readings',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    if (test.parameters.isEmpty)
+                      const _Notice(
+                        icon: Icons.info_outline,
+                        text: 'No readings were recorded for this test.',
+                      )
+                    else
+                      ...test.parameters.map(
+                        (parameter) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(parameter.name),
+                          subtitle: Text(parameter.code),
+                          trailing: Text(
+                            '${parameter.value} ${parameter.unit}',
+                          ),
+                        ),
+                      ),
+                    if (test.staffRemarks?.isNotEmpty ?? false)
+                      _Remarks(
+                        label: 'Staff remarks',
+                        text: test.staffRemarks!,
+                      ),
+                    if (test.customerRemarks?.isNotEmpty ?? false)
+                      _Remarks(
+                        label: 'Customer remarks',
+                        text: test.customerRemarks!,
+                      ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Test images',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    _AuthenticatedImages(
+                      milkTestId: test.milkTestId,
+                      images: test.images,
+                    ),
+                  ],
+                ),
+              ),
+      ),
+    );
   }
 }
 
@@ -582,10 +799,17 @@ class _StaffMilkTestScreenState
                           text: test.staffRemarks!,
                         ),
                       _Notice(
-                        icon: test.customerDecision.isTerminal
-                            ? Icons.fact_check_outlined
-                            : Icons.schedule,
-                        text: test.customerDecision.label,
+                        icon: test.customerDecision ==
+                                MilkTestCustomerDecision.cancelled
+                            ? Icons.cancel_outlined
+                            : test.customerDecision ==
+                                    MilkTestCustomerDecision.pending
+                                ? Icons.schedule
+                                : Icons.fact_check_outlined,
+                        text: test.customerDecision ==
+                                MilkTestCustomerDecision.pending
+                            ? 'Customer test confirmation required before delivery can be completed.'
+                            : test.customerDecision.label,
                       ),
                       if (test.customerRemarks?.isNotEmpty ?? false)
                         _Remarks(
@@ -933,6 +1157,9 @@ DoodhStatusTone _milkTestTone(
   if (decision == MilkTestCustomerDecision.rejected) {
     return DoodhStatusTone.error;
   }
+  if (decision == MilkTestCustomerDecision.cancelled) {
+    return DoodhStatusTone.neutral;
+  }
   if (status == MilkTestStatus.completed) return DoodhStatusTone.warning;
   return DoodhStatusTone.neutral;
 }
@@ -1109,13 +1336,16 @@ class _AuthenticatedImageTileState extends ConsumerState<_AuthenticatedImageTile
           future: _bytesFuture,
           builder: (context, snapshot) {
             if (snapshot.hasData) {
-              return Image.memory(
+              return _openViewerOnTap(
                 snapshot.data!,
-                fit: BoxFit.cover,
-                gaplessPlayback: true,
-                errorBuilder: (_, _, _) => _imageStateBox(
-                  context,
-                  const Icon(Icons.broken_image_outlined),
+                Image.memory(
+                  snapshot.data!,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, _, _) => _imageStateBox(
+                    context,
+                    const Icon(Icons.broken_image_outlined),
+                  ),
                 ),
               );
             }
@@ -1150,6 +1380,55 @@ class _AuthenticatedImageTileState extends ConsumerState<_AuthenticatedImageTile
       ),
     ),
   );
+
+  /// Wraps a loaded authenticated image so a tap opens the full-screen viewer.
+  ///
+  /// The already-fetched authenticated bytes are handed to the viewer, so no
+  /// additional (or unauthenticated) request is made and [Image.network] is
+  /// never used. A small zoom affordance signals the image is tappable.
+  Widget _openViewerOnTap(Uint8List bytes, Widget child) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        child,
+        Positioned(
+          right: 4,
+          bottom: 4,
+          child: Material(
+            color: Colors.black54,
+            borderRadius: BorderRadius.circular(12),
+            child: const Padding(
+              padding: EdgeInsets.all(4),
+              child: Icon(
+                Icons.zoom_in,
+                size: 18,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+        Positioned.fill(
+          // A separate semantics container keeps this tap target's label from
+          // merging into the enclosing "Milk test image N" container, so both
+          // labels remain individually addressable (and the tap action is
+          // announced as a button).
+          child: Semantics(
+            container: true,
+            button: true,
+            label: 'Open milk test image ${widget.index + 1} full screen',
+            child: InkWell(
+              onTap: () => showMilkTestImageViewer(
+                context,
+                bytes: bytes,
+                image: widget.image,
+                index: widget.index,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _imageStateBox(BuildContext context, Widget child, {String? message}) {
     final theme = Theme.of(context);
@@ -1247,6 +1526,93 @@ class _ButtonProgress extends StatelessWidget {
 
 String? _required(String? value) =>
     value == null || value.trim().isEmpty ? 'Required' : null;
+
+/// Opens a full-screen, pinch-to-zoom viewer for a protected milk test image.
+///
+/// The bytes have already been fetched through the authenticated channel by the
+/// tile that invoked this; the viewer itself never issues a network request and
+/// never renders a public URL. Closing the viewer returns to the inspection
+/// screen.
+Future<void> showMilkTestImageViewer(
+  BuildContext context, {
+  required Uint8List bytes,
+  required MilkTestImage image,
+  required int index,
+}) {
+  return Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      fullscreenDialog: true,
+      builder: (_) => _MilkTestImageViewer(
+        bytes: bytes,
+        fileName: image.fileName,
+        index: index,
+      ),
+    ),
+  );
+}
+
+class _MilkTestImageViewer extends StatelessWidget {
+  const _MilkTestImageViewer({
+    required this.bytes,
+    required this.fileName,
+    required this.index,
+  });
+
+  final Uint8List bytes;
+  final String fileName;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      title: Text('Image ${index + 1}'),
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        tooltip: 'Close',
+        onPressed: () => Navigator.of(context).maybePop(),
+      ),
+    ),
+    body: Column(
+      children: [
+        Expanded(
+          child: InteractiveViewer(
+            minScale: 1,
+            maxScale: 5,
+            clipBehavior: Clip.none,
+            child: Center(
+              child: Image.memory(
+                bytes,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+                errorBuilder: (_, _, _) => const Icon(
+                  Icons.broken_image_outlined,
+                  color: Colors.white70,
+                  size: 48,
+                ),
+              ),
+            ),
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              fileName,
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
 String? resolveMilkTestImageContentType(String fileName, String? declaredType) {
   final normalized = declaredType?.trim().toLowerCase();

@@ -101,6 +101,11 @@ public sealed record OrderItemResult(
 
 public sealed record BranchAllocationResult(long BranchId, Guid BranchPublicId, string BranchCode, string BranchName, decimal DistanceKm);
 
+public sealed record OrderActor(
+    long UserId,
+    IReadOnlySet<long> BranchIds,
+    bool HasGlobalAccess = false);
+
 public interface IBranchAllocationService
 {
     Task<BranchAllocationResult> AllocateAsync(
@@ -123,6 +128,8 @@ public interface IOrderService
     Task<IReadOnlyList<OrderResult>> GetForCustomerAsync(long customerId, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<OrderResult>> GetForAdministrationAsync(CancellationToken cancellationToken);
+
+    Task<OrderResult> GetForBranchAsync(OrderActor actor, Guid orderId, CancellationToken cancellationToken);
 
     Task<OrderResult> GetAsync(long customerId, Guid orderId, bool bypassOwnership, CancellationToken cancellationToken);
 

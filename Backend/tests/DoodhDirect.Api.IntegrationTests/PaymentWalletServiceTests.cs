@@ -1458,6 +1458,10 @@ public sealed class PaymentWalletServiceTests
             await db.SaveChangesAsync();
             db.NumberSeries.Add(new NumberSeries(
                 "DELIVERY", "Delivery Number", "DEL/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never));
+            // Branch-scoped delivery series: strict allocation requires a
+            // scope-specific series and does not fall back to the unscoped legacy row.
+            db.NumberSeries.Add(new NumberSeries(
+                "DELIVERY_MAIN", "Delivery MAIN", "DLV/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "MAIN"));
 
             var order = new Order(
                 customer.Id, 1, 1, "checkout-1", "DD-20260816020000-PAYMENT",

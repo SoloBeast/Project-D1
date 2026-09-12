@@ -306,6 +306,11 @@ public sealed class FoundationApiFactory : WebApplicationFactory<Program>
             {
                 ["Payments:RazorpayKeyId"] = "rzp_test_key",
                 ["Payments:RazorpayKeySecret"] = "test-secret",
+                // The Development appsettings enable startup seeding; the integration
+                // harness pins it back to false so tests run against a pristine
+                // in-memory database and SeedOptions_EnableDevelopmentSeeds_DefaultsToFalse
+                // remains valid.
+                ["SeedOptions:EnableDevelopmentSeeds"] = "false",
             }));
         builder.ConfigureServices(services =>
         {

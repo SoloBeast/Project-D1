@@ -226,6 +226,14 @@ public interface IPaymentService
         CancellationToken cancellationToken);
 }
 
+public interface IPaymentReconciliationCoordinator
+{
+    Task<int> ProcessBatchAsync(
+        int batchSize,
+        int candidateAgeMinutes,
+        CancellationToken cancellationToken);
+}
+
 public static class PaymentMappings
 {
     public static PaymentResult ToResult(

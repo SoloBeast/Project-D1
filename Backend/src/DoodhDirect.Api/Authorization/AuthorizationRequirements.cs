@@ -21,7 +21,15 @@ public static class AuthorizationPolicyNames
     // Attribute arguments must be constant expressions (string.Join is not const),
     // so concrete OR-policy names used on endpoints are exposed as consts.
     public const string AnyMilkTestImageContent =
-        AnyPermissionPrefix + AuthorizationCodes.MilkTestsReadOwn + "," + AuthorizationCodes.MilkTestsOperateAssigned;
+        AnyPermissionPrefix + AuthorizationCodes.MilkTestsReadOwn + "," +
+        AuthorizationCodes.MilkTestsOperateAssigned + "," +
+        AuthorizationCodes.MilkTestsReadBranch;
+
+    public const string AnyRefundReplacementRequestView =
+        AnyPermissionPrefix + AuthorizationCodes.RefundReplacementReadBranch + "," + AuthorizationCodes.RefundReplacementManageBranch;
+
+    public const string AnyRefundReplacementRequestContent =
+        AnyPermissionPrefix + AuthorizationCodes.RefundReplacementReadOwn + "," + AuthorizationCodes.RefundReplacementReadBranch + "," + AuthorizationCodes.RefundReplacementManageBranch;
 
     internal static bool TryGetPermission(string policyName, out string permission)
     {

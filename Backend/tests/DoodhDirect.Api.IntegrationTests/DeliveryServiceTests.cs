@@ -11,6 +11,7 @@ using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Dairy;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.MilkTesting;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Subscriptions;
@@ -903,6 +904,119 @@ public sealed class DeliveryServiceTests
             new VerifyDeliveryOtpRequest(code),
             CancellationToken.None);
         Assert.Equal(DeliveryStatus.Delivered, retried.Status);
+        Assert.Equal(1, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task OtpVerification_BlockedByUnresolvedMilkTest_DoesNotConsumeOtpOrComplete()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 2m);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+
+        var delivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        harness.Db.MilkTests.Add(new MilkTest(
+            delivery.Id, harness.Customer.Id, harness.Branch.Id, harness.Customer.Id, harness.TimeProvider.Now));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None));
+        Assert.Equal(
+            "Customer test confirmation required before delivery can be completed.",
+            exception.Message);
+
+        // The serializable transaction rolls back all completion mutations: the OTP is
+        // NOT consumed, the delivery is NOT marked verified/delivered, and no
+        // DELIVERY.OTP_SUCCESS/DELIVERY.COMPLETE audit or notification is written.
+        harness.Db.ChangeTracker.Clear();
+        var unchanged = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        var otp = await harness.Db.DeliveryOtps.AsNoTracking()
+            .SingleAsync(x => x.DeliveryId == unchanged.Id);
+        Assert.Equal(DeliveryStatus.Arrived, unchanged.Status);
+        Assert.Null(unchanged.OtpVerifiedAt);
+        Assert.Null(otp.ConsumedAt);
+        Assert.NotNull(otp.ProtectedCode);
+        Assert.Equal(0, await harness.Db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.Action == "DELIVERY.OTP_SUCCESS" || x.Action == "DELIVERY.COMPLETE"));
+        Assert.Equal(0, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryCompleted));
+        Assert.Equal(0, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task CompleteAsync_BlockedByUnresolvedMilkTest()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 2m);
+
+        var delivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        harness.Db.MilkTests.Add(new MilkTest(
+            delivery.Id, harness.Customer.Id, harness.Branch.Id, harness.Customer.Id, harness.TimeProvider.Now));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.CompleteAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new DeliveryNotesRequest("Delivered manually"),
+            CancellationToken.None));
+        Assert.Equal(
+            "Customer test confirmation required before delivery can be completed.",
+            exception.Message);
+
+        harness.Db.ChangeTracker.Clear();
+        var unchanged = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        Assert.Equal(DeliveryStatus.Arrived, unchanged.Status);
+        Assert.Equal(0, await harness.Db.AuditLogs.AsNoTracking()
+            .CountAsync(x => x.Action == "DELIVERY.COMPLETE"));
+        Assert.Equal(0, await harness.Db.NotificationEvents.AsNoTracking()
+            .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryCompleted));
+    }
+
+    [Fact]
+    public async Task OtpVerification_AllowedWhenMilkTestCancelledByCustomer()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 2m);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+
+        var delivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        var milkTest = new MilkTest(
+            delivery.Id, harness.Customer.Id, harness.Branch.Id, harness.Customer.Id, harness.TimeProvider.Now);
+        milkTest.Cancel(harness.TimeProvider.Now, "No longer needed");
+        harness.Db.MilkTests.Add(milkTest);
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var verified = await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+        Assert.Equal(DeliveryStatus.Delivered, verified.Status);
+
+        var completed = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        Assert.Equal(DeliveryStatus.Delivered, completed.Status);
+        Assert.NotNull(completed.OtpVerifiedAt);
         Assert.Equal(1, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
     }
 
@@ -2133,6 +2247,38 @@ public sealed class DeliveryServiceTests
         Assert.True(winner.QuantityAllocated <= 2m);
     }
 
+    [Fact]
+    public async Task BranchInspectionRead_ExposesDeliveryPerformerToBranchReader()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AssignAsync(deliveryId, harness.Staff);
+
+        var result = await harness.Service.GetForOperationsAsync(
+            harness.ManagerActor,
+            deliveryId,
+            requireAssignment: false,
+            CancellationToken.None);
+
+        Assert.Equal(harness.Staff.PublicId, result.AssignedEmployeeId);
+        Assert.Equal("Delivery Staff One", result.AssignedEmployeeName);
+    }
+
+    [Fact]
+    public async Task BranchInspectionRead_OutOfBranchActorCannotSeeDeliveryPerformer()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var deliveryId = await harness.MaterializeOrderAsync();
+        await harness.AssignAsync(deliveryId, harness.Staff);
+        var otherBranchActor = new DeliveryActor(harness.Manager.Id, [harness.OtherBranch.Id]);
+
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.GetForOperationsAsync(
+            otherBranchActor,
+            deliveryId,
+            requireAssignment: false,
+            CancellationToken.None));
+    }
+
     private static JsonElement Payload(
         DoodhDirect.Domain.Notifications.NotificationEvent notificationEvent) =>
         JsonSerializer.Deserialize<JsonElement>(notificationEvent.PayloadJson);
@@ -2357,6 +2503,13 @@ public sealed class DeliveryServiceTests
             await db.Database.EnsureCreatedAsync();
             db.NumberSeries.Add(new NumberSeries(
                 "DELIVERY", "Delivery Number", "DEL/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never));
+            // Branch-scoped delivery series: strict allocation (see
+            // NumberSeriesService.FindForAllocationAsync) requires a scope-specific
+            // series per branch and refuses to fall back to the unscoped legacy row.
+            db.NumberSeries.Add(new NumberSeries(
+                "DELIVERY_MAIN", "Delivery MAIN", "DLV/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "MAIN"));
+            db.NumberSeries.Add(new NumberSeries(
+                "DELIVERY_NORTH", "Delivery NORTH", "DLV/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "NORTH"));
 
             var customer = User(UserType.Customer, "Customer", "9999999999");
             var manager = User(UserType.Employee, "Delivery Manager", "9000000000");

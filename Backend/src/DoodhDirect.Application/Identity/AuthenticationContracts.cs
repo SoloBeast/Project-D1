@@ -200,6 +200,7 @@ public static class AuthorizationCodes
     public const string OrdersReadOwn = "ORDERS.READ_OWN";
     public const string OrdersCancelOwn = "ORDERS.CANCEL_OWN";
     public const string OrdersRead = "ORDERS.READ";
+    public const string OrdersReadBranch = "ORDERS.READ_BRANCH";
     public const string SubscriptionsCreateOwn = "SUBSCRIPTIONS.CREATE_OWN";
     public const string SubscriptionsReadOwn = "SUBSCRIPTIONS.READ_OWN";
     public const string SubscriptionsManageOwn = "SUBSCRIPTIONS.MANAGE_OWN";
@@ -215,6 +216,7 @@ public static class AuthorizationCodes
     public const string MilkTestsReadOwn = "MILK_TESTS.READ_OWN";
     public const string MilkTestsDecideOwn = "MILK_TESTS.DECIDE_OWN";
     public const string MilkTestsOperateAssigned = "MILK_TESTS.OPERATE_ASSIGNED";
+    public const string MilkTestsReadBranch = "MILK_TESTS.READ_BRANCH";
     public const string WalletReadOwn = "WALLET.READ_OWN";
     public const string WalletTopUpOwn = "WALLET.TOPUP_OWN";
     public const string WalletAdjust = "WALLET.ADJUST";
@@ -240,6 +242,12 @@ public static class AuthorizationCodes
     public const string SetupOtpProviderManage = "SETUP.OTP_PROVIDER.MANAGE";
     public const string SetupIntegrationsRead = "SETUP.INTEGRATIONS.READ";
     public const string SetupIntegrationsManage = "SETUP.INTEGRATIONS.MANAGE";
+    public const string SetupRefundReplacementRead = "SETUP.REFUND_REPLACEMENT.READ";
+    public const string SetupRefundReplacementManage = "SETUP.REFUND_REPLACEMENT.MANAGE";
+    public const string RefundReplacementRequestOwn = "REFUND_REPLACEMENT.REQUEST_OWN";
+    public const string RefundReplacementReadOwn = "REFUND_REPLACEMENT.READ_OWN";
+    public const string RefundReplacementReadBranch = "REFUND_REPLACEMENT.READ_BRANCH";
+    public const string RefundReplacementManageBranch = "REFUND_REPLACEMENT.MANAGE_BRANCH";
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
@@ -278,6 +286,7 @@ public static class AuthorizationCodes
         [OrdersReadOwn] = "Read own orders",
         [OrdersCancelOwn] = "Cancel own eligible orders",
         [OrdersRead] = "Read customer orders for administration",
+        [OrdersReadBranch] = "Read orders within assigned branches",
         [SubscriptionsCreateOwn] = "Create own prepaid subscriptions",
         [SubscriptionsReadOwn] = "Read own subscriptions and delivery calendars",
         [SubscriptionsManageOwn] = "Update, pause, resume, cancel, and skip own subscriptions",
@@ -293,6 +302,7 @@ public static class AuthorizationCodes
         [MilkTestsReadOwn] = "Read own doorstep milk-test status and completed evidence",
         [MilkTestsDecideOwn] = "Confirm or reject an own completed doorstep milk test",
         [MilkTestsOperateAssigned] = "Upload evidence and complete doorstep tests for assigned deliveries",
+        [MilkTestsReadBranch] = "Read doorstep milk tests within assigned branches",
         [WalletReadOwn] = "Read own wallet and ledger",
         [WalletTopUpOwn] = "Top up own wallet through a verified payment",
         [WalletAdjust] = "Adjust customer wallets",
@@ -317,6 +327,12 @@ public static class AuthorizationCodes
         [SetupOtpProviderRead] = "View OTP provider configuration and status",
         [SetupOtpProviderManage] = "Configure and test the OTP provider",
         [SetupIntegrationsRead] = "View integration configuration and status",
-        [SetupIntegrationsManage] = "Configure and test integrations"
+        [SetupIntegrationsManage] = "Configure and test integrations",
+        [SetupRefundReplacementRead] = "View refund/replacement request window configuration",
+        [SetupRefundReplacementManage] = "Configure refund/replacement request window",
+        [RefundReplacementRequestOwn] = "Submit own refund/replacement requests for eligible deliveries",
+        [RefundReplacementReadOwn] = "Read own refund/replacement requests",
+        [RefundReplacementReadBranch] = "Read branch refund/replacement requests for operations",
+        [RefundReplacementManageBranch] = "Approve, reject, and complete refund/replacement requests"
     };
 }

@@ -89,6 +89,23 @@ public sealed class MilkTestService(
         return ToStaffResult(milkTest, milkTest.Delivery.PublicId);
     }
 
+    public async Task<StaffMilkTestResult?> GetForBranchAsync(
+        MilkTestActor actor,
+        Guid deliveryId,
+        CancellationToken cancellationToken)
+    {
+        var milkTest = await TestQuery(asNoTracking: true)
+            .SingleOrDefaultAsync(
+                x => x.Delivery.PublicId == deliveryId &&
+                    (actor.HasGlobalAccess ||
+                     actor.BranchIds.Contains(x.BranchId)),
+                cancellationToken);
+
+        return milkTest is null
+            ? null
+            : ToStaffResult(milkTest, milkTest.Delivery.PublicId);
+    }
+
     public async Task<MilkTestImageResult> UploadImageAsync(
         MilkTestActor actor,
         Guid milkTestId,
@@ -327,6 +344,10 @@ public sealed class MilkTestService(
                 throw new NotFoundException("The doorstep test image was not found.");
             }
         }
+        else if (actor.CanReadBranch)
+        {
+            EnsureBranchReadAccess(actor, milkTest);
+        }
         else
         {
             // Delivery staff must be assigned to the delivery and within branch scope.
@@ -398,6 +419,53 @@ public sealed class MilkTestService(
         CancellationToken cancellationToken) =>
         DecideAsync(actor, milkTestId, request, confirm: false, cancellationToken);
 
+    public async Task<CustomerMilkTestResult> CancelAsync(
+        MilkTestActor actor,
+        Guid milkTestId,
+        DecideMilkTestRequest request,
+        CancellationToken cancellationToken)
+    {
+        ValidateLength(request.Remarks, "remarks", 1000);
+        CustomerMilkTestResult? result = null;
+        await ExecuteSerializableAsync(async () =>
+        {
+            var milkTest = await TestQuery().SingleOrDefaultAsync(
+                x => x.PublicId == milkTestId && x.CustomerId == actor.UserId,
+                cancellationToken) ?? throw new NotFoundException("The doorstep test was not found.");
+            if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed)
+            {
+                throw new BusinessRuleException("A doorstep test can only be cancelled for an active delivery.");
+            }
+
+            var previousDecision = milkTest.CustomerDecision;
+            var wasAlreadyCancelled = previousDecision == MilkTestCustomerDecision.CustomerCancelled;
+            var now = timeProvider.Now;
+            Mutate(() => milkTest.Cancel(now, request.Remarks));
+            AddAudit(actor.UserId, "MILK_TEST.CANCEL", milkTest.PublicId,
+                new { CustomerDecision = previousDecision },
+                new { milkTest.CustomerDecision, milkTest.CancelledAt },
+                request.Remarks,
+                now);
+            // A repeated cancel is idempotent at the domain level (Status stays Requested
+            // and CustomerDecision stays CustomerCancelled), so only the first cancel emits
+            // the cancellation notification. A repeat would otherwise violate the unique
+            // NotificationEvent.EventKey constraint.
+            if (!wasAlreadyCancelled)
+            {
+                AddMilkTestEvent(
+                    milkTest,
+                    milkTest.Delivery.PublicId,
+                    NotificationEventTypes.MilkTestCancelled,
+                    $"milk-test:{milkTest.PublicId:N}:cancelled",
+                    "Your doorstep milk test request has been cancelled.",
+                    now);
+            }
+            await dbContext.SaveChangesAsync(cancellationToken);
+            result = ToCustomerResult(milkTest, milkTest.Delivery.PublicId);
+        }, cancellationToken);
+        return result!;
+    }
+
     private async Task<CustomerMilkTestResult> DecideAsync(
         MilkTestActor actor,
         Guid milkTestId,
@@ -423,6 +491,7 @@ public sealed class MilkTestService(
                 else
                 {
                     milkTest.Reject(now, request.Remarks);
+                    milkTest.Delivery.FailForCustomerMilkTest(now, request.Remarks);
                 }
             });
             AddAudit(actor.UserId, confirm ? "MILK_TEST.CONFIRM" : "MILK_TEST.REJECT", milkTest.PublicId,
@@ -430,6 +499,39 @@ public sealed class MilkTestService(
                 new { milkTest.CustomerDecision, milkTest.ConfirmedAt, milkTest.RejectedAt },
                 request.Remarks,
                 now);
+            if (!confirm)
+            {
+                AddDeliveryAudit(actor.UserId, "DELIVERY.FAIL", milkTest.Delivery.PublicId,
+                    null,
+                    new { milkTest.Delivery.Status, milkTest.Delivery.FailureReason },
+                    request.Remarks,
+                    now);
+                foreach (var otp in milkTest.Delivery.Otps)
+                {
+                    Mutate(() => otp.Invalidate(now));
+                }
+                if (milkTest.Delivery.Order is not null)
+                {
+                    Mutate(milkTest.Delivery.Order.MarkDeliveryFailed);
+                }
+                else if (milkTest.Delivery.SubscriptionDelivery is not null)
+                {
+                    Mutate(() => milkTest.Delivery.SubscriptionDelivery.Subscription.MarkFailed(
+                        milkTest.Delivery.SubscriptionDelivery,
+                        now));
+                }
+                AddMilkTestEvent(
+                    milkTest,
+                    milkTest.Delivery.PublicId,
+                    NotificationEventTypes.DeliveryFailed,
+                    $"delivery:{milkTest.Delivery.PublicId:N}:failed:{now.Ticks}",
+                    "Your delivery could not be completed because the milk test was rejected.",
+                    now,
+                    new Dictionary<string, string>
+                    {
+                        ["reason"] = DeliveryFailureReasons.CustomerRejectedMilkTest
+                    });
+            }
             await dbContext.SaveChangesAsync(cancellationToken);
             result = ToCustomerResult(milkTest, milkTest.Delivery.PublicId);
         }, cancellationToken);
@@ -440,14 +542,30 @@ public sealed class MilkTestService(
     {
         IQueryable<MilkTest> query = dbContext.MilkTests
             .Include(x => x.Delivery)
+                .ThenInclude(x => x.Order)
+            .Include(x => x.Delivery)
+                .ThenInclude(x => x.SubscriptionDelivery)
+                    .ThenInclude(x => x!.Subscription)
+            .Include(x => x.Delivery)
+                .ThenInclude(x => x.Otps)
             .Include(x => x.Parameters)
-            .Include(x => x.Images);
+            .Include(x => x.Images)
+            .Include(x => x.CompletedByUser);
         return asNoTracking ? query.AsNoTracking() : query;
     }
 
     private static void EnsureStaffAccess(MilkTestActor actor, MilkTest milkTest)
     {
         if (milkTest.Delivery.AssignedEmployeeId != actor.UserId ||
+            (!actor.HasGlobalAccess && !actor.BranchIds.Contains(milkTest.BranchId)))
+        {
+            throw new NotFoundException("The doorstep test was not found.");
+        }
+    }
+
+    private static void EnsureBranchReadAccess(MilkTestActor actor, MilkTest milkTest)
+    {
+        if (!actor.CanReadBranch ||
             (!actor.HasGlobalAccess && !actor.BranchIds.Contains(milkTest.BranchId)))
         {
             throw new NotFoundException("The doorstep test was not found.");
@@ -580,6 +698,26 @@ public sealed class MilkTestService(
             string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
             createdAt));
 
+    private void AddDeliveryAudit(
+        long userId,
+        string action,
+        Guid deliveryId,
+        object? oldValue,
+        object? newValue,
+        string? reason,
+        DateTime createdAt) =>
+        dbContext.AddAuditLog(new AuditLog(
+            userId,
+            action,
+            "Delivery",
+            deliveryId.ToString(),
+            oldValue is null ? null : JsonSerializer.Serialize(oldValue),
+            newValue is null ? null : JsonSerializer.Serialize(newValue),
+            null,
+            null,
+            string.IsNullOrWhiteSpace(reason) ? null : reason.Trim(),
+            createdAt));
+
     private static void Mutate(Action operation)
     {
         try
@@ -603,9 +741,12 @@ public sealed class MilkTestService(
         milkTest.CustomerDecision,
         milkTest.RequestedAt,
         milkTest.CompletedAt,
+        milkTest.CompletedByUser?.PublicId,
+        milkTest.CompletedByUser?.DisplayName,
         milkTest.StaffRemarks,
         milkTest.ConfirmedAt,
         milkTest.RejectedAt,
+        milkTest.CancelledAt,
         milkTest.CustomerRemarks,
         milkTest.Parameters
             .OrderBy(x => x.Code)
@@ -625,6 +766,7 @@ public sealed class MilkTestService(
         milkTest.CompletedAt,
         milkTest.ConfirmedAt,
         milkTest.RejectedAt,
+        milkTest.CancelledAt,
         milkTest.CustomerRemarks,
         milkTest.Status == MilkTestStatus.Completed
             ? milkTest.Images

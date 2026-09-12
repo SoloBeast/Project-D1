@@ -46,6 +46,28 @@ void main() {
       expect(confirmed.customerDecision.isTerminal, isTrue);
       expect(rejected.customerDecision.isTerminal, isTrue);
     });
+
+    test('customer model parses cancellation and canCancel only while pending', () {
+      final cancelled = CustomerMilkTest.fromJson(
+        customerMilkTestJson(
+          status: 'Requested',
+          decision: 'CustomerCancelled',
+        ),
+      );
+
+      expect(cancelled.status, MilkTestStatus.requested);
+      expect(cancelled.customerDecision, MilkTestCustomerDecision.cancelled);
+      expect(cancelled.cancelledAtUtc, isNotNull);
+      expect(cancelled.cancelledAtUtc?.isUtc, isTrue);
+      expect(cancelled.canCancel, isFalse);
+      expect(cancelled.canDecide, isFalse);
+      expect(cancelled.customerDecision.isTerminal, isTrue);
+
+      final pending = CustomerMilkTest.fromJson(
+        customerMilkTestJson(status: 'Requested', decision: 'Pending'),
+      );
+      expect(pending.canCancel, isTrue);
+    });
   });
 
   group('milk-test repository', () {
@@ -78,6 +100,26 @@ void main() {
         ]);
       },
     );
+
+    test('branch inspection uses the branch-scoped staff milk test route', () async {
+      final requests = <String>[];
+      final client = MockClient((request) async {
+        requests.add('${request.method} ${request.url}');
+        expect(request.headers['Authorization'], 'Bearer milk-token');
+        return successResponse(staffMilkTestJson());
+      });
+      final repository = testRepository(client);
+
+      // Dairy Manager / Customer Support inspection uses the dedicated
+      // branch-scoped route, never the assigned-delivery-staff route.
+      final branch = await repository.getForBranch('milk-token', 'delivery-1');
+
+      expect(branch?.milkTestId, 'test-1');
+      expect(branch?.parameters.single.value, 6.5);
+      expect(requests, [
+        'GET https://api.example.test/api/v1/staff/deliveries/delivery-1/milk-test',
+      ]);
+    });
 
     test('parses the production customer GET shape including uploadedAt', () async {
       var requestCount = 0;
@@ -251,6 +293,32 @@ void main() {
       expect(confirmed.customerDecision, MilkTestCustomerDecision.confirmed);
       expect(rejected.customerDecision, MilkTestCustomerDecision.rejected);
     });
+
+    test('posts a customer cancel decision to the cancel route', () async {
+      final client = MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/api/v1/milk-tests/test-1/cancel');
+        expect(request.headers['Authorization'], 'Bearer milk-token');
+        expect(jsonDecode(request.body), {
+          'remarks': 'No longer needed',
+        });
+        return successResponse(
+          customerMilkTestJson(
+            status: 'Requested',
+            decision: 'CustomerCancelled',
+          ),
+        );
+      });
+
+      final result = await testRepository(client).cancel(
+        'milk-token',
+        'test-1',
+        remarks: 'No longer needed',
+      );
+
+      expect(result.customerDecision, MilkTestCustomerDecision.cancelled);
+      expect(result.cancelledAtUtc, isNotNull);
+    });
   });
 }
 
@@ -267,6 +335,9 @@ Map<String, dynamic> customerMilkTestJson({
   'completedAtUtc': status == 'Completed' ? '2026-08-17T09:10:00Z' : null,
   'confirmedAtUtc': decision == 'Confirmed' ? '2026-08-17T09:12:00Z' : null,
   'rejectedAtUtc': decision == 'Rejected' ? '2026-08-17T09:12:00Z' : null,
+  'cancelledAtUtc': decision == 'CustomerCancelled'
+      ? '2026-08-17T09:12:00Z'
+      : null,
   'customerRemarks': decision == 'Pending' ? null : 'Customer decision',
   'images': includeImage ? [imageJson()] : <Map<String, dynamic>>[],
 };

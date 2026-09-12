@@ -479,12 +479,39 @@ public sealed class PaymentWebhook : AuditableEntity
 
     public void StartProcessing()
     {
-        if (Status != PaymentWebhookStatus.Received)
+        StartProcessing(DateTime.SpecifyKind(DateTime.Now, DateTimeKind.Unspecified), TimeSpan.Zero);
+    }
+
+    public void StartProcessing(DateTime processingAt, TimeSpan staleAfter)
+    {
+        EnsureIndiaLocal(processingAt, nameof(processingAt));
+
+        if (staleAfter < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(staleAfter));
+        }
+
+        if (Status is PaymentWebhookStatus.Processed or PaymentWebhookStatus.Rejected)
+        {
+            throw new InvalidOperationException($"A webhook in status '{Status}' is terminal.");
+        }
+
+        if (Status == PaymentWebhookStatus.Processing)
+        {
+            if (!ProcessedAt.HasValue || processingAt - ProcessedAt.Value < staleAfter)
+            {
+                throw new InvalidOperationException("The webhook is already being processed.");
+            }
+        }
+        else if (Status is not (PaymentWebhookStatus.Received or PaymentWebhookStatus.Failed))
         {
             throw new InvalidOperationException($"A webhook in status '{Status}' cannot start processing.");
         }
 
         Status = PaymentWebhookStatus.Processing;
+        ProcessedAt = processingAt;
+        ErrorCode = null;
+        ErrorMessage = null;
     }
 
     public void Complete(DateTime processedAt)
@@ -504,6 +531,11 @@ public sealed class PaymentWebhook : AuditableEntity
     }
 
     public void Fail(string errorCode, string? errorMessage, DateTime processedAt)
+    {
+        FailProcessing(errorCode, errorMessage, processedAt);
+    }
+
+    public void FailProcessing(string errorCode, string? errorMessage, DateTime processedAt)
     {
         EnsureCompletable(processedAt);
         Status = PaymentWebhookStatus.Failed;

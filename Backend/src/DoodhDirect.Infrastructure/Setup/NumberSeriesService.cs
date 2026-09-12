@@ -380,11 +380,18 @@ public sealed class NumberSeriesService(
     /// "ORDER_DB0001" stored under scope "DB0001"):
     /// <list type="number">
     ///   <item>exact match — a series for exactly (code, scopeKey);</item>
-    ///   <item>unscoped fallback — a legacy global series for the code;</item>
-    ///   <item>scope-suffixed fallback — (code + "_" + scopeKey, scopeKey).</item>
+    ///   <item>scope-suffixed fallback — (code + "_" + scopeKey, scopeKey);</item>
+    ///   <item>unscoped legacy fallback — a legacy global series for the code,
+    ///   but only for codes that are not strictly branch-scoped.</item>
     /// </list>
     /// An unscoped request stays exact so an empty database still reports the
-    /// series as missing rather than silently matching a scoped row.
+    /// series as missing rather than silently matching a scoped row. Strictly
+    /// branch-scoped codes (<see cref="RequiresScopedSeries"/>) never fall back
+    /// to the unscoped legacy series: allocating from the wrong template
+    /// silently produces an out-of-band number and, for DELIVERY, a
+    /// duplicate-key collision. When a scope is explicitly requested and no
+    /// scoped series exists, the request fails with a clear NotFoundException
+    /// instead of being redirected.
     /// </summary>
     private async Task<NumberSeries> FindForAllocationAsync(
         string code,
@@ -405,12 +412,6 @@ public sealed class NumberSeriesService(
             return exact;
         }
 
-        var unscoped = await FindExactAsync(normalizedCode, string.Empty, cancellationToken);
-        if (unscoped is not null)
-        {
-            return unscoped;
-        }
-
         var suffixedCandidate = $"{normalizedCode}_{scopeKey}";
         if (suffixedCandidate.Length <= 50
             && suffixedCandidate.All(ch => char.IsAsciiLetterOrDigit(ch) || ch == '_' || ch == '-'))
@@ -422,9 +423,27 @@ public sealed class NumberSeriesService(
             }
         }
 
+        if (!RequiresScopedSeries(normalizedCode))
+        {
+            var unscoped = await FindExactAsync(normalizedCode, string.Empty, cancellationToken);
+            if (unscoped is not null)
+            {
+                return unscoped;
+            }
+        }
+
         throw new NotFoundException(
             $"Number series '{normalizedCode}' for scope '{scopeKey}' was not found.");
     }
+
+    /// <summary>
+    /// Codes that must always resolve to a branch-specific series. Falling back
+    /// to the unscoped legacy series for these would generate numbers from the
+    /// wrong template (e.g. DEL/000001 instead of DLV/DB0001/26-27/000001) and
+    /// can collide with existing unique identifiers.
+    /// </summary>
+    private static bool RequiresScopedSeries(string normalizedCode) =>
+        normalizedCode is "DELIVERY" or "ORDER";
 
     private Task<NumberSeries?> FindExactAsync(
         string code,

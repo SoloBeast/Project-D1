@@ -146,6 +146,103 @@ void main() {
       expect(find.text('Reject'), findsNothing);
       expect(find.text('Confirm'), findsNothing);
     });
+
+    testWidgets('cancels a pending request from the cancel dialog', (
+      tester,
+    ) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          customerTest: _customerTest(status: MilkTestStatus.requested),
+        ),
+      );
+      await _pump(
+        tester,
+        const CustomerMilkTestScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      expect(find.text('Cancel Test Request'), findsOneWidget);
+
+      await tester.tap(find.text('Cancel Test Request'));
+      await tester.pumpAndSettle();
+      expect(find.text('Cancel test request?'), findsOneWidget);
+      expect(
+        find.text(
+          'The delivery can then be completed without a doorstep milk test.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Reason (optional)'),
+        'No longer needed',
+      );
+      await tester.tap(find.text('Cancel Request'));
+      await tester.pumpAndSettle();
+
+      expect(controller.cancelledMilkTestId, 'test-1');
+      expect(controller.cancelRemarks, 'No longer needed');
+      expect(find.text('Test request cancelled.'), findsOneWidget);
+      expect(find.text('Cancel Test Request'), findsNothing);
+      expect(
+        find.text(
+          'You cancelled this test request. The delivery can now be completed without a test.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Cancelled by customer'), findsOneWidget);
+    });
+
+    testWidgets('keeps the request when the cancel dialog is dismissed', (
+      tester,
+    ) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          customerTest: _customerTest(status: MilkTestStatus.requested),
+        ),
+      );
+      await _pump(
+        tester,
+        const CustomerMilkTestScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      await tester.tap(find.text('Cancel Test Request'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Keep Test'));
+      await tester.pumpAndSettle();
+
+      expect(controller.cancelledMilkTestId, isNull);
+      expect(controller.cancelRemarks, isNull);
+      expect(find.text('Cancel Test Request'), findsOneWidget);
+      expect(find.text('Test request cancelled.'), findsNothing);
+    });
+
+    testWidgets('hides cancel once the request is cancelled', (tester) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          customerTest: _customerTest(
+            status: MilkTestStatus.requested,
+            decision: MilkTestCustomerDecision.cancelled,
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const CustomerMilkTestScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      expect(find.text('Cancel Test Request'), findsNothing);
+      expect(
+        find.text(
+          'You cancelled this test request. The delivery can now be completed without a test.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Cancelled by customer'), findsOneWidget);
+      expect(find.text('Cancelled'), findsOneWidget);
+    });
   });
 
   group('staff milk-test screen', () {
@@ -323,6 +420,54 @@ void main() {
       expect(controller.completedParameters.first.value, 6.5);
       expect(controller.completedRemarks, 'Doorstep reading');
       expect(find.text('Milk test completed.'), findsOneWidget);
+    });
+
+    testWidgets('blocks delivery completion while customer confirmation is pending', (
+      tester,
+    ) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          staffTest: _staffTest(
+            images: [testImage],
+            status: MilkTestStatus.completed,
+            decision: MilkTestCustomerDecision.pending,
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const StaffMilkTestScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      expect(
+        find.text(
+          'Customer test confirmation required before delivery can be completed.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('shows cancelled resolution for a completed test', (
+      tester,
+    ) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          staffTest: _staffTest(
+            images: [testImage],
+            status: MilkTestStatus.completed,
+            decision: MilkTestCustomerDecision.cancelled,
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const StaffMilkTestScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      // The label appears both in the status pill and the resolution notice.
+      expect(find.text('Cancelled by customer'), findsWidgets);
     });
   });
 
@@ -709,6 +854,259 @@ void main() {
       '17/08/2026 09:05',
     );
   });
+
+  group('branch milk-test inspection screen', () {
+    testWidgets('shows the staff member who performed the milk test', (
+      tester,
+    ) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          staffTest: _staffTest(
+            status: MilkTestStatus.completed,
+            images: [testImage],
+            completedByUserId: 'staff-1',
+            completedByName: 'Delivery Staff One',
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const BranchMilkTestInspectionScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      expect(find.text('Milk test performed by'), findsOneWidget);
+      expect(find.text('Delivery Staff One'), findsOneWidget);
+    });
+
+    testWidgets('falls back to the employee id when the name is absent', (
+      tester,
+    ) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          staffTest: _staffTest(
+            status: MilkTestStatus.completed,
+            images: [testImage],
+            completedByUserId: 'staff-9',
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const BranchMilkTestInspectionScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      expect(find.text('Milk test performed by'), findsOneWidget);
+      expect(find.text('Employee staff-9'), findsOneWidget);
+    });
+
+    testWidgets('states when no performer was recorded', (tester) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          staffTest: _staffTest(
+            status: MilkTestStatus.completed,
+            images: [testImage],
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const BranchMilkTestInspectionScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      expect(find.text('Milk test performed by'), findsOneWidget);
+      expect(find.text('Not recorded'), findsOneWidget);
+    });
+
+    testWidgets('omits the performer row before the test is completed', (
+      tester,
+    ) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          staffTest: _staffTest(
+            images: [testImage],
+            completedByUserId: 'staff-1',
+            completedByName: 'Delivery Staff One',
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const BranchMilkTestInspectionScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      expect(find.text('Milk test performed by'), findsNothing);
+    });
+
+    testWidgets(
+      'loads protected image content via the authenticated client',
+      (tester) async {
+        final repository = _FakeMilkTestRepository()
+          ..imageContent = (token, milkTestId, imageId) => ApiByteResponse(
+            bytes: Uint8List.fromList(
+              const [
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+                0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+                0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+              ],
+            ),
+            contentType: 'image/png',
+            fileName: 'reading.png',
+          );
+        final controller = _SeededMilkTestController(
+          MilkTestState(
+            staffTest: _staffTest(
+              status: MilkTestStatus.completed,
+              images: [testImage],
+            ),
+          ),
+        );
+        await _pump(
+          tester,
+          const BranchMilkTestInspectionScreen(deliveryId: 'delivery-1'),
+          controller,
+          repository: repository,
+        );
+
+        expect(
+          find.byWidgetPredicate(
+            (widget) => widget is Image && widget.image is MemoryImage,
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.byWidgetPredicate(
+            (widget) => widget is Image && widget.image is NetworkImage,
+          ),
+          findsNothing,
+        );
+        expect(repository.contentRequests, hasLength(1));
+        final request = repository.contentRequests.single;
+        expect(request.token, 'milk-token');
+        expect(request.milkTestId, 'test-1');
+        expect(request.imageId, 'image-1');
+      },
+    );
+
+    testWidgets('opens a full-screen viewer when the image is tapped', (
+      tester,
+    ) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          staffTest: _staffTest(
+            status: MilkTestStatus.completed,
+            images: [testImage],
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const BranchMilkTestInspectionScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      final tapTarget = find.bySemanticsLabel(
+        RegExp('^Open milk test image 1 full screen'),
+      );
+      await tester.ensureVisible(tapTarget);
+      await tester.pumpAndSettle();
+      await tester.tap(tapTarget);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+      expect(find.text('Image 1'), findsOneWidget);
+    });
+
+    testWidgets('closing the viewer returns to the inspection screen', (
+      tester,
+    ) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          staffTest: _staffTest(
+            status: MilkTestStatus.completed,
+            images: [testImage],
+            completedByUserId: 'staff-1',
+            completedByName: 'Delivery Staff One',
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const BranchMilkTestInspectionScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      final tapTarget = find.bySemanticsLabel(
+        RegExp('^Open milk test image 1 full screen'),
+      );
+      await tester.ensureVisible(tapTarget);
+      await tester.pumpAndSettle();
+      await tester.tap(tapTarget);
+      await tester.pumpAndSettle();
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(InteractiveViewer), findsNothing);
+      expect(find.text('Milk test inspection'), findsOneWidget);
+      expect(find.text('Milk test performed by'), findsOneWidget);
+    });
+
+    testWidgets('opens each authenticated image in the viewer', (
+      tester,
+    ) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          staffTest: _staffTest(
+            status: MilkTestStatus.completed,
+            images: [testImage, secondTestImage],
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const BranchMilkTestInspectionScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      final secondTarget = find.bySemanticsLabel(
+        RegExp('^Open milk test image 2 full screen'),
+      );
+      await tester.ensureVisible(secondTarget);
+      await tester.pumpAndSettle();
+      await tester.tap(secondTarget);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+      expect(find.text('Image 2'), findsOneWidget);
+    });
+
+    testWidgets('exposes no image mutation controls', (tester) async {
+      final controller = _SeededMilkTestController(
+        MilkTestState(
+          staffTest: _staffTest(
+            status: MilkTestStatus.completed,
+            images: [testImage],
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const BranchMilkTestInspectionScreen(deliveryId: 'delivery-1'),
+        controller,
+      );
+
+      expect(find.text('Replace'), findsNothing);
+      expect(find.text('Delete'), findsNothing);
+      expect(find.text('Add Test Image'), findsNothing);
+      expect(find.text('Complete test'), findsNothing);
+    });
+  });
 }
 
 Future<_FakeMilkTestRepository> _pump(
@@ -750,6 +1148,8 @@ class _SeededMilkTestController extends MilkTestController {
   List<MilkTestParameter> completedParameters = const [];
   String? confirmedMilkTestId;
   String? confirmRemarks;
+  String? cancelledMilkTestId;
+  String? cancelRemarks;
   String? deletedImageId;
   String? replacedAsStaffImageId;
   String? replacedAsCustomerImageId;
@@ -764,6 +1164,9 @@ class _SeededMilkTestController extends MilkTestController {
 
   @override
   Future<void> loadForStaff(String deliveryId) async {}
+
+  @override
+  Future<void> loadForBranch(String deliveryId) async {}
 
   @override
   Future<bool> request(String deliveryId) async {
@@ -805,6 +1208,19 @@ class _SeededMilkTestController extends MilkTestController {
   Future<bool> confirm(String milkTestId, {String? remarks}) async {
     confirmedMilkTestId = milkTestId;
     confirmRemarks = remarks;
+    return true;
+  }
+
+  @override
+  Future<bool> cancel(String milkTestId, {String? remarks}) async {
+    cancelledMilkTestId = milkTestId;
+    cancelRemarks = remarks;
+    state = state.copyWith(
+      customerTest: _customerTest(
+        status: MilkTestStatus.requested,
+        decision: MilkTestCustomerDecision.cancelled,
+      ),
+    );
     return true;
   }
 
@@ -883,6 +1299,7 @@ class _SeededMilkTestController extends MilkTestController {
         completedAtUtc: test.completedAtUtc,
         confirmedAtUtc: test.confirmedAtUtc,
         rejectedAtUtc: test.rejectedAtUtc,
+        cancelledAtUtc: test.cancelledAtUtc,
         customerRemarks: test.customerRemarks,
         images: [
           for (final image in test.images)
@@ -979,8 +1396,13 @@ CustomerMilkTest _customerTest({
   completedAtUtc: status == MilkTestStatus.completed
       ? DateTime.utc(2026, 8, 17, 9, 10)
       : null,
-  confirmedAtUtc: null,
+  confirmedAtUtc: decision == MilkTestCustomerDecision.confirmed
+      ? DateTime.utc(2026, 8, 17, 9, 12)
+      : null,
   rejectedAtUtc: decision == MilkTestCustomerDecision.rejected
+      ? DateTime.utc(2026, 8, 17, 9, 12)
+      : null,
+  cancelledAtUtc: decision == MilkTestCustomerDecision.cancelled
       ? DateTime.utc(2026, 8, 17, 9, 12)
       : null,
   customerRemarks: decision.isTerminal ? 'Customer decision' : null,
@@ -991,6 +1413,8 @@ StaffMilkTest _staffTest({
   required List<MilkTestImage> images,
   MilkTestStatus status = MilkTestStatus.requested,
   MilkTestCustomerDecision decision = MilkTestCustomerDecision.pending,
+  String? completedByUserId,
+  String? completedByName,
 }) =>
     StaffMilkTest(
       milkTestId: 'test-1',
@@ -1001,9 +1425,14 @@ StaffMilkTest _staffTest({
       completedAtUtc: status == MilkTestStatus.completed
           ? DateTime.utc(2026, 8, 17, 9, 10)
           : null,
+      completedByUserId: completedByUserId,
+      completedByName: completedByName,
       staffRemarks: null,
       confirmedAtUtc: null,
       rejectedAtUtc: null,
+      cancelledAtUtc: decision == MilkTestCustomerDecision.cancelled
+          ? DateTime.utc(2026, 8, 17, 9, 12)
+          : null,
       customerRemarks: null,
       parameters: const [],
       images: images,
@@ -1016,6 +1445,15 @@ final testImage = MilkTestImage(
   fileSize: 2048,
   uploadedAtUtc: DateTime.utc(2026, 8, 17, 9, 5),
   contentPath: '/api/v1/milk-tests/test-1/images/image-1/content',
+);
+
+final secondTestImage = MilkTestImage(
+  imageId: 'image-2',
+  fileName: 'reading-2.jpg',
+  contentType: 'image/jpeg',
+  fileSize: 2048,
+  uploadedAtUtc: DateTime.utc(2026, 8, 17, 9, 6),
+  contentPath: '/api/v1/milk-tests/test-1/images/image-2/content',
 );
 
 final _session = AuthSession(

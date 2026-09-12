@@ -20,12 +20,14 @@ enum MilkTestCustomerDecision {
   pending,
   confirmed,
   rejected,
+  cancelled,
   unknown;
 
   static MilkTestCustomerDecision parse(Object? value) => switch (value) {
     'Pending' || 'pending' => pending,
     'Confirmed' || 'confirmed' => confirmed,
     'Rejected' || 'rejected' => rejected,
+    'CustomerCancelled' || 'customerCancelled' => cancelled,
     _ => unknown,
   };
 
@@ -33,12 +35,14 @@ enum MilkTestCustomerDecision {
     pending => 'Awaiting customer decision',
     confirmed => 'Confirmed',
     rejected => 'Rejected',
+    cancelled => 'Cancelled by customer',
     unknown => 'Unknown',
   };
 
   bool get isTerminal =>
       this == MilkTestCustomerDecision.confirmed ||
-      this == MilkTestCustomerDecision.rejected;
+      this == MilkTestCustomerDecision.rejected ||
+      this == MilkTestCustomerDecision.cancelled;
 }
 
 class MilkTestImage {
@@ -111,6 +115,7 @@ class CustomerMilkTest {
     required this.completedAtUtc,
     required this.confirmedAtUtc,
     required this.rejectedAtUtc,
+    required this.cancelledAtUtc,
     required this.customerRemarks,
     required this.images,
   });
@@ -138,6 +143,7 @@ class CustomerMilkTest {
       'confirmedAtUtc',
     ),
     rejectedAtUtc: _optionalProtocolDate(json, 'rejectedAt', 'rejectedAtUtc'),
+    cancelledAtUtc: _optionalProtocolDate(json, 'cancelledAt', 'cancelledAtUtc'),
     customerRemarks: json['customerRemarks'] as String?,
     images: _images(json['images']),
   );
@@ -150,11 +156,16 @@ class CustomerMilkTest {
   final DateTime? completedAtUtc;
   final DateTime? confirmedAtUtc;
   final DateTime? rejectedAtUtc;
+  final DateTime? cancelledAtUtc;
   final String? customerRemarks;
   final List<MilkTestImage> images;
 
   bool get canDecide =>
       status == MilkTestStatus.completed && !customerDecision.isTerminal;
+
+  bool get canCancel =>
+      status == MilkTestStatus.requested &&
+      customerDecision == MilkTestCustomerDecision.pending;
 }
 
 class StaffMilkTest {
@@ -165,9 +176,12 @@ class StaffMilkTest {
     required this.customerDecision,
     required this.requestedAtUtc,
     required this.completedAtUtc,
+    this.completedByUserId,
+    this.completedByName,
     required this.staffRemarks,
     required this.confirmedAtUtc,
     required this.rejectedAtUtc,
+    required this.cancelledAtUtc,
     required this.customerRemarks,
     required this.parameters,
     required this.images,
@@ -188,6 +202,8 @@ class StaffMilkTest {
       'completedAt',
       'completedAtUtc',
     ),
+    completedByUserId: json['completedByUserId'] as String?,
+    completedByName: json['completedByName'] as String?,
     staffRemarks: json['staffRemarks'] as String?,
     confirmedAtUtc: _optionalProtocolDate(
       json,
@@ -195,6 +211,7 @@ class StaffMilkTest {
       'confirmedAtUtc',
     ),
     rejectedAtUtc: _optionalProtocolDate(json, 'rejectedAt', 'rejectedAtUtc'),
+    cancelledAtUtc: _optionalProtocolDate(json, 'cancelledAt', 'cancelledAtUtc'),
     customerRemarks: json['customerRemarks'] as String?,
     parameters: (json['parameters'] as List<dynamic>? ?? const [])
         .cast<Map<String, dynamic>>()
@@ -209,9 +226,12 @@ class StaffMilkTest {
   final MilkTestCustomerDecision customerDecision;
   final DateTime requestedAtUtc;
   final DateTime? completedAtUtc;
+  final String? completedByUserId;
+  final String? completedByName;
   final String? staffRemarks;
   final DateTime? confirmedAtUtc;
   final DateTime? rejectedAtUtc;
+  final DateTime? cancelledAtUtc;
   final String? customerRemarks;
   final List<MilkTestParameter> parameters;
   final List<MilkTestImage> images;

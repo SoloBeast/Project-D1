@@ -12,11 +12,13 @@ import 'package:doodh_direct_mobile/features/deliveries/delivery_models.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
 import 'package:doodh_direct_mobile/features/milk_testing/milk_test_controller.dart';
 import 'package:doodh_direct_mobile/features/milk_testing/milk_test_models.dart';
+import 'package:doodh_direct_mobile/features/milk_testing/milk_test_repository.dart';
 import 'package:doodh_direct_mobile/features/milk_testing/milk_test_screens.dart';
 import 'package:doodh_direct_mobile/features/notifications/notification_controller.dart';
 import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/orders/order_repository.dart';
+import 'package:doodh_direct_mobile/features/orders/order_screens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -196,6 +198,105 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets(
+      'branch inspection route opens the read-only staff Order screen',
+      (tester) async {
+        final orderController = _SeededOrderController(
+          OrderState(selectedOrder: _staffOrder()),
+        );
+        final container = await _pumpProductionApp(
+          tester,
+          session: _staffSession,
+          orderController: orderController,
+        );
+
+        // Navigate via the production GoRouter table exactly as the
+        // Refund/Replacement linked-record action does.
+        container.read(routerProvider).go('/staff/orders/order-1');
+        await tester.pumpAndSettle();
+
+        expect(find.byType(StaffOrderInspectionScreen), findsOneWidget);
+        expect(find.text('Order inspection'), findsOneWidget);
+        expect(find.text('DD-000001'), findsOneWidget);
+        // Inspection is read-only: no mutation controls are exposed.
+        expect(find.text('Cancel order'), findsNothing);
+        expect(find.text('Cancel'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'branch inspection route opens the read-only staff Delivery screen',
+      (tester) async {
+        final deliveryController = _SeededDeliveryController(
+          DeliveryState(selectedDelivery: _staffDelivery()),
+        );
+        final container = await _pumpProductionApp(
+          tester,
+          session: _staffSession,
+          deliveryController: deliveryController,
+        );
+
+        container.read(routerProvider).go('/staff/delivery/delivery-1');
+        await tester.pumpAndSettle();
+
+        expect(find.byType(DeliveryInspectionScreen), findsOneWidget);
+        expect(find.text('Delivery inspection'), findsOneWidget);
+        expect(find.text('DD-1001'), findsOneWidget);
+        // Inspection is read-only: no assignment/status mutation controls.
+        expect(find.text('Assign'), findsNothing);
+        expect(find.text('Start'), findsNothing);
+        expect(find.text('Complete'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'branch inspection route opens the read-only Milk Test screen with '
+      'authenticated images',
+      (tester) async {
+        final milkController = _SeededMilkTestController(
+          MilkTestState(staffTest: _staffTest(images: [testImage])),
+        );
+        final container = await _pumpProductionApp(
+          tester,
+          session: _staffSession,
+          milkController: milkController,
+          milkTestRepository: _FakeMilkTestRepository(),
+        );
+
+        container
+            .read(routerProvider)
+            .go('/staff/delivery/delivery-1/milk-test');
+        await tester.pumpAndSettle();
+
+        expect(find.byType(BranchMilkTestInspectionScreen), findsOneWidget);
+        expect(find.text('Milk test inspection'), findsOneWidget);
+        // Inspection is read-only: no image mutation controls.
+        expect(find.text('Replace Image'), findsNothing);
+        expect(find.text('Delete Image'), findsNothing);
+
+        await tester.drag(find.byType(ListView).first, const Offset(0, -400));
+        await tester.pumpAndSettle();
+
+        // Protected media is loaded from authenticated bytes (Image.memory),
+        // never through an unauthenticated Image.network request.
+        final images = find.byType(Image).evaluate().map((element) =>
+            element.widget).whereType<Image>();
+        expect(
+          images.any((image) => image.image is MemoryImage),
+          isTrue,
+          reason: 'protected milk test image must render from authenticated bytes',
+        );
+        expect(
+          images.any((image) => image.image is NetworkImage),
+          isFalse,
+          reason: 'protected media must never use Image.network',
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
   });
 }
 
@@ -210,6 +311,8 @@ Future<ProviderContainer> _pumpProductionApp(
   required AuthSession session,
   _SeededMilkTestController? milkController,
   _SeededDeliveryController? deliveryController,
+  _SeededOrderController? orderController,
+  _FakeMilkTestRepository? milkTestRepository,
 }) async {
   final auth = _SeededAuthRepository(session);
   final container = ProviderContainer(
@@ -226,6 +329,10 @@ Future<ProviderContainer> _pumpProductionApp(
         milkTestControllerProvider.overrideWith(() => milkController),
       if (deliveryController != null)
         deliveryControllerProvider.overrideWith(() => deliveryController),
+      if (orderController != null)
+        orderControllerProvider.overrideWith(() => orderController),
+      if (milkTestRepository != null)
+        milkTestRepositoryProvider.overrideWithValue(milkTestRepository),
       notificationControllerProvider.overrideWith(
         _SeededNotificationController.new,
       ),
@@ -276,6 +383,9 @@ class _SeededMilkTestController extends MilkTestController {
   Future<void> loadForStaff(String deliveryId) async {}
 
   @override
+  Future<void> loadForBranch(String deliveryId) async {}
+
+  @override
   Future<bool> uploadImage(
     String deliveryId,
     String milkTestId, {
@@ -310,6 +420,9 @@ class _SeededDeliveryController extends DeliveryController {
 
   @override
   Future<void> loadManagedDelivery(String id) async {}
+
+  @override
+  Future<void> loadInspectionDelivery(String id) async {}
 }
 
 class _FakeOrderRepository extends OrderRepository {
@@ -372,6 +485,7 @@ StaffMilkTest _staffTest({required List<MilkTestImage> images}) =>
       staffRemarks: null,
       confirmedAtUtc: null,
       rejectedAtUtc: null,
+      cancelledAtUtc: null,
       customerRemarks: null,
       parameters: const [],
       images: images,
@@ -384,4 +498,98 @@ final testImage = MilkTestImage(
   fileSize: 2048,
   uploadedAtUtc: DateTime.utc(2026, 8, 17, 9, 5),
   contentPath: '/api/v1/milk-tests/test-1/images/image-1/content',
+);
+
+class _SeededOrderController extends OrderController {
+  _SeededOrderController(this.initialState);
+
+  final OrderState initialState;
+
+  @override
+  OrderState build() => initialState;
+
+  @override
+  Future<void> loadStaffOrder(String orderId) async {}
+}
+
+class _FakeMilkTestRepository extends MilkTestRepository {
+  _FakeMilkTestRepository()
+    : super(api: ApiClient(baseUrl: 'https://api.example.test'));
+
+  @override
+  Future<ApiByteResponse> getImageContent(
+    String token,
+    String milkTestId,
+    String imageId,
+  ) async => ApiByteResponse(
+    bytes: Uint8List.fromList(const [137, 80, 78, 71]),
+    contentType: 'image/png',
+  );
+}
+
+OrderSummary _staffOrder() => OrderSummary(
+  publicId: 'order-1',
+  orderNumber: 'DD-000001',
+  type: 'OneTime',
+  status: 'Confirmed',
+  createdAt: DateTime.utc(2026, 8, 16, 9),
+  addressLabel: 'Home',
+  city: 'Bengaluru',
+  branchName: 'Main Branch',
+  items: const [
+    OrderItem(
+      productId: 'product-1',
+      productName: 'Whole Milk',
+      sku: 'MILK-1L',
+      unitOfMeasure: 'litre',
+      quantity: 1,
+      unitPrice: 60,
+      lineTotal: 60,
+    ),
+  ],
+  subtotal: 60,
+  discountAmount: 0,
+  payableAmount: 60,
+  cancelledAt: null,
+  paymentPublicId: 'payment-1',
+  paymentStatus: 'Captured',
+  gatewayPaymentId: null,
+  deliveryPublicId: null,
+  deliveryReferenceNumber: null,
+  deliveryStatus: null,
+);
+
+DeliveryDetails _staffDelivery() => DeliveryDetails(
+  deliveryId: 'delivery-1',
+  sourceType: DeliverySourceType.oneTimeOrder,
+  referenceNumber: 'DD-1001',
+  status: DeliveryStatus.assigned,
+  scheduledDate: DateTime(2026, 8, 16),
+  branchId: 7,
+  customerId: 'customer-1',
+  customerName: 'Customer User',
+  customerMobile: '9999999999',
+  destinationAddress: '1 Main Street, Pune',
+  deliveryInstructions: null,
+  destinationLatitude: 18.5204,
+  destinationLongitude: 73.8567,
+  assignedEmployeeId: null,
+  assignedEmployeeName: null,
+  assignedAt: null,
+  pickedUpAt: null,
+  outForDeliveryAt: null,
+  arrivedAt: null,
+  otpVerifiedAt: null,
+  completedAt: null,
+  failedAt: null,
+  failureReason: null,
+  remarks: null,
+  operationalNotes: null,
+  subscriptionSlot: null,
+  quantity: 1,
+  orderSummary: null,
+  isTrackingActive: false,
+  latestLocation: null,
+  assignments: const [],
+  batchAllocations: const [],
 );

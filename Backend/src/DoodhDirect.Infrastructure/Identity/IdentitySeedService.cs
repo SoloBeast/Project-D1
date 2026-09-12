@@ -29,6 +29,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.PaymentsReadOwn,
                 AuthorizationCodes.WalletReadOwn,
                 AuthorizationCodes.WalletTopUpOwn,
+                AuthorizationCodes.RefundReplacementRequestOwn,
+                AuthorizationCodes.RefundReplacementReadOwn,
                 AuthorizationCodes.CamerasViewPublic
             ],
             [AuthorizationCodes.DeliveryStaff] =
@@ -48,6 +50,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.SessionsManageOwn,
                 AuthorizationCodes.UsersRead,
                 AuthorizationCodes.BranchAccess,
+                AuthorizationCodes.OrdersReadBranch,
+                AuthorizationCodes.MilkTestsReadBranch,
                 AuthorizationCodes.DeliveriesReadBranch,
                 AuthorizationCodes.DeliveriesAssignBranch,
                 AuthorizationCodes.DairyRead,
@@ -57,7 +61,10 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.ReportsDashboardRead,
                 AuthorizationCodes.ReportsOperationsRead,
                 AuthorizationCodes.ReportsMilkTestsRead,
-                AuthorizationCodes.ReportsExport
+                AuthorizationCodes.ReportsExport,
+                AuthorizationCodes.RefundReplacementReadBranch,
+                AuthorizationCodes.RefundReplacementManageBranch,
+                AuthorizationCodes.SetupRefundReplacementRead
             ],
             [AuthorizationCodes.DeliveryManager] =
             [
@@ -71,7 +78,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.ReportsDashboardRead,
                 AuthorizationCodes.ReportsOperationsRead,
                 AuthorizationCodes.ReportsMilkTestsRead,
-                AuthorizationCodes.ReportsExport
+                AuthorizationCodes.ReportsExport,
+                AuthorizationCodes.RefundReplacementReadBranch
             ],
             [AuthorizationCodes.CustomerSupport] =
             [
@@ -81,8 +89,13 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.UsersRead,
                 AuthorizationCodes.CustomerProfilesRead,
                 AuthorizationCodes.OrdersRead,
+                AuthorizationCodes.OrdersReadBranch,
+                AuthorizationCodes.MilkTestsReadBranch,
                 AuthorizationCodes.ReportsDashboardRead,
-                AuthorizationCodes.ReportsAdministrationRead
+                AuthorizationCodes.ReportsAdministrationRead,
+                AuthorizationCodes.RefundReplacementReadBranch,
+                AuthorizationCodes.RefundReplacementManageBranch,
+                AuthorizationCodes.SetupRefundReplacementRead
             ],
             [AuthorizationCodes.Accountant] =
             [
@@ -138,7 +151,13 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.SetupOtpProviderRead,
                 AuthorizationCodes.SetupOtpProviderManage,
                 AuthorizationCodes.SetupIntegrationsRead,
-                AuthorizationCodes.SetupIntegrationsManage
+                AuthorizationCodes.SetupIntegrationsManage,
+                AuthorizationCodes.SetupRefundReplacementRead,
+                AuthorizationCodes.SetupRefundReplacementManage,
+                AuthorizationCodes.RefundReplacementRequestOwn,
+                AuthorizationCodes.RefundReplacementReadOwn,
+                AuthorizationCodes.RefundReplacementReadBranch,
+                AuthorizationCodes.RefundReplacementManageBranch
             ],
             [AuthorizationCodes.Owner] = AuthorizationCodes.Permissions.Keys.ToArray()
         };

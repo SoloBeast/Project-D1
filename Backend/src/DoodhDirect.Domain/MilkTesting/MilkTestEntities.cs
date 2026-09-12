@@ -14,7 +14,8 @@ public enum MilkTestCustomerDecision
 {
     Pending = 1,
     Confirmed = 2,
-    Rejected = 3
+    Rejected = 3,
+    CustomerCancelled = 4
 }
 
 public sealed class MilkTest : AuditableEntity
@@ -55,6 +56,7 @@ public sealed class MilkTest : AuditableEntity
     public MilkTestCustomerDecision CustomerDecision { get; private set; }
     public DateTime? ConfirmedAt { get; private set; }
     public DateTime? RejectedAt { get; private set; }
+    public DateTime? CancelledAt { get; private set; }
     public string? CustomerRemarks { get; private set; }
 
     public Delivery Delivery { get; private set; } = null!;
@@ -158,6 +160,26 @@ public sealed class MilkTest : AuditableEntity
 
         CustomerDecision = MilkTestCustomerDecision.Rejected;
         RejectedAt = rejectedAt;
+        CustomerRemarks = Optional(remarks);
+    }
+
+    /// <summary>
+    /// Cancels a pending (not yet performed) test request by the customer. A cancelled
+    /// test no longer blocks delivery completion. Only a Requested test with a Pending
+    /// decision can be cancelled; once the staff has performed the test (Completed), the
+    /// customer must Confirm or Reject it instead.
+    /// </summary>
+    public void Cancel(DateTime cancelledAt, string? remarks)
+    {
+        EnsureRequested();
+        EnsureIndiaLocal(cancelledAt, nameof(cancelledAt));
+        if (cancelledAt < RequestedAt)
+        {
+            throw new ArgumentException("Cancellation cannot precede the test request.", nameof(cancelledAt));
+        }
+
+        CustomerDecision = MilkTestCustomerDecision.CustomerCancelled;
+        CancelledAt = cancelledAt;
         CustomerRemarks = Optional(remarks);
     }
 

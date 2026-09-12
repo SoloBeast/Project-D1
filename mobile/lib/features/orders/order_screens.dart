@@ -907,6 +907,19 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                       ),
                     ),
                   ],
+                  const SizedBox(height: 16),
+                  DoodhSectionHeader(title: 'Support'),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.support_agent_outlined),
+                      title: const Text('Refund or replacement requests'),
+                      subtitle: const Text(
+                        'Track refund or replacement requests raised for your deliveries',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.push('/refund-replacements'),
+                    ),
+                  ),
                   if (state.errorMessage != null) ...[
                     const SizedBox(height: 12),
                     Text(
@@ -933,6 +946,160 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                       onPressed: state.isSaving ? null : () => _cancel(order),
                       icon: const Icon(Icons.cancel_outlined),
                       label: const Text('Cancel order'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+    );
+  }
+}
+
+class StaffOrderInspectionScreen extends ConsumerStatefulWidget {
+  const StaffOrderInspectionScreen({super.key, required this.orderId});
+
+  final String orderId;
+
+  @override
+  ConsumerState<StaffOrderInspectionScreen> createState() =>
+      _StaffOrderInspectionScreenState();
+}
+
+class _StaffOrderInspectionScreenState
+    extends ConsumerState<StaffOrderInspectionScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(
+      () => ref
+          .read(orderControllerProvider.notifier)
+          .loadStaffOrder(widget.orderId),
+    );
+  }
+
+  Future<void> _load() => ref
+      .read(orderControllerProvider.notifier)
+      .loadStaffOrder(widget.orderId);
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(orderControllerProvider);
+    final order = state.selectedOrder?.publicId == widget.orderId
+        ? state.selectedOrder
+        : null;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Order inspection')),
+      body: state.isLoading && order == null
+          ? const LoadingStatePanel(message: 'Loading order...')
+          : order == null
+          ? ErrorStatePanel(
+              message: state.errorMessage ?? 'Order could not be loaded.',
+              onRetry: _load,
+            )
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              order.orderNumber,
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(formatOrderDate(order.createdAt)),
+                          ],
+                        ),
+                      ),
+                      _OrderStatusPill(status: order.status),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Card(
+                    color: DoodhColors.mint,
+                    child: ListTile(
+                      leading: const Icon(
+                        Icons.local_shipping_outlined,
+                        color: DoodhColors.tealDark,
+                      ),
+                      title: Text('Branch: ${order.branchName}'),
+                      subtitle: Text('${order.addressLabel}, ${order.city}'),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  DoodhSectionHeader(title: 'Order items'),
+                  const SizedBox(height: 8),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          ...order.items.map(
+                            (item) => Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Icon(Icons.local_drink_outlined),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      '${item.productName}\n${formatQuantity(item.quantity)}',
+                                    ),
+                                  ),
+                                  Text('₹${item.lineTotal.toStringAsFixed(2)}'),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const Divider(height: 24),
+                          _AmountRow(label: 'Subtotal', amount: order.subtotal),
+                          _AmountRow(
+                            label: 'Discount',
+                            amount: -order.discountAmount,
+                          ),
+                          _AmountRow(
+                            label: 'Total',
+                            amount: order.payableAmount,
+                            emphasized: true,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (order.paymentStatus != null) ...[
+                    const SizedBox(height: 16),
+                    DoodhSectionHeader(title: 'Payment status'),
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.payment_outlined),
+                        title: Text(order.paymentStatus!),
+                        subtitle: Text(
+                          order.gatewayPaymentId ?? 'Payment linked to order',
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (order.deliveryPublicId != null) ...[
+                    const SizedBox(height: 16),
+                    DoodhSectionHeader(title: 'Delivery'),
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.location_on_outlined),
+                        title: Text(
+                          order.deliveryReferenceNumber ?? 'Linked delivery',
+                        ),
+                        subtitle: Text(
+                          order.deliveryStatus ?? 'Delivery linked to order',
+                        ),
+                      ),
                     ),
                   ],
                 ],

@@ -24,8 +24,12 @@ public static class NotificationEventTypes
     public const string DeliveryFailed = "DELIVERY_FAILED";
     public const string MilkTestRequested = "MILK_TEST_REQUESTED";
     public const string MilkTestCompleted = "MILK_TEST_COMPLETED";
+    public const string MilkTestCancelled = "MILK_TEST_CANCELLED";
     public const string ComplaintUpdated = "COMPLAINT_UPDATED";
     public const string ReplacementUpdated = "REPLACEMENT_UPDATED";
+    public const string RefundReplacementSubmitted = "REFUND_REPLACEMENT_SUBMITTED";
+    public const string RefundReplacementDecided = "REFUND_REPLACEMENT_DECIDED";
+    public const string RefundReplacementCompleted = "REFUND_REPLACEMENT_COMPLETED";
 
     public static IReadOnlySet<string> Critical { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -67,8 +71,12 @@ public static class NotificationEventTypes
         DeliveryFailed,
         MilkTestRequested,
         MilkTestCompleted,
+        MilkTestCancelled,
         ComplaintUpdated,
-        ReplacementUpdated
+        ReplacementUpdated,
+        RefundReplacementSubmitted,
+        RefundReplacementDecided,
+        RefundReplacementCompleted
     ];
 
     public static bool IsCritical(string eventType) =>

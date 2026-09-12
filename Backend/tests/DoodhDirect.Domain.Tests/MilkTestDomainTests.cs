@@ -117,6 +117,60 @@ public sealed class MilkTestDomainTests
     }
 
     [Fact]
+    public void Cancel_RecordsCustomerCancelledDecisionAndNormalizesRemarks()
+    {
+        var test = CreateTest();
+
+        test.Cancel(RequestedAt.AddMinutes(2), " Changed my mind ");
+
+        Assert.Equal(MilkTestStatus.Requested, test.Status);
+        Assert.Equal(MilkTestCustomerDecision.CustomerCancelled, test.CustomerDecision);
+        Assert.Equal(RequestedAt.AddMinutes(2), test.CancelledAt);
+        Assert.Equal("Changed my mind", test.CustomerRemarks);
+    }
+
+    [Fact]
+    public void Cancel_RejectsTimestampBeforeRequest()
+    {
+        var test = CreateTest();
+
+        Assert.Throws<ArgumentException>(() =>
+            test.Cancel(RequestedAt.AddSeconds(-1), null));
+    }
+
+    [Fact]
+    public void Cancel_RequiresRequestedStatusAndIsTerminal()
+    {
+        var completed = CreateReadyTest();
+        completed.Complete(4, RequestedAt.AddMinutes(5), null);
+        Assert.Throws<InvalidOperationException>(() =>
+            completed.Cancel(RequestedAt.AddMinutes(6), "Too late"));
+
+        var rejected = CreateReadyTest();
+        rejected.Complete(4, RequestedAt.AddMinutes(5), null);
+        rejected.Reject(RequestedAt.AddMinutes(6), "Not acceptable");
+        Assert.Throws<InvalidOperationException>(() =>
+            rejected.Cancel(RequestedAt.AddMinutes(7), "Changed mind"));
+    }
+
+    [Fact]
+    public void Cancel_IsIdempotent_AndKeepsRequestedStatus()
+    {
+        var test = CreateTest();
+        test.Cancel(RequestedAt.AddMinutes(2), "Changed my mind");
+
+        // A cancelled request keeps Status=Requested (only CustomerDecision becomes
+        // CustomerCancelled), so a repeated cancel is idempotent and refreshes the
+        // cancellation timestamp and remarks.
+        test.Cancel(RequestedAt.AddMinutes(3), "Changed my mind");
+
+        Assert.Equal(MilkTestStatus.Requested, test.Status);
+        Assert.Equal(MilkTestCustomerDecision.CustomerCancelled, test.CustomerDecision);
+        Assert.Equal(RequestedAt.AddMinutes(3), test.CancelledAt);
+        Assert.Equal("Changed my mind", test.CustomerRemarks);
+    }
+
+    [Fact]
     public void RemoveImage_WhileRequested_RemovesOnlyTheTargetImage()
     {
         var test = CreateTest();

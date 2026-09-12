@@ -21,6 +21,7 @@ public sealed class MilkTestsControllerTests
     [Theory]
     [InlineData(typeof(CustomerDeliveryMilkTestsController), "api/v1/deliveries/{deliveryId:guid}/milk-test")]
     [InlineData(typeof(DeliveryStaffMilkTestsController), "api/v1/delivery/{deliveryId:guid}/milk-test")]
+    [InlineData(typeof(StaffMilkTestInspectionController), "api/v1/staff/deliveries/{deliveryId:guid}/milk-test")]
     [InlineData(typeof(MilkTestsController), "api/v1/milk-tests")]
     public void Controller_UsesExpectedRoute(Type controllerType, string expectedRoute)
     {
@@ -39,6 +40,7 @@ public sealed class MilkTestsControllerTests
     [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.Complete), AuthorizationCodes.MilkTestsOperateAssigned)]
     [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.Confirm), AuthorizationCodes.MilkTestsDecideOwn)]
     [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.Reject), AuthorizationCodes.MilkTestsDecideOwn)]
+    [InlineData(typeof(MilkTestsController), nameof(MilkTestsController.Cancel), AuthorizationCodes.MilkTestsDecideOwn)]
     public void Action_RequiresExpectedPermission(
         Type controllerType,
         string methodName,
@@ -53,7 +55,7 @@ public sealed class MilkTestsControllerTests
     }
 
     [Fact]
-    public void OpenImage_RequiresAnyPermission_OfReadOwnOrOperateAssigned()
+    public void OpenImage_RequiresAnyPermission_IncludingBranchReadForStaffInspection()
     {
         var method = Assert.IsAssignableFrom<MethodInfo>(
             typeof(MilkTestsController).GetMethod(
@@ -61,12 +63,39 @@ public sealed class MilkTestsControllerTests
                 BindingFlags.Instance | BindingFlags.Public));
         var authorize = Assert.Single(method.GetCustomAttributes<AuthorizeAttribute>(inherit: false));
 
+        Assert.Equal(AuthorizationPolicyNames.AnyMilkTestImageContent, authorize.Policy);
         Assert.Equal(
             AuthorizationPolicyNames.AnyPermission(
                 AuthorizationCodes.MilkTestsReadOwn,
-                AuthorizationCodes.MilkTestsOperateAssigned),
+                AuthorizationCodes.MilkTestsOperateAssigned,
+                AuthorizationCodes.MilkTestsReadBranch),
             authorize.Policy);
         Assert.Empty(method.GetCustomAttributes<AllowAnonymousAttribute>(inherit: true));
+    }
+
+    [Fact]
+    public void StaffInspectionController_RequiresBranchReadPermission()
+    {
+        var authorize = Assert.Single(
+            typeof(StaffMilkTestInspectionController)
+                .GetCustomAttributes<AuthorizeAttribute>(inherit: false));
+
+        Assert.Equal(
+            $"permission:{AuthorizationCodes.MilkTestsReadBranch}",
+            authorize.Policy);
+    }
+
+    [Fact]
+    public void StaffInspectionController_DoesNotRequireAssignedOperationPermission()
+    {
+        var authorize = Assert.Single(
+            typeof(StaffMilkTestInspectionController)
+                .GetCustomAttributes<AuthorizeAttribute>(inherit: false));
+
+        Assert.DoesNotContain(
+            AuthorizationCodes.MilkTestsOperateAssigned,
+            authorize.Policy,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -166,6 +195,68 @@ public sealed class MilkTestsControllerTests
     }
 
     [Fact]
+    public void RequireActor_DetectsBranchReadPermission()
+    {
+        var controller = CreateActorController(
+            new Claim("user_id", "73"),
+            new Claim(AuthorizationCodes.BranchClaim, "11"),
+            new Claim(
+                AuthorizationCodes.PermissionClaim,
+                AuthorizationCodes.MilkTestsReadBranch));
+
+        var actor = controller.GetActor();
+
+        Assert.True(actor.CanReadBranch);
+        Assert.False(actor.HasGlobalAccess);
+    }
+
+    [Fact]
+    public void RequireActor_WithoutBranchReadPermission_CannotReadBranch()
+    {
+        var controller = CreateActorController(
+            new Claim("user_id", "73"),
+            new Claim(AuthorizationCodes.BranchClaim, "11"),
+            new Claim(
+                AuthorizationCodes.PermissionClaim,
+                AuthorizationCodes.MilkTestsOperateAssigned));
+
+        var actor = controller.GetActor();
+
+        Assert.False(actor.CanReadBranch);
+    }
+
+    [Fact]
+    public async Task StaffInspectionController_ReadsViaBranchScopedLookup()
+    {
+        var service = new RecordingMilkTestService();
+        var context = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity(
+                [
+                    new Claim("user_id", "73"),
+                    new Claim(AuthorizationCodes.BranchClaim, "11"),
+                    new Claim(
+                        AuthorizationCodes.PermissionClaim,
+                        AuthorizationCodes.MilkTestsReadBranch)
+                ],
+                authenticationType: "Test"))
+        };
+        var controller = new StaffMilkTestInspectionController(service)
+        {
+            ControllerContext = new ControllerContext { HttpContext = context }
+        };
+        var deliveryId = Guid.NewGuid();
+
+        await controller.Get(deliveryId, CancellationToken.None);
+
+        Assert.True(service.BranchLookupCalled);
+        Assert.Equal(deliveryId, service.LastBranchDeliveryId);
+        Assert.Equal(73, service.LastBranchActor?.UserId);
+        Assert.True(service.LastBranchActor?.CanReadBranch);
+        Assert.Equal([11L], service.LastBranchActor?.BranchIds);
+    }
+
+    [Fact]
     public void RequireActor_WithoutGlobalPermission_HasBranchOnlyAccess()
     {
         var controller = CreateActorController(
@@ -245,9 +336,12 @@ public sealed class MilkTestsControllerTests
     private sealed class RecordingMilkTestService : IMilkTestService
     {
         public bool UploadCalled { get; private set; }
+        public bool BranchLookupCalled { get; private set; }
         public MilkTestActor? LastActor { get; private set; }
+        public MilkTestActor? LastBranchActor { get; private set; }
         public Guid? OpenedMilkTestId { get; private set; }
         public Guid? OpenedImageId { get; private set; }
+        public Guid? LastBranchDeliveryId { get; private set; }
         public StoredMediaContent OpenedMedia { get; init; } = new(
             new MemoryStream([1]),
             "application/octet-stream",
@@ -267,6 +361,17 @@ public sealed class MilkTestsControllerTests
             MilkTestActor actor,
             Guid deliveryId,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<StaffMilkTestResult?> GetForBranchAsync(
+            MilkTestActor actor,
+            Guid deliveryId,
+            CancellationToken cancellationToken)
+        {
+            BranchLookupCalled = true;
+            LastBranchActor = actor;
+            LastBranchDeliveryId = deliveryId;
+            return Task.FromResult<StaffMilkTestResult?>(null);
+        }
 
         public Task<MilkTestImageResult> UploadImageAsync(
             MilkTestActor actor,
@@ -314,6 +419,12 @@ public sealed class MilkTestsControllerTests
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<CustomerMilkTestResult> ConfirmAsync(
+            MilkTestActor actor,
+            Guid milkTestId,
+            DecideMilkTestRequest request,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<CustomerMilkTestResult> CancelAsync(
             MilkTestActor actor,
             Guid milkTestId,
             DecideMilkTestRequest request,

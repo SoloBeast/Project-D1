@@ -30,6 +30,7 @@ public static class DeliveryFailureReasons
     public const string AddressNotFound = "Address not found";
     public const string VehicleIssue = "Vehicle issue";
     public const string ProductDamaged = "Product damaged";
+    public const string CustomerRejectedMilkTest = "Customer rejected milk test";
     public const string Other = "Other";
 
     public static readonly IReadOnlySet<string> Allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -38,6 +39,7 @@ public static class DeliveryFailureReasons
         AddressNotFound,
         VehicleIssue,
         ProductDamaged,
+        CustomerRejectedMilkTest,
         Other
     };
 }
@@ -303,6 +305,24 @@ public sealed class Delivery : AuditableEntity
         Remarks = Optional(remarks);
         FailureLatitude = latitude;
         FailureLongitude = longitude;
+    }
+
+    public void FailForCustomerMilkTest(
+        DateTime failedAt,
+        string? remarks)
+    {
+        EnsureIndiaLocal(failedAt, nameof(failedAt));
+        if (Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.ReadyForAssignment)
+        {
+            throw InvalidTransition("failed");
+        }
+
+        Status = DeliveryStatus.Failed;
+        FailedAt = failedAt;
+        FailureReason = DeliveryFailureReasons.CustomerRejectedMilkTest;
+        Remarks = Optional(remarks);
+        FailureLatitude = null;
+        FailureLongitude = null;
     }
 
     public void EnsureCanRecordLocation(long employeeId)

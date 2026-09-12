@@ -266,6 +266,35 @@ public sealed class OrderServiceTests
         Assert.Equal(DateTimeKind.Unspecified, roundTrip.ProcessedAt!.Value.Kind);
     }
 
+    [Fact]
+    public async Task GetForBranchAsync_IsBranchScopedAndIndependentOfOwnership()
+    {
+        await using var harness = await OrderHarness.CreateAsync();
+        var request = harness.Request(harness.Address.PublicId, harness.Product.PublicId, 1m);
+        var order = await harness.Service.CreateAsync(
+            harness.Customer.Id, request, "branch-scope-key", CancellationToken.None);
+
+        var inBranch = await harness.Service.GetForBranchAsync(
+            new OrderActor(999, new HashSet<long> { harness.NearBranch.Id }),
+            order.PublicId,
+            CancellationToken.None);
+
+        Assert.Equal(order.PublicId, inBranch.PublicId);
+
+        await Assert.ThrowsAsync<NotFoundException>(() =>
+            harness.Service.GetForBranchAsync(
+                new OrderActor(999, new HashSet<long> { harness.NearBranch.Id + 1000 }),
+                order.PublicId,
+                CancellationToken.None));
+
+        var global = await harness.Service.GetForBranchAsync(
+            new OrderActor(999, new HashSet<long>(), true),
+            order.PublicId,
+            CancellationToken.None);
+
+        Assert.Equal(order.PublicId, global.PublicId);
+    }
+
     private sealed record TimestampContract(
         DateTime BusinessAt,
         DateTime ExpiresAt,

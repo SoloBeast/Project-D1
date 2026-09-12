@@ -1804,6 +1804,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<long>("BranchId")
                         .HasColumnType("bigint");
 
+                    b.Property<DateTime?>("CancelledAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CancelledAtUtc");
+
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("CompletedAtUtc");
@@ -1881,9 +1885,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.ToTable("MilkTest", "dbo", t =>
                         {
-                            t.HasCheckConstraint("CK_MilkTest_Lifecycle", "([Status] = 'Requested' AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL AND [CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL) OR ([Status] = 'Completed' AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL AND (([CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL) OR ([CustomerDecision] = 'Confirmed' AND [ConfirmedAtUtc] IS NOT NULL AND [RejectedAtUtc] IS NULL) OR ([CustomerDecision] = 'Rejected' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NOT NULL)))");
+                            t.HasCheckConstraint("CK_MilkTest_Lifecycle", "([Status] = 'Requested' AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL AND [CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL AND [CancelledAtUtc] IS NULL) OR ([Status] = 'Requested' AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL AND [CustomerDecision] = 'CustomerCancelled' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL AND [CancelledAtUtc] IS NOT NULL) OR ([Status] = 'Completed' AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL AND [CancelledAtUtc] IS NULL AND (([CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL) OR ([CustomerDecision] = 'Confirmed' AND [ConfirmedAtUtc] IS NOT NULL AND [RejectedAtUtc] IS NULL) OR ([CustomerDecision] = 'Rejected' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NOT NULL)))");
 
-                            t.HasCheckConstraint("CK_MilkTest_TimestampOrder", "[CompletedAtUtc] IS NULL OR ([CompletedAtUtc] >= [RequestedAtUtc] AND ([ConfirmedAtUtc] IS NULL OR [ConfirmedAtUtc] >= [CompletedAtUtc]) AND ([RejectedAtUtc] IS NULL OR [RejectedAtUtc] >= [CompletedAtUtc]))");
+                            t.HasCheckConstraint("CK_MilkTest_TimestampOrder", "[CompletedAtUtc] IS NULL OR ([CompletedAtUtc] >= [RequestedAtUtc] AND ([ConfirmedAtUtc] IS NULL OR [ConfirmedAtUtc] >= [CompletedAtUtc]) AND ([RejectedAtUtc] IS NULL OR [RejectedAtUtc] >= [CompletedAtUtc])) AND ([CancelledAtUtc] IS NULL OR [CancelledAtUtc] >= [RequestedAtUtc])");
                         });
                 });
 
@@ -2974,6 +2978,192 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.RefundReplacement.RefundReplacementImage", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<long>("RequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime>("UploadedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UploadedAtUtc");
+
+                    b.Property<long>("UploadedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("StorageKey")
+                        .IsUnique();
+
+                    b.HasIndex("UploadedByUserId");
+
+                    b.HasIndex("RequestId", "UploadedAt");
+
+                    b.ToTable("RefundReplacementImage", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_RefundReplacementImage_FileSize", "[FileSize] > 0");
+                        });
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.RefundReplacement.RefundReplacementRequest", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("BranchId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CompletedAtUtc");
+
+                    b.Property<long?>("CompletedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("CompletionRemarks")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
+
+                    b.Property<long>("CustomerId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("Deadline")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("DeadlineUtc");
+
+                    b.Property<DateTime?>("DecidedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("DecidedAtUtc");
+
+                    b.Property<long?>("DecidedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("DecisionRemarks")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<long>("DeliveryId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("MilkTestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("OrderId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("Remarks")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
+                    b.Property<string>("RequestNumber")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<DateTime>("SubmittedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("SubmittedAtUtc");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompletedByUserId");
+
+                    b.HasIndex("DecidedByUserId");
+
+                    b.HasIndex("DeliveryId")
+                        .IsUnique()
+                        .HasFilter("[Status] IN ('Pending', 'Approved')");
+
+                    b.HasIndex("MilkTestId");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("RequestNumber")
+                        .IsUnique();
+
+                    b.HasIndex("CustomerId", "SubmittedAt");
+
+                    b.HasIndex("BranchId", "Status", "SubmittedAt");
+
+                    b.ToTable("RefundReplacementRequest", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_RefundReplacementRequest_Lifecycle", "([Status] = 'Pending' AND [DecidedByUserId] IS NULL AND [DecidedAtUtc] IS NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR ([Status] = 'Approved' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR ([Status] = 'Rejected' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR ([Status] = 'Completed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_RefundReplacementRequest_TimestampOrder", "([DeadlineUtc] IS NULL OR [DeadlineUtc] > [SubmittedAtUtc]) AND ([DecidedAtUtc] IS NULL OR [DecidedAtUtc] >= [SubmittedAtUtc]) AND ([CompletedAtUtc] IS NULL OR ([DecidedAtUtc] IS NOT NULL AND [CompletedAtUtc] >= [DecidedAtUtc]))");
+                        });
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Setup.NumberSeries", b =>
                 {
                     b.Property<long>("Id")
@@ -4041,6 +4231,81 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Navigation("RequestedByUser");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.RefundReplacement.RefundReplacementImage", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.RefundReplacement.RefundReplacementRequest", "Request")
+                        .WithMany("Images")
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", "UploadedByUser")
+                        .WithMany()
+                        .HasForeignKey("UploadedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Request");
+
+                    b.Navigation("UploadedByUser");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.RefundReplacement.RefundReplacementRequest", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Catalogue.Branch", "Branch")
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", "CompletedByUser")
+                        .WithMany()
+                        .HasForeignKey("CompletedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", "Customer")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", "DecidedByUser")
+                        .WithMany()
+                        .HasForeignKey("DecidedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoodhDirect.Domain.Deliveries.Delivery", "Delivery")
+                        .WithMany()
+                        .HasForeignKey("DeliveryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.MilkTesting.MilkTest", "MilkTest")
+                        .WithMany()
+                        .HasForeignKey("MilkTestId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoodhDirect.Domain.Orders.Order", "Order")
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Branch");
+
+                    b.Navigation("CompletedByUser");
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("DecidedByUser");
+
+                    b.Navigation("Delivery");
+
+                    b.Navigation("MilkTest");
+
+                    b.Navigation("Order");
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Subscriptions.Subscription", b =>
                 {
                     b.HasOne("DoodhDirect.Domain.Catalogue.Branch", "Branch")
@@ -4261,6 +4526,11 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("DoodhDirect.Domain.Payments.Payment", b =>
                 {
                     b.Navigation("Refunds");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.RefundReplacement.RefundReplacementRequest", b =>
+                {
+                    b.Navigation("Images");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Subscriptions.Subscription", b =>

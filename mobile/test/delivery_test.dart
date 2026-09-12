@@ -89,6 +89,27 @@ void main() {
       ]);
     });
 
+    test('branch inspection reads the branch-scoped managed delivery route', () async {
+      final requests = <String>[];
+      final client = MockClient((request) async {
+        requests.add('${request.method} ${request.url}');
+        expect(request.headers['Authorization'], 'Bearer manager-token');
+        return successResponse(deliveryDetailsJson());
+      });
+      final repository = testRepository(client);
+
+      final delivery = await repository.getManaged(
+        'manager-token',
+        'delivery-1',
+      );
+
+      expect(delivery.deliveryId, 'delivery-1');
+      expect(delivery.status, DeliveryStatus.assigned);
+      expect(requests, [
+        'GET https://api.example.test/api/v1/delivery-management/delivery-1',
+      ]);
+    });
+
     test('serializes source and slot branch filters', () async {
       Uri? requestedUri;
       final client = MockClient((request) async {
@@ -881,6 +902,38 @@ void main() {
       await tester.enterText(find.byType(TextField), '2');
       await tester.pump();
       expect(saveButton().onPressed, isNotNull);
+    });
+
+    testWidgets('inspection screen shows who handled the delivery', (
+      tester,
+    ) async {
+      await _pumpDeliveryScreen(
+        tester,
+        const DeliveryInspectionScreen(deliveryId: 'delivery-1'),
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(deliveryDetailsJson()),
+        ),
+      );
+
+      expect(find.text('Delivery handled by'), findsOneWidget);
+      expect(find.text('Delivery Agent'), findsOneWidget);
+    });
+
+    testWidgets('inspection screen states when no employee is assigned', (
+      tester,
+    ) async {
+      await _pumpDeliveryScreen(
+        tester,
+        const DeliveryInspectionScreen(deliveryId: 'delivery-1'),
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(
+            deliveryDetailsJson(assigned: false),
+          ),
+        ),
+      );
+
+      expect(find.text('Delivery handled by'), findsOneWidget);
+      expect(find.text('Not assigned'), findsOneWidget);
     });
   });
 }

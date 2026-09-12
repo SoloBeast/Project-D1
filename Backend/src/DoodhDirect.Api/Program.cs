@@ -84,6 +84,29 @@ builder.Services.AddCors(options =>
             policy.WithOrigins(configuredCorsOrigins);
         }
 
+        // policy.SetIsOriginAllowed(origin =>
+        //     {
+        //         if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+        //         {
+        //             return false;
+        //         }
+
+        //         if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        //         {
+        //             return false;
+        //         }
+
+        //         var host = uri.Host;
+
+        //         return string.Equals(
+        //                    host,
+        //                    "trycloudflare.com",
+        //                    StringComparison.OrdinalIgnoreCase)
+        //                || host.EndsWith(
+        //                    ".trycloudflare.com",
+        //                    StringComparison.OrdinalIgnoreCase);
+        //     });
+
         policy.AllowAnyMethod();
         policy.AllowAnyHeader();
     });

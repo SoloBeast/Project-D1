@@ -283,22 +283,66 @@ public sealed class NumberSeriesServiceTests
     // ---------------------------------------------- with/without-scope fallback
 
     [Fact]
-    public async Task GetNextNumber_ScopedRequest_FallsBackToGlobalSeries()
+    public async Task GetNextNumber_ScopedDeliveryRequest_MissingScopedSeries_FailsWithoutUnscopedFallback()
     {
         await using var db = CreateDb();
         var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
-        // Only a legacy global DELIVERY series exists (no scope). A scoped request
-        // from the delivery service must still allocate from it.
+        // Regression for the UAT duplicate-key incident: only the legacy unscoped
+        // DELIVERY series exists. A scoped DELIVERY request must NOT silently
+        // allocate DEL/000001 from the wrong template — it must fail clearly so
+        // the missing branch-scoped series is created instead.
         db.NumberSeries.Add(new NumberSeries(
             "DELIVERY", "Delivery Number", "DEL/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never));
         await db.SaveChangesAsync();
         var service = new NumberSeriesService(db, time);
 
-        var number = await service.GetNextNumberAsync("DELIVERY", 11, CancellationToken.None, "MAIN");
+        var exception = await Assert.ThrowsAsync<NotFoundException>(
+            () => service.GetNextNumberAsync("DELIVERY", 11, CancellationToken.None, "DB0001"));
 
-        Assert.Equal("DEL/000001", number);
+        Assert.Contains("DELIVERY", exception.Message);
+        Assert.Contains("DB0001", exception.Message);
 
+        // The unscoped legacy counter is left untouched.
         var global = await db.NumberSeries.SingleAsync(item => item.Code == "DELIVERY" && item.ScopeKey == "");
+        Assert.Equal(0, global.LastUsedNumber);
+    }
+
+    [Fact]
+    public async Task GetNextNumber_ScopedOrderRequest_MissingScopedSeries_FailsWithoutUnscopedFallback()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        // Same safeguard for ORDER: a scoped allocation must not consume the
+        // legacy global ORDER counter.
+        db.NumberSeries.Add(new NumberSeries(
+            "ORDER", "Order Number", "ORD/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never));
+        await db.SaveChangesAsync();
+        var service = new NumberSeriesService(db, time);
+
+        await Assert.ThrowsAsync<NotFoundException>(
+            () => service.GetNextNumberAsync("ORDER", 11, CancellationToken.None, "DB0001"));
+
+        var global = await db.NumberSeries.SingleAsync(item => item.Code == "ORDER" && item.ScopeKey == "");
+        Assert.Equal(0, global.LastUsedNumber);
+    }
+
+    [Fact]
+    public async Task GetNextNumber_ScopedRequest_NonStrictCode_StillFallsBackToGlobalSeries()
+    {
+        await using var db = CreateDb();
+        var time = new TestClock(new DateTime(2026, 8, 28, 12, 0, 0, DateTimeKind.Unspecified));
+        // Codes that are not strictly branch-scoped keep the tolerant legacy
+        // fallback so an existing unscoped series continues to serve scoped
+        // callers that do not require branch isolation.
+        db.NumberSeries.Add(new NumberSeries(
+            "CUSTOMER", "Customer Number", "CUST/{NUMBER:0000}", 1, 1, NumberSeriesResetPolicy.Never));
+        await db.SaveChangesAsync();
+        var service = new NumberSeriesService(db, time);
+
+        var number = await service.GetNextNumberAsync("CUSTOMER", 11, CancellationToken.None, "MAIN");
+
+        Assert.Equal("CUST/0001", number);
+        var global = await db.NumberSeries.SingleAsync(item => item.Code == "CUSTOMER" && item.ScopeKey == "");
         Assert.Equal(1, global.LastUsedNumber);
     }
 
@@ -984,12 +1028,17 @@ public sealed class NumberSeriesServiceTests
         await seed.SeedAsync(CancellationToken.None);
         await seed.SeedAsync(CancellationToken.None);
 
-        // CUSTOMER, ORDER@MAIN, and DELIVERY — order numbers are scoped per active branch.
-        Assert.Equal(3, await db.NumberSeries.CountAsync());
+        // CUSTOMER, ORDER@MAIN, DELIVERY, and REFUNDREPLACEMENT — order numbers are
+        // scoped per active branch, and refund/replacement requests get their own series.
+        Assert.Equal(4, await db.NumberSeries.CountAsync());
         Assert.Contains(await db.NumberSeries.Select(x => x.Code).ToListAsync(), code => code == "CUSTOMER");
         Assert.Contains(await db.NumberSeries.Select(x => x.Code).ToListAsync(), code => code == "ORDER");
         Assert.DoesNotContain("BRANCH", await db.NumberSeries.Select(x => x.Code).ToListAsync());
         Assert.Contains(await db.NumberSeries.Select(x => x.Code).ToListAsync(), code => code == "DELIVERY");
+        Assert.Contains(
+            await db.NumberSeries.Select(x => x.Code).ToListAsync(),
+            code => code == "REFUNDREPLACEMENT"
+        );
     }
 
     [Fact]

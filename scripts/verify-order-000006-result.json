@@ -1,0 +1,9 @@
+﻿{
+    "status":  "PendingPayment",
+    "orderId":  "0f8235dc-c3f8-4bd7-9edd-21e66e509859",
+    "actualNumber":  "ORD/DB0001/26-27/000006",
+    "scenario":  "order-number-000006-after-counter-correction",
+    "branchCode":  "DB0001",
+    "idempotencyKey":  "verify-000006-8407328a081d44ab947c5843c30aaf41",
+    "expectedNumber":  "ORD/DB0001/26-27/000006"
+}

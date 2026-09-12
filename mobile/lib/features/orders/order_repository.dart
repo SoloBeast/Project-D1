@@ -43,6 +43,14 @@ class OrderRepository {
     return OrderSummary.fromJson(response['data'] as Map<String, dynamic>);
   }
 
+  Future<OrderSummary> getForStaff(String token, String orderId) async {
+    final response = await api.get(
+      '/api/v1/staff/orders/$orderId',
+      accessToken: token,
+    );
+    return OrderSummary.fromJson(response['data'] as Map<String, dynamic>);
+  }
+
   Future<OrderSummary> cancel(String token, String orderId) async {
     final response = await api.post(
       '/api/v1/orders/$orderId/cancel',

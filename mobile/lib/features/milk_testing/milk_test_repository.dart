@@ -41,6 +41,15 @@ class MilkTestRepository {
     return data is Map<String, dynamic> ? StaffMilkTest.fromJson(data) : null;
   }
 
+  Future<StaffMilkTest?> getForBranch(String token, String deliveryId) async {
+    final response = await api.get(
+      '/api/v1/staff/deliveries/$deliveryId/milk-test',
+      accessToken: token,
+    );
+    final data = response['data'];
+    return data is Map<String, dynamic> ? StaffMilkTest.fromJson(data) : null;
+  }
+
   /// Fetches the raw bytes of a protected milk test image over the
   /// authenticated channel. The browser cannot send the JWT with
   /// [Image.network], so content is loaded here and rendered from bytes.
@@ -154,6 +163,15 @@ class MilkTestRepository {
     String milkTestId, {
     String? remarks,
   }) => _decide(token, milkTestId, 'reject', remarks);
+
+  /// Customer explicitly cancels a still-pending doorstep test request so the
+  /// delivery can proceed without a test. Only the requesting customer may do
+  /// this; the Delivery Boy cannot cancel on the customer's behalf.
+  Future<CustomerMilkTest> cancel(
+    String token,
+    String milkTestId, {
+    String? remarks,
+  }) => _decide(token, milkTestId, 'cancel', remarks);
 
   Future<CustomerMilkTest> _decide(
     String token,

@@ -144,6 +144,130 @@ class _CustomerDeliveryDetailScreenState
                       '/deliveries/${widget.deliveryId}/milk-test',
                     ),
                   ),
+                  if (delivery.status == DeliveryStatus.delivered) ...[
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.support_agent_outlined),
+                      label: const Text('Refund or replacement'),
+                      onPressed: () => context.push(
+                        '/deliveries/${widget.deliveryId}/refund-replacement',
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+    );
+  }
+}
+
+class DeliveryInspectionScreen extends ConsumerStatefulWidget {
+  const DeliveryInspectionScreen({super.key, required this.deliveryId});
+
+  final String deliveryId;
+
+  @override
+  ConsumerState<DeliveryInspectionScreen> createState() =>
+      _DeliveryInspectionScreenState();
+}
+
+class _DeliveryInspectionScreenState
+    extends ConsumerState<DeliveryInspectionScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_load);
+  }
+
+  Future<void> _load() => ref
+      .read(deliveryControllerProvider.notifier)
+      .loadInspectionDelivery(widget.deliveryId);
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(deliveryControllerProvider);
+    final delivery = state.selectedDelivery?.deliveryId == widget.deliveryId
+        ? state.selectedDelivery
+        : null;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Delivery inspection')),
+      body: delivery == null
+          ? _missingBody(state, _load)
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                children: [
+                  _DeliveryHeader(
+                    reference: delivery.referenceNumber,
+                    source: delivery.sourceType,
+                    status: delivery.status,
+                    date: delivery.scheduledDate,
+                  ),
+                  const SizedBox(height: 12),
+                  _InfoTile(
+                    icon: Icons.person_outline,
+                    title: delivery.customerName,
+                    text: delivery.customerMobile,
+                  ),
+                  _InfoTile(
+                    icon: Icons.delivery_dining_outlined,
+                    title: 'Delivery handled by',
+                    text: delivery.assignedEmployeeName ??
+                        (delivery.assignedEmployeeId != null
+                            ? 'Employee ${delivery.assignedEmployeeId}'
+                            : 'Not assigned'),
+                  ),
+                  _InfoTile(
+                    icon: Icons.location_on_outlined,
+                    title: 'Destination',
+                    text: delivery.destinationAddress,
+                  ),
+                  _NavigateButton(delivery: delivery),
+                  if (delivery.deliveryInstructions != null)
+                    _InfoTile(
+                      icon: Icons.notes_outlined,
+                      title: 'Instructions',
+                      text: delivery.deliveryInstructions!,
+                    ),
+                  if (delivery.orderSummary != null) ...[
+                    const SizedBox(height: 8),
+                    DoodhSectionHeader(title: 'Linked order'),
+                    _InfoTile(
+                      icon: Icons.receipt_long_outlined,
+                      title: delivery.orderSummary!.orderNumber,
+                      text: delivery.orderSummary!.items.join(', '),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  DoodhSectionHeader(title: 'Timeline'),
+                  _InfoTile(
+                    icon: Icons.event_outlined,
+                    title: 'Scheduled',
+                    text: delivery.scheduledDate.toLocal().toString(),
+                  ),
+                  if (delivery.completedAt != null)
+                    _InfoTile(
+                      icon: Icons.check_circle_outline,
+                      title: 'Completed',
+                      text: delivery.completedAt!.toLocal().toString(),
+                    ),
+                  if (delivery.failedAt != null)
+                    _InfoTile(
+                      icon: Icons.error_outline,
+                      title: 'Failed',
+                      text: delivery.failureReason ??
+                          delivery.failedAt!.toLocal().toString(),
+                    ),
+                  if (delivery.remarks != null)
+                    _InfoTile(
+                      icon: Icons.comment_outlined,
+                      title: 'Remarks',
+                      text: delivery.remarks!,
+                    ),
+                  if (state.errorMessage != null)
+                    _ErrorText(state.errorMessage!),
                 ],
               ),
             ),

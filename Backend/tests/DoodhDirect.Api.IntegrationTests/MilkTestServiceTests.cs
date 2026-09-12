@@ -300,6 +300,45 @@ public sealed class MilkTestServiceTests
         Assert.Contains("MILK_TEST.COMPLETE", await harness.Db.AuditLogs.Select(x => x.Action).ToArrayAsync());
     }
 
+    [Fact]
+    public async Task Customer_rejection_atomically_fails_delivery_and_invalidates_otp_without_consumption()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var completed = await harness.CreateCompletedAsync();
+        var otp = new DeliveryOtp(
+            harness.Delivery.Id,
+            "delivery-otp-hash",
+            harness.Clock.Now.AddMinutes(15),
+            5,
+            harness.Clock.Now,
+            "protected-code");
+        harness.Db.DeliveryOtps.Add(otp);
+        await harness.Db.SaveChangesAsync();
+        harness.Clock.Advance(TimeSpan.FromMinutes(1));
+
+        var result = await harness.Service.RejectAsync(
+            harness.CustomerActor(harness.Customer),
+            completed.MilkTestId,
+            new DecideMilkTestRequest("  Milk test result not acceptable.  "),
+            CancellationToken.None);
+
+        Assert.Equal(MilkTestCustomerDecision.Rejected, result.CustomerDecision);
+        Assert.Equal("Milk test result not acceptable.", result.CustomerRemarks);
+        Assert.Equal(DeliveryStatus.Failed, harness.Delivery.Status);
+        Assert.Equal(DeliveryFailureReasons.CustomerRejectedMilkTest, harness.Delivery.FailureReason);
+        Assert.Equal("Milk test result not acceptable.", harness.Delivery.Remarks);
+        Assert.Equal(harness.Clock.Now, harness.Delivery.FailedAt);
+        Assert.NotNull(otp.ConsumedAt);
+        Assert.Null(otp.ProtectedCode);
+        Assert.Equal(OrderStatus.Failed, await harness.Db.Orders.Select(x => x.Status).SingleAsync());
+        Assert.Empty(await harness.Db.MilkUsages.ToArrayAsync());
+        Assert.Contains("DELIVERY.FAIL", await harness.Db.AuditLogs.Select(x => x.Action).ToArrayAsync());
+        Assert.Single(await harness.Db.NotificationEvents.Where(
+            x => x.EventType == NotificationEventTypes.DeliveryFailed).ToArrayAsync());
+        Assert.Throws<InvalidOperationException>(() =>
+            harness.Delivery.Complete(harness.Staff.Id, harness.Clock.Now, null));
+    }
+
     [Theory]
     [InlineData(true, MilkTestCustomerDecision.Confirmed, "MILK_TEST.CONFIRM")]
     [InlineData(false, MilkTestCustomerDecision.Rejected, "MILK_TEST.REJECT")]
@@ -324,6 +363,79 @@ public sealed class MilkTestServiceTests
         await Assert.ThrowsAsync<ConflictException>(() => harness.Service.ConfirmAsync(
             harness.CustomerActor(harness.Customer), completed.MilkTestId, request, CancellationToken.None));
         Assert.Contains(expectedAudit, await harness.Db.AuditLogs.Select(x => x.Action).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task Cancel_requires_customer_ownership_records_decision_audit_and_notification()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        harness.Clock.Advance(TimeSpan.FromMinutes(1));
+        var request = new DecideMilkTestRequest("  no longer needed  ");
+
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.CancelAsync(
+            harness.CustomerActor(harness.OtherCustomer), requested.MilkTestId, request, CancellationToken.None));
+
+        var result = await harness.Service.CancelAsync(
+            harness.CustomerActor(harness.Customer), requested.MilkTestId, request, CancellationToken.None);
+
+        Assert.Equal(MilkTestStatus.Requested, result.Status);
+        Assert.Equal(MilkTestCustomerDecision.CustomerCancelled, result.CustomerDecision);
+        Assert.Equal("no longer needed", result.CustomerRemarks);
+        Assert.NotNull(result.CancelledAt);
+        Assert.Contains("MILK_TEST.CANCEL", await harness.Db.AuditLogs.Select(x => x.Action).ToArrayAsync());
+
+        var notificationEvent = await harness.Db.NotificationEvents.SingleAsync(
+            x => x.EventType == NotificationEventTypes.MilkTestCancelled);
+        Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
+        Assert.Equal($"milk-test:{result.MilkTestId:N}:cancelled", notificationEvent.EventKey);
+        Assert.False(notificationEvent.IsCritical);
+        Assert.Equal(result.CancelledAt, notificationEvent.OccurredAt);
+        Assert.Equal($"/deliveries/{harness.Delivery.PublicId}/milk-test", Payload(notificationEvent).GetProperty("DeepLink").GetString());
+    }
+
+    [Fact]
+    public async Task Cancel_is_idempotent_at_service_level_and_rejects_completed_tests()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        harness.Clock.Advance(TimeSpan.FromMinutes(1));
+        var request = new DecideMilkTestRequest(null);
+
+        var first = await harness.Service.CancelAsync(
+            harness.CustomerActor(harness.Customer), requested.MilkTestId, request, CancellationToken.None);
+        Assert.Equal(MilkTestCustomerDecision.CustomerCancelled, first.CustomerDecision);
+        Assert.NotNull(first.CancelledAt);
+
+        // A cancelled test keeps Status=Requested with only the decision flipped, so a
+        // repeated cancel is accepted and refreshes the cancellation timestamp.
+        harness.Clock.Advance(TimeSpan.FromMinutes(1));
+        var second = await harness.Service.CancelAsync(
+            harness.CustomerActor(harness.Customer), requested.MilkTestId, request, CancellationToken.None);
+        Assert.Equal(MilkTestCustomerDecision.CustomerCancelled, second.CustomerDecision);
+        Assert.True(second.CancelledAt > first.CancelledAt);
+
+        // Once the staff has performed the test the customer must Confirm/Reject it;
+        // Cancel must be rejected as a conflict.
+        await using var completedHarness = await MilkTestHarness.CreateAsync();
+        var completed = await completedHarness.CreateCompletedAsync();
+        await Assert.ThrowsAsync<ConflictException>(() => completedHarness.Service.CancelAsync(
+            completedHarness.CustomerActor(completedHarness.Customer), completed.MilkTestId, request, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Cancel_rejects_terminal_deliveries(bool delivered)
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        await harness.MakeTerminalAsync(delivered);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.CancelAsync(
+            harness.CustomerActor(harness.Customer), requested.MilkTestId, new DecideMilkTestRequest(null), CancellationToken.None));
+
+        Assert.Equal("A doorstep test can only be cancelled for an active delivery.", exception.Message);
     }
 
     [Fact]
@@ -487,6 +599,145 @@ public sealed class MilkTestServiceTests
     }
 
     [Fact]
+    public async Task GetForBranchAsync_serves_test_to_branch_reader_without_assignment()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+
+        var result = await harness.Service.GetForBranchAsync(
+            harness.BranchReaderActor(harness.OtherStaff), harness.Delivery.PublicId, CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(requested.MilkTestId, result!.MilkTestId);
+        Assert.Equal(MilkTestStatus.Requested, result.Status);
+    }
+
+    [Fact]
+    public async Task GetForBranchAsync_denies_reader_from_another_branch()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        await harness.RequestAsync();
+
+        var result = await harness.Service.GetForBranchAsync(
+            harness.BranchReaderActor(harness.OtherStaff, harness.OtherBranch.Id),
+            harness.Delivery.PublicId,
+            CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetForBranchAsync_allows_global_reader_outside_branch_membership()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+
+        var result = await harness.Service.GetForBranchAsync(
+            new MilkTestActor(harness.OtherStaff.Id, new HashSet<long>(), true, true),
+            harness.Delivery.PublicId,
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(requested.MilkTestId, result!.MilkTestId);
+    }
+
+    [Fact]
+    public async Task OpenImage_serves_content_to_branch_reader_without_assignment()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var image = await harness.UploadAsync(requested.MilkTestId);
+
+        await using var content = await harness.Service.OpenImageAsync(
+            harness.BranchReaderActor(harness.OtherStaff),
+            requested.MilkTestId,
+            image.ImageId,
+            CancellationToken.None);
+        using var copy = new MemoryStream();
+        await content.Content.CopyToAsync(copy);
+
+        Assert.Equal(harness.ImageBytes, copy.ToArray());
+    }
+
+    [Fact]
+    public async Task OpenImage_denies_reader_without_branch_read_flag()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var image = await harness.UploadAsync(requested.MilkTestId);
+
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.OpenImageAsync(
+            harness.StaffActor(harness.OtherStaff),
+            requested.MilkTestId,
+            image.ImageId,
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task OpenImage_denies_branch_reader_from_another_branch()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var requested = await harness.RequestAsync();
+        var image = await harness.UploadAsync(requested.MilkTestId);
+
+        await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.OpenImageAsync(
+            harness.BranchReaderActor(harness.OtherStaff, harness.OtherBranch.Id),
+            requested.MilkTestId,
+            image.ImageId,
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetForBranchAsync_reports_no_performer_before_completion()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        await harness.RequestAsync();
+
+        var result = await harness.Service.GetForBranchAsync(
+            harness.BranchReaderActor(harness.OtherStaff),
+            harness.Delivery.PublicId,
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(MilkTestStatus.Requested, result!.Status);
+        Assert.Null(result.CompletedByUserId);
+        Assert.Null(result.CompletedByName);
+    }
+
+    [Fact]
+    public async Task GetForBranchAsync_exposes_milk_test_performer_to_branch_reader()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        var completed = await harness.CreateCompletedAsync();
+
+        Assert.Equal(harness.Staff.PublicId, completed.CompletedByUserId);
+        Assert.Equal("Assigned Staff", completed.CompletedByName);
+
+        var result = await harness.Service.GetForBranchAsync(
+            harness.BranchReaderActor(harness.OtherStaff),
+            harness.Delivery.PublicId,
+            CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(harness.Staff.PublicId, result!.CompletedByUserId);
+        Assert.Equal("Assigned Staff", result.CompletedByName);
+    }
+
+    [Fact]
+    public async Task GetForBranchAsync_out_of_branch_reader_cannot_see_performer()
+    {
+        await using var harness = await MilkTestHarness.CreateAsync();
+        await harness.CreateCompletedAsync();
+
+        var result = await harness.Service.GetForBranchAsync(
+            harness.BranchReaderActor(harness.OtherStaff, harness.OtherBranch.Id),
+            harness.Delivery.PublicId,
+            CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
     public async Task Database_enforces_one_test_per_delivery()
     {
         await using var harness = await MilkTestHarness.CreateAsync();
@@ -548,6 +799,9 @@ public sealed class MilkTestServiceTests
 
         public MilkTestActor CustomerActor(User customer) => new(customer.Id, new HashSet<long>(), false);
         public MilkTestActor StaffActor(User staff) => new(staff.Id, new HashSet<long> { Branch.Id }, false);
+
+        public MilkTestActor BranchReaderActor(User user, long? branchId = null) =>
+            new(user.Id, new HashSet<long> { branchId ?? Branch.Id }, false, true);
 
         public Task<CustomerMilkTestResult> RequestAsync() => Service.RequestAsync(
             CustomerActor(Customer), Delivery.PublicId, CancellationToken.None);
@@ -665,6 +919,7 @@ public sealed class MilkTestServiceTests
                 address.Latitude,
                 address.Longitude);
             order.ConfirmPayment();
+            order.AssignForDelivery();
             db.Orders.Add(order);
             await db.SaveChangesAsync();
 

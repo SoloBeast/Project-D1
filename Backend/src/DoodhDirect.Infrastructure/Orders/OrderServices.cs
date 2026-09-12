@@ -228,6 +228,22 @@ public sealed class OrderService(
                 .ToListAsync(cancellationToken),
             cancellationToken);
 
+    public async Task<OrderResult> GetForBranchAsync(
+        OrderActor actor,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var order = await QueryOrders()
+            .SingleOrDefaultAsync(
+                order => order.PublicId == orderId &&
+                    (actor.HasGlobalAccess || actor.BranchIds.Contains(order.BranchId)),
+                cancellationToken);
+
+        return order is null
+            ? throw new NotFoundException("Order was not found.")
+            : await ToResultAsync(order, cancellationToken);
+    }
+
     public async Task<OrderResult> GetAsync(long customerId, Guid orderId, bool bypassOwnership, CancellationToken cancellationToken)
     {
         var order = await QueryOrders()

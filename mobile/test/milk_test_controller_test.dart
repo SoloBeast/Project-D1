@@ -31,6 +31,57 @@ void main() {
       expect(repository.lastToken, 'milk-token');
     });
 
+    test('loads a branch-scoped inspection result via the staff route', () async {
+      final repository = _FakeMilkTestRepository();
+      final container = await authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(milkTestControllerProvider.notifier);
+
+      await controller.loadForBranch('delivery-1');
+
+      final state = container.read(milkTestControllerProvider);
+      expect(state.customerTest, isNull);
+      expect(state.staffTest?.milkTestId, 'test-1');
+      expect(state.staffTest?.parameters.single.value, 6.5);
+      expect(repository.branchReadCount, 1);
+      // Branch inspection must not read through the assigned-staff path.
+      expect(repository.staffReadCount, 0);
+      expect(repository.lastToken, 'milk-token');
+      expect(state.isLoading, isFalse);
+      expect(state.errorMessage, isNull);
+    });
+
+    test('reports a missing branch-scoped milk test as empty', () async {
+      final repository = _FakeMilkTestRepository()..branchResult = null;
+      final container = await authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(milkTestControllerProvider.notifier);
+
+      await controller.loadForBranch('delivery-1');
+
+      final state = container.read(milkTestControllerProvider);
+      expect(state.staffTest, isNull);
+      expect(state.errorMessage, isNull);
+    });
+
+    test('maps branch inspection authorization failures', () async {
+      final container = await authenticatedContainer(
+        _FailingMilkTestRepository(
+          ApiException(403, 'FORBIDDEN', 'Milk test access denied.'),
+        ),
+      );
+      addTearDown(container.dispose);
+
+      await container
+          .read(milkTestControllerProvider.notifier)
+          .loadForBranch('delivery-1');
+
+      final state = container.read(milkTestControllerProvider);
+      expect(state.isUnauthorized, isTrue);
+      expect(state.staffTest, isNull);
+      expect(state.errorMessage, contains('denied'));
+    });
+
     test(
       'runs request, upload refresh, completion, and decision lifecycle',
       () async {
@@ -88,6 +139,25 @@ void main() {
         expect(state.isSaving, isFalse);
       },
     );
+
+    test('cancels a pending request and reflects the cancelled state', () async {
+      final repository = _FakeMilkTestRepository();
+      final container = await authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(milkTestControllerProvider.notifier);
+
+      expect(
+        await controller.cancel('test-1', remarks: 'No longer needed'),
+        isTrue,
+      );
+      final state = container.read(milkTestControllerProvider);
+      expect(
+        state.customerTest?.customerDecision,
+        MilkTestCustomerDecision.cancelled,
+      );
+      expect(state.customerTest?.cancelledAtUtc, isNotNull);
+      expect(state.isSaving, isFalse);
+    });
 
     for (final statusCode in [401, 403]) {
       test('maps $statusCode API failures to unauthorized state', () async {
@@ -190,6 +260,8 @@ class _FakeMilkTestRepository extends MilkTestRepository {
   String? lastToken;
   int uploadCount = 0;
   int staffReadCount = 0;
+  int branchReadCount = 0;
+  StaffMilkTest? branchResult = staffTest();
   List<MilkTestParameter> completedParameters = const [];
 
   @override
@@ -206,6 +278,13 @@ class _FakeMilkTestRepository extends MilkTestRepository {
     lastToken = token;
     staffReadCount++;
     return staffTest();
+  }
+
+  @override
+  Future<StaffMilkTest?> getForBranch(String token, String deliveryId) async {
+    lastToken = token;
+    branchReadCount++;
+    return branchResult;
   }
 
   @override
@@ -245,6 +324,13 @@ class _FakeMilkTestRepository extends MilkTestRepository {
     String milkTestId, {
     String? remarks,
   }) async => customerTest(decision: MilkTestCustomerDecision.confirmed);
+
+  @override
+  Future<CustomerMilkTest> cancel(
+    String token,
+    String milkTestId, {
+    String? remarks,
+  }) async => customerTest(decision: MilkTestCustomerDecision.cancelled);
 }
 
 class _FailingMilkTestRepository extends MilkTestRepository {
@@ -261,6 +347,10 @@ class _FailingMilkTestRepository extends MilkTestRepository {
 
   @override
   Future<StaffMilkTest?> getForStaff(String token, String deliveryId) async =>
+      throw failure;
+
+  @override
+  Future<StaffMilkTest?> getForBranch(String token, String deliveryId) async =>
       throw failure;
 
   @override
@@ -286,7 +376,12 @@ CustomerMilkTest customerTest({
   confirmedAtUtc: decision == MilkTestCustomerDecision.confirmed
       ? DateTime.utc(2026, 8, 17, 9, 12)
       : null,
-  rejectedAtUtc: null,
+  rejectedAtUtc: decision == MilkTestCustomerDecision.rejected
+      ? DateTime.utc(2026, 8, 17, 9, 12)
+      : null,
+  cancelledAtUtc: decision == MilkTestCustomerDecision.cancelled
+      ? DateTime.utc(2026, 8, 17, 9, 12)
+      : null,
   customerRemarks: decision.isTerminal ? 'Customer decision' : null,
   images: status == MilkTestStatus.completed ? [image] : const [],
 );
@@ -301,6 +396,7 @@ StaffMilkTest staffTest() => StaffMilkTest(
   staffRemarks: 'Doorstep reading',
   confirmedAtUtc: null,
   rejectedAtUtc: null,
+  cancelledAtUtc: null,
   customerRemarks: null,
   parameters: const [
     MilkTestParameter(code: 'FAT', name: 'Fat', value: 6.5, unit: '%'),

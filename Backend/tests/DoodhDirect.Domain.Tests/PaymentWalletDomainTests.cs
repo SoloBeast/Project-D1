@@ -204,6 +204,33 @@ public sealed class PaymentWalletDomainTests
     }
 
     [Fact]
+    public void PaymentWebhook_RedrivesFailedAndStaleProcessingRowsButNotActiveOrTerminalRows()
+    {
+        var failed = new PaymentWebhook("Razorpay", "evt_failed", "payment.captured", "abc", IndiaNow);
+        failed.StartProcessing(IndiaNow, TimeSpan.FromMinutes(5));
+        failed.FailProcessing("TEMPORARY", "Transient failure", IndiaNow.AddMinutes(1));
+        failed.StartProcessing(IndiaNow.AddMinutes(2), TimeSpan.FromMinutes(5));
+        Assert.Equal(PaymentWebhookStatus.Processing, failed.Status);
+        Assert.Null(failed.ErrorCode);
+
+        var active = new PaymentWebhook("Razorpay", "evt_active", "payment.captured", "abc", IndiaNow);
+        active.StartProcessing(IndiaNow, TimeSpan.FromMinutes(5));
+        Assert.Throws<InvalidOperationException>(() =>
+            active.StartProcessing(IndiaNow.AddMinutes(4), TimeSpan.FromMinutes(5)));
+
+        var stale = new PaymentWebhook("Razorpay", "evt_stale", "payment.captured", "abc", IndiaNow);
+        stale.StartProcessing(IndiaNow, TimeSpan.FromMinutes(5));
+        stale.StartProcessing(IndiaNow.AddMinutes(5), TimeSpan.FromMinutes(5));
+        Assert.Equal(PaymentWebhookStatus.Processing, stale.Status);
+
+        var processed = new PaymentWebhook("Razorpay", "evt_processed", "payment.captured", "abc", IndiaNow);
+        processed.StartProcessing(IndiaNow, TimeSpan.FromMinutes(5));
+        processed.Complete(IndiaNow.AddMinutes(1));
+        Assert.Throws<InvalidOperationException>(() =>
+            processed.StartProcessing(IndiaNow.AddMinutes(10), TimeSpan.FromMinutes(5)));
+    }
+
+    [Fact]
     public void PaymentWebhook_RejectsUtcTimestamps()
     {
         var utc = new DateTime(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc);

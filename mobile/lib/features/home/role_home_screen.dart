@@ -59,11 +59,7 @@ class RoleHomeScreen extends ConsumerWidget {
           branchIds: user?.branchIds ?? const [],
           branchDetails: user?.branchDetails ?? const [],
         ),
-        UserRole.support => const StatePanel(
-          icon: Icons.support_agent_outlined,
-          title: 'Customer support workspace ready',
-          message: 'Customer support workflows remain outside the Identity and RBAC phase.',
-        ),
+        UserRole.support => const _SupportHomeActions(),
         UserRole.accountant => const StatePanel(
           icon: Icons.account_balance_outlined,
           title: 'Accounting workspace ready',
@@ -444,6 +440,39 @@ class _DeliveryHomeActions extends StatelessWidget {
   }
 }
 
+class _SupportHomeActions extends StatelessWidget {
+  const _SupportHomeActions();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text(
+          'Customer support',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Review customer care workflows and branch operations requests.',
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.assignment_return_outlined),
+            title: const Text('Refund / replacement requests'),
+            subtitle: const Text(
+              'Review customer requests, approve, reject, or complete them',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/staff/refund-replacements'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _DairyHomeActions extends ConsumerWidget {
   const _DairyHomeActions();
 
@@ -499,6 +528,20 @@ class _DairyHomeActions extends ConsumerWidget {
                   context.push('/delivery-management/branch/$branchId'),
             ),
           ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.assignment_return_outlined),
+              title: const Text('Refund / replacement requests'),
+              subtitle: const Text(
+                'Review customer requests, approve, reject, or complete them',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push(
+                '/staff/refund-replacements?branchId=$branchId',
+              ),
+            ),
+          ),
         ],
       ],
     );
@@ -532,6 +575,10 @@ class _AdminHomeActions extends ConsumerWidget {
       permissions.contains('SETUP.INTEGRATIONS.READ') ||
       permissions.contains('SETUP.INTEGRATIONS.MANAGE');
 
+  bool get _canReadRefundReplacementConfig =>
+      permissions.contains('SETUP.REFUND_REPLACEMENT.READ') ||
+      permissions.contains('SETUP.REFUND_REPLACEMENT.MANAGE');
+
   bool get _canManageEmployees =>
       permissions.contains('EMPLOYEES.READ') ||
       permissions.contains('EMPLOYEES.MANAGE');
@@ -539,6 +586,10 @@ class _AdminHomeActions extends ConsumerWidget {
   bool get _canReadBranches =>
       permissions.contains('BRANCHES.READ') ||
       permissions.contains('BRANCHES.MANAGE');
+
+  bool get _canReadRefundReplacements =>
+      permissions.contains('REFUND_REPLACEMENT.READ_BRANCH') ||
+      permissions.contains('REFUND_REPLACEMENT.MANAGE_BRANCH');
 
   bool get _canReadReports => permissions.any(
     const {
@@ -604,7 +655,8 @@ class _AdminHomeActions extends ConsumerWidget {
         ],
         if (_canReadNumberSeries ||
             _canReadOtpProvider ||
-            _canReadIntegrations) ...[
+            _canReadIntegrations ||
+            _canReadRefundReplacementConfig) ...[
           const _AdminSectionHeader('System Setup'),
           _AdminTileGrid(
             items: [
@@ -629,10 +681,20 @@ class _AdminHomeActions extends ConsumerWidget {
                   subtitle: 'SMTP, Razorpay & Maps keys',
                   onTap: () => context.push('/admin/setup/integrations'),
                 ),
+              if (_canReadRefundReplacementConfig)
+                _AdminTileData(
+                  icon: Icons.timer_outlined,
+                  label: 'Refund / Replacement Window',
+                  subtitle: 'Request window in hours',
+                  onTap: () => context.push('/admin/setup/refund-replacement'),
+                ),
             ],
           ),
         ],
-        if (_canReadCameras || _canReadReports || branchIds.isNotEmpty) ...[
+        if (_canReadCameras ||
+            _canReadReports ||
+            _canReadRefundReplacements ||
+            branchIds.isNotEmpty) ...[
           const _AdminSectionHeader('Monitoring & Operations'),
           _AdminTileGrid(
             items: [
@@ -649,6 +711,19 @@ class _AdminHomeActions extends ConsumerWidget {
                   label: 'Cameras',
                   subtitle: 'Visibility & stream status',
                   onTap: () => context.push('/admin/cameras'),
+                ),
+              if (_canReadRefundReplacements)
+                _AdminTileData(
+                  icon: Icons.assignment_return_outlined,
+                  label: 'Refund / replacement requests',
+                  subtitle: branchIds.isEmpty
+                      ? 'Review customer requests'
+                      : 'Review requests for ${branchDisplayName(branchDetails, branchIds.first)}',
+                  onTap: () => context.push(
+                    branchIds.isEmpty
+                        ? '/staff/refund-replacements'
+                        : '/staff/refund-replacements?branchId=${branchIds.first}',
+                  ),
                 ),
               if (branchIds.isNotEmpty)
                 _AdminTileData(

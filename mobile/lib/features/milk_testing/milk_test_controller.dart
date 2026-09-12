@@ -83,6 +83,15 @@ class MilkTestController extends Notifier<MilkTestState> {
     );
   });
 
+  Future<void> loadForBranch(String deliveryId) => _load(() async {
+    final test = await _repository.getForBranch(_token!, deliveryId);
+    state = state.copyWith(
+      staffTest: test,
+      clearStaffTest: test == null,
+      clearCustomerTest: true,
+    );
+  });
+
   Future<bool> request(String deliveryId) => _save(() async {
     final test = await _repository.request(_token!, deliveryId);
     state = state.copyWith(customerTest: test, clearStaffTest: true);
@@ -179,6 +188,13 @@ class MilkTestController extends Notifier<MilkTestState> {
 
   Future<bool> reject(String milkTestId, {String? remarks}) =>
       _decide(milkTestId, confirmDecision: false, remarks: remarks);
+
+  /// Cancels a still-pending doorstep test request. The delivery may then be
+  /// completed without a test.
+  Future<bool> cancel(String milkTestId, {String? remarks}) => _save(() async {
+    final test = await _repository.cancel(_token!, milkTestId, remarks: remarks);
+    state = state.copyWith(customerTest: test);
+  });
 
   Future<bool> _decide(
     String milkTestId, {

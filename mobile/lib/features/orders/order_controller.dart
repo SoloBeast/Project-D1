@@ -373,6 +373,20 @@ class OrderController extends Notifier<OrderState> {
     }
   }
 
+  Future<void> loadStaffOrder(String orderId) async {
+    final token = _token;
+    if (token == null) return;
+    state = state.copyWith(isLoading: true, clearError: true);
+    try {
+      final order = await _repository.getForStaff(token, orderId);
+      state = state.copyWith(selectedOrder: order, isLoading: false);
+    } on ApiException catch (error) {
+      state = state.copyWith(isLoading: false, errorMessage: error.message);
+    } on Object {
+      state = state.copyWith(isLoading: false, errorMessage: _offlineMessage);
+    }
+  }
+
   Future<bool> cancel(String orderId) async {
     final token = _token;
     if (token == null) return false;

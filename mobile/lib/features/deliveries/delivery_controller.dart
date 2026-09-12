@@ -171,6 +171,14 @@ class DeliveryController extends Notifier<DeliveryState> {
     );
   });
 
+  Future<void> loadInspectionDelivery(String id) async => _load(() async {
+    final delivery = await _repository.getManaged(_token!, id);
+    state = state.copyWith(
+      managedDeliveries: _upsertDetails(state.managedDeliveries, delivery),
+      selectedDelivery: delivery,
+    );
+  });
+
   Future<bool> loadBatchAllocations(String id) async {
     if (_token == null) return false;
     state = state.copyWith(

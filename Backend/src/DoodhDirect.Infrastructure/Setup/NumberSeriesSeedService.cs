@@ -18,6 +18,7 @@ public sealed class NumberSeriesSeedService(DoodhDirectDbContext dbContext)
     public const string CustomerCode = "CUSTOMER";
     public const string OrderCode = "ORDER";
     public const string DeliveryCode = "DELIVERY";
+    public const string RefundReplacementCode = "REFUNDREPLACEMENT";
 
     public async Task SeedAsync(CancellationToken cancellationToken)
     {
@@ -54,6 +55,12 @@ public sealed class NumberSeriesSeedService(DoodhDirectDbContext dbContext)
                 DeliveryCode,
                 "Delivery run numbers",
                 "DEL/{NUMBER:000000}",
+                cancellationToken);
+
+            await EnsureSeriesAsync(
+                RefundReplacementCode,
+                "Customer refund/replacement request numbers",
+                "RR/{NUMBER:000000}",
                 cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);

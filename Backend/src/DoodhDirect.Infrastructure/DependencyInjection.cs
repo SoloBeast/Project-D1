@@ -12,6 +12,7 @@ using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Reports;
+using DoodhDirect.Application.RefundReplacement;
 using DoodhDirect.Application.Setup;
 using DoodhDirect.Application.Subscriptions;
 using DoodhDirect.Application.Wallets;
@@ -29,6 +30,7 @@ using DoodhDirect.Infrastructure.Orders;
 using DoodhDirect.Infrastructure.OtpProvider;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.RefundReplacement;
 using DoodhDirect.Infrastructure.Reports;
 using DoodhDirect.Infrastructure.Setup;
 using DoodhDirect.Infrastructure.Subscriptions;
@@ -74,6 +76,10 @@ public static class DependencyInjection
             .Bind(configuration.GetSection(PaymentOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
+        services.AddOptions<PaymentReconciliationOptions>()
+            .Bind(configuration.GetSection(PaymentReconciliationOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
         // NOTE: Razorpay credentials are not validated at boot. They may be configured at
         // runtime through the Integration settings store (Integration.Razorpay.*), which
         // overrides static appsettings values per call.
@@ -109,6 +115,9 @@ public static class DependencyInjection
                     .All(channel => IsSupportedNotificationProvider(options.ProviderFor(channel))),
                 "Notifications providers must be 'Unconfigured' or 'DevelopmentMock'.")
             .ValidateOnStart();
+        services.AddOptions<SeedOptions>()
+            .Bind(configuration.GetSection(SeedOptions.SectionName))
+            .ValidateOnStart();
 
         var timeZoneId = configuration["TimeZone"]
             ?? throw new InvalidOperationException("TimeZone configuration is required.");
@@ -142,6 +151,8 @@ public static class DependencyInjection
         services.AddScoped<IOneTimeDeliveryCreator>(provider => provider.GetRequiredService<DeliveryService>());
         services.AddScoped<IDairyService, DairyService>();
         services.AddScoped<IMilkTestService, MilkTestService>();
+        services.AddScoped<IRefundReplacementConfigurationService, RefundReplacementConfigurationService>();
+        services.AddScoped<IRefundReplacementService, RefundReplacementService>();
         services.AddScoped<ICameraService, CameraService>();
         services.AddScoped<INotificationEventWriter, NotificationEventWriter>();
         services.AddScoped<INotificationService, NotificationService>();
@@ -150,7 +161,10 @@ public static class DependencyInjection
         services.AddSingleton<NotificationTokenProtector>();
         services.AddSingleton<DeliveryOtpHandoffProtector>();
         services.AddHostedService<NotificationWorker>();
-        services.AddScoped<IPaymentService, PaymentService>();
+        services.AddHostedService<PaymentReconciliationWorker>();
+        services.AddScoped<PaymentService>();
+        services.AddScoped<IPaymentService>(provider => provider.GetRequiredService<PaymentService>());
+        services.AddScoped<IPaymentReconciliationCoordinator, PaymentReconciliationCoordinator>();
         services.AddScoped<IWalletService, WalletService>();
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<INumberSeriesService, NumberSeriesService>();
@@ -182,6 +196,7 @@ public static class DependencyInjection
         services.AddScoped<CatalogueSeedService>();
         services.AddScoped<NotificationTemplateSeedService>();
         services.AddScoped<NumberSeriesSeedService>();
+        services.AddHostedService<StartupSeedWorker>();
         if (environment.IsDevelopment())
         {
             services.AddScoped<IDevelopmentNotificationService, DevelopmentNotificationService>();

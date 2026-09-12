@@ -68,6 +68,49 @@ public sealed class OrdersController(IOrderService orderService) : ControllerBas
 }
 
 [ApiController]
+[Route("api/v1/staff/orders")]
+[Tags("Staff order inspection")]
+[Produces("application/json")]
+[Authorize(Policy = "permission:" + AuthorizationCodes.OrdersReadBranch)]
+public sealed class StaffOrdersController(IOrderService orderService) : ControllerBase
+{
+    [HttpGet("{orderId:guid}")]
+    [ProducesResponseType(typeof(ApiResponse<OrderResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<OrderResult>>> GetOrder(
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var actor = RequireActor();
+        return Ok(ApiResponse<OrderResult>.Ok(await orderService.GetForBranchAsync(
+            actor, orderId, cancellationToken)));
+    }
+
+    private OrderActor RequireActor()
+    {
+        var value = User.FindFirstValue("user_id");
+        if (!long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var userId))
+        {
+            throw new UnauthorizedAppException();
+        }
+
+        var branchIds = User.FindAll(AuthorizationCodes.BranchClaim)
+            .Select(claim => long.TryParse(
+                claim.Value,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var branchId) ? branchId : (long?)null)
+            .Where(branchId => branchId.HasValue)
+            .Select(branchId => branchId!.Value)
+            .ToHashSet();
+
+        return new OrderActor(
+            userId,
+            branchIds,
+            User.HasClaim(AuthorizationCodes.PermissionClaim, AuthorizationCodes.GlobalAccess));
+    }
+}
+
+[ApiController]
 [Route("api/v1/admin/orders")]
 [Tags("Order administration")]
 [Produces("application/json")]

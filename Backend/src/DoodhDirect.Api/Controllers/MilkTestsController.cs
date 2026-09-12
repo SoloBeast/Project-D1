@@ -35,8 +35,15 @@ public abstract class MilkTestControllerBase : ControllerBase
         var hasGlobalAccess = User.HasClaim(
             AuthorizationCodes.PermissionClaim,
             AuthorizationCodes.GlobalAccess);
+        var canReadBranch = User.HasClaim(
+            AuthorizationCodes.PermissionClaim,
+            AuthorizationCodes.MilkTestsReadBranch);
 
-        return new MilkTestActor(userId, branchIds, hasGlobalAccess);
+        return new MilkTestActor(
+            userId,
+            branchIds,
+            hasGlobalAccess,
+            canReadBranch);
     }
 }
 
@@ -81,6 +88,30 @@ public sealed class DeliveryStaffMilkTestsController(IMilkTestService milkTestSe
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<StaffMilkTestResult?>.Ok(await milkTestService.GetForStaffAsync(
             RequireMilkTestActor(), deliveryId, cancellationToken)));
+}
+
+[ApiController]
+[Route("api/v1/staff/deliveries/{deliveryId:guid}/milk-test")]
+[Tags("Staff doorstep test inspection")]
+[Produces("application/json")]
+[Authorize(
+    Policy = "permission:" +
+        AuthorizationCodes.MilkTestsReadBranch)]
+public sealed class StaffMilkTestInspectionController(
+    IMilkTestService milkTestService) : MilkTestControllerBase
+{
+    [HttpGet]
+    [ProducesResponseType(
+        typeof(ApiResponse<StaffMilkTestResult?>),
+        StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<StaffMilkTestResult?>>> Get(
+        Guid deliveryId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<StaffMilkTestResult?>.Ok(
+            await milkTestService.GetForBranchAsync(
+                RequireMilkTestActor(),
+                deliveryId,
+                cancellationToken)));
 }
 
 [ApiController]
@@ -214,6 +245,16 @@ public sealed class MilkTestsController(IMilkTestService milkTestService) : Milk
         [FromBody] DecideMilkTestRequest request,
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<CustomerMilkTestResult>.Ok(await milkTestService.RejectAsync(
+            RequireMilkTestActor(), milkTestId, request, cancellationToken)));
+
+    [HttpPost("{milkTestId:guid}/cancel")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.MilkTestsDecideOwn)]
+    [ProducesResponseType(typeof(ApiResponse<CustomerMilkTestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<CustomerMilkTestResult>>> Cancel(
+        Guid milkTestId,
+        [FromBody] DecideMilkTestRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<CustomerMilkTestResult>.Ok(await milkTestService.CancelAsync(
             RequireMilkTestActor(), milkTestId, request, cancellationToken)));
 
     [HttpGet("{milkTestId:guid}/images/{imageId:guid}/content")]

@@ -10,6 +10,7 @@ using DoodhDirect.Domain.Dairy;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.MilkTesting;
 using DoodhDirect.Domain.Orders;
+using DoodhDirect.Domain.RefundReplacement;
 using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Wallets;
@@ -61,6 +62,8 @@ public sealed class DoodhDirectDbContext(
     public DbSet<MilkTest> MilkTests => Set<MilkTest>();
     public DbSet<MilkTestParameter> MilkTestParameters => Set<MilkTestParameter>();
     public DbSet<MilkTestImage> MilkTestImages => Set<MilkTestImage>();
+    public DbSet<RefundReplacementRequest> RefundReplacementRequests => Set<RefundReplacementRequest>();
+    public DbSet<RefundReplacementImage> RefundReplacementImages => Set<RefundReplacementImage>();
     public DbSet<Camera> Cameras => Set<Camera>();
     public DbSet<CameraStream> CameraStreams => Set<CameraStream>();
     public DbSet<NotificationEvent> NotificationEvents => Set<NotificationEvent>();
@@ -114,6 +117,8 @@ public sealed class DoodhDirectDbContext(
         ConfigureMilkTest(modelBuilder, usesSqlite);
         ConfigureMilkTestParameter(modelBuilder);
         ConfigureMilkTestImage(modelBuilder, usesSqlite);
+        ConfigureRefundReplacementRequest(modelBuilder, usesSqlite);
+        ConfigureRefundReplacementImage(modelBuilder, usesSqlite);
         ConfigureCamera(modelBuilder, usesSqlite);
         ConfigureCameraStream(modelBuilder);
         ConfigureNotificationEvent(modelBuilder);
@@ -1018,14 +1023,15 @@ public sealed class DoodhDirectDbContext(
             {
                 table.HasCheckConstraint(
                     "CK_MilkTest_Lifecycle",
-                    "([Status] = 'Requested' AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL AND [CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL) OR " +
-                    "([Status] = 'Completed' AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL AND " +
+                    "([Status] = 'Requested' AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL AND [CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL AND [CancelledAtUtc] IS NULL) OR " +
+                    "([Status] = 'Requested' AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL AND [CustomerDecision] = 'CustomerCancelled' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL AND [CancelledAtUtc] IS NOT NULL) OR " +
+                    "([Status] = 'Completed' AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL AND [CancelledAtUtc] IS NULL AND " +
                     "(([CustomerDecision] = 'Pending' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NULL) OR " +
                     "([CustomerDecision] = 'Confirmed' AND [ConfirmedAtUtc] IS NOT NULL AND [RejectedAtUtc] IS NULL) OR " +
                     "([CustomerDecision] = 'Rejected' AND [ConfirmedAtUtc] IS NULL AND [RejectedAtUtc] IS NOT NULL)))");
                 table.HasCheckConstraint(
                     "CK_MilkTest_TimestampOrder",
-                    "[CompletedAtUtc] IS NULL OR ([CompletedAtUtc] >= [RequestedAtUtc] AND ([ConfirmedAtUtc] IS NULL OR [ConfirmedAtUtc] >= [CompletedAtUtc]) AND ([RejectedAtUtc] IS NULL OR [RejectedAtUtc] >= [CompletedAtUtc]))");
+                    "[CompletedAtUtc] IS NULL OR ([CompletedAtUtc] >= [RequestedAtUtc] AND ([ConfirmedAtUtc] IS NULL OR [ConfirmedAtUtc] >= [CompletedAtUtc]) AND ([RejectedAtUtc] IS NULL OR [RejectedAtUtc] >= [CompletedAtUtc])) AND ([CancelledAtUtc] IS NULL OR [CancelledAtUtc] >= [RequestedAtUtc])");
             }
         });
         entity.HasKey(x => x.Id);
@@ -1039,6 +1045,7 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.CompletedAt).HasColumnName("CompletedAtUtc");
         entity.Property(x => x.ConfirmedAt).HasColumnName("ConfirmedAtUtc");
         entity.Property(x => x.RejectedAt).HasColumnName("RejectedAtUtc");
+        entity.Property(x => x.CancelledAt).HasColumnName("CancelledAtUtc");
         entity.Property(x => x.StaffRemarks).HasMaxLength(1000);
         entity.Property(x => x.CustomerRemarks).HasMaxLength(1000);
         entity.HasIndex(x => x.DeliveryId).IsUnique();
@@ -1088,6 +1095,84 @@ public sealed class DoodhDirectDbContext(
         entity.HasIndex(x => x.StorageKey).IsUnique();
         entity.HasIndex(x => new { x.MilkTestId, x.UploadedAt });
         entity.HasOne(x => x.MilkTest).WithMany(x => x.Images).HasForeignKey(x => x.MilkTestId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.UploadedByUser).WithMany().HasForeignKey(x => x.UploadedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureRefundReplacementRequest(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<RefundReplacementRequest>();
+        entity.ToTable("RefundReplacementRequest", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint(
+                    "CK_RefundReplacementRequest_Lifecycle",
+                    "([Status] = 'Pending' AND [DecidedByUserId] IS NULL AND [DecidedAtUtc] IS NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Approved' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Rejected' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Completed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL)");
+                table.HasCheckConstraint(
+                    "CK_RefundReplacementRequest_TimestampOrder",
+                    "([DeadlineUtc] IS NULL OR [DeadlineUtc] > [SubmittedAtUtc]) AND " +
+                    "([DecidedAtUtc] IS NULL OR [DecidedAtUtc] >= [SubmittedAtUtc]) AND " +
+                    "([CompletedAtUtc] IS NULL OR ([DecidedAtUtc] IS NOT NULL AND [CompletedAtUtc] >= [DecidedAtUtc]))");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.RequestNumber).HasMaxLength(40).IsRequired();
+        entity.HasIndex(x => x.RequestNumber).IsUnique();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Type).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Source).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Reason).HasMaxLength(1000).IsRequired();
+        entity.Property(x => x.Remarks).HasMaxLength(1000);
+        entity.Property(x => x.SubmittedAt)
+            .HasColumnName("SubmittedAtUtc")
+            .IsRequired();
+        entity.Property(x => x.Deadline).HasColumnName("DeadlineUtc");
+        entity.Property(x => x.DecidedAt).HasColumnName("DecidedAtUtc");
+        entity.Property(x => x.DecisionRemarks).HasMaxLength(1000);
+        entity.Property(x => x.CompletedAt).HasColumnName("CompletedAtUtc");
+        entity.Property(x => x.CompletionRemarks).HasMaxLength(1000);
+        entity.HasIndex(x => x.DeliveryId)
+            .IsUnique()
+            .HasFilter("[Status] IN ('Pending', 'Approved')");
+        entity.HasIndex(x => new { x.CustomerId, x.SubmittedAt });
+        entity.HasIndex(x => new { x.BranchId, x.Status, x.SubmittedAt });
+        entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Delivery).WithMany().HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.MilkTest).WithMany().HasForeignKey(x => x.MilkTestId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.DecidedByUser).WithMany().HasForeignKey(x => x.DecidedByUserId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.CompletedByUser).WithMany().HasForeignKey(x => x.CompletedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureRefundReplacementImage(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<RefundReplacementImage>();
+        entity.ToTable("RefundReplacementImage", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_RefundReplacementImage_FileSize", "[FileSize] > 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.StorageKey).HasMaxLength(500).IsRequired();
+        entity.Property(x => x.FileName).HasMaxLength(255).IsRequired();
+        entity.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.FileSize).IsRequired();
+        entity.Property(x => x.UploadedAt)
+            .HasColumnName("UploadedAtUtc")
+            .IsRequired();
+        entity.HasIndex(x => x.StorageKey).IsUnique();
+        entity.HasIndex(x => new { x.RequestId, x.UploadedAt });
+        entity.HasOne(x => x.Request).WithMany(x => x.Images).HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.UploadedByUser).WithMany().HasForeignKey(x => x.UploadedByUserId).OnDelete(DeleteBehavior.Restrict);
     }
 

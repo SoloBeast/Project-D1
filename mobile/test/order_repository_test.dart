@@ -243,4 +243,30 @@ void main() {
       'order-1',
     );
   });
+
+  test('staff inspection reads the branch-scoped staff order route', () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(
+        request.url.toString(),
+        'https://api.example.test/api/v1/staff/orders/order-1',
+      );
+      expect(request.headers['Authorization'], 'Bearer manager-token');
+      return http.Response(
+        jsonEncode({'success': true, 'data': orderJson(), 'errors': []}),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final repository = OrderRepository(
+      api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
+    );
+
+    // The read-only staff inspection path must never reuse the customer
+    // `/api/v1/orders/{id}` (ownership) route.
+    final order = await repository.getForStaff('manager-token', 'order-1');
+
+    expect(order.publicId, 'order-1');
+    expect(order.orderNumber, 'DD-000001');
+  });
 }

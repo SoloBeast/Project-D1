@@ -12,6 +12,7 @@ using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Dairy;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.MilkTesting;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Infrastructure.Notifications;
@@ -714,6 +715,16 @@ public sealed class DeliveryService(
         string? remarks,
         CancellationToken cancellationToken)
     {
+        var hasUnresolvedTest = await dbContext.MilkTests.AnyAsync(
+            x => x.DeliveryId == delivery.Id &&
+                 x.CustomerDecision == MilkTestCustomerDecision.Pending,
+            cancellationToken);
+        if (hasUnresolvedTest)
+        {
+            throw new BusinessRuleException(
+                "Customer test confirmation required before delivery can be completed.");
+        }
+
         Mutate(() => delivery.Complete(actor.UserId, completedAt, remarks));
         foreach (var otp in delivery.Otps)
         {

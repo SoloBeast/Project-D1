@@ -27,9 +27,136 @@ public sealed class PaymentService(
     INotificationEventWriter notificationEventWriter,
     MockPaymentGateway? mockGateway = null,
     IOneTimeDeliveryCreator? oneTimeDeliveryCreator = null,
-    IIntegrationSettingsProvider? integrationSettings = null) : IPaymentService
+    IIntegrationSettingsProvider? integrationSettings = null,
+    IOptions<PaymentReconciliationOptions>? reconciliationOptions = null) : IPaymentService
 {
     private readonly PaymentOptions options = paymentOptions.Value;
+    private readonly PaymentReconciliationOptions reconciliation =
+        reconciliationOptions?.Value ?? new PaymentReconciliationOptions();
+
+    public async Task<int> ProcessBatchAsync(
+        int batchSize,
+        int candidateAgeMinutes,
+        CancellationToken cancellationToken)
+        => await ProcessReconciliationBatchAsync(batchSize, candidateAgeMinutes, cancellationToken);
+
+    public async Task<int> ProcessReconciliationBatchAsync(
+        int batchSize,
+        int candidateAgeMinutes,
+        CancellationToken cancellationToken)
+    {
+        if (batchSize is < 1 or > 500)
+        {
+            throw new ArgumentOutOfRangeException(nameof(batchSize));
+        }
+        if (candidateAgeMinutes is < 1 or > 1440)
+        {
+            throw new ArgumentOutOfRangeException(nameof(candidateAgeMinutes));
+        }
+
+        var cutoff = timeProvider.Now.AddMinutes(-candidateAgeMinutes);
+        var paymentIds = await dbContext.Payments
+            .Where(x => x.Method == PaymentMethod.Razorpay &&
+                (x.Status == PaymentStatus.Pending ||
+                 x.Status == PaymentStatus.Expired) &&
+                x.CreatedAt <= cutoff &&
+                x.GatewayOrderId != null)
+            .OrderBy(x => x.CreatedAt)
+            .ThenBy(x => x.Id)
+            .Select(x => x.PublicId)
+            .Take(batchSize)
+            .ToListAsync(cancellationToken);
+
+        var processed = 0;
+        foreach (var paymentId in paymentIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await ReconcileForRecoveryAsync(paymentId, cancellationToken);
+                processed++;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // A single gateway/payment failure must not stop the bounded cycle.
+            }
+        }
+
+        return processed;
+    }
+
+    private async Task ReconcileForRecoveryAsync(Guid paymentId, CancellationToken cancellationToken)
+    {
+        var payment = await PaymentQuery().SingleOrDefaultAsync(
+            x => x.PublicId == paymentId,
+            cancellationToken);
+        if (payment is null || payment.Method != PaymentMethod.Razorpay ||
+            payment.Status is not (PaymentStatus.Pending or PaymentStatus.Expired))
+        {
+            return;
+        }
+
+        var evidence = PaymentAttemptEvidence.From(payment);
+        var resolution = await ResolveGatewayPaymentAsync(
+            payment,
+            payment.GatewayPaymentId,
+            cancellationToken);
+
+        await ExecuteSerializableAsync(async () =>
+        {
+            await ReloadPaymentAndTargetAsync(payment, cancellationToken);
+            if (payment.Status is not (PaymentStatus.Pending or PaymentStatus.Expired) ||
+                PaymentAttemptEvidence.From(payment) != evidence)
+            {
+                return;
+            }
+
+            if (resolution.Outcome is PaymentReconciliationOutcome.Pending or
+                PaymentReconciliationOutcome.Ambiguous)
+            {
+                return;
+            }
+
+            EnsureGatewayIdentity(payment, resolution.Status.GatewayPaymentId, resolution.Status);
+            EnsureGatewayFinancials(payment, resolution.Status.AmountMinor, resolution.Status.Currency);
+            var now = timeProvider.Now;
+            if (resolution.Outcome == PaymentReconciliationOutcome.Captured)
+            {
+                var recovered = payment.Status == PaymentStatus.Expired;
+                if (recovered)
+                {
+                    payment.RecoverCaptured(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
+                }
+                else
+                {
+                    payment.Succeed(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
+                }
+
+                await ConfirmTargetAsync(payment, now, cancellationToken, recovered);
+                AddPaymentOutcomeEvents(payment);
+            }
+            else
+            {
+                if (payment.Status == PaymentStatus.Pending && now < payment.ExpiresAt)
+                {
+                    payment.Fail(
+                        "GATEWAY_PAYMENT_FAILED",
+                        "The gateway reported a terminal payment failure.",
+                        resolution.Status.Status,
+                        now);
+                }
+                else
+                {
+                    payment.Expire(now);
+                }
+
+                FailTarget(payment);
+                AddPaymentOutcomeEvents(payment);
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
+    }
 
     public async Task<PaymentResult> CreateAsync(
         long customerId,
@@ -998,21 +1125,25 @@ public sealed class PaymentService(
             throw new ValidationAppException($"The webhook payload is invalid: {exception.Message}");
         }
 
-        var duplicate = await dbContext.PaymentWebhooks.AnyAsync(
+        var webhook = await dbContext.PaymentWebhooks.SingleOrDefaultAsync(
             x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
             cancellationToken);
-        if (duplicate)
+        if (webhook is not null &&
+            webhook.Status is PaymentWebhookStatus.Processed or PaymentWebhookStatus.Rejected)
         {
             return;
         }
 
-        var webhook = new PaymentWebhook(
+        webhook ??= new PaymentWebhook(
             razorpayGateway.ProviderName,
             gatewayEvent.EventId,
             gatewayEvent.EventType,
             Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant(),
             timeProvider.Now);
-        dbContext.PaymentWebhooks.Add(webhook);
+        if (webhook.Id == 0)
+        {
+            dbContext.PaymentWebhooks.Add(webhook);
+        }
         try
         {
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -1020,21 +1151,61 @@ public sealed class PaymentService(
         catch (DbUpdateException)
         {
             dbContext.ChangeTracker.Clear();
-            if (await dbContext.PaymentWebhooks.AnyAsync(
-                    x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
-                    cancellationToken))
+            webhook = await dbContext.PaymentWebhooks.SingleOrDefaultAsync(
+                x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
+                cancellationToken);
+            if (webhook is null)
+            {
+                throw;
+            }
+        }
+
+        dbContext.ChangeTracker.Clear();
+        var processingAt = timeProvider.Now;
+        var claimed = false;
+        await ExecuteSerializableAsync(async () =>
+        {
+            webhook = await dbContext.PaymentWebhooks.SingleAsync(
+                x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
+                cancellationToken);
+            if (webhook.Status is PaymentWebhookStatus.Processed or PaymentWebhookStatus.Rejected)
+            {
+                return;
+            }
+            if (webhook.Status == PaymentWebhookStatus.Processing &&
+                webhook.ProcessedAt.HasValue &&
+                processingAt - webhook.ProcessedAt.Value < TimeSpan.FromMinutes(
+                    reconciliation.WebhookProcessingStaleMinutes))
             {
                 return;
             }
 
-            throw;
+            webhook.StartProcessing(
+                processingAt,
+                TimeSpan.FromMinutes(
+                    reconciliation.WebhookProcessingStaleMinutes));
+            await dbContext.SaveChangesAsync(cancellationToken);
+            claimed = true;
+        }, cancellationToken);
+        if (!claimed)
+        {
+            return;
         }
 
         try
         {
+            dbContext.ChangeTracker.Clear();
             await ExecuteSerializableAsync(async () =>
             {
-                webhook.StartProcessing();
+                webhook = await dbContext.PaymentWebhooks.SingleAsync(
+                    x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
+                    cancellationToken);
+                if (webhook.Status != PaymentWebhookStatus.Processing ||
+                    webhook.ProcessedAt != processingAt)
+                {
+                    return;
+                }
+
                 if (gatewayEvent.EventType.StartsWith("payment.", StringComparison.OrdinalIgnoreCase))
                 {
                     await ProcessPaymentWebhookAsync(gatewayEvent, cancellationToken);
@@ -1053,15 +1224,26 @@ public sealed class PaymentService(
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             dbContext.ChangeTracker.Clear();
-            webhook = await dbContext.PaymentWebhooks.SingleAsync(
-                x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
-                cancellationToken);
-            webhook.StartProcessing();
-            webhook.Fail("WEBHOOK_PROCESSING_FAILED", exception.Message, timeProvider.Now);
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await ExecuteSerializableAsync(async () =>
+            {
+                webhook = await dbContext.PaymentWebhooks.SingleAsync(
+                    x => x.Provider == razorpayGateway.ProviderName && x.EventId == gatewayEvent.EventId,
+                    cancellationToken);
+                if (webhook.Status != PaymentWebhookStatus.Processing ||
+                    webhook.ProcessedAt != processingAt)
+                {
+                    return;
+                }
+
+                webhook.FailProcessing(
+                    "WEBHOOK_PROCESSING_FAILED",
+                    "Webhook processing failed.",
+                    timeProvider.Now);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
             throw;
         }
     }

@@ -13,6 +13,8 @@ import 'package:doodh_direct_mobile/features/cameras/camera_screens.dart';
 import 'package:doodh_direct_mobile/features/branches/branch_models.dart';
 import 'package:doodh_direct_mobile/features/branches/branch_screens.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
+import 'package:doodh_direct_mobile/features/refund_replacement/refund_replacement_screens.dart';
+import 'package:doodh_direct_mobile/features/refund_replacement_config/refund_replacement_config_screen.dart';
 import 'package:doodh_direct_mobile/features/employees/employee_models.dart';
 import 'package:doodh_direct_mobile/features/employees/employee_screens.dart';
 import 'package:doodh_direct_mobile/features/home/role_home_screen.dart';
@@ -94,7 +96,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       // must stay pure: only reads are allowed here. Every provider write is
       // deferred to a microtask (see the _defer*/_take* helpers below).
       if (session.isLoading) {
-        return path == '/restore' ? null : '/restore';
+        // The /restore placeholder normally holds the screen while the stored
+        // session is loaded. But an in-flight auth operation (send-otp /
+        // verify-otp) must keep its screen: the OTP screen uses the result of
+        // verify-otp to route a new customer into onboarding, so tearing it
+        // down mid-request (via this redirect) unmounts it before it can
+        // navigate. Auth routes therefore stay put during the loading state.
+        if (path == '/restore' || isAuthRoute) return null;
+        return '/restore';
       }
 
       if (session.isAuthenticated) {
@@ -280,6 +289,15 @@ final routerProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: '/staff/orders/:orderId',
+        builder: (context, state) {
+          final orderId = _requiredPathParameter(state, 'orderId');
+          return orderId == null
+              ? const _RouteErrorScreen(resource: 'order')
+              : StaffOrderInspectionScreen(orderId: orderId);
+        },
+      ),
+      GoRoute(
         path: '/orders/:orderId/payment',
         builder: (context, state) {
           final orderId = _requiredPathParameter(state, 'orderId');
@@ -395,6 +413,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: '/admin/setup/refund-replacement',
+        builder: (context, state) => const RefundReplacementConfigScreen(),
+      ),
+      GoRoute(
         path: '/admin/employees',
         builder: (context, state) => const EmployeeListScreen(),
       ),
@@ -469,6 +491,69 @@ final routerProvider = Provider<GoRouter>((ref) {
           return deliveryId == null
               ? const _RouteErrorScreen(resource: 'delivery')
               : CustomerMilkTestScreen(deliveryId: deliveryId);
+        },
+      ),
+      GoRoute(
+        path: '/deliveries/:deliveryId/refund-replacement',
+        builder: (context, state) {
+          final deliveryId = _requiredPathParameter(state, 'deliveryId');
+          final milkTestId = state.uri.queryParameters['milkTestId'];
+          return deliveryId == null
+              ? const _RouteErrorScreen(resource: 'delivery')
+              : CustomerRefundReplacementScreen(
+                  deliveryId: deliveryId,
+                  milkTestId: milkTestId,
+                );
+        },
+      ),
+      GoRoute(
+        path: '/refund-replacements',
+        builder: (context, state) =>
+            const CustomerRefundReplacementListScreen(),
+      ),
+      GoRoute(
+        path: '/refund-replacements/:requestId',
+        builder: (context, state) {
+          final requestId = _requiredPathParameter(state, 'requestId');
+          return requestId == null
+              ? const _RouteErrorScreen(resource: 'refund/replacement request')
+              : CustomerRefundReplacementDetailScreen(requestId: requestId);
+        },
+      ),
+      GoRoute(
+        path: '/staff/refund-replacements',
+        builder: (context, state) {
+          final branchId = int.tryParse(
+            state.uri.queryParameters['branchId'] ?? '',
+          );
+          return StaffRefundReplacementListScreen(branchId: branchId);
+        },
+      ),
+      GoRoute(
+        path: '/staff/refund-replacements/:requestId',
+        builder: (context, state) {
+          final requestId = _requiredPathParameter(state, 'requestId');
+          return requestId == null
+              ? const _RouteErrorScreen(resource: 'refund/replacement request')
+              : StaffRefundReplacementDetailScreen(requestId: requestId);
+        },
+      ),
+      GoRoute(
+        path: '/staff/delivery/:deliveryId',
+        builder: (context, state) {
+          final deliveryId = _requiredPathParameter(state, 'deliveryId');
+          return deliveryId == null
+              ? const _RouteErrorScreen(resource: 'delivery')
+              : DeliveryInspectionScreen(deliveryId: deliveryId);
+        },
+      ),
+      GoRoute(
+        path: '/staff/delivery/:deliveryId/milk-test',
+        builder: (context, state) {
+          final deliveryId = _requiredPathParameter(state, 'deliveryId');
+          return deliveryId == null
+              ? const _RouteErrorScreen(resource: 'delivery')
+              : BranchMilkTestInspectionScreen(deliveryId: deliveryId);
         },
       ),
       GoRoute(
@@ -660,6 +745,8 @@ const _returnIntentAllowedPrefixes = <String>[
   '/wallet',
   '/customer',
   '/deliveries',
+  '/refund-replacements',
+  '/staff',
   '/notifications',
   '/payments',
   '/cameras',
