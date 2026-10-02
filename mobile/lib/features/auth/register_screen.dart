@@ -1,4 +1,6 @@
 import 'package:doodh_direct_mobile/core/widgets/country_code_mobile_field.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -38,91 +40,88 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Create account')),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Customer registration',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Use an email address or mobile number to sign in later.',
-                    ),
-                    if (session.errorMessage != null) ...[
-                      const SizedBox(height: 16),
+      body: DoodhPage(
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: DoodhContentMax.narrow,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: DoodhSpacing.sm),
                       Text(
-                        session.errorMessage!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
+                        'Customer registration',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: DoodhSpacing.sm),
+                      Text(
+                        'Use an email address or mobile number to sign in later.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: DoodhColors.muted,
                         ),
                       ),
-                    ],
-                    const SizedBox(height: 24),
-                    TextFormField(
-                      controller: _nameController,
-                      enabled: !busy,
-                      textCapitalization: TextCapitalization.words,
-                      decoration: const InputDecoration(
-                        labelText: 'Full name',
-                        prefixIcon: Icon(Icons.badge_outlined),
-                        border: OutlineInputBorder(),
+                      if (session.errorMessage != null) ...[
+                        const SizedBox(height: DoodhSpacing.md),
+                        DoodhErrorBanner(message: session.errorMessage!),
+                      ],
+                      const SizedBox(height: DoodhSpacing.lg),
+                      TextFormField(
+                        controller: _nameController,
+                        enabled: !busy,
+                        textCapitalization: TextCapitalization.words,
+                        decoration: const InputDecoration(
+                          labelText: 'Full name',
+                          prefixIcon: Icon(Icons.badge_outlined),
+                        ),
+                        validator: (value) =>
+                            value == null || value.trim().length < 2
+                            ? 'Enter your name.'
+                            : null,
                       ),
-                      validator: (value) =>
-                          value == null || value.trim().length < 2
-                          ? 'Enter your name.'
-                          : null,
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _emailController,
-                      enabled: !busy,
-                      keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(
-                        labelText: 'Email address (optional)',
-                        prefixIcon: Icon(Icons.email_outlined),
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: DoodhSpacing.md),
+                      DoodhField(
+                        label: 'Email address (optional)',
+                        controller: _emailController,
+                        enabled: !busy,
+                        keyboardType: TextInputType.emailAddress,
+                        prefixIcon: const Icon(Icons.email_outlined),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return null;
+                          }
+                          return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+                                  .hasMatch(value.trim())
+                              ? null
+                              : 'Enter a valid email address.';
+                        },
                       ),
-                      validator: (value) {
-                        if (value == null || value.trim().isEmpty) return null;
-                        return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-                                .hasMatch(value.trim())
-                            ? null
-                            : 'Enter a valid email address.';
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    CountryCodeMobileField(
-                      key: _countryKey,
-                      controller: _mobileController,
-                      enabled: !busy,
-                      optional: true,
-                      label: 'Mobile number (optional)',
-                      validator: (canonical) {
-                        if (canonical == null &&
-                            _emailController.text.trim().isEmpty) {
-                          return 'Enter an email address or mobile number.';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _passwordController,
-                      enabled: !busy,
-                      obscureText: _obscurePassword,
-                      decoration: InputDecoration(
-                        labelText: 'Password',
+                      const SizedBox(height: DoodhSpacing.md),
+                      CountryCodeMobileField(
+                        key: _countryKey,
+                        controller: _mobileController,
+                        enabled: !busy,
+                        optional: true,
+                        label: 'Mobile number (optional)',
+                        validator: (canonical) {
+                          if (canonical == null &&
+                              _emailController.text.trim().isEmpty) {
+                            return 'Enter an email address or mobile number.';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: DoodhSpacing.md),
+                      DoodhField(
+                        label: 'Password',
+                        controller: _passwordController,
+                        enabled: !busy,
+                        obscureText: _obscurePassword,
                         prefixIcon: const Icon(Icons.lock_outline),
-                        border: const OutlineInputBorder(),
                         suffixIcon: IconButton(
                           tooltip: _obscurePassword
                               ? 'Show password'
@@ -136,44 +135,42 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                                 : Icons.visibility_off_outlined,
                           ),
                         ),
+                        validator: (value) => value == null || value.length < 8
+                            ? 'Use at least 8 characters.'
+                            : null,
                       ),
-                      validator: (value) => value == null || value.length < 8
-                          ? 'Use at least 8 characters.'
-                          : null,
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _confirmController,
-                      enabled: !busy,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Confirm password',
-                        prefixIcon: Icon(Icons.lock_reset_outlined),
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: DoodhSpacing.md),
+                      DoodhField(
+                        label: 'Confirm password',
+                        controller: _confirmController,
+                        enabled: !busy,
+                        obscureText: true,
+                        prefixIcon: const Icon(Icons.lock_reset_outlined),
+                        validator: (value) => value != _passwordController.text
+                            ? 'Passwords do not match.'
+                            : null,
                       ),
-                      validator: (value) => value != _passwordController.text
-                          ? 'Passwords do not match.'
-                          : null,
-                    ),
-                    const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: busy ? null : _submit,
-                      icon: busy
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.person_add_outlined),
-                      label: const Text('Create account'),
-                    ),
-                    TextButton(
-                      onPressed: busy ? null : () => context.go(_withRedirect('/login')),
-                      child: const Text('Back to sign in'),
-                    ),
-                  ],
+                      const SizedBox(height: DoodhSpacing.lg),
+                      DoodhButton(
+                        label: 'Create account',
+                        icon: Icons.person_add_outlined,
+                        busy: busy,
+                        expand: true,
+                        onPressed: _submit,
+                      ),
+                      const SizedBox(height: DoodhSpacing.xs),
+                      TextButton(
+                        onPressed: busy
+                            ? null
+                            : () => context.go(_withRedirect('/login')),
+                        child: const Text('Back to sign in'),
+                      ),
+                      const SizedBox(height: DoodhSpacing.xl),
+                    ],
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),

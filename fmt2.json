@@ -1,0 +1,92 @@
+[
+  {
+    "DocumentId": {
+      "ProjectId": {
+        "Id": "ece2958e-4204-40fc-b4c1-5ac341793eb7"
+      },
+      "Id": "51d027a9-7fee-4092-816c-1f3530780df2"
+    },
+    "FileName": "SubscriptionServiceTests.cs",
+    "FilePath": "C:\\Hemant\\Project-D1\\Backend\\tests\\DoodhDirect.Api.IntegrationTests\\SubscriptionServiceTests.cs",
+    "FileChanges": [
+      {
+        "LineNumber": 337,
+        "CharNumber": 9,
+        "DiagnosticId": "xUnit2013",
+        "FormatDescription": "warning xUnit2013: Do not use Assert.Equal() to check for collection size. Use Assert.Empty instead."
+      }
+    ]
+  },
+  {
+    "DocumentId": {
+      "ProjectId": {
+        "Id": "ece2958e-4204-40fc-b4c1-5ac341793eb7"
+      },
+      "Id": "ffbf5dea-b7b6-4600-b1f9-b6c2516bdc06"
+    },
+    "FileName": "CatalogueServiceTests.cs",
+    "FilePath": "C:\\Hemant\\Project-D1\\Backend\\tests\\DoodhDirect.Api.IntegrationTests\\CatalogueServiceTests.cs",
+    "FileChanges": [
+      {
+        "LineNumber": 738,
+        "CharNumber": 35,
+        "DiagnosticId": "xUnit2002",
+        "FormatDescription": "warning xUnit2002: Do not use Assert.NotNull() on value type \u0027DateTime\u0027. Remove this assert."
+      }
+    ]
+  },
+  {
+    "DocumentId": {
+      "ProjectId": {
+        "Id": "ece2958e-4204-40fc-b4c1-5ac341793eb7"
+      },
+      "Id": "ffbf5dea-b7b6-4600-b1f9-b6c2516bdc06"
+    },
+    "FileName": "CatalogueServiceTests.cs",
+    "FilePath": "C:\\Hemant\\Project-D1\\Backend\\tests\\DoodhDirect.Api.IntegrationTests\\CatalogueServiceTests.cs",
+    "FileChanges": [
+      {
+        "LineNumber": 638,
+        "CharNumber": 23,
+        "DiagnosticId": "xUnit2031",
+        "FormatDescription": "warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function."
+      }
+    ]
+  },
+  {
+    "DocumentId": {
+      "ProjectId": {
+        "Id": "ece2958e-4204-40fc-b4c1-5ac341793eb7"
+      },
+      "Id": "ffbf5dea-b7b6-4600-b1f9-b6c2516bdc06"
+    },
+    "FileName": "CatalogueServiceTests.cs",
+    "FilePath": "C:\\Hemant\\Project-D1\\Backend\\tests\\DoodhDirect.Api.IntegrationTests\\CatalogueServiceTests.cs",
+    "FileChanges": [
+      {
+        "LineNumber": 677,
+        "CharNumber": 26,
+        "DiagnosticId": "xUnit2031",
+        "FormatDescription": "warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function."
+      }
+    ]
+  },
+  {
+    "DocumentId": {
+      "ProjectId": {
+        "Id": "ece2958e-4204-40fc-b4c1-5ac341793eb7"
+      },
+      "Id": "ffbf5dea-b7b6-4600-b1f9-b6c2516bdc06"
+    },
+    "FileName": "CatalogueServiceTests.cs",
+    "FilePath": "C:\\Hemant\\Project-D1\\Backend\\tests\\DoodhDirect.Api.IntegrationTests\\CatalogueServiceTests.cs",
+    "FileChanges": [
+      {
+        "LineNumber": 680,
+        "CharNumber": 24,
+        "DiagnosticId": "xUnit2031",
+        "FormatDescription": "warning xUnit2031: Do not use a Where clause to filter before calling Assert.Single. Use the overload of Assert.Single that accepts a filtering function."
+      }
+    ]
+  }
+]

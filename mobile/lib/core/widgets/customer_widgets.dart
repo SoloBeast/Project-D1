@@ -1,6 +1,7 @@
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
-import 'package:doodh_direct_mobile/features/notifications/notification_controller.dart';
+import 'package:doodh_direct_mobile/features/branding/doodh_brand_mark.dart';
+import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -16,11 +17,13 @@ class DoodhPage extends StatelessWidget {
     builder: (context, constraints) => Align(
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1180),
+        constraints: const BoxConstraints(maxWidth: DoodhContentMax.wide),
         child: padding
             ? Padding(
                 padding: EdgeInsets.symmetric(
-                  horizontal: constraints.maxWidth < 600 ? 16 : 28,
+                  horizontal: constraints.maxWidth < DoodhBreakpoints.compact
+                      ? DoodhSpacing.md
+                      : 28,
                   vertical: 20,
                 ),
                 child: child,
@@ -41,7 +44,10 @@ class DoodhSectionHeader extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     children: [
       Expanded(
-        child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+        child: Semantics(
+          header: true,
+          child: Text(title, style: Theme.of(context).textTheme.titleLarge),
+        ),
       ),
       ?action,
     ],
@@ -73,14 +79,16 @@ class DoodhActionTile extends StatelessWidget {
         padding: const EdgeInsets.all(14),
         child: Row(
           children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: (color ?? DoodhColors.mint).withValues(alpha: .8),
-                borderRadius: DoodhRadii.sm,
+            ExcludeSemantics(
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: (color ?? DoodhColors.mint).withValues(alpha: .8),
+                  borderRadius: DoodhRadii.sm,
+                ),
+                child: Icon(icon, color: DoodhColors.tealDark),
               ),
-              child: Icon(icon, color: DoodhColors.tealDark),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -93,7 +101,9 @@ class DoodhActionTile extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(Icons.arrow_forward_ios_rounded, size: 16),
+            const ExcludeSemantics(
+              child: Icon(Icons.arrow_forward_ios_rounded, size: 16),
+            ),
           ],
         ),
       ),
@@ -122,19 +132,25 @@ class DoodhStatusPill extends StatelessWidget {
       DoodhStatusTone.error => (const Color(0xFFFCE5E0), DoodhColors.coral),
       DoodhStatusTone.neutral => (const Color(0xFFEFF2F0), DoodhColors.muted),
     };
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colors.$1,
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: colors.$2,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
+    return Semantics(
+      label: label,
+      container: true,
+      child: ExcludeSemantics(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colors.$1,
+            borderRadius: BorderRadius.circular(DoodhRadii.pillValue),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            child: Text(
+              label,
+              style: TextStyle(
+                color: colors.$2,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ),
       ),
@@ -152,6 +168,8 @@ class CustomerShell extends ConsumerWidget {
     this.title,
     this.actions = const [],
     this.floatingActionButton,
+    this.showBrandInAppBar = true,
+    this.header,
   });
 
   final Widget child;
@@ -160,107 +178,229 @@ class CustomerShell extends ConsumerWidget {
   final List<Widget> actions;
   final Widget? floatingActionButton;
 
+  /// Whether the AppBar carries the brand mark (+ name). Surfaces that draw
+  /// their own large brand header (customer home) pass `false` so the name is
+  /// not shown twice on one screen.
+  final bool showBrandInAppBar;
+
+  /// Rich leading widget replacing the AppBar title entirely (customer home:
+  /// brand row + tagline + notification + wallet, all sharing the cart-icon
+  /// row so no empty bar is wasted above the content).
+  final Widget? header;
+
   static const _items = [
     (
       icon: Icons.home_outlined,
-      selected: Icons.home,
+      selected: Icons.home_rounded,
       label: 'Home',
       path: '/home',
     ),
     (
-      icon: Icons.receipt_long_outlined,
-      selected: Icons.receipt_long,
-      label: 'Orders',
-      path: '/orders',
+      icon: Icons.storefront_outlined,
+      selected: Icons.storefront_rounded,
+      label: 'Products',
+      path: '/catalogue',
     ),
     (
       icon: Icons.event_repeat_outlined,
-      selected: Icons.event_repeat,
-      label: 'Subscribe',
+      selected: Icons.event_repeat_rounded,
+      label: 'Subscription',
       path: '/subscriptions',
     ),
     (
-      icon: Icons.account_balance_wallet_outlined,
-      selected: Icons.account_balance_wallet,
-      label: 'Wallet',
-      path: '/wallet',
+      icon: Icons.shopping_cart_outlined,
+      selected: Icons.shopping_cart_rounded,
+      label: 'Cart',
+      path: '/checkout',
     ),
     (
-      icon: Icons.person_outline,
-      selected: Icons.person,
-      label: 'Profile',
-      path: '/customer/account',
+      icon: Icons.more_horiz_outlined,
+      selected: Icons.more_horiz_rounded,
+      label: 'More',
+      path: '/more',
     ),
   ];
 
   int get _selectedIndex {
+    if (currentPath.startsWith('/orders') ||
+        currentPath.startsWith('/wallet') ||
+        currentPath.startsWith('/notifications') ||
+        currentPath.startsWith('/customer/account')) {
+      return 4;
+    }
     final index = _items.indexWhere(
       (item) => currentPath.startsWith(item.path),
     );
-    return index < 0 ? 0 : index;
+    return index >= 0 && index < 4 ? index : 0;
+  }
+
+  void _openMore(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(DoodhRadii.lgValue),
+        ),
+      ),
+      builder: (sheetContext) {
+        void go(String path) {
+          Navigator.of(sheetContext).pop();
+          context.go(path);
+        }
+
+        void push(String path) {
+          Navigator.of(sheetContext).pop();
+          context.push(path);
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              DoodhSpacing.md,
+              DoodhSpacing.sm,
+              DoodhSpacing.md,
+              DoodhSpacing.md,
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                const ListTile(
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: DoodhSpacing.sm,
+                  ),
+                  title: Text(
+                    'More',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text('Manage your DoodhDirect account'),
+                ),
+                _MoreDestinationTile(
+                  icon: Icons.receipt_long_outlined,
+                  label: 'Orders',
+                  onTap: () => go('/orders'),
+                ),
+                _MoreDestinationTile(
+                  icon: Icons.account_balance_wallet_outlined,
+                  label: 'Wallet',
+                  onTap: () => go('/wallet'),
+                ),
+                _MoreDestinationTile(
+                  icon: Icons.notifications_none,
+                  label: 'Notifications',
+                  onTap: () => push('/notifications'),
+                ),
+                _MoreDestinationTile(
+                  icon: Icons.person_outline,
+                  label: 'Profile / Account',
+                  onTap: () => go('/customer/account'),
+                ),
+                const Divider(height: DoodhSpacing.lg),
+                _MoreDestinationTile(
+                  key: const ValueKey('customer-more-sign-out'),
+                  icon: Icons.logout_rounded,
+                  label: 'Sign out',
+                  destructive: true,
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await ref
+                        .read(sessionControllerProvider.notifier)
+                        .signOut();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final session = ref.watch(sessionControllerProvider).session;
-    final displayName = session?.user.displayName?.trim();
-    final initials = displayName == null || displayName.isEmpty
-        ? 'D'
-        : displayName.substring(0, 1).toUpperCase();
+    final cartCount = ref.watch(
+      orderControllerProvider.select((state) => state.cart.length),
+    );
     return Scaffold(
       appBar: AppBar(
+        // The customer home passes a rich two-row header (brand block +
+        // icons, wallet chip below) — give the toolbar room for it. All
+        // other shells keep the standard height.
+        toolbarHeight: header != null ? 104 : kToolbarHeight,
         titleSpacing: 20,
-        title: Row(
-          children: [
-            const Icon(Icons.water_drop_rounded, color: DoodhColors.teal),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                'DoodhDirect',
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
+        title:
+            header ??
+            Row(
+              children: [
+                if (showBrandInAppBar) ...[
+                  // Business ask: logo BESIDE the name — the business-uploaded
+                  // logo when branding is configured, the bundled drop icon
+                  // otherwise.
+                  const DoodhBrandMark(showWordmark: false, height: 26),
+                  // When a screen title is present the brand NAME is dropped
+                  // (the logo mark stays): brand + title together squeezed
+                  // both into ellipsis ("DoodhD..." / cramped titles) on
+                  // phones, and the name is redundant next to the title.
+                  if (title == null) ...[
+                    const SizedBox(width: DoodhSpacing.sm),
+                    Flexible(
+                      child: Text(
+                        'DoodhDirect',
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                    ),
+                  ],
+                ],
+                if (title != null) ...[
+                  SizedBox(
+                    width: showBrandInAppBar ? DoodhSpacing.sm : 12,
+                  ),
+                  Flexible(
+                    child: Text(
+                      title!,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ],
+              ],
             ),
-            if (title != null) ...[
-              const SizedBox(width: 12),
-              Flexible(
-                child: Text(
-                  title!,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-            ],
-          ],
-        ),
-        actions: [
-          ...actions,
-          const _ShellNotificationButton(),
-          Padding(
-            padding: const EdgeInsets.only(right: 16, left: 4),
-            child: CircleAvatar(
-              radius: 17,
-              backgroundColor: DoodhColors.mint,
-              foregroundColor: DoodhColors.tealDark,
-              child: Text(
-                initials,
-                style: const TextStyle(fontWeight: FontWeight.w800),
-              ),
-            ),
-          ),
-        ],
+        actions: [...actions],
       ),
       body: child,
       floatingActionButton: floatingActionButton,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) => context.go(_items[index].path),
+        onDestinationSelected: (index) {
+          if (index == 4) {
+            _openMore(context, ref);
+          } else {
+            context.go(_items[index].path);
+          }
+        },
         destinations: [
-          for (final item in _items)
+          for (var index = 0; index < _items.length; index++)
             NavigationDestination(
-              icon: Icon(item.icon),
-              selectedIcon: Icon(item.selected),
-              label: item.label,
+              icon: index == 3
+                  ? Badge(
+                      isLabelVisible: cartCount > 0,
+                      label: Text(cartCount > 99 ? '99+' : '$cartCount'),
+                      child: Icon(_items[index].icon),
+                    )
+                  : Icon(_items[index].icon),
+              selectedIcon: index == 3
+                  ? Badge(
+                      isLabelVisible: cartCount > 0,
+                      label: Text(cartCount > 99 ? '99+' : '$cartCount'),
+                      child: Icon(_items[index].selected),
+                    )
+                  : Icon(_items[index].selected),
+              label: _items[index].label,
+              key: index == 4
+                  ? const ValueKey('customer-more-navigation')
+                  : null,
             ),
         ],
       ),
@@ -268,24 +408,38 @@ class CustomerShell extends ConsumerWidget {
   }
 }
 
-class _ShellNotificationButton extends ConsumerWidget {
-  const _ShellNotificationButton();
+class _MoreDestinationTile extends StatelessWidget {
+  const _MoreDestinationTile({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool destructive;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final count = ref.watch(
-      notificationControllerProvider.select((state) => state.unreadCount),
-    );
-    return IconButton(
-      tooltip: 'Notifications',
-      onPressed: () => context.push('/notifications'),
-      icon: Badge(
-        isLabelVisible: count > 0,
-        label: Text(count > 99 ? '99+' : '$count'),
-        child: const Icon(Icons.notifications_none),
+  Widget build(BuildContext context) => ListTile(
+    contentPadding: const EdgeInsets.symmetric(horizontal: DoodhSpacing.sm),
+    shape: RoundedRectangleBorder(borderRadius: DoodhRadii.md),
+    leading: Icon(
+      icon,
+      color: destructive ? DoodhColors.coral : DoodhColors.teal,
+    ),
+    title: Text(
+      label,
+      style: TextStyle(
+        color: destructive ? DoodhColors.coral : DoodhColors.ink,
+        fontWeight: FontWeight.w700,
       ),
-    );
-  }
+    ),
+    trailing: const Icon(Icons.chevron_right_rounded),
+    onTap: onTap,
+  );
 }
 
 class DoodhHeroCard extends StatelessWidget {
@@ -296,7 +450,7 @@ class DoodhHeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Card(
     clipBehavior: Clip.antiAlias,
-    color: DoodhColors.tealDark,
+    color: DoodhColors.teal,
     child: Padding(
       padding: const EdgeInsets.all(22),
       child: LayoutBuilder(
@@ -328,7 +482,7 @@ class DoodhHeroCard extends StatelessWidget {
                 label: const Text('Shop'),
                 style: FilledButton.styleFrom(
                   backgroundColor: Colors.white,
-                  foregroundColor: DoodhColors.tealDark,
+                  foregroundColor: DoodhColors.teal,
                 ),
               ),
             ],
@@ -338,10 +492,12 @@ class DoodhHeroCard extends StatelessWidget {
             children: [
               Expanded(child: content),
               const SizedBox(width: 12),
-              const Icon(
-                Icons.local_drink_rounded,
-                size: 82,
-                color: Colors.white24,
+              const ExcludeSemantics(
+                child: Icon(
+                  Icons.local_drink_rounded,
+                  size: 82,
+                  color: Colors.white24,
+                ),
               ),
             ],
           );

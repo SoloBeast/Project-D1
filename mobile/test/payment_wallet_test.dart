@@ -148,18 +148,86 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Payment successful'), findsNWidgets(2));
+      expect(find.text('Payment successful'), findsOneWidget);
       expect(find.text('DD-000001'), findsOneWidget);
       expect(find.text('₹90.00'), findsOneWidget);
       expect(find.text('View Order'), findsOneWidget);
       expect(find.text('Go to Home'), findsOneWidget);
 
+      await tester.ensureVisible(find.text('View Order'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('View Order'));
       await tester.pumpAndSettle();
       expect(
         router.routerDelegate.currentConfiguration.uri.path,
         '/orders/order-1',
       );
+    });
+
+    testWidgets('pending order payment explains verification and recovery', (
+      tester,
+    ) async {
+      final payment = PaymentDetails.fromJson(paymentJson(status: 'Pending'));
+      final router = _paymentResultRouter(payment);
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _AuthenticatedAuthRepository(),
+            ),
+            paymentControllerProvider.overrideWith(
+              () => _SeededPaymentController(payment),
+            ),
+          ],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Verification pending'), findsNWidgets(2));
+      expect(find.text('Check status'), findsOneWidget);
+      expect(find.text('Continue Razorpay payment'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel(
+          'Payment status is still being verified. Verification pending. '
+          'The order remains payment pending until DoodhDirect verifies the payment.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('expired order payment presents a terminal retry state', (
+      tester,
+    ) async {
+      final payment = PaymentDetails.fromJson(paymentJson(status: 'Expired'));
+      final router = _paymentResultRouter(payment);
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _AuthenticatedAuthRepository(),
+            ),
+            paymentControllerProvider.overrideWith(
+              () => _SeededPaymentController(payment),
+            ),
+          ],
+          child: MaterialApp.router(routerConfig: router),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Payment expired'), findsNWidgets(2));
+      expect(find.text('Return to order'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel(
+          'Payment needs attention. Payment expired. '
+          'This payment was not completed. You can retry from the order.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Check status'), findsNothing);
     });
 
     testWidgets(
@@ -191,6 +259,8 @@ void main() {
         await tester.pumpAndSettle();
 
         expect(find.text('View Subscription'), findsOneWidget);
+        await tester.ensureVisible(find.text('Go to Home'));
+        await tester.pumpAndSettle();
         await tester.tap(find.text('Go to Home'));
         await tester.pumpAndSettle();
         expect(router.routerDelegate.currentConfiguration.uri.path, '/home');
@@ -696,61 +766,158 @@ void main() {
       expect(find.text('Development top-up'), findsNothing);
       expect(find.text('₹410.50'), findsOneWidget);
     });
+
+    testWidgets(
+      'wallet surface presents the server-confirmed balance as the primary card',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(800, 1200));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              walletControllerProvider.overrideWith(
+                () => _SeededWalletController(
+                  WalletState(wallet: WalletDetails.fromJson(walletJson())),
+                ),
+              ),
+            ],
+            child: const MaterialApp(home: WalletScreen()),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        // The balance card is a single semantic surface that exposes the
+        // credited, server-authoritative balance as the dominant figure.
+        expect(
+          find.bySemanticsLabel('Available wallet balance ₹410.50'),
+          findsOneWidget,
+        );
+        expect(find.text('Available balance'), findsOneWidget);
+        expect(find.text('₹410.50'), findsOneWidget);
+        expect(find.text('INR'), findsOneWidget);
+        // Recharge stays the primary action on the balance card.
+        expect(find.widgetWithText(FilledButton, 'Add money'), findsOneWidget);
+        // The trust copy separates pending recharges from spendable balance.
+        expect(
+          find.textContaining(
+            'Money appears in your available balance only after the payment is '
+            'confirmed by our servers.',
+          ),
+          findsOneWidget,
+        );
+        // Empty ledger keeps the existing empty-state behaviour.
+        expect(find.text('No transactions'), findsOneWidget);
+      },
+    );
+
+    testWidgets('wallet ledger renders credit and debit entries with state', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(800, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final credit = WalletTransaction.fromJson(
+        walletTransactionJson(amount: 500),
+      );
+      final debit = WalletTransaction.fromJson({
+        ...walletTransactionJson(amount: -90),
+        'publicId': 'transaction-2',
+        'type': 'PaymentDebit',
+        'balanceBefore': 410.5,
+        'balanceAfter': 320.5,
+        'description': 'Order payment',
+        'paymentId': 'payment-1',
+        'orderId': 'order-1',
+      });
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            walletControllerProvider.overrideWith(
+              () => _SeededWalletController(
+                WalletState(
+                  wallet: WalletDetails.fromJson(walletJson()),
+                  transactions: [credit, debit],
+                ),
+              ),
+            ),
+          ],
+          child: const MaterialApp(home: WalletScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Wallet top-up'), findsOneWidget);
+      expect(find.text('Order payment'), findsOneWidget);
+      expect(find.text('+₹500.00'), findsOneWidget);
+      expect(find.text('-₹90.00'), findsOneWidget);
+      expect(find.text('Credit'), findsOneWidget);
+      expect(find.text('Debit'), findsOneWidget);
+      // Both entries reconcile with their running balance, so both are shown
+      // as confirmed rather than surfacing a false pending state.
+      expect(find.text('Confirmed'), findsNWidgets(2));
+      expect(find.text('Pending'), findsNothing);
+      expect(find.text('Ref: payment-1'), findsOneWidget);
+    });
   });
 
   group('wallet top-up flow', () {
-    test('topUp posts amount and idempotency key and parses PaymentDetails', () async {
-      final client = MockClient((request) async {
-        expect(request.method, 'POST');
-        expect(request.url.path, '/api/v1/wallet/top-up');
-        expect(request.headers['Authorization'], 'Bearer customer-token');
-        expect(request.headers['Idempotency-Key'], 'wallet-top-up-42');
-        expect(jsonDecode(request.body), {'amount': 250.0});
-        return successResponse(walletTopUpPaymentJson(), statusCode: 201);
-      });
-      final repository = WalletRepository(
-        api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
-      );
+    test(
+      'topUp posts amount and idempotency key and parses PaymentDetails',
+      () async {
+        final client = MockClient((request) async {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/api/v1/wallet/top-up');
+          expect(request.headers['Authorization'], 'Bearer customer-token');
+          expect(request.headers['Idempotency-Key'], 'wallet-top-up-42');
+          expect(jsonDecode(request.body), {'amount': 250.0});
+          return successResponse(walletTopUpPaymentJson(), statusCode: 201);
+        });
+        final repository = WalletRepository(
+          api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
+        );
 
-      final payment = await repository.topUp(
-        token: 'customer-token',
-        amount: 250,
-        idempotencyKey: 'wallet-top-up-42',
-      );
+        final payment = await repository.topUp(
+          token: 'customer-token',
+          amount: 250,
+          idempotencyKey: 'wallet-top-up-42',
+        );
 
-      expect(payment.publicId, 'payment-wallet-topup-1');
-      expect(payment.amount, 250);
-      expect(payment.status, PaymentStatus.pending);
-      expect(payment.usesRazorpay, isTrue);
-      expect(payment.hasValidTarget, isFalse);
-    });
+        expect(payment.publicId, 'payment-wallet-topup-1');
+        expect(payment.amount, 250);
+        expect(payment.status, PaymentStatus.pending);
+        expect(payment.usesRazorpay, isTrue);
+        expect(payment.hasValidTarget, isFalse);
+      },
+    );
 
-    test('topUp returns null without touching the repository for invalid amounts', () async {
-      final repository = _WalletTopUpRepository(
-        topUpResult: PaymentDetails.fromJson(walletTopUpPaymentJson()),
-      );
-      final container = ProviderContainer(
-        overrides: [
-          authRepositoryProvider.overrideWithValue(
-            _AuthenticatedAuthRepository(),
-          ),
-          walletRepositoryProvider.overrideWithValue(repository),
-        ],
-      );
-      addTearDown(container.dispose);
+    test(
+      'topUp returns null without touching the repository for invalid amounts',
+      () async {
+        final repository = _WalletTopUpRepository(
+          topUpResult: PaymentDetails.fromJson(walletTopUpPaymentJson()),
+        );
+        final container = ProviderContainer(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _AuthenticatedAuthRepository(),
+            ),
+            walletRepositoryProvider.overrideWithValue(repository),
+          ],
+        );
+        addTearDown(container.dispose);
 
-      container.read(sessionControllerProvider);
-      await Future<void>.delayed(Duration.zero);
+        container.read(sessionControllerProvider);
+        await Future<void>.delayed(Duration.zero);
 
-      final message = await container
-          .read(walletControllerProvider.notifier)
-          .topUp(0);
-      final state = container.read(walletControllerProvider);
+        final message = await container
+            .read(walletControllerProvider.notifier)
+            .topUp(0);
+        final state = container.read(walletControllerProvider);
 
-      expect(message, isNull);
-      expect(repository.topUpAmount, isNull);
-      expect(state.isSaving, isFalse);
-    });
+        expect(message, isNull);
+        expect(repository.topUpAmount, isNull);
+        expect(state.isSaving, isFalse);
+      },
+    );
 
     test(
       'runs Razorpay checkout, verifies with backend and refreshes wallet',
@@ -792,10 +959,7 @@ void main() {
 
         expect(message, '₹250.00 added to your wallet.');
         expect(repository.topUpAmount, 250);
-        expect(
-          repository.topUpIdempotencyKey,
-          startsWith('wallet-top-up-'),
-        );
+        expect(repository.topUpIdempotencyKey, startsWith('wallet-top-up-'));
         expect(launcher.openedPayment, same(created));
         expect(paymentRepository.verifiedPaymentId, created.publicId);
         expect(
@@ -815,133 +979,142 @@ void main() {
       },
     );
 
-    test('persists cancellation and surfaces the gateway message on SDK error', () async {
-      final created = PaymentDetails.fromJson(walletTopUpPaymentJson());
-      final cancelled = PaymentDetails.fromJson(
-        walletTopUpPaymentJson(status: 'Cancelled'),
-      );
-      final repository = _WalletTopUpRepository(topUpResult: created);
-      final paymentRepository = _GatewayFlowPaymentRepository(
-        cancelResult: cancelled,
-      );
-      final launcher = _RecordingPaymentGatewayLauncher.failure(
-        const PaymentGatewayException('Payment window was closed.'),
-      );
-      final container = ProviderContainer(
-        overrides: [
-          authRepositoryProvider.overrideWithValue(
-            _AuthenticatedAuthRepository(),
+    test(
+      'persists cancellation and surfaces the gateway message on SDK error',
+      () async {
+        final created = PaymentDetails.fromJson(walletTopUpPaymentJson());
+        final cancelled = PaymentDetails.fromJson(
+          walletTopUpPaymentJson(status: 'Cancelled'),
+        );
+        final repository = _WalletTopUpRepository(topUpResult: created);
+        final paymentRepository = _GatewayFlowPaymentRepository(
+          cancelResult: cancelled,
+        );
+        final launcher = _RecordingPaymentGatewayLauncher.failure(
+          const PaymentGatewayException('Payment window was closed.'),
+        );
+        final container = ProviderContainer(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _AuthenticatedAuthRepository(),
+            ),
+            walletRepositoryProvider.overrideWithValue(repository),
+            paymentRepositoryProvider.overrideWithValue(paymentRepository),
+            paymentGatewayLauncherProvider.overrideWithValue(launcher),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        container.read(sessionControllerProvider);
+        await Future<void>.delayed(Duration.zero);
+
+        final message = await container
+            .read(walletControllerProvider.notifier)
+            .topUp(250);
+        final state = container.read(walletControllerProvider);
+
+        expect(message, 'Payment window was closed.');
+        expect(launcher.openedPayment, same(created));
+        expect(paymentRepository.cancelledPaymentId, created.publicId);
+        expect(repository.loadCalls, 0);
+        expect(state.wallet, isNull);
+        expect(state.isSaving, isFalse);
+        expect(state.errorMessage, 'Payment window was closed.');
+      },
+    );
+
+    test(
+      'does not refresh the wallet when the backend verification fails',
+      () async {
+        final created = PaymentDetails.fromJson(walletTopUpPaymentJson());
+        final failed = PaymentDetails.fromJson(
+          walletTopUpPaymentJson(
+            status: 'Failed',
+            failureMessage: 'Payment failed at the gateway.',
           ),
-          walletRepositoryProvider.overrideWithValue(repository),
-          paymentRepositoryProvider.overrideWithValue(paymentRepository),
-          paymentGatewayLauncherProvider.overrideWithValue(launcher),
-        ],
-      );
-      addTearDown(container.dispose);
-
-      container.read(sessionControllerProvider);
-      await Future<void>.delayed(Duration.zero);
-
-      final message = await container
-          .read(walletControllerProvider.notifier)
-          .topUp(250);
-      final state = container.read(walletControllerProvider);
-
-      expect(message, 'Payment window was closed.');
-      expect(launcher.openedPayment, same(created));
-      expect(paymentRepository.cancelledPaymentId, created.publicId);
-      expect(repository.loadCalls, 0);
-      expect(state.wallet, isNull);
-      expect(state.isSaving, isFalse);
-      expect(state.errorMessage, 'Payment window was closed.');
-    });
-
-    test('does not refresh the wallet when the backend verification fails', () async {
-      final created = PaymentDetails.fromJson(walletTopUpPaymentJson());
-      final failed = PaymentDetails.fromJson(
-        walletTopUpPaymentJson(
-          status: 'Failed',
-          failureMessage: 'Payment failed at the gateway.',
-        ),
-      );
-      final repository = _WalletTopUpRepository(topUpResult: created);
-      final paymentRepository = _GatewayFlowPaymentRepository(
-        verifyResult: failed,
-      );
-      final launcher = _RecordingPaymentGatewayLauncher.success(
-        const PaymentGatewayCallback(
-          gatewayPaymentId: 'pay_cb',
-          gatewayOrderId: 'order_cb',
-          signature: 'sig',
-        ),
-      );
-      final container = ProviderContainer(
-        overrides: [
-          authRepositoryProvider.overrideWithValue(
-            _AuthenticatedAuthRepository(),
+        );
+        final repository = _WalletTopUpRepository(topUpResult: created);
+        final paymentRepository = _GatewayFlowPaymentRepository(
+          verifyResult: failed,
+        );
+        final launcher = _RecordingPaymentGatewayLauncher.success(
+          const PaymentGatewayCallback(
+            gatewayPaymentId: 'pay_cb',
+            gatewayOrderId: 'order_cb',
+            signature: 'sig',
           ),
-          walletRepositoryProvider.overrideWithValue(repository),
-          paymentRepositoryProvider.overrideWithValue(paymentRepository),
-          paymentGatewayLauncherProvider.overrideWithValue(launcher),
-        ],
-      );
-      addTearDown(container.dispose);
+        );
+        final container = ProviderContainer(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _AuthenticatedAuthRepository(),
+            ),
+            walletRepositoryProvider.overrideWithValue(repository),
+            paymentRepositoryProvider.overrideWithValue(paymentRepository),
+            paymentGatewayLauncherProvider.overrideWithValue(launcher),
+          ],
+        );
+        addTearDown(container.dispose);
 
-      container.read(sessionControllerProvider);
-      await Future<void>.delayed(Duration.zero);
+        container.read(sessionControllerProvider);
+        await Future<void>.delayed(Duration.zero);
 
-      final message = await container
-          .read(walletControllerProvider.notifier)
-          .topUp(250);
-      final state = container.read(walletControllerProvider);
+        final message = await container
+            .read(walletControllerProvider.notifier)
+            .topUp(250);
+        final state = container.read(walletControllerProvider);
 
-      expect(message, 'Payment failed at the gateway.');
-      expect(repository.loadCalls, 0);
-      expect(state.wallet, isNull);
-      expect(state.isSaving, isFalse);
-      expect(state.errorMessage, 'Payment failed at the gateway.');
-    });
+        expect(message, 'Payment failed at the gateway.');
+        expect(repository.loadCalls, 0);
+        expect(state.wallet, isNull);
+        expect(state.isSaving, isFalse);
+        expect(state.errorMessage, 'Payment failed at the gateway.');
+      },
+    );
 
-    test('surfaces a terminal payment at creation without opening checkout', () async {
-      final failed = PaymentDetails.fromJson(
-        walletTopUpPaymentJson(
-          status: 'Failed',
-          failureMessage: 'Gateway order could not be created.',
-        ),
-      );
-      final repository = _WalletTopUpRepository(topUpResult: failed);
-      final launcher = _RecordingPaymentGatewayLauncher.success(
-        const PaymentGatewayCallback(
-          gatewayPaymentId: 'pay_cb',
-          gatewayOrderId: 'order_cb',
-          signature: 'sig',
-        ),
-      );
-      final container = ProviderContainer(
-        overrides: [
-          authRepositoryProvider.overrideWithValue(
-            _AuthenticatedAuthRepository(),
+    test(
+      'surfaces a terminal payment at creation without opening checkout',
+      () async {
+        final failed = PaymentDetails.fromJson(
+          walletTopUpPaymentJson(
+            status: 'Failed',
+            failureMessage: 'Gateway order could not be created.',
           ),
-          walletRepositoryProvider.overrideWithValue(repository),
-          paymentGatewayLauncherProvider.overrideWithValue(launcher),
-        ],
-      );
-      addTearDown(container.dispose);
+        );
+        final repository = _WalletTopUpRepository(topUpResult: failed);
+        final launcher = _RecordingPaymentGatewayLauncher.success(
+          const PaymentGatewayCallback(
+            gatewayPaymentId: 'pay_cb',
+            gatewayOrderId: 'order_cb',
+            signature: 'sig',
+          ),
+        );
+        final container = ProviderContainer(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _AuthenticatedAuthRepository(),
+            ),
+            walletRepositoryProvider.overrideWithValue(repository),
+            paymentGatewayLauncherProvider.overrideWithValue(launcher),
+          ],
+        );
+        addTearDown(container.dispose);
 
-      container.read(sessionControllerProvider);
-      await Future<void>.delayed(Duration.zero);
+        container.read(sessionControllerProvider);
+        await Future<void>.delayed(Duration.zero);
 
-      final message = await container
-          .read(walletControllerProvider.notifier)
-          .topUp(250);
-      final state = container.read(walletControllerProvider);
+        final message = await container
+            .read(walletControllerProvider.notifier)
+            .topUp(250);
+        final state = container.read(walletControllerProvider);
 
-      expect(message, 'Gateway order could not be created.');
-      expect(launcher.openedPayment, isNull);
-      expect(repository.loadCalls, 0);
-      expect(state.wallet, isNull);
-      expect(state.errorMessage, 'Gateway order could not be created.');
-    });
+        expect(message, 'Gateway order could not be created.');
+        expect(launcher.openedPayment, isNull);
+        expect(repository.loadCalls, 0);
+        expect(state.wallet, isNull);
+        expect(state.errorMessage, 'Gateway order could not be created.');
+      },
+    );
 
     test('refreshes the wallet for an already successful payment (idempotent replay)', () async {
       final succeeded = PaymentDetails.fromJson(

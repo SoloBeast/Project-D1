@@ -1,8 +1,8 @@
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/utils/country_codes.dart';
 import 'package:doodh_direct_mobile/core/utils/india_mobile.dart';
 import 'package:doodh_direct_mobile/core/utils/mobile_number.dart';
 import 'package:doodh_direct_mobile/core/widgets/country_code_mobile_field.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
@@ -110,14 +110,14 @@ class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
       );
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: DoodhSpacing.pagePadding,
       children: [
         if (state.savedMessage != null) ...[
-          _SavedBanner(message: state.savedMessage!),
+          DoodhSavedBanner(message: state.savedMessage!),
           const SizedBox(height: 12),
         ],
         if (state.errorMessage != null) ...[
-          _ErrorBanner(message: state.errorMessage!),
+          DoodhErrorBanner(message: state.errorMessage!),
           const SizedBox(height: 12),
         ],
         ...items.map(
@@ -130,48 +130,6 @@ class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
       ],
     );
   }
-}
-
-class _SavedBanner extends StatelessWidget {
-  const _SavedBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    color: DoodhColors.mint,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          const Icon(Icons.check_circle_outline, color: DoodhColors.tealDark),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message)),
-        ],
-      ),
-    ),
-  );
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    color: Theme.of(context).colorScheme.errorContainer,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          Icon(Icons.error_outline, color: Theme.of(context).colorScheme.error),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message)),
-        ],
-      ),
-    ),
-  );
 }
 
 class _EmployeeCard extends ConsumerWidget {
@@ -196,7 +154,7 @@ class _EmployeeCard extends ConsumerWidget {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.cardPadding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -208,9 +166,13 @@ class _EmployeeCard extends ConsumerWidget {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
-                _ActiveBadge(
-                  isActive: employee.isActive,
-                  isArchived: employee.isArchived,
+                DoodhChip(
+                  label: employee.isArchived
+                      ? 'Archived'
+                      : (employee.isActive ? 'Active' : 'Inactive'),
+                  tone: employee.isArchived || !employee.isActive
+                      ? DoodhTone.neutral
+                      : DoodhTone.success,
                 ),
               ],
             ),
@@ -456,37 +418,6 @@ class _InvitationRow extends StatelessWidget {
   }
 }
 
-class _ActiveBadge extends StatelessWidget {
-  const _ActiveBadge({required this.isActive, this.isArchived = false});
-
-  final bool isActive;
-  final bool isArchived;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: isArchived || !isActive
-            ? scheme.surfaceContainerHighest
-            : DoodhColors.mint,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        isArchived ? 'Archived' : (isActive ? 'Active' : 'Inactive'),
-        style: TextStyle(
-          color: isActive && !isArchived
-              ? DoodhColors.tealDark
-              : scheme.onSurfaceVariant,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
 /// Create Employee → Name, Mobile, Email, Role, Branch. OWNER is intentionally
 /// absent from the role selector. Requires `EMPLOYEES.MANAGE`.
 class CreateEmployeeScreen extends ConsumerStatefulWidget {
@@ -549,10 +480,10 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Create employee')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.pagePadding,
         children: [
           if (state.errorMessage != null) ...[
-            _ErrorBanner(message: state.errorMessage!),
+            DoodhErrorBanner(message: state.errorMessage!),
             const SizedBox(height: 12),
           ],
           Form(
@@ -805,10 +736,10 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
     return Scaffold(
       appBar: AppBar(title: Text('Edit ${employee.displayName}')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.pagePadding,
         children: [
           if (state.errorMessage != null) ...[
-            _ErrorBanner(message: state.errorMessage!),
+            DoodhErrorBanner(message: state.errorMessage!),
             const SizedBox(height: 12),
           ],
           _InvitationRow(
@@ -1083,19 +1014,19 @@ class _EmployeeInvitationScreenState
     }
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: DoodhSpacing.pagePadding,
       children: [
         if (state.savedMessage != null) ...[
-          _SavedBanner(message: state.savedMessage!),
+          DoodhSavedBanner(message: state.savedMessage!),
           const SizedBox(height: 12),
         ],
         if (state.errorMessage != null) ...[
-          _ErrorBanner(message: state.errorMessage!),
+          DoodhErrorBanner(message: state.errorMessage!),
           const SizedBox(height: 12),
         ],
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: DoodhSpacing.cardPadding,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

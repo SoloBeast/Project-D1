@@ -1,6 +1,7 @@
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
+import 'package:doodh_direct_mobile/core/widgets/product_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_controller.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
@@ -134,132 +135,243 @@ class _SubscriptionSetupScreenState
   ) {
     final product = products.firstWhere((item) => item.publicId == _productId);
     final estimate = product.price * _quantity * _entitlement;
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    // On tablets/web the setup becomes a two-column composition (plan on the
+    // left, address + payment on the right) on a constrained reading width;
+    // phones keep the single guided column.
+    final useTwoColumn = MediaQuery.sizeOf(context).width >=
+        DoodhBreakpoints.medium;
+    Widget planSections() => Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        DropdownButtonFormField<String>(
-          initialValue: product.publicId,
-          decoration: const InputDecoration(labelText: 'Product'),
-          items: products
-              .map(
-                (item) => DropdownMenuItem(
-                  value: item.publicId,
-                  child: Text(item.name),
-                ),
-              )
-              .toList(),
-          onChanged: (value) => setState(() => _productId = value),
-        ),
-        const SizedBox(height: 12),
-        DropdownButtonFormField<String>(
-          initialValue: _addressId,
-          decoration: const InputDecoration(labelText: 'Delivery address'),
-          items: addresses
-              .map(
-                (item) => DropdownMenuItem(
-                  value: item.publicId,
-                  child: Text('${item.label} - ${item.city}'),
-                ),
-              )
-              .toList(),
-          onChanged: (value) => setState(() => _addressId = value),
-        ),
-        const SizedBox(height: 12),
-        TextFormField(
-          initialValue: _quantity.toString(),
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(
-            labelText: 'Quantity per delivery (${product.unitLabel})',
-          ),
-          onChanged: (value) => _quantity = double.tryParse(value) ?? 0,
-        ),
-        const SizedBox(height: 12),
-        TextFormField(
-          initialValue: _entitlement.toString(),
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Total deliveries'),
-          onChanged: (value) => _entitlement = int.tryParse(value) ?? 0,
-        ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Start date'),
-          subtitle: Text(_formatDate(_startDate)),
-          trailing: const Icon(Icons.calendar_today_outlined),
-          onTap: _pickStartDate,
-        ),
-        Text('Delivery days', style: Theme.of(context).textTheme.titleMedium),
-        Wrap(
-          spacing: 4,
-          children: DeliveryWeekday.values
-              .map(
-                (day) => FilterChip(
-                  label: Text(day.shortLabel),
-                  selected: _days.contains(day),
-                  onSelected: (selected) => setState(
-                    () => selected ? _days.add(day) : _days.remove(day),
+        DoodhSectionCard(
+          icon: Icons.local_drink_outlined,
+          title: '1. Choose your product',
+          subtitle: 'Fresh delivery from an available branch',
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 84,
+                  child: DoodhProductImage(
+                    height: 84,
+                    imageUrl: product.usableImageUrl,
+                    icon: doodhProductUnitIcon(product.unitOfMeasure),
+                    semanticLabel: '${product.name} product image',
+                    borderRadius: DoodhRadii.mdRadius,
                   ),
                 ),
-              )
-              .toList(),
+                const SizedBox(width: DoodhSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(product.name, style: Theme.of(context).textTheme.titleLarge),
+                      const SizedBox(height: DoodhSpacing.xs),
+                      DoodhPriceTag(amount: product.price),
+                      const SizedBox(height: DoodhSpacing.sm),
+                      DropdownButtonFormField<String>(
+                        initialValue: product.publicId,
+                        decoration: const InputDecoration(labelText: 'Change product'),
+                        items: products.map((item) => DropdownMenuItem(value: item.publicId, child: Text(item.name))).toList(),
+                        onChanged: (value) => setState(() => _productId = value),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
-        DropdownButtonFormField<SubscriptionDeliverySlot>(
-          initialValue: _slot,
-          decoration: const InputDecoration(labelText: 'Delivery slot'),
-          items: SubscriptionDeliverySlot.values
-              .map(
-                (slot) =>
-                    DropdownMenuItem(value: slot, child: Text(slot.apiValue)),
-              )
-              .toList(),
-          onChanged: (value) => setState(() => _slot = value!),
+        const SizedBox(height: DoodhSpacing.md),
+        DoodhSectionCard(
+          icon: Icons.water_drop_outlined,
+          title: '2. Set quantity and prepaid coverage',
+          subtitle: 'Your quantity is applied to each generated delivery',
+          children: [
+            TextFormField(
+              initialValue: _quantity.toString(),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(labelText: 'Quantity per delivery (${product.unitLabel})'),
+              onChanged: (value) => _quantity = double.tryParse(value) ?? 0,
+            ),
+            const SizedBox(height: DoodhSpacing.md),
+            TextFormField(
+              initialValue: _entitlement.toString(),
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Total deliveries',
+                helperText: 'Choose between 1 and 366 prepaid deliveries',
+              ),
+              onChanged: (value) => _entitlement = int.tryParse(value) ?? 0,
+            ),
+          ],
         ),
-        const SizedBox(height: 12),
-        RadioGroup<PaymentMethod>(
-          groupValue: _paymentMethod,
-          onChanged: (value) => setState(() => _paymentMethod = value!),
-          child: Column(
-            children: [
-              const RadioListTile(
-                value: PaymentMethod.wallet,
-                title: Text('DoodhDirect Wallet'),
+        const SizedBox(height: DoodhSpacing.md),
+        DoodhSectionCard(
+          icon: Icons.event_repeat_outlined,
+          title: '3. Choose your delivery rhythm',
+          subtitle: 'Select at least one day and a preferred time window',
+          children: [
+            Semantics(
+              container: true,
+              label: 'Delivery days, ${_days.length} selected',
+              child: Wrap(
+                spacing: DoodhSpacing.xs,
+                runSpacing: DoodhSpacing.xs,
+                children: DeliveryWeekday.values.map((day) => FilterChip(
+                  label: Text(day.shortLabel),
+                  tooltip: day.apiValue,
+                  selected: _days.contains(day),
+                  onSelected: (selected) => setState(() => selected ? _days.add(day) : _days.remove(day)),
+                )).toList(),
               ),
-              const RadioListTile(
-                value: PaymentMethod.razorpay,
-                title: Text('Razorpay'),
+            ),
+            const SizedBox(height: DoodhSpacing.sm),
+            DropdownButtonFormField<SubscriptionDeliverySlot>(
+              initialValue: _slot,
+              decoration: const InputDecoration(labelText: 'Delivery slot'),
+              items: SubscriptionDeliverySlot.values.map((slot) => DropdownMenuItem(value: slot, child: Text(slot.apiValue))).toList(),
+              onChanged: (value) => setState(() => _slot = value!),
+            ),
+          ],
+        ),
+      ],
+    );
+
+    Widget logisticsSections() => Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DoodhSectionCard(
+          icon: Icons.location_on_outlined,
+          title: '4. Delivery address and start date',
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _addressId,
+              decoration: const InputDecoration(labelText: 'Delivery address'),
+              items: addresses.map((item) => DropdownMenuItem(value: item.publicId, child: Text('${item.label} - ${item.city}'))).toList(),
+              onChanged: (value) => setState(() => _addressId = value),
+            ),
+            const SizedBox(height: DoodhSpacing.xs),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Start date'),
+              subtitle: Text(_formatDate(_startDate)),
+              trailing: const Icon(Icons.calendar_today_outlined),
+              onTap: _pickStartDate,
+            ),
+          ],
+        ),
+        const SizedBox(height: DoodhSpacing.md),
+        DoodhSectionCard(
+          icon: Icons.lock_outline,
+          title: '5. Review and pay',
+          subtitle: 'Payment and activation are confirmed by DoodhDirect',
+          children: [
+            DoodhCard(
+              color: DoodhColors.mint,
+              semanticLabel: 'Prepaid estimate for ${formatQuantity(_quantity)} per delivery and $_entitlement deliveries',
+              child: Row(
+                children: [
+                  const Icon(Icons.receipt_long_outlined),
+                  const SizedBox(width: DoodhSpacing.sm),
+                  Expanded(child: Text('${formatQuantity(_quantity)} ${product.unitLabel} × $_entitlement deliveries\nEstimate only; final payable amount is confirmed by the server.')),
+                  DoodhPriceTag(amount: estimate),
+                ],
               ),
+            ),
+            const SizedBox(height: DoodhSpacing.md),
+            RadioGroup<PaymentMethod>(
+              groupValue: _paymentMethod,
+              onChanged: (value) => setState(() => _paymentMethod = value!),
+              child: const Column(children: [
+                RadioListTile(value: PaymentMethod.wallet, title: Text('DoodhDirect Wallet'), contentPadding: EdgeInsets.zero),
+                RadioListTile(value: PaymentMethod.razorpay, title: Text('Razorpay'), contentPadding: EdgeInsets.zero),
+              ]),
+            ),
+            if (state.errorMessage != null) ...[
+              const SizedBox(height: DoodhSpacing.sm),
+              DoodhErrorBanner(message: state.errorMessage!),
             ],
-          ),
+          ],
         ),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.receipt_long_outlined),
-            title: const Text('Prepaid estimate'),
-            subtitle: Text(
-              '${formatQuantity(_quantity)} x $_entitlement deliveries',
+      ],
+    );
+
+    // The primary CTA stays sticky at the bottom on phones so the pay action
+    // is always reachable; on wide layouts it flows inline after the form.
+    final cta = DoodhButton(
+      label: state.isSaving ? 'Processing...' : 'Continue to payment',
+      icon: state.isSaving ? null : Icons.lock_outline,
+      busy: state.isSaving,
+      expand: true,
+      onPressed: state.isSaving ? null : _create,
+    );
+    return Stack(
+      children: [
+        ListView(
+          padding: EdgeInsets.fromLTRB(
+            DoodhSpacing.md,
+            DoodhSpacing.md,
+            DoodhSpacing.md,
+            useTwoColumn ? DoodhSpacing.xl : 96,
+          ),
+          children: [
+            Text('Build your recurring plan', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: DoodhSpacing.xs),
+            const Text('Choose what you need, when it arrives, and how much prepaid coverage to keep.'),
+            const SizedBox(height: DoodhSpacing.lg),
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: DoodhContentMax.form),
+                child: useTwoColumn
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: planSections()),
+                          const SizedBox(width: DoodhSpacing.lg),
+                          Expanded(child: logisticsSections()),
+                        ],
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          planSections(),
+                          const SizedBox(height: DoodhSpacing.md),
+                          logisticsSections(),
+                        ],
+                      ),
+              ),
             ),
-            trailing: Text('Rs ${estimate.toStringAsFixed(2)}'),
-          ),
+            if (useTwoColumn) ...[
+              const SizedBox(height: DoodhSpacing.lg),
+              cta,
+            ],
+          ],
         ),
-        if (state.errorMessage != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Text(
-              state.errorMessage!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+        if (!useTwoColumn)
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Container(
+              width: double.infinity,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                border: Border(top: BorderSide(color: DoodhColors.line)),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    DoodhSpacing.md,
+                    DoodhSpacing.sm,
+                    DoodhSpacing.md,
+                    DoodhSpacing.sm,
+                  ),
+                  child: cta,
+                ),
+              ),
             ),
           ),
-        const SizedBox(height: 16),
-        FilledButton.icon(
-          onPressed: state.isSaving ? null : _create,
-          icon: state.isSaving
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.lock_outline),
-          label: Text(state.isSaving ? 'Processing...' : 'Continue to payment'),
-        ),
       ],
     );
   }
@@ -368,31 +480,23 @@ class _SubscriptionListScreenState
           )
         : RefreshIndicator(
             onRefresh: _refresh,
-            child: ListView.separated(
+            child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
-              itemCount: state.subscriptions.length,
-              separatorBuilder: (_, index) => const SizedBox(height: 10),
-              itemBuilder: (context, index) {
-                final subscription = state.subscriptions[index];
-                return Card(
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      child: Icon(_statusIcon(subscription.status)),
-                    ),
-                    title: Text(subscription.productName),
-                    subtitle: Text(
-                      '${subscription.formattedQuantity}\n'
-                      '${subscription.scheduleLabel} | '
-                      '${subscription.remainingEntitlement} deliveries remaining',
-                    ),
-                    isThreeLine: true,
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () =>
-                        context.push('/subscriptions/${subscription.publicId}'),
-                  ),
-                );
-              },
+              padding: DoodhSpacing.pagePadding,
+              children: [
+                Text('Your recurring plans', style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: DoodhSpacing.xs),
+                const Text('See your delivery rhythm, prepaid balance, and current plan status at a glance.'),
+                const SizedBox(height: DoodhSpacing.lg),
+                DoodhGrid(
+                  minItemWidth: 320,
+                  maxColumns: 2,
+                  children: state.subscriptions.map((subscription) => _SubscriptionPlanCard(
+                    subscription: subscription,
+                    onTap: () => context.push('/subscriptions/${subscription.publicId}'),
+                  )).toList(),
+                ),
+              ],
             ),
           );
     return CustomerShell(
@@ -416,15 +520,102 @@ class _SubscriptionListScreenState
     );
   }
 
-  IconData _statusIcon(SubscriptionStatus status) => switch (status) {
-    SubscriptionStatus.active => Icons.play_circle_outline,
-    SubscriptionStatus.paused => Icons.pause_circle_outline,
-    SubscriptionStatus.completed => Icons.check_circle_outline,
-    SubscriptionStatus.cancelled => Icons.cancel_outlined,
-    SubscriptionStatus.paymentPending => Icons.pending_outlined,
-    SubscriptionStatus.paymentFailed => Icons.error_outline,
-    SubscriptionStatus.unknown => Icons.help_outline,
-  };
+}
+
+class _SubscriptionPlanCard extends StatelessWidget {
+  const _SubscriptionPlanCard({required this.subscription, required this.onTap});
+
+  final SubscriptionDetails subscription;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => DoodhCard(
+    onTap: onTap,
+    semanticLabel: '${subscription.productName}, ${subscription.formattedQuantity}, ${subscription.status.label}, ${subscription.remainingEntitlement} deliveries remaining',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 72,
+              child: DoodhProductImage(
+                height: 72,
+                icon: doodhProductUnitIcon(subscription.unitOfMeasure),
+                semanticLabel: '${subscription.productName} product image',
+                borderRadius: DoodhRadii.mdRadius,
+              ),
+            ),
+            const SizedBox(width: DoodhSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(subscription.productName, style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: DoodhSpacing.xs),
+                  Text(subscription.formattedQuantity),
+                ],
+              ),
+            ),
+            const SizedBox(width: DoodhSpacing.xs),
+            _SubscriptionStatusPill(status: subscription.status),
+          ],
+        ),
+        const SizedBox(height: DoodhSpacing.md),
+        Row(
+          children: [
+            const Icon(Icons.event_repeat_outlined, size: 20),
+            const SizedBox(width: DoodhSpacing.sm),
+            Expanded(child: Text(subscription.scheduleLabel)),
+          ],
+        ),
+        const SizedBox(height: DoodhSpacing.md),
+        Semantics(
+          container: true,
+          label: '${subscription.usedEntitlement} of ${subscription.totalEntitlement} prepaid deliveries used, ${subscription.remainingEntitlement} deliveries remaining',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${subscription.remainingEntitlement} deliveries remaining',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${subscription.usedEntitlement}/${subscription.totalEntitlement}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: DoodhColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: DoodhSpacing.sm),
+              LinearProgressIndicator(
+                value: subscription.entitlementProgress,
+                minHeight: 6,
+                borderRadius: BorderRadius.circular(DoodhRadii.pillValue),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: DoodhSpacing.lg),
+        Row(
+          children: [
+            const Icon(Icons.visibility_outlined, size: 18),
+            const SizedBox(width: DoodhSpacing.sm),
+            const Expanded(child: Text('View details')),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+      ],
+    ),
+  );
 }
 
 class SubscriptionDetailScreen extends ConsumerStatefulWidget {
@@ -496,209 +687,345 @@ class _SubscriptionDetailScreenState
     SubscriptionState state,
   ) => RefreshIndicator(
     onRefresh: _reload,
-    child: ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(16),
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Text(
-                subscription.productName,
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-            ),
-            _SubscriptionStatusPill(status: subscription.status),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Card(
-          color: DoodhColors.mint,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${subscription.remainingEntitlement} deliveries remaining',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${subscription.usedEntitlement} of ${subscription.totalEntitlement} deliveries used',
-                ),
-                const SizedBox(height: 12),
-                LinearProgressIndicator(
-                  value: subscription.entitlementProgress,
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-        DoodhSectionHeader(
-          title: 'Your plan',
-          action: Text(
-            subscription.formattedPayableAmount,
-            style: const TextStyle(fontWeight: FontWeight.w800),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Card(
-          child: Column(
+    child: DoodhResponsive(
+      builder: (context, size) {
+        final useTwoColumn = size != DoodhWindowSize.compact;
+        Widget heroCard() => DoodhCard(
+          color: DoodhColors.tealDark,
+          semanticLabel:
+              '${subscription.productName}, ${subscription.formattedQuantity}, ${subscription.status.label}',
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ListTile(
-                leading: const Icon(Icons.local_drink_outlined),
-                title: Text(subscription.formattedQuantity),
-                subtitle: Text(subscription.productSku),
-              ),
-              ListTile(
-                leading: const Icon(Icons.calendar_month_outlined),
-                title: Text(subscription.scheduleLabel),
-                subtitle: Text(
-                  '${_formatDate(subscription.startDate)} to ${_formatDate(subscription.endDate)}',
+              ExcludeSemantics(
+                child: Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: DoodhColors.mint,
+                    borderRadius: DoodhRadii.mdRadius,
+                  ),
+                  child: Icon(
+                    doodhProductUnitIcon(subscription.unitOfMeasure),
+                    color: DoodhColors.tealDark,
+                  ),
                 ),
               ),
-              ListTile(
-                leading: const Icon(Icons.payments_outlined),
-                title: Text(subscription.formattedPayableAmount),
-                subtitle: Text(
-                  '₹${subscription.unitPrice.toStringAsFixed(2)} per unit',
+              const SizedBox(width: DoodhSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      subscription.productName,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: DoodhSpacing.xs),
+                    Text(
+                      subscription.formattedQuantity,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ],
                 ),
               ),
+              const SizedBox(width: DoodhSpacing.xs),
+              _SubscriptionStatusPill(status: subscription.status),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-        DoodhSectionHeader(title: 'Delivery address'),
-        const SizedBox(height: 8),
-        Card(
-          child: ListTile(
-            leading: const Icon(Icons.location_on_outlined),
-            title: Text(subscription.address),
-            subtitle: const Text('Used for upcoming deliveries'),
-          ),
-        ),
-        if (state.errorMessage != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              state.errorMessage!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
+        );
+
+        Widget statusAndPlanColumn() => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            heroCard(),
+            const SizedBox(height: DoodhSpacing.md),
+            // Prepaid entitlement: the trust anchor of the plan.
+            DoodhCard(
+              color: DoodhColors.mint,
+              semanticLabel:
+                  '${subscription.remainingEntitlement} deliveries remaining, ${subscription.usedEntitlement} of ${subscription.totalEntitlement} prepaid deliveries used',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${subscription.remainingEntitlement} deliveries remaining',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: DoodhSpacing.xs),
+                  Text(
+                    '${subscription.usedEntitlement} of ${subscription.totalEntitlement} deliveries used',
+                  ),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  Semantics(
+                    container: true,
+                    label:
+                        '${subscription.usedEntitlement} of ${subscription.totalEntitlement} prepaid deliveries used',
+                    child: LinearProgressIndicator(
+                      value: subscription.entitlementProgress,
+                      minHeight: 6,
+                      borderRadius: BorderRadius.circular(
+                        DoodhRadii.pillValue,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  Text(
+                    'Prepaid plan value ${subscription.formattedPayableAmount}',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: DoodhColors.tealDark,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        if (subscription.status == SubscriptionStatus.paymentPending ||
-            subscription.status == SubscriptionStatus.paymentFailed) ...[
-          const SizedBox(height: 8),
-          Text(
-            'Status: ${subscription.status.label}',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          Text('Amount Due: ${subscription.formattedPayableAmount}'),
-          const SizedBox(height: 8),
-          Text(
-            subscription.status == SubscriptionStatus.paymentPending
-                ? 'Complete Payment'
-                : 'Retry Payment',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          RadioGroup<PaymentMethod>(
-            groupValue: _retryPaymentMethod,
-            onChanged: (value) {
-              if (!state.isSaving && value != null) {
-                setState(() => _retryPaymentMethod = value);
-              }
-            },
-            child: Column(
+            const SizedBox(height: DoodhSpacing.md),
+            _planCard(context, subscription),
+          ],
+        );
+
+        Widget addressAndActionsColumn() => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DoodhSectionCard(
+              icon: Icons.location_on_outlined,
+              title: 'Delivery address',
               children: [
-                const RadioListTile(
-                  value: PaymentMethod.wallet,
-                  title: Text('DoodhDirect Wallet'),
-                ),
-                const RadioListTile(
-                  value: PaymentMethod.razorpay,
-                  title: Text('Razorpay'),
+                DoodhInfoTile(
+                  icon: Icons.location_on_outlined,
+                  title: subscription.address,
+                  subtitle: 'Used for upcoming deliveries',
                 ),
               ],
             ),
-          ),
-          FilledButton.icon(
-            onPressed: state.isSaving ? null : _retryPayment,
-            icon: state.isSaving
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Icon(
-                    subscription.status == SubscriptionStatus.paymentPending
-                        ? Icons.payment
-                        : Icons.replay,
+            if (state.errorMessage != null) ...[
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhInfoBanner(
+                tone: DoodhTone.error,
+                message: state.errorMessage!,
+              ),
+            ],
+            if (subscription.status == SubscriptionStatus.paymentPending ||
+                subscription.status == SubscriptionStatus.paymentFailed) ...[
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhSectionCard(
+                icon: Icons.priority_high_outlined,
+                title: subscription.status == SubscriptionStatus.paymentPending
+                    ? 'Complete Payment'
+                    : 'Retry Payment',
+                subtitle: 'Status: ${subscription.status.label}',
+                children: [
+                  Text('Amount Due: ${subscription.formattedPayableAmount}'),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  RadioGroup<PaymentMethod>(
+                    groupValue: _retryPaymentMethod,
+                    onChanged: (value) {
+                      if (!state.isSaving && value != null) {
+                        setState(() => _retryPaymentMethod = value);
+                      }
+                    },
+                    child: const Column(
+                      children: [
+                        RadioListTile(
+                          value: PaymentMethod.wallet,
+                          title: Text('DoodhDirect Wallet'),
+                        ),
+                        RadioListTile(
+                          value: PaymentMethod.razorpay,
+                          title: Text('Razorpay'),
+                        ),
+                      ],
+                    ),
                   ),
-            label: Text(
-              state.isSaving
-                  ? 'Processing...'
-                  : subscription.status == SubscriptionStatus.paymentPending
-                  ? 'Complete Payment'
-                  : 'Retry Payment',
+                  const SizedBox(height: DoodhSpacing.sm),
+                  FilledButton.icon(
+                    onPressed: state.isSaving ? null : _retryPayment,
+                    icon: state.isSaving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            subscription.status ==
+                                    SubscriptionStatus.paymentPending
+                                ? Icons.payment
+                                : Icons.replay,
+                          ),
+                    label: Text(
+                      state.isSaving
+                          ? 'Processing...'
+                          : subscription.status ==
+                                    SubscriptionStatus.paymentPending
+                              ? 'Complete Payment'
+                              : 'Retry Payment',
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: DoodhSpacing.md),
+            DoodhSectionCard(
+              icon: Icons.tune_outlined,
+              title: 'Manage this plan',
+              subtitle: 'Changes apply to upcoming deliveries on the server.',
+              children: [
+                // Schedule updates are disabled: after a subscription is
+                // placed the customer may only hold (pause/resume) or
+                // cancel it.
+                if (subscription.status.canPause)
+                  OutlinedButton.icon(
+                    onPressed: state.isSaving
+                        ? null
+                        : () => _action(
+                            'pause',
+                            'Pause subscription?',
+                            ref
+                                .read(subscriptionControllerProvider.notifier)
+                                .pause,
+                          ),
+                    icon: const Icon(Icons.pause),
+                    label: const Text('Pause subscription'),
+                  ),
+                if (subscription.status.canResume)
+                  OutlinedButton.icon(
+                    onPressed: state.isSaving
+                        ? null
+                        : () => _action(
+                            'resume',
+                            'Resume subscription?',
+                            ref
+                                .read(subscriptionControllerProvider.notifier)
+                                .resume,
+                          ),
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Resume subscription'),
+                  ),
+                if (subscription.status.canCancel)
+                  TextButton.icon(
+                    onPressed: state.isSaving
+                        ? null
+                        : () => _action(
+                            'cancel',
+                            'Cancel subscription?',
+                            ref
+                                .read(subscriptionControllerProvider.notifier)
+                                .cancel,
+                          ),
+                    icon: const Icon(Icons.cancel_outlined),
+                    label: const Text('Cancel subscription'),
+                  ),
+              ],
             ),
-          ),
-        ],
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: subscription.status.canUpdate && !state.isSaving
-              ? () => _edit(context, subscription)
-              : null,
-          icon: const Icon(Icons.edit_outlined),
-          label: const Text('Update schedule'),
-        ),
-        if (subscription.status.canPause)
-          OutlinedButton.icon(
-            onPressed: state.isSaving
-                ? null
-                : () => _action(
-                    'pause',
-                    'Pause subscription?',
-                    ref.read(subscriptionControllerProvider.notifier).pause,
-                  ),
-            icon: const Icon(Icons.pause),
-            label: const Text('Pause subscription'),
-          ),
-        if (subscription.status.canResume)
-          OutlinedButton.icon(
-            onPressed: state.isSaving
-                ? null
-                : () => _action(
-                    'resume',
-                    'Resume subscription?',
-                    ref.read(subscriptionControllerProvider.notifier).resume,
-                  ),
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Resume subscription'),
-          ),
-        if (subscription.status.canCancel)
-          TextButton.icon(
-            onPressed: state.isSaving
-                ? null
-                : () => _action(
-                    'cancel',
-                    'Cancel subscription?',
-                    ref.read(subscriptionControllerProvider.notifier).cancel,
-                  ),
-            icon: const Icon(Icons.cancel_outlined),
-            label: const Text('Cancel subscription'),
-          ),
-        const SizedBox(height: 8),
-        FilledButton.icon(
-          onPressed: () =>
-              context.push('/subscriptions/${subscription.publicId}/calendar'),
-          icon: const Icon(Icons.event_note_outlined),
-          label: const Text('View delivery calendar'),
-        ),
-      ],
+            const SizedBox(height: DoodhSpacing.md),
+            DoodhButton(
+              label: 'View delivery calendar',
+              icon: Icons.event_note_outlined,
+              variant: DoodhButtonVariant.secondary,
+              expand: true,
+              onPressed: () => context.push(
+                '/subscriptions/${subscription.publicId}/calendar',
+              ),
+            ),
+          ],
+        );
+
+        return ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: DoodhSpacing.pagePadding,
+          children: [
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: DoodhContentMax.form,
+                ),
+                child: useTwoColumn
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: statusAndPlanColumn()),
+                          const SizedBox(width: DoodhSpacing.lg),
+                          Expanded(child: addressAndActionsColumn()),
+                        ],
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          statusAndPlanColumn(),
+                          const SizedBox(height: DoodhSpacing.md),
+                          addressAndActionsColumn(),
+                        ],
+                      ),
+              ),
+            ),
+          ],
+        );
+      },
     ),
   );
+
+  Widget _planCard(BuildContext context, SubscriptionDetails subscription) {
+    final nextDelivery = _nextDeliverySummary(subscription);
+    return DoodhSectionCard(
+      icon: Icons.receipt_long_outlined,
+      title: 'Your plan',
+      trailing: Text(
+        subscription.formattedPayableAmount,
+        style: const TextStyle(fontWeight: FontWeight.w800),
+      ),
+      children: [
+        DoodhKeyValueRow(
+          label: 'Product',
+          value:
+              '${subscription.formattedQuantity} · ${subscription.productSku}',
+        ),
+        DoodhKeyValueRow(
+          label: 'Delivery days',
+          value: subscription.scheduleLabel,
+        ),
+        DoodhKeyValueRow(
+          label: 'Active window',
+          value:
+              '${_formatDate(subscription.startDate)} to ${_formatDate(subscription.endDate)}',
+        ),
+        DoodhKeyValueRow(
+          label: 'Unit price',
+          value: '₹${subscription.unitPrice.toStringAsFixed(2)} per unit',
+        ),
+        if (nextDelivery != null)
+          DoodhKeyValueRow(label: 'Next delivery', value: nextDelivery),
+      ],
+    );
+  }
+
+  String? _nextDeliverySummary(SubscriptionDetails subscription) {
+    final next = _nextScheduledOccurrence(subscription);
+    if (next == null) return null;
+    final slot = subscription.schedules.first.slot.apiValue;
+    return '${_formatDate(next)} · $slot';
+  }
+
+  DateTime? _nextScheduledOccurrence(SubscriptionDetails subscription) {
+    if (subscription.status != SubscriptionStatus.active) return null;
+    final weekdays = subscription.schedules
+        .map((schedule) => schedule.dayOfWeek)
+        .toSet();
+    if (weekdays.isEmpty) return null;
+    final start = _dateOnly(subscription.startDate);
+    final end = _dateOnly(subscription.endDate);
+    var cursor = _dateOnly(indiaNow());
+    if (cursor.isBefore(start)) cursor = start;
+    for (var offset = 0; offset < 14; offset++) {
+      final candidate = cursor.add(Duration(days: offset));
+      if (candidate.isAfter(end)) return null;
+      if (weekdays.contains(_weekdayOf(candidate))) return candidate;
+    }
+    return null;
+  }
 
   Future<void> _retryPayment() async {
     final created = await ref
@@ -746,122 +1073,6 @@ class _SubscriptionDetailScreenState
     }
   }
 
-  Future<void> _edit(
-    BuildContext context,
-    SubscriptionDetails subscription,
-  ) async {
-    final customer = ref.read(customerControllerProvider);
-    if (customer.addresses.isEmpty) {
-      await ref.read(customerControllerProvider.notifier).load();
-    }
-    if (!mounted) return;
-    final addresses = deduplicateActiveSubscriptionAddresses(
-      ref.read(customerControllerProvider).addresses,
-    );
-    if (addresses.isEmpty) return;
-    final quantityController = TextEditingController(
-      text: subscription.quantity.toString(),
-    );
-    var addressId = resolveActiveSubscriptionAddressId(
-      addresses,
-      subscription.addressId,
-    )!;
-    var days = subscription.schedules.map((item) => item.dayOfWeek).toSet();
-    final result = await showDialog<UpdateSubscriptionRequest>(
-      context: this.context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Update subscription'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: quantityController,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: const InputDecoration(
-                    labelText: 'Quantity per delivery',
-                  ),
-                ),
-                DropdownButtonFormField<String>(
-                  initialValue: addressId,
-                  decoration: const InputDecoration(
-                    labelText: 'Delivery address',
-                  ),
-                  items: addresses
-                      .map(
-                        (item) => DropdownMenuItem(
-                          value: item.publicId,
-                          child: Text(item.label),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (value) {
-                    if (value != null) {
-                      setDialogState(() => addressId = value);
-                    }
-                  },
-                ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Delivery days',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                ),
-                Wrap(
-                  spacing: 4,
-                  children: DeliveryWeekday.values
-                      .map(
-                        (day) => FilterChip(
-                          label: Text(day.shortLabel),
-                          selected: days.contains(day),
-                          onSelected: (selected) => setDialogState(() {
-                            if (selected) {
-                              days = {...days, day};
-                            } else {
-                              days = {...days}..remove(day);
-                            }
-                          }),
-                        ),
-                      )
-                      .toList(),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
-            FilledButton(
-              onPressed: days.isEmpty
-                  ? null
-                  : () => Navigator.pop(
-                      context,
-                      UpdateSubscriptionRequest(
-                        quantity: double.tryParse(quantityController.text),
-                        addressId: addressId,
-                        deliveryDays: days,
-                      ),
-                    ),
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
-    quantityController.dispose();
-    if (result != null && mounted) {
-      await ref
-          .read(subscriptionControllerProvider.notifier)
-          .update(widget.subscriptionId, result);
-    }
-  }
 }
 
 class SubscriptionCalendarScreen extends ConsumerStatefulWidget {
@@ -893,6 +1104,23 @@ class _SubscriptionCalendarScreenState
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(subscriptionControllerProvider);
+    final today = _dateOnly(indiaNow());
+    final upcoming = state.calendar
+        .where(
+          (delivery) =>
+              delivery.status == SubscriptionDeliveryStatus.scheduled &&
+              !_dateOnly(delivery.scheduledDate).isBefore(today),
+        )
+        .toList()
+      ..sort((a, b) => a.scheduledDate.compareTo(b.scheduledDate));
+    final history = state.calendar
+        .where(
+          (delivery) =>
+              !(delivery.status == SubscriptionDeliveryStatus.scheduled &&
+                  !_dateOnly(delivery.scheduledDate).isBefore(today)),
+        )
+        .toList()
+      ..sort((a, b) => b.scheduledDate.compareTo(a.scheduledDate));
     final body = state.isLoading && state.calendar.isEmpty
         ? const LoadingStatePanel(message: 'Loading delivery calendar...')
         : state.isOffline && state.calendar.isEmpty
@@ -911,43 +1139,39 @@ class _SubscriptionCalendarScreenState
           )
         : RefreshIndicator(
             onRefresh: _reload,
-            child: ListView.separated(
+            child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
-              itemCount: state.calendar.length,
-              separatorBuilder: (_, index) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                final delivery = state.calendar[index];
-                return Card(
-                  child: ListTile(
-                    leading: Icon(_deliveryIcon(delivery.status)),
-                    title: Text(_formatDate(delivery.scheduledDate)),
-                    subtitle: Text(
-                      '${formatQuantity(delivery.quantity)} · ${delivery.address}',
-                    ),
-                    trailing: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _SubscriptionDeliveryStatus(status: delivery.status),
-                        if (delivery.status.canSkip)
-                          IconButton(
-                            tooltip: 'Skip delivery',
-                            onPressed: state.isSaving
-                                ? null
-                                : () => _skip(delivery),
-                            icon: const Icon(Icons.event_busy_outlined),
-                          ),
-                      ],
-                    ),
-                  ),
-                );
-              },
+              padding: DoodhSpacing.pagePadding,
+              children: [
+                if (upcoming.isNotEmpty) ...[
+                  DoodhSectionHeader(title: 'Upcoming deliveries'),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  for (final delivery in upcoming) ...[
+                    _deliveryCard(delivery, state),
+                    const SizedBox(height: DoodhSpacing.sm),
+                  ],
+                  const SizedBox(height: DoodhSpacing.sm),
+                ],
+                if (history.isNotEmpty) ...[
+                  DoodhSectionHeader(title: 'Delivery history'),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  for (final delivery in history) ...[
+                    _deliveryCard(delivery, state),
+                    const SizedBox(height: DoodhSpacing.sm),
+                  ],
+                ],
+              ],
             ),
           );
     return Scaffold(
       appBar: AppBar(
         title: const Text('Delivery calendar'),
         actions: [
+          IconButton(
+            tooltip: 'Set Vacation',
+            onPressed: () => context.push('/subscriptions/vacation'),
+            icon: const Icon(Icons.beach_access_outlined),
+          ),
           IconButton(
             tooltip: 'Refresh calendar',
             onPressed: state.isLoading ? null : _reload,
@@ -986,14 +1210,81 @@ class _SubscriptionCalendarScreenState
     }
   }
 
-  IconData _deliveryIcon(SubscriptionDeliveryStatus status) => switch (status) {
-    SubscriptionDeliveryStatus.scheduled => Icons.event_outlined,
-    SubscriptionDeliveryStatus.delivered => Icons.check_circle_outline,
-    SubscriptionDeliveryStatus.skipped => Icons.event_busy_outlined,
-    SubscriptionDeliveryStatus.failed => Icons.error_outline,
-    SubscriptionDeliveryStatus.cancelled => Icons.cancel_outlined,
-    SubscriptionDeliveryStatus.unknown => Icons.help_outline,
-  };
+  Widget _deliveryCard(SubscriptionDelivery delivery, SubscriptionState state) =>
+      DoodhCard(
+        semanticLabel:
+            '${_formatDate(delivery.scheduledDate)}, ${delivery.status.label}, ${formatQuantity(delivery.quantity)}',
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Compact calendar tile keeps the date scannable down the list.
+            ExcludeSemantics(
+              child: Container(
+                width: 52,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: delivery.status == SubscriptionDeliveryStatus.scheduled
+                      ? DoodhColors.mint
+                      : DoodhColors.neutralSurface,
+                  borderRadius: DoodhRadii.mdRadius,
+                  border: Border.all(color: DoodhColors.line),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      _weekdayOf(delivery.scheduledDate).shortLabel,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: DoodhColors.muted,
+                      ),
+                    ),
+                    Text(
+                      '${delivery.scheduledDate.day}',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: DoodhSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _formatDate(delivery.scheduledDate),
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: DoodhSpacing.xs),
+                  Text(
+                    '${delivery.slot.apiValue} · ${formatQuantity(delivery.quantity)} per delivery',
+                  ),
+                  const SizedBox(height: DoodhSpacing.xs),
+                  Text(
+                    delivery.address,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: DoodhColors.muted,
+                    ),
+                  ),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  _SubscriptionDeliveryStatus(status: delivery.status),
+                ],
+              ),
+            ),
+            const SizedBox(width: DoodhSpacing.sm),
+            if (delivery.status.canSkip)
+              IconButton(
+                tooltip: 'Skip delivery',
+                onPressed: state.isSaving ? null : () => _skip(delivery),
+                icon: const Icon(Icons.event_busy_outlined),
+              ),
+          ],
+        ),
+      );
 }
 
 class _SubscriptionStatusPill extends StatelessWidget {
@@ -1035,6 +1326,9 @@ class _SubscriptionDeliveryStatus extends StatelessWidget {
 
 DateTime _dateOnly(DateTime value) =>
     DateTime(value.year, value.month, value.day);
+
+DeliveryWeekday _weekdayOf(DateTime value) =>
+    DeliveryWeekday.values[value.weekday - 1];
 
 String _formatDate(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}/'

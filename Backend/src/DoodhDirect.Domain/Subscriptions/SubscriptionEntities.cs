@@ -2,6 +2,7 @@ using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Common;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.Setup;
 
 namespace DoodhDirect.Domain.Subscriptions;
 
@@ -76,6 +77,7 @@ public sealed class Subscription : AuditableEntity
         UnitPrice = decimal.Round(unitPrice, 2, MidpointRounding.AwayFromZero);
         TotalEntitlement = totalEntitlement;
         PayableAmount = decimal.Round(Quantity * UnitPrice * TotalEntitlement, 2, MidpointRounding.AwayFromZero);
+        ChargesTotal = 0m;
         ProductSkuSnapshot = Required(productSku, nameof(productSku));
         ProductNameSnapshot = Required(productName, nameof(productName));
         UnitOfMeasureSnapshot = Required(unitOfMeasure, nameof(unitOfMeasure)).ToLowerInvariant();
@@ -94,6 +96,8 @@ public sealed class Subscription : AuditableEntity
     public DateOnly EndDate { get; private set; }
     public decimal Quantity { get; private set; }
     public decimal UnitPrice { get; private set; }
+    /// <summary>Sum of the frozen <see cref="Charges"/> amounts; included in PayableAmount.</summary>
+    public decimal ChargesTotal { get; private set; }
     public decimal PayableAmount { get; private set; }
     public int TotalEntitlement { get; private set; }
     public int UsedEntitlement { get; private set; }
@@ -115,6 +119,7 @@ public sealed class Subscription : AuditableEntity
     public Branch Branch { get; private set; } = null!;
     public ICollection<SubscriptionSchedule> Schedules { get; private set; } = [];
     public ICollection<SubscriptionDelivery> Deliveries { get; private set; } = [];
+    public ICollection<SubscriptionCharge> Charges { get; private set; } = [];
 
     public void AddSchedule(
         DayOfWeek dayOfWeek,
@@ -149,6 +154,30 @@ public sealed class Subscription : AuditableEntity
             BranchCodeSnapshot,
             BranchNameSnapshot,
             AddressSnapshot));
+    }
+
+    /// <summary>
+    /// Freezes the charge snapshot for this subscription. Must be called once, before
+    /// the first save: PayableAmount becomes product value + Σ(rounded amounts).
+    /// Rows are stored exactly as supplied (already rounded by the caller) so they
+    /// sum exactly to <see cref="ChargesTotal"/>. Empty input is valid and leaves
+    /// the constructor-established product-value payable untouched.
+    /// </summary>
+    public void AddCharges(IReadOnlyCollection<SubscriptionCharge> charges)
+    {
+        ArgumentNullException.ThrowIfNull(charges);
+        if (Charges.Count > 0)
+        {
+            throw new InvalidOperationException("Subscription charges have already been applied.");
+        }
+
+        foreach (var charge in charges)
+        {
+            Charges.Add(charge);
+            ChargesTotal = decimal.Round(ChargesTotal + charge.Amount, 2, MidpointRounding.AwayFromZero);
+        }
+
+        PayableAmount = decimal.Round(Quantity * UnitPrice * TotalEntitlement + ChargesTotal, 2, MidpointRounding.AwayFromZero);
     }
 
     public void Activate(DateTime indiaLocalNow)

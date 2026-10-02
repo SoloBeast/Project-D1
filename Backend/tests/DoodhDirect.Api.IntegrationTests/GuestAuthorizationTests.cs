@@ -122,6 +122,7 @@ public sealed class GuestAuthorizationTests : IClassFixture<FoundationApiFactory
         { typeof(SubscriptionsController), nameof(SubscriptionsController.Resume), AuthorizationCodes.SubscriptionsManageOwn },
         { typeof(SubscriptionsController), nameof(SubscriptionsController.Cancel), AuthorizationCodes.SubscriptionsManageOwn },
         { typeof(SubscriptionsController), nameof(SubscriptionsController.Skip), AuthorizationCodes.SubscriptionsManageOwn },
+        { typeof(SubscriptionsController), nameof(SubscriptionsController.CreateVacation), AuthorizationCodes.SubscriptionsManageOwn },
         { typeof(SubscriptionsController), nameof(SubscriptionsController.GetCalendar), AuthorizationCodes.SubscriptionsReadOwn },
         // Payments
         { typeof(PaymentsController), nameof(PaymentsController.GetCapabilities), AuthorizationCodes.PaymentsCreateOwn },
@@ -171,6 +172,8 @@ public sealed class GuestAuthorizationTests : IClassFixture<FoundationApiFactory
         { typeof(CatalogueAdministrationController), nameof(CatalogueAdministrationController.ActivateProduct), AuthorizationCodes.CatalogueManage },
         { typeof(CatalogueAdministrationController), nameof(CatalogueAdministrationController.DeactivateProduct), AuthorizationCodes.CatalogueManage },
         { typeof(CatalogueAdministrationController), nameof(CatalogueAdministrationController.SetBranchAvailability), AuthorizationCodes.CatalogueManage },
+        { typeof(CatalogueAdministrationController), nameof(CatalogueAdministrationController.UpsertProductImage), AuthorizationCodes.CatalogueManage },
+        { typeof(CatalogueAdministrationController), nameof(CatalogueAdministrationController.RemoveProductImage), AuthorizationCodes.CatalogueManage },
         { typeof(CatalogueAdministrationController), nameof(CatalogueAdministrationController.GetCategories), AuthorizationCodes.CatalogueRead },
         { typeof(CatalogueAdministrationController), nameof(CatalogueAdministrationController.CreateCategory), AuthorizationCodes.CatalogueManage },
         { typeof(CatalogueAdministrationController), nameof(CatalogueAdministrationController.UpdateCategory), AuthorizationCodes.CatalogueManage },
@@ -222,6 +225,7 @@ public sealed class GuestAuthorizationTests : IClassFixture<FoundationApiFactory
     {
         { typeof(CatalogueController), nameof(CatalogueController.GetProducts) },
         { typeof(CatalogueController), nameof(CatalogueController.GetProduct) },
+        { typeof(CatalogueController), nameof(CatalogueController.GetProductImage) },
         { typeof(CatalogueController), nameof(CatalogueController.GetCategories) },
         { typeof(AuthController), nameof(AuthController.Register) },
         { typeof(AuthController), nameof(AuthController.Login) },
@@ -389,6 +393,8 @@ public sealed class GuestAuthorizationTests : IClassFixture<FoundationApiFactory
         ("GET", $"/api/v1/admin/products/{Id}"),
         ("POST", "/api/v1/admin/products"),
         ("PATCH", $"/api/v1/admin/products/{Id}"),
+        ("PUT", $"/api/v1/admin/products/{Id}/image"),
+        ("DELETE", $"/api/v1/admin/products/{Id}/image"),
         ("GET", "/api/v1/admin/product-categories"),
         ("POST", "/api/v1/admin/product-categories"),
         // Branches administration
@@ -421,6 +427,7 @@ public sealed class GuestAuthorizationTests : IClassFixture<FoundationApiFactory
         // Catalogue public reads
         ("GET", "/api/v1/products"),
         ("GET", $"/api/v1/products/{Id}"),
+        ("GET", $"/api/v1/products/{Id}/image"),
         ("GET", "/api/v1/product-categories"),
         // Auth entry points
         ("POST", "/api/v1/auth/register"),

@@ -95,7 +95,7 @@ class _CameraListBody extends StatelessWidget {
           final available = camera.isAvailable;
           return Card(
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: DoodhSpacing.cardPadding,
               child: Row(
                 children: [
                   Container(

@@ -1,5 +1,6 @@
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Orders;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Payments;
 
 namespace DoodhDirect.Application.Orders;
@@ -53,6 +54,8 @@ public sealed record CheckoutResult(
     IReadOnlyCollection<CheckoutLineResult> Items,
     decimal Subtotal,
     decimal DiscountAmount,
+    IReadOnlyCollection<OrderChargeResult> Charges,
+    decimal ChargesTotal,
     decimal PayableAmount);
 
 public sealed record OrderResult(
@@ -81,6 +84,8 @@ public sealed record OrderResult(
     IReadOnlyCollection<OrderItemResult> Items,
     decimal Subtotal,
     decimal DiscountAmount,
+    IReadOnlyCollection<OrderChargeResult> Charges,
+    decimal ChargesTotal,
     decimal PayableAmount,
     DateTime? CancelledAt,
     Guid? PaymentPublicId,
@@ -98,6 +103,18 @@ public sealed record OrderItemResult(
     decimal Quantity,
     decimal UnitPrice,
     decimal LineTotal);
+
+/// <summary>
+/// One frozen charge line as applied at checkout (or previewed). Customer-facing:
+/// contains only what a customer needs to understand the total — no admin metadata.
+/// </summary>
+public sealed record OrderChargeResult(
+    string ChargeType,
+    string ChargeCode,
+    string? Description,
+    decimal Percentage,
+    decimal BaseAmount,
+    decimal Amount);
 
 public sealed record BranchAllocationResult(long BranchId, Guid BranchPublicId, string BranchCode, string BranchName, decimal DistanceKm);
 
@@ -150,7 +167,8 @@ public static class OrderMappings
     public static OrderResult ToResult(
         this Order order,
         Payment? payment = null,
-        Delivery? delivery = null) => new(
+        Delivery? delivery = null,
+        IReadOnlyCollection<OrderCharge>? charges = null) => new(
             order.PublicId,
             order.OrderNumber,
             order.Type,
@@ -176,6 +194,16 @@ public static class OrderMappings
             order.Items.Select(item => item.ToResult()).ToArray(),
             order.Subtotal,
             order.DiscountAmount,
+            (charges ?? (IReadOnlyCollection<OrderCharge>)order.Charges)
+                .Select(charge => new OrderChargeResult(
+                    charge.ChargeType,
+                    charge.ChargeCode,
+                    charge.Description,
+                    charge.Percentage,
+                    charge.BaseAmount,
+                    charge.Amount))
+                .ToArray(),
+            order.ChargesTotal,
             order.PayableAmount,
             order.CancelledAt,
             payment?.PublicId,

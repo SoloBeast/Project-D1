@@ -2,6 +2,8 @@ import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'dart:typed_data';
+
 import 'catalogue_models.dart';
 
 class CatalogueRepository {
@@ -99,6 +101,47 @@ class CatalogueRepository {
     );
     return CatalogueProduct.fromJson(response['data'] as Map<String, dynamic>);
   }
+
+  /// Adds the product image, or replaces the current one atomically.
+  ///
+  /// The image endpoints answer with the backend's `ProductImageResult`
+  /// metadata (productId/imageId/fileName/contentType/fileSize/uploadedAtUtc),
+  /// NOT a full catalogue product. Parsing that payload as `CatalogueProduct`
+  /// throws a Dart `TypeError` even though the upload succeeded — which the
+  /// controller then reported as a connectivity outage. Parse the real shape
+  /// instead; the refreshed product (with its `imageUrl`) arrives through
+  /// [getAdminProducts] during the controller's post-save `load()`.
+  Future<ProductImageResult> upsertProductImage(
+    String productId,
+    String accessToken, {
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  }) async => ProductImageResult.fromJson(
+    (await api.putMultipart(
+          '/api/v1/admin/products/$productId/image',
+          fieldName: 'image',
+          bytes: bytes,
+          fileName: fileName,
+          contentType: contentType,
+          accessToken: accessToken,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+
+  /// Removes the current product image; the product returns to the branded
+  /// no-image presentation. Response is the same image metadata shape as
+  /// [upsertProductImage] and is parsed, never as a `CatalogueProduct`.
+  Future<ProductImageResult> removeProductImage(
+    String productId,
+    String accessToken,
+  ) async => ProductImageResult.fromJson(
+    (await api.delete(
+          '/api/v1/admin/products/$productId/image',
+          accessToken: accessToken,
+        ))['data']
+        as Map<String, dynamic>,
+  );
 
   Future<List<ProductCategory>> getAdminCategories(String accessToken) async {
     final response = await api.get(

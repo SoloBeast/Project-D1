@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
@@ -86,7 +87,7 @@ class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
           ref.read(adminReportControllerProvider.notifier).loadDashboard(),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.pagePadding,
         children: [
           if (state.dashboard case final dashboard?) ...[
             Text('Overview', style: Theme.of(context).textTheme.titleLarge),

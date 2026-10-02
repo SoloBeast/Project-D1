@@ -141,46 +141,50 @@ void main() {
     },
   );
 
-  test('creates product with normalized draft body including branch ids', () async {
-    final client = MockClient((request) async {
-      expect(request.method, 'POST');
-      expect(
-        request.url.toString(),
-        'https://api.example.test/api/v1/admin/products',
-      );
-      expect(request.headers['Authorization'], 'Bearer admin-token');
-      expect(jsonDecode(request.body), {
-        'sku': 'MILK-001',
-        'name': 'Fresh Buffalo Milk',
-        'description': null,
-        'categoryId': 'category-1',
-        'unitOfMeasure': 'litre',
-        'price': 80.25,
-        'branchIds': ['branch-1', 'branch-2'],
+  test(
+    'creates product with normalized draft body including branch ids',
+    () async {
+      final client = MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(
+          request.url.toString(),
+          'https://api.example.test/api/v1/admin/products',
+        );
+        expect(request.headers['Authorization'], 'Bearer admin-token');
+        expect(jsonDecode(request.body), {
+          'sku': 'MILK-001',
+          'name': 'Fresh Buffalo Milk',
+          'description': null,
+          'categoryId': 'category-1',
+          'unitOfMeasure': 'litre',
+          'price': 80.25,
+          'branchIds': ['branch-1', 'branch-2'],
+          'applicableChargeIds': <String>[],
+        });
+        return http.Response(
+          jsonEncode({'success': true, 'data': productJson(), 'errors': []}),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
       });
-      return http.Response(
-        jsonEncode({'success': true, 'data': productJson(), 'errors': []}),
-        201,
-        headers: {'content-type': 'application/json'},
+      final repository = CatalogueRepository(
+        api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
       );
-    });
-    final repository = CatalogueRepository(
-      api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
-    );
 
-    final product = await repository.createProduct(
-      const ProductDraft(
-        sku: ' MILK-001 ',
-        name: ' Fresh Buffalo Milk ',
-        description: ' ',
-        categoryId: 'category-1',
-        unitOfMeasure: 'litre',
-        price: 80.25,
-        branchIds: ['branch-1', 'branch-2'],
-      ),
-      'admin-token',
-    );
+      final product = await repository.createProduct(
+        const ProductDraft(
+          sku: ' MILK-001 ',
+          name: ' Fresh Buffalo Milk ',
+          description: ' ',
+          categoryId: 'category-1',
+          unitOfMeasure: 'litre',
+          price: 80.25,
+          branchIds: ['branch-1', 'branch-2'],
+        ),
+        'admin-token',
+      );
 
-    expect(product.name, 'Fresh Buffalo Milk');
-  });
+      expect(product.name, 'Fresh Buffalo Milk');
+    },
+  );
 }

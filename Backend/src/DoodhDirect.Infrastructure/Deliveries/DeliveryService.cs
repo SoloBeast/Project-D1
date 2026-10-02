@@ -101,14 +101,35 @@ public sealed class DeliveryService(
         var occurrences = await occurrenceQuery.ToListAsync(cancellationToken);
         var now = timeProvider.Now;
 
+        var eligibleCount = 0;
         await ExecuteSerializableAsync(async () =>
         {
+            // Race guard (skip vs. materialization): the occurrence list was
+            // read outside the serializable transaction, so each occurrence is
+            // re-validated in-transaction before its Delivery is inserted. An
+            // occurrence committed as Skipped (or otherwise no longer
+            // Scheduled) must never produce a Delivery; it is silently
+            // dropped instead of failing the manager's materialization call.
+            var occurrenceIds = occurrences.Select(x => x.Id).ToArray();
+            var stillScheduledIds = occurrenceIds.Length == 0
+                ? new HashSet<long>()
+                : (await dbContext.SubscriptionDeliveries
+                    .AsNoTracking()
+                    .Where(x => occurrenceIds.Contains(x.Id) &&
+                        x.Status == SubscriptionDeliveryStatus.Scheduled)
+                    .Select(x => x.Id)
+                    .ToListAsync(cancellationToken)).ToHashSet();
+            var eligibleOccurrences = occurrences
+                .Where(x => stillScheduledIds.Contains(x.Id))
+                .ToArray();
+            eligibleCount = eligibleOccurrences.Length;
+
             foreach (var order in orders)
             {
                 await AddIfMissing(order, today, cancellationToken);
             }
 
-            foreach (var occurrence in occurrences)
+            foreach (var occurrence in eligibleOccurrences)
             {
                 var subscription = occurrence.Subscription;
                 var address = subscription.CustomerAddress;
@@ -133,16 +154,16 @@ public sealed class DeliveryService(
                 dbContext.Deliveries.Add(delivery);
             }
 
-            if (orders.Count + occurrences.Count > 0)
+            if (orders.Count + eligibleCount > 0)
             {
                 AddAudit(actor.UserId, "DELIVERY.MATERIALIZE", "Delivery", throughDate.ToString("yyyy-MM-dd"), null,
-                    new { OrdersCreated = orders.Count, SubscriptionOccurrencesCreated = occurrences.Count }, null, now);
+                    new { OrdersCreated = orders.Count, SubscriptionOccurrencesCreated = eligibleCount }, null, now);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 await IssuePendingOtpsAsync(cancellationToken);
             }
         }, cancellationToken);
 
-        return new DeliveryMaterializationResult(orders.Count, occurrences.Count);
+        return new DeliveryMaterializationResult(orders.Count, eligibleCount);
     }
 
     public Task<DeliveryMaterializationResult> FetchSubscriptionDeliveriesAsync(

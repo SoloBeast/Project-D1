@@ -1,4 +1,6 @@
 using DoodhDirect.Domain.Common;
+using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.Setup;
 
 namespace DoodhDirect.Domain.Catalogue;
 
@@ -54,6 +56,19 @@ public sealed class Product : AuditableEntity
 
     public ProductCategory Category { get; private set; } = null!;
     public ICollection<ProductBranch> ProductBranches { get; private set; } = [];
+
+    /// <summary>
+    /// Item-level charge assignments (Tax &amp; Charges master). Configuration only —
+    /// the pricing snapshot lives on the order/subscription, never here.
+    /// </summary>
+    public ICollection<ProductCharge> ProductCharges { get; private set; } = [];
+
+    /// <summary>
+    /// The product's current image row, when one exists. Navigation only — the
+    /// FK lives on <see cref="ProductImage"/> and the unique ProductId index
+    /// guarantees at most one row.
+    /// </summary>
+    public ICollection<ProductImage> ProductImages { get; private set; } = [];
 
     public void Update(long categoryId, string sku, string name, string? description, string unitOfMeasure, decimal price)
     {
@@ -191,4 +206,88 @@ public sealed class ProductBranch : Entity
         IsAvailable = isAvailable;
         MaxDailyQuantity = maxDailyQuantity;
     }
+}
+
+/// <summary>
+/// The current catalogue image of a product. At most one row exists per product
+/// (enforced by a unique ProductId index); the row itself is the authoritative
+/// reference to the stored blob — the product never stores a storage key.
+/// </summary>
+public sealed class ProductImage : PublicEntity
+{
+    private ProductImage() { }
+
+    public ProductImage(
+        long productId,
+        string storageKey,
+        string fileName,
+        string contentType,
+        long fileSize,
+        long uploadedByUserId,
+        DateTime uploadedAt)
+    {
+        if (productId <= 0) throw new ArgumentOutOfRangeException(nameof(productId));
+        if (fileSize <= 0) throw new ArgumentOutOfRangeException(nameof(fileSize));
+        if (uploadedByUserId <= 0) throw new ArgumentOutOfRangeException(nameof(uploadedByUserId));
+        if (uploadedAt.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "The timestamp must be India-local with an unspecified DateTime kind.",
+                nameof(uploadedAt));
+        }
+
+        ProductId = productId;
+        StorageKey = Required(storageKey, nameof(storageKey));
+        FileName = Required(fileName, nameof(fileName));
+        ContentType = Required(contentType, nameof(contentType));
+        FileSize = fileSize;
+        UploadedByUserId = uploadedByUserId;
+        UploadedAt = uploadedAt;
+    }
+
+    public long ProductId { get; private set; }
+    public string StorageKey { get; private set; } = string.Empty;
+    public string FileName { get; private set; } = string.Empty;
+    public string ContentType { get; private set; } = string.Empty;
+    public long FileSize { get; private set; }
+    public long UploadedByUserId { get; private set; }
+    public DateTime UploadedAt { get; private set; }
+
+    public Product Product { get; private set; } = null!;
+    public User UploadedByUser { get; private set; } = null!;
+
+    /// <summary>
+    /// Points the current image at replacement content during a safe replace:
+    /// the new blob is already stored and durably committed before the previous
+    /// blob is deleted.
+    /// </summary>
+    public void ReplaceContent(
+        string storageKey,
+        string fileName,
+        string contentType,
+        long fileSize,
+        long uploadedByUserId,
+        DateTime uploadedAt)
+    {
+        if (fileSize <= 0) throw new ArgumentOutOfRangeException(nameof(fileSize));
+        if (uploadedByUserId <= 0) throw new ArgumentOutOfRangeException(nameof(uploadedByUserId));
+        if (uploadedAt.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException(
+                "The timestamp must be India-local with an unspecified DateTime kind.",
+                nameof(uploadedAt));
+        }
+
+        StorageKey = Required(storageKey, nameof(storageKey));
+        FileName = Required(fileName, nameof(fileName));
+        ContentType = Required(contentType, nameof(contentType));
+        FileSize = fileSize;
+        UploadedByUserId = uploadedByUserId;
+        UploadedAt = uploadedAt;
+    }
+
+    private static string Required(string value, string parameterName) =>
+        string.IsNullOrWhiteSpace(value)
+            ? throw new ArgumentException("A value is required.", parameterName)
+            : value.Trim();
 }

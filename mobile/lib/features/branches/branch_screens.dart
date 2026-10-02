@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/customer/client_configuration_repository.dart';
@@ -159,9 +159,13 @@ class _BranchCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            _StatusChip(
-              isActive: branch.isActive,
-              isArchived: branch.isArchived,
+            DoodhChip(
+              label: branch.isArchived
+                  ? 'Archived'
+                  : (branch.isActive ? 'Active' : 'Inactive'),
+              tone: branch.isArchived || !branch.isActive
+                  ? DoodhTone.neutral
+                  : DoodhTone.success,
             ),
           ],
         ),
@@ -185,48 +189,6 @@ class _BranchCard extends StatelessWidget {
       branch.city.trim(),
     ];
     return parts.join(' · ');
-  }
-}
-
-class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.isActive, this.isArchived = false});
-
-  final bool isActive;
-  final bool isArchived;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final Color background;
-    final Color foreground;
-    final String label;
-    if (isArchived) {
-      background = theme.colorScheme.surfaceContainerHighest;
-      foreground = theme.colorScheme.onSurfaceVariant;
-      label = 'Archived';
-    } else if (isActive) {
-      background = DoodhColors.mint;
-      foreground = DoodhColors.tealDark;
-      label = 'Active';
-    } else {
-      background = theme.colorScheme.surfaceContainerHighest;
-      foreground = theme.colorScheme.onSurfaceVariant;
-      label = 'Inactive';
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Text(
-        label,
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: foreground,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
   }
 }
 
@@ -451,7 +413,7 @@ class _BranchFormScreenState extends ConsumerState<BranchFormScreen> {
         title: Text(widget.isEditing ? 'Edit branch' : 'Add branch'),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.pagePadding,
         children: [
           Form(
             key: _formKey,
@@ -870,11 +832,11 @@ class _BranchDetailBody extends StatelessWidget {
     }
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: DoodhSpacing.pagePadding,
       children: [
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: DoodhSpacing.cardPadding,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -886,9 +848,13 @@ class _BranchDetailBody extends StatelessWidget {
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                     ),
-                    _StatusChip(
-                      isActive: branch.isActive,
-                      isArchived: branch.isArchived,
+                    DoodhChip(
+                      label: branch.isArchived
+                          ? 'Archived'
+                          : (branch.isActive ? 'Active' : 'Inactive'),
+                      tone: branch.isArchived || !branch.isActive
+                          ? DoodhTone.neutral
+                          : DoodhTone.success,
                     ),
                   ],
                 ),

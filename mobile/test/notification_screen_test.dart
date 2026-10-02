@@ -182,6 +182,8 @@ void main() {
         tester,
         _SeededNotificationController(const NotificationState()),
       );
+      // The Home header bell is the only notification action; the customer
+      // shell no longer renders a duplicate bell.
       expect(find.byTooltip('Notifications'), findsOneWidget);
       expect(find.text('0'), findsNothing);
 
@@ -189,7 +191,11 @@ void main() {
         tester,
         _SeededNotificationController(const NotificationState(unreadCount: 7)),
       );
-      expect(find.text('7'), findsOneWidget);
+      // The bell shows the unread count. The count label is keyed because
+      // the Home delivery date strip also renders bare day-of-month numbers.
+      final headerCount = find.byKey(const ValueKey('home-notification-count'));
+      expect(headerCount, findsOneWidget);
+      expect(tester.widget<Text>(headerCount).data, '7');
     });
 
     testWidgets('caps large unread counts and opens the inbox', (tester) async {
@@ -201,7 +207,9 @@ void main() {
         withInbox: true,
       );
 
+      // The bell caps the count at 99+.
       expect(find.text('99+'), findsOneWidget);
+      // The bell opens the notification inbox.
       await tester.tap(find.byTooltip('Notifications'));
       await tester.pumpAndSettle();
       expect(find.text('Inbox destination'), findsOneWidget);

@@ -82,6 +82,7 @@ void main() {
       'unitOfMeasure': 'litre',
       'price': 80.25,
       'branchIds': ['branch-1', 'branch-2'],
+      'applicableChargeIds': <String>[],
     });
     expect(category.toJson(), {
       'code': 'MILK',
@@ -129,6 +130,61 @@ void main() {
     expect(draft.branchIds, ['branch-1', 'branch-2']);
     expect(draft.toJson()['branchIds'], ['branch-1', 'branch-2']);
   });
+
+  test(
+    'applicable charges parse from admin payload and absent key defaults empty',
+    () {
+      const mappingJson = {
+        'chargeId': 'chg-1',
+        'chargeCode': 'GST-5',
+        'chargeType': 'GST',
+        'description': 'GST five percent',
+        'percentage': 5,
+        'isActive': false,
+      };
+      final adminPayload = <String, dynamic>{
+        'publicId': 'product-1',
+        'sku': 'MILK-001',
+        'name': 'Fresh Buffalo Milk',
+        'description': null,
+        'category': {
+          'publicId': 'category-1',
+          'code': 'MILK',
+          'name': 'Milk',
+          'description': null,
+          'isActive': true,
+        },
+        'unitOfMeasure': 'litre',
+        'price': 80,
+        'isActive': true,
+        'branchAvailability': <Map<String, dynamic>>[
+          {
+            'branchId': 'branch-1',
+            'branchCode': 'MAIN',
+            'branchName': 'Main Branch',
+            'isAvailable': true,
+            'maxDailyQuantity': null,
+          },
+        ],
+        'applicableCharges': [mappingJson],
+      };
+
+      final admin = CatalogueProduct.fromJson(adminPayload);
+      expect(admin.applicableCharges, hasLength(1));
+      expect(admin.applicableCharges.single.chargeId, 'chg-1');
+      expect(admin.applicableCharges.single.chargeCode, 'GST-5');
+      expect(admin.applicableCharges.single.isActive, isFalse);
+
+      // Customer payloads omit the key entirely: no crash, empty list, and
+      // fromProduct round-trips nothing.
+      final customerPayload = Map<String, dynamic>.from(adminPayload)
+        ..remove('applicableCharges');
+      final customer = CatalogueProduct.fromJson(customerPayload);
+      expect(customer.applicableCharges, isEmpty);
+      expect(ProductDraft.fromProduct(customer).chargeIds, isEmpty);
+      expect(ProductDraft.fromProduct(admin).chargeIds, ['chg-1']);
+    },
+  );
 
   test(
     'availability draft preserves loose decimal quantity and null capacity',

@@ -502,7 +502,7 @@ class _CustomerRefundReplacementListScreenState
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.pagePadding,
         itemCount: state.customerRequests.length,
         separatorBuilder: (_, _) => const SizedBox(height: 12),
         itemBuilder: (context, index) {
@@ -1042,7 +1042,7 @@ class _StaffRefundReplacementListScreenState
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.pagePadding,
         itemCount: items.length,
         separatorBuilder: (_, _) => const SizedBox(height: 12),
         itemBuilder: (context, index) {

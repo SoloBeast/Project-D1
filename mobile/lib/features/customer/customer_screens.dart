@@ -1,10 +1,10 @@
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/utils/country_codes.dart';
 import 'package:doodh_direct_mobile/core/utils/india_mobile.dart';
 import 'package:doodh_direct_mobile/core/utils/mobile_number.dart';
 import 'package:doodh_direct_mobile/core/widgets/country_code_mobile_field.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
@@ -56,48 +56,73 @@ class _CustomerOverviewScreenState
               onRefresh: () =>
                   ref.read(customerControllerProvider.notifier).load(),
               child: DoodhPage(
-                padding: false,
-                child: ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
-                  children: [
-                    _ProfileSection(profile: state.profile!, user: user),
-                    const SizedBox(height: 16),
-                    Card(
-                      child: ListTile(
-                        leading: Icon(
-                          Icons.password_outlined,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        title: const Text('Change Password'),
-                        subtitle: Text(
-                          user?.hasPassword == true
-                              ? 'Update the password you sign in with.'
-                              : 'Set a password to sign in without an OTP.',
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => context.push(
-                          user?.hasPassword == true
-                              ? '/change-password'
-                              : '/create-password',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    _AddressSection(
+                child: DoodhResponsive(
+                  builder: (context, size) {
+                    final identity = _IdentityColumn(
+                      profile: state.profile!,
+                      user: user,
+                      errorMessage: state.errorMessage,
+                    );                    final addresses = _AddressSection(
                       addresses: state.addresses,
                       isSaving: state.isSaving,
-                    ),
-                    if (state.errorMessage != null) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        state.errorMessage!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
+                    );
+                    final security = _SecuritySection(user: user);
+
+                    // Compact screens stack identity above account management
+                    // so every section keeps its full card width.
+                    if (size == DoodhWindowSize.compact) {
+                      return ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        padding: const EdgeInsets.only(bottom: DoodhSpacing.lg),
+                        children: [
+                          identity,
+                          const SizedBox(height: DoodhSpacing.lg),
+                          addresses,
+                          const SizedBox(height: DoodhSpacing.lg),
+                          security,
+                        ],
+                      );
+                    }
+
+                    // Wide layouts keep a readable two-column composition:
+                    // identity on the left, addresses on the right, with the
+                    // overall width constrained instead of stretching cards.
+                    return Align(
+                      alignment: Alignment.topCenter,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth:
+                              DoodhContentMax.narrow * 2 + DoodhSpacing.lg,
+                        ),
+                        child: ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.only(
+                            bottom: DoodhSpacing.lg,
+                          ),
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(child: identity),
+                                const SizedBox(width: DoodhSpacing.lg),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      addresses,
+                                      const SizedBox(height: DoodhSpacing.lg),
+                                      security,
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ],
+                    );
+                  },
                 ),
               ),
             ),
@@ -105,124 +130,262 @@ class _CustomerOverviewScreenState
   }
 }
 
-class _ProfileSection extends StatelessWidget {
-  const _ProfileSection({required this.profile, required this.user});
+/// Left column of My Account: the profile identity hero followed by the
+/// personal-information card (and any reload error surfaced from the shared
+/// customer controller).
+class _IdentityColumn extends StatelessWidget {
+  const _IdentityColumn({
+    required this.profile,
+    required this.user,
+    this.errorMessage,
+  });
+
+  final CustomerProfile profile;
+  final AuthUser? user;
+  final String? errorMessage;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      _ProfileHero(profile: profile, user: user),
+      const SizedBox(height: DoodhSpacing.lg),
+      _PersonalInfoSection(profile: profile, user: user),
+      if (errorMessage != null) ...[
+        const SizedBox(height: DoodhSpacing.md),
+        DoodhErrorBanner(message: errorMessage!),
+      ],
+    ],
+  );
+}
+
+/// The profile identity hero. Uses only server-provided data: name from the
+/// customer profile (falling back to the session display name), mobile and
+/// email from the authenticated session. With no name on record a tasteful
+/// branded droplet fallback is shown — no profile photo is invented.
+class _ProfileHero extends StatelessWidget {
+  const _ProfileHero({required this.profile, required this.user});
 
   final CustomerProfile profile;
   final AuthUser? user;
 
   @override
-  Widget build(BuildContext context) => Card(
-    color: DoodhColors.mint,
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final profileName = profile.fullName.trim();
+    final displayName = user?.displayName?.trim() ?? '';
+    final name = profileName.isNotEmpty
+        ? profileName
+        : displayName.isNotEmpty
+        ? displayName
+        : '';
+    final mobile = _displayMobile(user?.mobile);
+    final email = user?.email?.trim() ?? '';
+    final identityFacts = [
+      ?mobile,
+      if (email.isNotEmpty) email,
+    ].join('  ·  ');
+    final avatarLetter = name.isEmpty        ? null
+        : name.substring(0, 1).toUpperCase();
+
+    return Semantics(
+      container: true,
+      label: 'Profile: ${name.isEmpty ? 'Welcome' : name}'
+          '${mobile == null ? '' : ', mobile $mobile'}'
+          '${email.isEmpty ? '' : ', email $email'}',
+      child: Card(
+        color: DoodhColors.tealDark,
+        clipBehavior: Clip.antiAlias,
+        child: Padding(
+          padding: const EdgeInsets.all(DoodhSpacing.lg),
+          child: Row(
             children: [
-              Text('Profile', style: Theme.of(context).textTheme.titleLarge),
-              IconButton(
-                tooltip: 'Edit profile',
-                onPressed: () => context.push('/customer/profile/edit'),
-                icon: const Icon(Icons.edit_outlined),
+              ExcludeSemantics(
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: .14),
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: avatarLetter != null
+                      ? Text(
+                          avatarLetter,
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.water_drop_rounded,
+                          color: Colors.white,
+                          size: 26,
+                        ),
+                ),
+              ),
+              const SizedBox(width: DoodhSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Profile',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.white70,
+                      ),
+                    ),
+                    const SizedBox(height: DoodhSpacing.xs),
+                    Text(
+                      name.isEmpty ? 'Welcome' : name,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (identityFacts.isNotEmpty) ...[
+                      const SizedBox(height: DoodhSpacing.xs),
+                      Text(
+                        identityFacts,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: DoodhSpacing.sm),
+              ExcludeSemantics(
+                child: IconButton.outlined(
+                  tooltip: 'Edit profile',
+                  onPressed: () => context.push('/customer/profile/edit'),
+                  style: IconButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: BorderSide(color: Colors.white.withValues(alpha: .45)),
+                  ),
+                  icon: const Icon(Icons.edit_outlined, size: 20),
+                ),
               ),
             ],
           ),
-          if (profile.customerNumber?.isNotEmpty == true)
-            Padding(
-              padding: const EdgeInsets.only(top: 4, bottom: 12),
-              child: Text(
-                'Customer number: ${profile.customerNumber}',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: DoodhColors.muted),
-              ),
-            ),
-          _ProfileRow(label: 'Name', value: profile.firstName),
-          _ProfileRow(label: 'Last Name', value: profile.lastName),
-          _ProfileRow(
-            label: 'Alternate Number',
-            value: profile.alternateMobile,
-          ),
-          _ProfileRow(label: 'Gender', value: profile.gender),
-          _ProfileRow(
-            label: 'Date of Birth',
-            value: profile.dateOfBirth == null
-                ? null
-                : _date(profile.dateOfBirth!),
-          ),
-          // Mobile/email rows open the preserved auth change flows (OTP
-          // verification lives there) so no editable duplicate exists here.
-          _ProfileRow(
-            label: 'Mobile Number',
-            value: user?.mobile,
-            onTap: () => context.push('/security/mobile'),
-          ),
-          _ProfileRow(
-            label: 'Email',
-            value: user?.email,
-            onTap: () => context.push('/security/email'),
-          ),
-        ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
+class _PersonalInfoSection extends StatelessWidget {
+  const _PersonalInfoSection({required this.profile, required this.user});
+
+  final CustomerProfile profile;
+  final AuthUser? user;
+
+  @override
+  Widget build(BuildContext context) {
+    final email = user?.email?.trim() ?? '';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DoodhSectionHeader(
+          title: 'Personal information',
+          action: IconButton(
+            tooltip: 'Edit profile',
+            onPressed: () => context.push('/customer/profile/edit'),
+            icon: const Icon(Icons.edit_outlined),
+          ),
+        ),
+        const SizedBox(height: DoodhSpacing.sm),
+        DoodhCard(
+          color: DoodhColors.mint,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _ProfileRow(label: 'Name', value: profile.firstName),
+              _ProfileRow(label: 'Last Name', value: profile.lastName),
+              _ProfileRow(
+                label: 'Alternate Number',
+                value: profile.alternateMobile,
+              ),
+              _ProfileRow(label: 'Gender', value: profile.gender),
+              _ProfileRow(
+                label: 'Date of Birth',
+                value: profile.dateOfBirth == null
+                    ? null
+                    : _date(profile.dateOfBirth!),
+              ),
+              // Mobile/email rows open the preserved auth change flows (OTP
+              // verification lives there) so no editable duplicate exists here.
+              _ProfileRow(
+                label: 'Mobile Number',
+                value: _displayMobile(user?.mobile) ?? user?.mobile,
+                onTap: () => context.push('/security/mobile'),
+              ),
+              _ProfileRow(
+                label: 'Email',
+                value: email.isEmpty ? null : email,
+                onTap: () => context.push('/security/email'),
+                // Only the session-provided emailVerified flag is shown; no
+                // verification state is invented for accounts without email.
+                trailing: user?.emailVerified == true && email.isNotEmpty
+                    ? const DoodhStatusPill(
+                        label: 'Verified',
+                        tone: DoodhStatusTone.success,
+                      )
+                    : null,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// A single label/value row. Uses the shared [DoodhKeyValueRow] so values stack
+/// under their labels on narrow screens instead of being squeezed horizontally.
+/// Rows that open a change flow render a chevron affordance and stay tappable.
 class _ProfileRow extends StatelessWidget {
-  const _ProfileRow({required this.label, required this.value, this.onTap});
+  const _ProfileRow({
+    required this.label,
+    required this.value,
+    this.onTap,
+    this.trailing,
+  });
 
   final String label;
   final String? value;
   final VoidCallback? onTap;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final hasValue = value != null && value!.isNotEmpty;
-    final tappable = onTap != null;
-    final row = Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 140,
-          child: Text(
-            label,
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(color: DoodhColors.muted),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            hasValue ? value! : '—',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: hasValue ? DoodhColors.ink : DoodhColors.muted,
-            ),
-          ),
-        ),
-        if (tappable)
-          Padding(
-            padding: const EdgeInsets.only(left: 8),
+    final row = DoodhKeyValueRow(
+      label: label,
+      value: hasValue ? value! : '—',
+    );
+    if (onTap == null && trailing == null) return row;
+    return InkWell(
+      borderRadius: DoodhRadii.smRadius,
+      onTap: onTap,
+      child: Row(
+        children: [
+          Expanded(child: row),
+          ?trailing,
+          const ExcludeSemantics(
             child: Icon(
               Icons.chevron_right,
               size: 18,
-              color: theme.colorScheme.primary,
+              color: DoodhColors.tealDark,
             ),
           ),
-      ],
-    );
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: tappable
-          ? InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: onTap,
-              child: row,
-            )
-          : row,
+        ],
+      ),
     );
   }
 }
@@ -234,133 +397,237 @@ class _AddressSection extends StatelessWidget {
   final bool isSaving;
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      DoodhSectionHeader(
-        title: 'Delivery addresses',
-        action: IconButton(
-          tooltip: 'Add address',
-          onPressed: isSaving
-              ? null
-              : () => context.push('/customer/addresses/new'),
-          icon: const Icon(Icons.add_location_alt_outlined),
-        ),
-      ),
-      if (addresses.isEmpty)
-        EmptyStatePanel(
-          title: 'No delivery addresses',
-          message: 'Add an address with a map pin before placing deliveries.',
-          action: FilledButton.icon(
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DoodhSectionHeader(
+          title: 'Delivery addresses',
+          action: FilledButton.tonalIcon(
             onPressed: isSaving
                 ? null
                 : () => context.push('/customer/addresses/new'),
-            icon: const Icon(Icons.add),
+            icon: const Icon(Icons.add_location_alt_outlined, size: 18),
             label: const Text('Add address'),
           ),
-        )
-      else
-        ...addresses.map(
-          (address) => Card(
-            child: ListTile(
-              onTap: isSaving
+        ),
+        const SizedBox(height: DoodhSpacing.sm),
+        if (addresses.isEmpty)
+          EmptyStatePanel(
+            title: 'No delivery addresses',
+            message:
+                'Add an address with a map pin before placing deliveries.',
+            action: DoodhButton(
+              label: 'Add address',
+              icon: Icons.add,
+              onPressed: isSaving
                   ? null
-                  : () => context.push(
-                      '/customer/addresses/${address.publicId}/edit',
-                    ),
-              leading: Icon(
-                address.isDefault ? Icons.star : Icons.location_on_outlined,
-                color: address.isDefault
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
-              ),
-              title: Text(
-                '${address.label}${address.isDefault ? '  (default)' : ''}',
-              ),
-              subtitle: Text(
-                '${address.addressLine1}, ${address.locality}, ${address.city}\n'
-                '${address.state} - ${address.pinCode}',
-              ),
-              isThreeLine: true,
-              trailing: PopupMenuButton<_AddressAction>(
-                tooltip: 'Address actions',
-                enabled: !isSaving,
-                onSelected: (action) async {
-                  switch (action) {
-                    case _AddressAction.edit:
-                      await context.push(
-                        '/customer/addresses/${address.publicId}/edit',
-                      );
-                    case _AddressAction.setDefault:
-                      final container = ProviderScope.containerOf(
-                        context,
-                        listen: false,
-                      );
-                      await container
-                          .read(customerControllerProvider.notifier)
-                          .saveAddress(
-                            address.toDraft(isDefault: true),
-                            addressId: address.publicId,
-                          );
-                    case _AddressAction.deactivate:
-                      await _confirmDeactivate(context, address);
-                  }
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: _AddressAction.edit,
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.edit_outlined),
-                      title: Text('Edit'),
-                    ),
-                  ),
-                  if (!address.isDefault)
-                    const PopupMenuItem(
-                      value: _AddressAction.setDefault,
-                      child: ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(Icons.star_outline),
-                        title: Text('Set as default'),
-                      ),
-                    ),
-                  const PopupMenuItem(
-                    value: _AddressAction.deactivate,
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.delete_outline),
-                      title: Text('Deactivate'),
-                    ),
-                  ),
-                ],
+                  : () => context.push('/customer/addresses/new'),
+            ),
+          )
+        else
+          ...addresses.map(
+            (address) => Padding(
+              padding: const EdgeInsets.only(bottom: DoodhSpacing.sm),
+              child: _AddressCard(
+                address: address,
+                isSaving: isSaving,
               ),
             ),
           ),
-        ),
-    ],
-  );
+      ],
+    );
+  }
+}
 
+enum _AddressAction { edit, setDefault, deactivate }
+
+/// A single saved delivery address. The default address is immediately
+/// obvious through a tinted surface, a star icon, a status pill and an
+/// explicit semantics label — never colour alone.
+class _AddressCard extends StatelessWidget {
+  const _AddressCard({required this.address, required this.isSaving});
+
+  final CustomerAddress address;  final bool isSaving;
+
+  String get _detailText {
+    final line2 = address.addressLine2?.trim();
+    final lines = [
+      [
+        address.addressLine1,
+        if (line2 != null && line2.isNotEmpty) line2,
+        address.locality,
+        address.city,
+      ].where((part) => part.trim().isNotEmpty).join(', '),
+      '${address.state} - ${address.pinCode}',
+    ].where((part) => part.trim().isNotEmpty).join('\n');
+    return lines;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DoodhCard(
+      color: address.isDefault ? DoodhColors.mint : null,
+      onTap: isSaving
+          ? null
+          : () => context.push('/customer/addresses/${address.publicId}/edit'),
+      semanticLabel: address.isDefault
+          ? '${address.label}, default delivery address'
+          : address.label,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ExcludeSemantics(
+            child: Icon(
+              address.isDefault ? Icons.star : Icons.location_on_outlined,
+              size: 22,
+              color: address.isDefault
+                  ? DoodhColors.tealDark
+                  : DoodhColors.muted,
+            ),
+          ),
+          const SizedBox(width: DoodhSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: DoodhSpacing.sm,
+                  runSpacing: DoodhSpacing.xs,
+                  children: [
+                    Text(
+                      address.label,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    if (address.isDefault)
+                      const DoodhStatusPill(
+                        label: 'Default',
+                        tone: DoodhStatusTone.success,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: DoodhSpacing.xs),
+                // The full address is merged into one semantic node so screen
+                // readers announce it as a single readable block.
+                Semantics(
+                  container: true,
+                  label: _detailText,
+                  child: Text(_detailText),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: DoodhSpacing.xs),
+          PopupMenuButton<_AddressAction>(
+            key: ValueKey('address-menu-${address.publicId}'),
+            tooltip: 'Address actions',
+            enabled: !isSaving,
+            onSelected: (action) async {
+              switch (action) {
+                case _AddressAction.edit:
+                  await context.push(
+                    '/customer/addresses/${address.publicId}/edit',
+                  );
+                case _AddressAction.setDefault:
+                  final container = ProviderScope.containerOf(
+                    context,
+                    listen: false,
+                  );
+                  await container
+                      .read(customerControllerProvider.notifier)
+                      .saveAddress(
+                        address.toDraft(isDefault: true),
+                        addressId: address.publicId,
+                      );
+                case _AddressAction.deactivate:
+                  await _confirmDeactivate(context, address);
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: _AddressAction.edit,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.edit_outlined),
+                  title: Text('Edit'),
+                ),
+              ),
+              if (!address.isDefault)
+                const PopupMenuItem(
+                  value: _AddressAction.setDefault,
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.star_outline),
+                    title: Text('Set as default'),
+                  ),
+                ),
+              const PopupMenuItem(
+                value: _AddressAction.deactivate,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.delete_outline),
+                  title: Text('Deactivate'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Deactivation keeps the existing confirm-then-deactivate flow, with the
+  /// destructive action clearly labelled. A bottom sheet is used on compact
+  /// screens so the actions sit within comfortable thumb reach; the confirm
+  /// dialog text is unchanged.
   Future<void> _confirmDeactivate(
     BuildContext context,
     CustomerAddress address,
   ) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Deactivate address?'),
-        content: Text(
-          'Remove ${address.label} from active delivery addresses?',
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            DoodhSpacing.lg,
+            DoodhSpacing.sm,
+            DoodhSpacing.lg,
+            DoodhSpacing.lg,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Deactivate address?',
+                style: Theme.of(sheetContext).textTheme.titleMedium,
+              ),
+              const SizedBox(height: DoodhSpacing.xs),
+              Text(
+                'Remove ${address.label} from active delivery addresses?',
+              ),
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhButton(
+                label: 'Deactivate',
+                icon: Icons.delete_outline,
+                expand: true,
+                onPressed: () => Navigator.pop(sheetContext, true),
+              ),
+              const SizedBox(height: DoodhSpacing.sm),
+              DoodhButton(
+                label: 'Cancel',
+                variant: DoodhButtonVariant.secondary,
+                expand: true,
+                onPressed: () => Navigator.pop(sheetContext, false),
+              ),
+            ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Deactivate'),
-          ),
-        ],
       ),
     );
     if (confirmed != true || !context.mounted) return;
@@ -377,7 +644,54 @@ class _AddressSection extends StatelessWidget {
   }
 }
 
-enum _AddressAction { edit, setDefault, deactivate }
+/// Shared security entry points: the Login & security hub (password, mobile
+/// and email change flows with their OTP verification) and the direct
+/// password action. Routing and auth behaviour are unchanged.
+class _SecuritySection extends StatelessWidget {
+  const _SecuritySection({required this.user});
+
+  final AuthUser? user;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      DoodhSectionHeader(title: 'Security'),
+      const SizedBox(height: DoodhSpacing.sm),
+      DoodhActionTile(
+        key: const ValueKey('account-security-entry'),
+        icon: Icons.shield_outlined,
+        title: 'Login & security',
+        subtitle: 'Manage your password, mobile number and email.',
+        onTap: () => context.push('/security'),
+      ),
+      const SizedBox(height: DoodhSpacing.sm),
+      DoodhActionTile(
+        key: const ValueKey('account-change-password-entry'),
+        icon: Icons.password_outlined,
+        title: 'Change Password',
+        subtitle: user?.hasPassword == true
+            ? 'Update the password you sign in with.'
+            : 'Set a password to sign in without an OTP.',
+        onTap: () => context.push(
+          user?.hasPassword == true ? '/change-password' : '/create-password',
+        ),
+      ),
+    ],
+  );
+}
+
+/// Formats the canonical session mobile (`+91XXXXXXXXXX`) for display while
+/// leaving other formats untouched. Display-only: storage and validation are
+/// unaffected.
+String? _displayMobile(String? mobile) {
+  final canonical = mobile?.trim();
+  if (canonical == null || canonical.isEmpty) return null;
+  if (canonical.startsWith('+91') && canonical.length == 13) {
+    return '+91 ${canonical.substring(3)}';
+  }
+  return canonical;
+}
 
 class CustomerProfileEditScreen extends ConsumerStatefulWidget {
   const CustomerProfileEditScreen({super.key});
@@ -451,15 +765,11 @@ class _CustomerProfileEditScreenState
                 title: 'Personal details',
                 action: const Icon(Icons.person_outline),
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _firstName,
-                decoration: const InputDecoration(labelText: 'First name'),
-              ),
-              TextFormField(
-                controller: _lastName,
-                decoration: const InputDecoration(labelText: 'Last name'),
-              ),
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhField(label: 'First name', controller: _firstName),
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhField(label: 'Last name', controller: _lastName),
+              const SizedBox(height: DoodhSpacing.md),
               CountryCodeMobileField(
                 key: _countryKey,
                 controller: _mobile,
@@ -468,6 +778,7 @@ class _CustomerProfileEditScreenState
                 label: 'Alternate mobile',
                 errorText: _fieldError('alternateMobile'),
               ),
+              const SizedBox(height: DoodhSpacing.md),
               DropdownButtonFormField<String>(
                 initialValue: _gender.text.isEmpty ? null : _gender.text,
                 decoration: InputDecoration(
@@ -481,6 +792,7 @@ class _CustomerProfileEditScreenState
                 ],
                 onChanged: (value) => _gender.text = value ?? '',
               ),
+              const SizedBox(height: DoodhSpacing.md),
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text(
@@ -498,16 +810,13 @@ class _CustomerProfileEditScreenState
                   if (selected != null) setState(() => _dateOfBirth = selected);
                 },
               ),
-              const SizedBox(height: 20),
-              FilledButton.icon(
+              const SizedBox(height: DoodhSpacing.lg),
+              DoodhButton(
+                label: 'Save profile',
+                icon: Icons.save_outlined,
+                expand: true,
+                busy: saving,
                 onPressed: saving ? null : _save,
-                icon: saving
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.save_outlined),
-                label: const Text('Save profile'),
               ),
             ],
           ),
@@ -640,7 +949,7 @@ class _CustomerAddressEditScreenState
                 title: 'Address details',
                 action: const Icon(Icons.home_work_outlined),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: DoodhSpacing.md),
               if (!widget.checkoutMode) _text('label', 'Label', required: true),
               _text('addressLine1', 'Address line 1', required: true),
               _text('addressLine2', 'Address line 2'),
@@ -668,24 +977,26 @@ class _CustomerAddressEditScreenState
                     ? 'Contact mobile is required'
                     : null,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: DoodhSpacing.md),
               Text('Location', style: Theme.of(context).textTheme.titleMedium),
               const Text(
                 'Tap the map to adjust your delivery location.',
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: DoodhSpacing.md),
               GoogleMapCoordinatePicker(
                 initialLocation: _initialMapLocation(),
                 onLocationSelected: _setMapLocation,
                 mapsLoader: _loadGoogleMaps,
               ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
+              const SizedBox(height: DoodhSpacing.sm),
+              DoodhButton(
+                label: 'Retry address lookup',
+                icon: Icons.pin_drop_outlined,
+                variant: DoodhButtonVariant.secondary,
+                expand: true,
                 onPressed: state.isSaving || !_hasValidCoordinates
                     ? null
                     : _lookup,
-                icon: const Icon(Icons.pin_drop_outlined),
-                label: const Text('Retry address lookup'),
               ),
               if (!widget.checkoutMode)
                 CheckboxListTile(
@@ -696,23 +1007,19 @@ class _CustomerAddressEditScreenState
                   title: const Text('Use as default address'),
                   controlAffinity: ListTileControlAffinity.leading,
                 ),
-              const SizedBox(height: 12),
-              FilledButton.icon(
+              const SizedBox(height: DoodhSpacing.lg),
+              DoodhButton(
+                label: widget.checkoutMode
+                    ? 'Use this address'
+                    : 'Save address',
+                icon: Icons.save_outlined,
+                expand: true,
+                busy: state.isSaving,
                 onPressed: state.isSaving ? null : _save,
-                icon: state.isSaving
-                    ? const SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.save_outlined),
-                label: Text(widget.checkoutMode ? 'Use this address' : 'Save address'),
               ),
               if (state.errorMessage != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  state.errorMessage!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
+                const SizedBox(height: DoodhSpacing.md),
+                DoodhErrorBanner(message: state.errorMessage!),
               ],
             ],
           ),
@@ -787,19 +1094,20 @@ class _CustomerAddressEditScreenState
     bool required = false,
     TextInputType? keyboardType,
     String? Function(String?)? validator,
-  }) => TextFormField(
-    controller: _fields[key],
-    keyboardType: keyboardType,
-    decoration: InputDecoration(
-      labelText: label,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: DoodhSpacing.md),
+    child: DoodhField(
+      label: label,
+      controller: _fields[key],
+      keyboardType: keyboardType,
       errorText: ref.watch(customerControllerProvider).fieldErrors[key],
+      validator: validator ??
+          (required
+              ? (value) => value == null || value.trim().isEmpty
+                    ? '$label is required'
+                    : null
+              : null),
     ),
-    validator: validator ??
-        (required
-            ? (value) => value == null || value.trim().isEmpty
-                  ? '$label is required'
-                  : null
-            : null),
   );
 
   Future<void> _lookup() async {

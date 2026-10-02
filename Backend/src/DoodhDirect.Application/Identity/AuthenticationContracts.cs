@@ -236,6 +236,8 @@ public static class AuthorizationCodes
     public const string ReportsExport = ReportPermissions.Export;
     public const string SetupNumberSeriesRead = "SETUP.NUMBER_SERIES.READ";
     public const string SetupNumberSeriesManage = "SETUP.NUMBER_SERIES.MANAGE";
+    public const string SetupTaxChargesRead = "SETUP.TAX_CHARGES.READ";
+    public const string SetupTaxChargesManage = "SETUP.TAX_CHARGES.MANAGE";
     public const string BranchesRead = "BRANCHES.READ";
     public const string BranchesManage = "BRANCHES.MANAGE";
     public const string SetupOtpProviderRead = "SETUP.OTP_PROVIDER.READ";
@@ -244,6 +246,8 @@ public static class AuthorizationCodes
     public const string SetupIntegrationsManage = "SETUP.INTEGRATIONS.MANAGE";
     public const string SetupRefundReplacementRead = "SETUP.REFUND_REPLACEMENT.READ";
     public const string SetupRefundReplacementManage = "SETUP.REFUND_REPLACEMENT.MANAGE";
+    public const string SetupBrandingRead = "SETUP.BRANDING.READ";
+    public const string SetupBrandingManage = "SETUP.BRANDING.MANAGE";
     public const string RefundReplacementRequestOwn = "REFUND_REPLACEMENT.REQUEST_OWN";
     public const string RefundReplacementReadOwn = "REFUND_REPLACEMENT.READ_OWN";
     public const string RefundReplacementReadBranch = "REFUND_REPLACEMENT.READ_BRANCH";
@@ -322,6 +326,8 @@ public static class AuthorizationCodes
         [ReportsExport] = "Export authorized reports as CSV or XLSX",
         [SetupNumberSeriesRead] = "View numbering series configuration and live previews",
         [SetupNumberSeriesManage] = "Create and manage numbering series configuration",
+        [SetupTaxChargesRead] = "View the Tax & Charges master",
+        [SetupTaxChargesManage] = "Create and manage the Tax & Charges master",
         [BranchesRead] = "Read branch records and branch metadata",
         [BranchesManage] = "Create, update, activate, and deactivate branch records",
         [SetupOtpProviderRead] = "View OTP provider configuration and status",
@@ -330,6 +336,8 @@ public static class AuthorizationCodes
         [SetupIntegrationsManage] = "Configure and test integrations",
         [SetupRefundReplacementRead] = "View refund/replacement request window configuration",
         [SetupRefundReplacementManage] = "Configure refund/replacement request window",
+        [SetupBrandingRead] = "View application branding",
+        [SetupBrandingManage] = "Manage application branding",
         [RefundReplacementRequestOwn] = "Submit own refund/replacement requests for eligible deliveries",
         [RefundReplacementReadOwn] = "Read own refund/replacement requests",
         [RefundReplacementReadBranch] = "Read branch refund/replacement requests for operations",

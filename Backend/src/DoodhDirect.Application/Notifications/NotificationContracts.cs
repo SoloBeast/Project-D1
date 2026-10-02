@@ -14,6 +14,7 @@ public static class NotificationEventTypes
     public const string SubscriptionPaymentPending = "SUBSCRIPTION_PAYMENT_PENDING";
     public const string SubscriptionActivated = "SUBSCRIPTION_ACTIVATED";
     public const string SubscriptionSkipped = "SUBSCRIPTION_SKIPPED";
+    public const string SubscriptionVacationSet = "SUBSCRIPTION_VACATION_SET";
     public const string SubscriptionPaused = "SUBSCRIPTION_PAUSED";
     public const string SubscriptionResumed = "SUBSCRIPTION_RESUMED";
     public const string DeliveryAssigned = "DELIVERY_ASSIGNED";
@@ -61,6 +62,7 @@ public static class NotificationEventTypes
         SubscriptionPaymentPending,
         SubscriptionActivated,
         SubscriptionSkipped,
+        SubscriptionVacationSet,
         SubscriptionPaused,
         SubscriptionResumed,
         DeliveryAssigned,

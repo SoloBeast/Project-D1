@@ -2,8 +2,11 @@ import 'package:doodh_direct_mobile/core/utils/country_codes.dart';
 import 'package:doodh_direct_mobile/core/utils/india_mobile.dart';
 import 'package:doodh_direct_mobile/core/utils/mobile_number.dart';
 import 'package:doodh_direct_mobile/core/widgets/country_code_mobile_field.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -74,90 +77,89 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Mobile OTP')),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Verify your mobile number',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'A one-time code will be sent to your mobile number.',
-                    ),
-                    const SizedBox(height: 24),
-                    if (session.errorMessage != null) ...[
-                      const SizedBox(height: 16),
+      body: DoodhPage(
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: DoodhContentMax.narrow,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: DoodhSpacing.sm),
                       Text(
-                        session.errorMessage!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
+                        'Verify your mobile number',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: DoodhSpacing.sm),
+                      Text(
+                        'A one-time code will be sent to your mobile number.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: DoodhColors.muted,
                         ),
                       ),
-                    ],
-                    const SizedBox(height: 24),
-                    CountryCodeMobileField(
-                      key: _countryKey,
-                      controller: _mobileController,
-                      initialCountry: _initialCountry,
-                      enabled: !busy,
-                    ),
-                    if (_codeSent) ...[
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _codeController,
+                      if (session.errorMessage != null) ...[
+                        const SizedBox(height: DoodhSpacing.md),
+                        DoodhErrorBanner(message: session.errorMessage!),
+                      ],
+                      const SizedBox(height: DoodhSpacing.lg),
+                      CountryCodeMobileField(
+                        key: _countryKey,
+                        controller: _mobileController,
+                        initialCountry: _initialCountry,
                         enabled: !busy,
-                        keyboardType: TextInputType.number,
-                        maxLength: 6,
-                        decoration: const InputDecoration(
-                          labelText: '6-digit verification code',
-                          prefixIcon: Icon(Icons.password_outlined),
-                          border: OutlineInputBorder(),
-                          counterText: '',
+                      ),
+                      if (_codeSent) ...[
+                        const SizedBox(height: DoodhSpacing.md),
+                        DoodhField(
+                          label: '6-digit verification code',
+                          controller: _codeController,
+                          enabled: !busy,
+                          keyboardType: TextInputType.number,
+                          prefixIcon: const Icon(Icons.password_outlined),
+                          inputFormatters: [
+                            LengthLimitingTextInputFormatter(6),
+                          ],
+                          validator: (value) =>
+                              value == null || value.trim().length != 6
+                              ? 'Enter the 6-digit code.'
+                              : null,
                         ),
-                        validator: (value) =>
-                            value == null || value.trim().length != 6
-                            ? 'Enter the 6-digit code.'
-                            : null,
+                      ],
+                      const SizedBox(height: DoodhSpacing.lg),
+                      DoodhButton(
+                        label: _codeSent ? 'Verify code' : 'Send code',
+                        icon: _codeSent
+                            ? Icons.verified_outlined
+                            : Icons.sms_outlined,
+                        busy: busy,
+                        expand: true,
+                        onPressed: _codeSent ? _verify : _send,
                       ),
+                      if (_codeSent) ...[
+                        const SizedBox(height: DoodhSpacing.xs),
+                        TextButton.icon(
+                          onPressed: busy ? null : _resend,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('Send a new code'),
+                        ),
+                      ],
+                      TextButton(
+                        onPressed: busy
+                            ? null
+                            : () => context.go(_withRedirect('/login')),
+                        child: const Text('Back to password sign in'),
+                      ),
+                      const SizedBox(height: DoodhSpacing.xl),
                     ],
-                    const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: busy ? null : (_codeSent ? _verify : _send),
-                      icon: busy
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(
-                              _codeSent
-                                  ? Icons.verified_outlined
-                                  : Icons.sms_outlined,
-                            ),
-                      label: Text(_codeSent ? 'Verify code' : 'Send code'),
-                    ),
-                    if (_codeSent)
-                      TextButton.icon(
-                        onPressed: busy ? null : _resend,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Send a new code'),
-                      ),
-                    TextButton(
-                      onPressed: busy ? null : () => context.go(_withRedirect('/login')),
-                      child: const Text('Back to password sign in'),
-                    ),
-                  ],
+                  ),
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),

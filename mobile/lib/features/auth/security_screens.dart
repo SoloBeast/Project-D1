@@ -1,11 +1,14 @@
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/utils/country_codes.dart';
 import 'package:doodh_direct_mobile/core/utils/india_mobile.dart';
 import 'package:doodh_direct_mobile/core/utils/mobile_number.dart';
 import 'package:doodh_direct_mobile/core/widgets/country_code_mobile_field.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
+import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -38,80 +41,61 @@ class _CreatePasswordScreenState extends ConsumerState<CreatePasswordScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Create password')),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Secure your account',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Your account was created with a one-time code. Set a '
-                      'password so you can sign in with it in future.',
-                    ),
-                    const SizedBox(height: 24),
-                    TextFormField(
-                      controller: _passwordController,
-                      enabled: !_busy,
-                      obscureText: _obscure,
-                      autofillHints: const [AutofillHints.newPassword],
-                      decoration: InputDecoration(
-                        labelText: 'New password',
-                        prefixIcon: const Icon(Icons.lock_outline),
-                        border: const OutlineInputBorder(),
-                        suffixIcon: IconButton(
-                          tooltip: _obscure ? 'Show password' : 'Hide password',
-                          onPressed: () =>
-                              setState(() => _obscure = !_obscure),
-                          icon: Icon(
-                            _obscure
-                                ? Icons.visibility_outlined
-                                : Icons.visibility_off_outlined,
-                          ),
-                        ),
-                      ),
-                      validator: (value) => value == null || value.length < 8
-                          ? 'Use at least 8 characters.'
-                          : null,
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _confirmController,
-                      enabled: !_busy,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Confirm password',
-                        prefixIcon: Icon(Icons.lock_reset_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) => value != _passwordController.text
-                          ? 'Passwords do not match.'
-                          : null,
-                    ),
-                    const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: _busy ? null : _submit,
-                      icon: _busy
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.lock_reset_outlined),
-                      label: const Text('Set password'),
-                    ),
-                  ],
-                ),
+      body: DoodhPage(
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              Text(
+                'Secure your account',
+                style: Theme.of(context).textTheme.headlineSmall,
               ),
-            ),
+              const SizedBox(height: DoodhSpacing.sm),
+              const Text(
+                'Your account was created with a one-time code. Set a '
+                'password so you can sign in with it in future.',
+              ),
+              const SizedBox(height: DoodhSpacing.lg),
+              DoodhField(
+                label: 'New password',
+                controller: _passwordController,
+                enabled: !_busy,
+                obscureText: _obscure,
+                autofillHints: const [AutofillHints.newPassword],
+                prefixIcon: const Icon(Icons.lock_outline),
+                suffixIcon: IconButton(
+                  tooltip: _obscure ? 'Show password' : 'Hide password',
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                  icon: Icon(
+                    _obscure
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                  ),
+                ),
+                validator: (value) => value == null || value.length < 8
+                    ? 'Use at least 8 characters.'
+                    : null,
+              ),
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhField(
+                label: 'Confirm password',
+                controller: _confirmController,
+                enabled: !_busy,
+                obscureText: true,
+                prefixIcon: const Icon(Icons.lock_reset_outlined),
+                validator: (value) => value != _passwordController.text
+                    ? 'Passwords do not match.'
+                    : null,
+              ),
+              const SizedBox(height: DoodhSpacing.lg),
+              DoodhButton(
+                label: 'Set password',
+                icon: Icons.lock_reset_outlined,
+                busy: _busy,
+                expand: true,
+                onPressed: _submit,
+              ),
+            ],
           ),
         ),
       ),
@@ -180,96 +164,73 @@ class _ChangePasswordScreenState extends ConsumerState<ChangePasswordScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Change Password')),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Update your password',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Enter your current password and choose a new one to '
-                      'keep your account secure.',
-                    ),
-                    const SizedBox(height: 24),
-                    TextFormField(
-                      controller: _currentController,
-                      enabled: !_busy,
-                      obscureText: true,
-                      autofillHints: const [AutofillHints.password],
-                      decoration: const InputDecoration(
-                        labelText: 'Current Password',
-                        prefixIcon: Icon(Icons.lock_outline),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) => value == null || value.isEmpty
-                          ? 'Enter your current password.'
-                          : null,
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _newController,
-                      enabled: !_busy,
-                      obscureText: _obscure,
-                      autofillHints: const [AutofillHints.newPassword],
-                      decoration: InputDecoration(
-                        labelText: 'New Password',
-                        prefixIcon: const Icon(Icons.lock_reset_outlined),
-                        border: const OutlineInputBorder(),
-                        suffixIcon: IconButton(
-                          tooltip:
-                              _obscure ? 'Show password' : 'Hide password',
-                          onPressed: () =>
-                              setState(() => _obscure = !_obscure),
-                          icon: Icon(
-                            _obscure
-                                ? Icons.visibility_outlined
-                                : Icons.visibility_off_outlined,
-                          ),
-                        ),
-                      ),
-                      validator: (value) => value == null || value.length < 8
-                          ? 'Use at least 8 characters.'
-                          : null,
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _confirmController,
-                      enabled: !_busy,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Confirm New Password',
-                        prefixIcon: Icon(Icons.lock_reset_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) => value != _newController.text
-                          ? 'Passwords do not match.'
-                          : null,
-                    ),
-                    const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: _busy ? null : _submit,
-                      icon: _busy
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.lock_reset_outlined),
-                      label: const Text('Change Password'),
-                    ),
-                  ],
-                ),
+      body: DoodhPage(
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              Text(
+                'Update your password',
+                style: Theme.of(context).textTheme.headlineSmall,
               ),
-            ),
+              const SizedBox(height: DoodhSpacing.sm),
+              const Text(
+                'Enter your current password and choose a new one to '
+                'keep your account secure.',
+              ),
+              const SizedBox(height: DoodhSpacing.lg),
+              DoodhField(
+                label: 'Current Password',
+                controller: _currentController,
+                enabled: !_busy,
+                obscureText: true,
+                autofillHints: const [AutofillHints.password],
+                prefixIcon: const Icon(Icons.lock_outline),
+                validator: (value) => value == null || value.isEmpty
+                    ? 'Enter your current password.'
+                    : null,
+              ),
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhField(
+                label: 'New Password',
+                controller: _newController,
+                enabled: !_busy,
+                obscureText: _obscure,
+                autofillHints: const [AutofillHints.newPassword],
+                prefixIcon: const Icon(Icons.lock_reset_outlined),
+                suffixIcon: IconButton(
+                  tooltip: _obscure ? 'Show password' : 'Hide password',
+                  onPressed: () => setState(() => _obscure = !_obscure),
+                  icon: Icon(
+                    _obscure
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                  ),
+                ),
+                validator: (value) => value == null || value.length < 8
+                    ? 'Use at least 8 characters.'
+                    : null,
+              ),
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhField(
+                label: 'Confirm New Password',
+                controller: _confirmController,
+                enabled: !_busy,
+                obscureText: true,
+                prefixIcon: const Icon(Icons.lock_reset_outlined),
+                validator: (value) => value != _newController.text
+                    ? 'Passwords do not match.'
+                    : null,
+              ),
+              const SizedBox(height: DoodhSpacing.lg),
+              DoodhButton(
+                label: 'Change Password',
+                icon: Icons.lock_reset_outlined,
+                busy: _busy,
+                expand: true,
+                onPressed: _submit,
+              ),
+            ],
           ),
         ),
       ),
@@ -351,107 +312,116 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
       1 => 'Enter the 6-digit code sent to your mobile. Password fields appear after verification.',
       _ => 'Your mobile is verified. Choose a new password for your account.',
     };
+    final actionIcon = switch (_step) {
+      0 => Icons.sms_outlined,
+      1 => Icons.verified_outlined,
+      _ => Icons.lock_reset_outlined,
+    };
     return Scaffold(
       appBar: AppBar(title: const Text('Reset password')),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(title, style: Theme.of(context).textTheme.headlineSmall),
-                    const SizedBox(height: 8),
-                    Text(description),
-                    const SizedBox(height: 24),
-                    if (_step == 0)
-                      CountryCodeMobileField(
-                        key: _countryKey,
-                        controller: _mobileController,
-                        enabled: !_busy,
-                      ),
-                    if (_step == 1)
-                      TextFormField(
-                        controller: _codeController,
-                        enabled: !_busy,
-                        keyboardType: TextInputType.number,
-                        maxLength: 6,
-                        decoration: const InputDecoration(
-                          labelText: '6-digit verification code',
-                          prefixIcon: Icon(Icons.password_outlined),
-                          border: OutlineInputBorder(),
-                          counterText: '',
-                        ),
-                        validator: (value) => value == null || value.trim().length != 6
-                            ? 'Enter the 6-digit code.'
-                            : null,
-                      ),
-                    if (_otpVerified) ...[
-                      TextFormField(
-                        controller: _passwordController,
-                        enabled: !_busy,
-                        obscureText: _obscurePassword,
-                        autofillHints: const [AutofillHints.newPassword],
-                        decoration: InputDecoration(
-                          labelText: 'New password',
-                          prefixIcon: const Icon(Icons.lock_outline),
-                          border: const OutlineInputBorder(),
-                          suffixIcon: IconButton(
-                            tooltip: _obscurePassword ? 'Show password' : 'Hide password',
-                            onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                            icon: Icon(_obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
-                          ),
-                        ),
-                        validator: (value) => value == null || value.length < 8
-                            ? 'Use at least 8 characters.'
-                            : null,
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _confirmController,
-                        enabled: !_busy,
-                        obscureText: _obscureConfirmPassword,
-                        decoration: InputDecoration(
-                          labelText: 'Confirm password',
-                          prefixIcon: const Icon(Icons.lock_reset_outlined),
-                          border: const OutlineInputBorder(),
-                          suffixIcon: IconButton(
-                            tooltip: _obscureConfirmPassword ? 'Show password' : 'Hide password',
-                            onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
-                            icon: Icon(_obscureConfirmPassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
-                          ),
-                        ),
-                        validator: (value) => value != _passwordController.text
-                            ? 'Passwords do not match.'
-                            : null,
-                      ),
-                    ],
-                    const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: _busy ? null : (_step == 0 ? _send : _step == 1 ? _verify : _reset),
-                      icon: _busy
-                          ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                          : Icon(_step == 0 ? Icons.sms_outlined : _step == 1 ? Icons.verified_outlined : Icons.lock_reset_outlined),
-                      label: Text(_step == 0 ? 'Send OTP' : _step == 1 ? 'Verify OTP' : 'Reset password'),
-                    ),
-                    if (_step == 1)
-                      TextButton.icon(
-                        onPressed: _busy ? null : _resend,
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Send a new code'),
-                      ),
-                    TextButton(
-                      onPressed: _busy ? null : () => context.go(_withRedirect('/login')),
-                      child: const Text('Cancel'),
-                    ),
-                  ],
+      body: DoodhPage(
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              Text(title, style: Theme.of(context).textTheme.headlineSmall),
+              const SizedBox(height: DoodhSpacing.sm),
+              Text(description),
+              const SizedBox(height: DoodhSpacing.lg),
+              if (_step == 0)
+                CountryCodeMobileField(
+                  key: _countryKey,
+                  controller: _mobileController,
+                  enabled: !_busy,
                 ),
+              if (_step == 1)
+                DoodhField(
+                  label: '6-digit verification code',
+                  controller: _codeController,
+                  enabled: !_busy,
+                  keyboardType: TextInputType.number,
+                  prefixIcon: const Icon(Icons.password_outlined),
+                  inputFormatters: [LengthLimitingTextInputFormatter(6)],
+                  validator: (value) =>
+                      value == null || value.trim().length != 6
+                      ? 'Enter the 6-digit code.'
+                      : null,
+                ),
+              if (_otpVerified) ...[
+                DoodhField(
+                  label: 'New password',
+                  controller: _passwordController,
+                  enabled: !_busy,
+                  obscureText: _obscurePassword,
+                  autofillHints: const [AutofillHints.newPassword],
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  suffixIcon: IconButton(
+                    tooltip: _obscurePassword
+                        ? 'Show password'
+                        : 'Hide password',
+                    onPressed: () => setState(
+                      () => _obscurePassword = !_obscurePassword,
+                    ),
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                  ),
+                  validator: (value) => value == null || value.length < 8
+                      ? 'Use at least 8 characters.'
+                      : null,
+                ),
+                const SizedBox(height: DoodhSpacing.md),
+                DoodhField(
+                  label: 'Confirm password',
+                  controller: _confirmController,
+                  enabled: !_busy,
+                  obscureText: _obscureConfirmPassword,
+                  prefixIcon: const Icon(Icons.lock_reset_outlined),
+                  suffixIcon: IconButton(
+                    tooltip: _obscureConfirmPassword
+                        ? 'Show password'
+                        : 'Hide password',
+                    onPressed: () => setState(
+                      () => _obscureConfirmPassword = !_obscureConfirmPassword,
+                    ),
+                    icon: Icon(
+                      _obscureConfirmPassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                  ),
+                  validator: (value) => value != _passwordController.text
+                      ? 'Passwords do not match.'
+                      : null,
+                ),
+              ],
+              const SizedBox(height: DoodhSpacing.lg),
+              DoodhButton(
+                label: _step == 0
+                    ? 'Send OTP'
+                    : _step == 1
+                    ? 'Verify OTP'
+                    : 'Reset password',
+                icon: actionIcon,
+                busy: _busy,
+                expand: true,
+                onPressed: _step == 0 ? _send : _step == 1 ? _verify : _reset,
               ),
-            ),
+              if (_step == 1)
+                TextButton.icon(
+                  onPressed: _busy ? null : _resend,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Send a new code'),
+                ),
+              TextButton(
+                onPressed: _busy
+                    ? null
+                    : () => context.go(_withRedirect('/login')),
+                child: const Text('Cancel'),
+              ),
+            ],
           ),
         ),
       ),
@@ -596,147 +566,54 @@ class _LoginSecurityScreenState extends ConsumerState<LoginSecurityScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Login & security')),
-      body: SafeArea(
-        child: user == null
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                padding: const EdgeInsets.all(16),
+      body: user == null
+          ? const LoadingStatePanel(message: 'Loading your account security.')
+          : DoodhPage(
+              padding: false,
+              child: ListView(
+                padding: DoodhSpacing.pagePadding,
                 children: [
+                  const _SecurityIntroCard(),
+                  const SizedBox(height: DoodhSpacing.lg),
                   DoodhSectionHeader(title: 'Mobile number'),
-                  const SizedBox(height: 8),
-                  Card(
-                    child: ListTile(
-                      leading: Icon(
-                        user.mobile == null || user.pendingMobile != null
-                            ? Icons.phone_android_outlined
-                            : Icons.verified_outlined,
-                        color: user.mobile == null || user.pendingMobile != null
-                            ? Theme.of(context).colorScheme.error
-                            : DoodhColors.teal,
-                      ),
-                      title: Text(user.mobile ?? 'No mobile number'),
-                      subtitle: Text(
-                        user.pendingMobile != null
-                            ? 'Pending confirmation: ${user.pendingMobile}'
-                            : user.mobile == null
-                            ? 'Add a mobile number for OTP sign-in.'
-                            : 'Active',
-                      ),
-                      isThreeLine: true,
-                      trailing: IconButton(
-                        tooltip: user.mobile == null ? 'Add mobile' : 'Change mobile',
-                        onPressed: () => context.push('/security/mobile'),
-                        icon: const Icon(Icons.edit_outlined),
-                      ),
-                    ),
-                  ),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  _MobileStatusCard(user: user),
                   if (user.pendingMobile != null) ...[
-                    const SizedBox(height: 8),
-                    Card(
-                      child: ListTile(
-                        leading: Icon(Icons.sms_outlined, color: Theme.of(context).colorScheme.primary),
-                        title: const Text('Verify pending mobile'),
-                        subtitle: const Text('Enter the code sent to your new mobile number.'),
-                        trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 16),
-                        onTap: () => context.push('/security/mobile'),
-                      ),
+                    const SizedBox(height: DoodhSpacing.sm),
+                    DoodhActionTile(
+                      icon: Icons.sms_outlined,
+                      title: 'Verify pending mobile',
+                      subtitle:
+                          'Enter the code sent to your new mobile number.',
+                      onTap: () => context.push('/security/mobile'),
                     ),
                   ],
-                  const SizedBox(height: 24),
+                  const SizedBox(height: DoodhSpacing.lg),
                   DoodhSectionHeader(title: 'Email'),
-                  const SizedBox(height: 8),
-                  Card(
-                    child: ListTile(
-                      leading: Icon(
-                        user.email == null
-                            ? Icons.mark_email_read_outlined
-                            : user.emailVerified
-                            ? Icons.verified_outlined
-                            : Icons.mark_email_unread_outlined,
-                        color: user.email == null || !user.emailVerified
-                            ? Theme.of(context).colorScheme.error
-                            : DoodhColors.teal,
-                      ),
-                      title: Text(user.email ?? 'No email address'),
-                      subtitle: Text(
-                        user.pendingEmail != null
-                            ? 'Pending confirmation: ${user.pendingEmail}'
-                            : user.email == null
-                            ? 'Add an email to receive account notifications.'
-                            : user.emailVerified
-                            ? 'Verified'
-                            : 'Not yet verified — verify to secure your account.',
-                      ),
-                      isThreeLine: true,
-                      trailing: IconButton(
-                        tooltip:
-                            user.email == null ? 'Add email' : 'Change email',
-                        onPressed: () =>
-                            context.push('/security/email'),
-                        icon: const Icon(Icons.edit_outlined),
-                      ),
-                    ),
-                  ),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  _EmailStatusCard(user: user),
                   if (user.pendingEmail != null) ...[
-                    const SizedBox(height: 8),
-                    Card(
-                      child: ListTile(
-                        leading: Icon(
-                          Icons.sms_outlined,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        title: const Text('Verify pending email'),
-                        subtitle: const Text(
+                    const SizedBox(height: DoodhSpacing.sm),
+                    DoodhActionTile(
+                      icon: Icons.sms_outlined,
+                      title: 'Verify pending email',
+                      subtitle:
                           'Enter the code sent to your new email address.',
-                        ),
-                        trailing: const Icon(
-                          Icons.arrow_forward_ios_rounded,
-                          size: 16,
-                        ),
-                        onTap: () => context.push('/security/email'),
-                      ),
+                      onTap: () => context.push('/security/email'),
                     ),
                   ],
-                  const SizedBox(height: 24),
+                  const SizedBox(height: DoodhSpacing.lg),
                   DoodhSectionHeader(title: 'Password'),
-                  const SizedBox(height: 8),
-                  Card(
-                    child: ListTile(
-                      leading: Icon(
-                        user.hasPassword
-                            ? Icons.password_outlined
-                            : Icons.lock_open_outlined,
-                        color: user.hasPassword
-                            ? DoodhColors.teal
-                            : Theme.of(context).colorScheme.error,
-                      ),
-                      title: Text(
-                        user.hasPassword
-                            ? 'Configure Password'
-                            : 'No password set',
-                      ),
-                      subtitle: Text(
-                        user.hasPassword
-                            ? 'Change it any time to keep your account secure.'
-                            : 'Set a password to sign in with it instead of an OTP.',
-                      ),
-                      isThreeLine: true,
-                      trailing: const Icon(
-                        Icons.arrow_forward_ios_rounded,
-                        size: 16,
-                      ),
-                      onTap: () {
-                        if (user.hasPassword) {
-                          _showChangePasswordDialog(context);
-                        } else {
-                          context.push('/create-password');
-                        }
-                      },
-                    ),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  _PasswordStatusCard(
+                    user: user,
+                    onChangePassword: () =>
+                        _showChangePasswordDialog(context),
+                    onSetPassword: () => context.push('/create-password'),
                   ),
                 ],
               ),
-      ),
+            ),
     );
   }
 
@@ -759,57 +636,46 @@ class _LoginSecurityScreenState extends ConsumerState<LoginSecurityScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextFormField(
+                  DoodhField(
+                    label: 'Current password',
                     controller: currentController,
                     enabled: !busy,
                     obscureText: true,
                     autofillHints: const [AutofillHints.password],
-                    decoration: const InputDecoration(
-                      labelText: 'Current password',
-                      prefixIcon: Icon(Icons.lock_outline),
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (value) =>
-                        value == null || value.isEmpty
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    validator: (value) => value == null || value.isEmpty
                         ? 'Enter your current password.'
                         : null,
                   ),
-                  const SizedBox(height: 16),
-                  TextFormField(
+                  const SizedBox(height: DoodhSpacing.md),
+                  DoodhField(
+                    label: 'New password',
                     controller: newController,
                     enabled: !busy,
                     obscureText: obscure,
                     autofillHints: const [AutofillHints.newPassword],
-                    decoration: InputDecoration(
-                      labelText: 'New password',
-                      prefixIcon: const Icon(Icons.lock_reset_outlined),
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        tooltip: obscure ? 'Show password' : 'Hide password',
-                        onPressed: () =>
-                            setDialogState(() => obscure = !obscure),
-                        icon: Icon(
-                          obscure
-                              ? Icons.visibility_outlined
-                              : Icons.visibility_off_outlined,
-                        ),
+                    prefixIcon: const Icon(Icons.lock_reset_outlined),
+                    suffixIcon: IconButton(
+                      tooltip: obscure ? 'Show password' : 'Hide password',
+                      onPressed: () =>
+                          setDialogState(() => obscure = !obscure),
+                      icon: Icon(
+                        obscure
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
                       ),
                     ),
-                    validator: (value) =>
-                        value == null || value.length < 8
+                    validator: (value) => value == null || value.length < 8
                         ? 'Use at least 8 characters.'
                         : null,
                   ),
-                  const SizedBox(height: 16),
-                  TextFormField(
+                  const SizedBox(height: DoodhSpacing.md),
+                  DoodhField(
+                    label: 'Confirm new password',
                     controller: confirmController,
                     enabled: !busy,
                     obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Confirm new password',
-                      prefixIcon: Icon(Icons.lock_reset_outlined),
-                      border: OutlineInputBorder(),
-                    ),
+                    prefixIcon: const Icon(Icons.lock_reset_outlined),
                     validator: (value) => value != newController.text
                         ? 'Passwords do not match.'
                         : null,
@@ -825,40 +691,37 @@ class _LoginSecurityScreenState extends ConsumerState<LoginSecurityScreen> {
                   : () => Navigator.of(dialogContext).pop(),
               child: const Text('Cancel'),
             ),
-            FilledButton(
-              onPressed: busy
-                  ? null
-                  : () async {
-                      if (!_dialogFormKey.currentState!.validate()) return;
-                      setDialogState(() => busy = true);
-                      try {
-                        await controller
-                            .read(sessionControllerProvider.notifier)
-                            .changePassword(
-                              currentPassword: currentController.text,
-                              newPassword: newController.text,
-                            );
-                        if (dialogContext.mounted) {
-                          Navigator.of(dialogContext).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Password changed.'),
-                            ),
-                          );
-                        }
-                      } on Object catch (error) {
-                        if (dialogContext.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(error.toString())),
-                          );
-                        }
-                      } finally {
-                        if (dialogContext.mounted) {
-                          setDialogState(() => busy = false);
-                        }
-                      }
-                    },
-              child: const Text('Change password'),
+            DoodhButton(
+              label: 'Change password',
+              busy: busy,
+              onPressed: () async {
+                if (!_dialogFormKey.currentState!.validate()) return;
+                setDialogState(() => busy = true);
+                try {
+                  await controller
+                      .read(sessionControllerProvider.notifier)
+                      .changePassword(
+                        currentPassword: currentController.text,
+                        newPassword: newController.text,
+                      );
+                  if (dialogContext.mounted) {
+                    Navigator.of(dialogContext).pop();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Password changed.')),
+                    );
+                  }
+                } on Object catch (error) {
+                  if (dialogContext.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(error.toString())),
+                    );
+                  }
+                } finally {
+                  if (dialogContext.mounted) {
+                    setDialogState(() => busy = false);
+                  }
+                }
+              },
             ),
           ],
         ),
@@ -868,6 +731,219 @@ class _LoginSecurityScreenState extends ConsumerState<LoginSecurityScreen> {
     newController.dispose();
     confirmController.dispose();
   }
+}
+
+/// Calm, factual framing for the security hub: it only describes what the
+/// customer can manage here — no invented guarantees or certifications.
+class _SecurityIntroCard extends StatelessWidget {
+  const _SecurityIntroCard();
+
+  @override
+  Widget build(BuildContext context) => DoodhCard(
+    color: DoodhColors.mint,
+    child: Row(
+      children: [
+        const ExcludeSemantics(
+          child: Icon(Icons.shield_outlined, color: DoodhColors.tealDark),
+        ),
+        const SizedBox(width: DoodhSpacing.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Your sign-in details',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: DoodhSpacing.xs),
+              Text(
+                'Manage the mobile number, email address and password you use '
+                'to sign in to DoodhDirect.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: DoodhColors.muted,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// One sign-in-detail status row: icon tile, label/value, status pill and the
+/// change affordance. Status is always carried by text + pill, never colour
+/// alone.
+class _SecurityStatusTile extends StatelessWidget {
+  const _SecurityStatusTile({
+    required this.icon,
+    required this.value,
+    required this.subtitle,
+    required this.actionTooltip,
+    required this.onAction,
+    this.pill,
+  });
+
+  final IconData icon;
+  final String value;
+  final String subtitle;
+  final String actionTooltip;
+  final VoidCallback onAction;
+  final DoodhStatusPill? pill;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      borderRadius: DoodhRadii.mdRadius,
+      onTap: onAction,
+      child: Padding(
+        padding: const EdgeInsets.all(DoodhSpacing.md),
+        child: Row(
+          children: [
+            ExcludeSemantics(
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: DoodhColors.mint.withValues(alpha: .8),
+                  borderRadius: DoodhRadii.sm,
+                ),
+                child: Icon(icon, color: DoodhColors.tealDark),
+              ),
+            ),
+            const SizedBox(width: DoodhSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(value, style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: DoodhSpacing.xs),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: DoodhColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (pill != null) ...[
+              const SizedBox(width: DoodhSpacing.sm),
+              pill!,
+            ],
+            const SizedBox(width: DoodhSpacing.sm),
+            ExcludeSemantics(
+              child: IconButton(
+                tooltip: actionTooltip,
+                onPressed: onAction,
+                icon: const Icon(Icons.edit_outlined, size: 20),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _MobileStatusCard extends StatelessWidget {
+  const _MobileStatusCard({required this.user});
+
+  final AuthUser user;
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = user.pendingMobile != null;
+    final hasMobile = user.mobile != null;
+    return _SecurityStatusTile(
+      icon: Icons.phone_android_outlined,
+      value: user.mobile ?? 'No mobile number',
+      subtitle: pending
+          ? 'Pending confirmation: ${user.pendingMobile}'
+          : hasMobile
+          ? 'Used for OTP sign-in.'
+          : 'Add a mobile number for OTP sign-in.',
+      pill: pending
+          ? const DoodhStatusPill(label: 'Pending', tone: DoodhStatusTone.warning)
+          : hasMobile
+          ? const DoodhStatusPill(label: 'Active', tone: DoodhStatusTone.success)
+          : const DoodhStatusPill(
+              label: 'Not set',
+              tone: DoodhStatusTone.neutral,
+            ),
+      actionTooltip: hasMobile ? 'Change mobile' : 'Add mobile',
+      onAction: () => context.push('/security/mobile'),
+    );
+  }
+}
+
+class _EmailStatusCard extends StatelessWidget {
+  const _EmailStatusCard({required this.user});
+
+  final AuthUser user;
+
+  @override
+  Widget build(BuildContext context) {
+    final pending = user.pendingEmail != null;
+    final hasEmail = user.email != null;
+    final verified = user.emailVerified;
+    return _SecurityStatusTile(
+      icon: hasEmail
+          ? (verified ? Icons.mark_email_read_outlined : Icons.mail_outline)
+          : Icons.mail_outline,
+      value: user.email ?? 'No email address',
+      subtitle: pending
+          ? 'Pending confirmation: ${user.pendingEmail}'
+          : hasEmail
+          ? (verified
+                ? 'Used for account notifications and sign-in.'
+                : 'Not yet verified — verify to secure your account.')
+          : 'Add an email to receive account notifications.',
+      pill: pending
+          ? const DoodhStatusPill(label: 'Pending', tone: DoodhStatusTone.warning)
+          : !hasEmail
+          ? const DoodhStatusPill(
+              label: 'Not set',
+              tone: DoodhStatusTone.neutral,
+            )
+          : verified
+          ? const DoodhStatusPill(label: 'Verified', tone: DoodhStatusTone.success)
+          : const DoodhStatusPill(label: 'Unverified', tone: DoodhStatusTone.warning),
+      actionTooltip: hasEmail ? 'Change email' : 'Add email',
+      onAction: () => context.push('/security/email'),
+    );
+  }
+}
+
+class _PasswordStatusCard extends StatelessWidget {
+  const _PasswordStatusCard({
+    required this.user,
+    required this.onChangePassword,
+    required this.onSetPassword,
+  });
+
+  final AuthUser user;
+  final VoidCallback onChangePassword;
+  final VoidCallback onSetPassword;
+
+  @override
+  Widget build(BuildContext context) => _SecurityStatusTile(
+    icon: user.hasPassword
+        ? Icons.password_outlined
+        : Icons.lock_open_outlined,
+    value: user.hasPassword ? 'Configure Password' : 'No password set',
+    subtitle: user.hasPassword
+        ? 'Change it any time to keep your account secure.'
+        : 'Set a password to sign in with it instead of an OTP.',
+    pill: user.hasPassword
+        ? const DoodhStatusPill(label: 'Active', tone: DoodhStatusTone.success)
+        : const DoodhStatusPill(label: 'Not set', tone: DoodhStatusTone.neutral),
+    actionTooltip: user.hasPassword ? 'Change password' : 'Set password',
+    // Preserve the original branching: an existing password opens the
+    // change dialog; without one the dedicated create-password flow opens.
+    onAction: user.hasPassword ? onChangePassword : onSetPassword,
+  );
 }
 
 /// Adds, changes, or verifies the account mobile number.
@@ -926,42 +1002,90 @@ class _MobileChangeScreenState extends ConsumerState<MobileChangeScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text(_verifying ? 'Verify mobile' : 'Change mobile')),
-    body: SafeArea(child: Center(child: SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: Form(key: _formKey, child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+    body: DoodhPage(
+      child: Form(
+        key: _formKey,
+        child: ListView(
           children: _verifying ? _verificationFields() : _addressFields(),
-        )),
+        ),
       ),
-    ))),
+    ),
   );
 
   List<Widget> _addressFields() => [
-    Text('Add a mobile number', style: Theme.of(context).textTheme.headlineSmall),
-    const SizedBox(height: 8),
-    const Text('We will send a one-time code by SMS to confirm this number.'),
-    const SizedBox(height: 24),
-    CountryCodeMobileField(
-      key: _countryKey,
-      controller: _mobileController,
-      initialCountry: _initialCountry,
-      enabled: !_busy,
+    Text(
+      'Add a mobile number',
+      style: Theme.of(context).textTheme.headlineSmall,
     ),
-    const SizedBox(height: 20),
-    FilledButton.icon(onPressed: _busy ? null : _requestCode, icon: const Icon(Icons.sms_outlined), label: const Text('Send verification code')),
+    const SizedBox(height: DoodhSpacing.sm),
+    const Text('We will send a one-time code by SMS to confirm this number.'),
+    const SizedBox(height: DoodhSpacing.lg),
+    DoodhCard(
+      color: DoodhColors.mint,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          CountryCodeMobileField(
+            key: _countryKey,
+            controller: _mobileController,
+            initialCountry: _initialCountry,
+            enabled: !_busy,
+          ),
+        ],
+      ),
+    ),
+    const SizedBox(height: DoodhSpacing.lg),
+    DoodhButton(
+      label: 'Send verification code',
+      icon: Icons.sms_outlined,
+      busy: _busy,
+      expand: true,
+      onPressed: _requestCode,
+    ),
   ];
 
   List<Widget> _verificationFields() => [
-    Text('Verify your mobile', style: Theme.of(context).textTheme.headlineSmall),
-    const SizedBox(height: 8),
-    Text('Enter the 6-digit code sent to $_sentTo.'),
-    const SizedBox(height: 24),
-    TextFormField(controller: _codeController, enabled: !_busy, keyboardType: TextInputType.number, maxLength: 6, decoration: const InputDecoration(labelText: '6-digit verification code', prefixIcon: Icon(Icons.password_outlined), border: OutlineInputBorder(), counterText: ''), validator: (value) => value == null || value.trim().length != 6 ? 'Enter the 6-digit code.' : null),
-    const SizedBox(height: 20),
-    FilledButton.icon(onPressed: _busy ? null : _verify, icon: const Icon(Icons.verified_outlined), label: const Text('Verify mobile')),
-    TextButton.icon(onPressed: _busy ? null : _resendCode, icon: const Icon(Icons.refresh), label: const Text('Send a new code')),
+    Text(
+      'Verify your mobile',
+      style: Theme.of(context).textTheme.headlineSmall,
+    ),
+    const SizedBox(height: DoodhSpacing.sm),
+    DoodhInfoBanner(
+      message: 'Enter the 6-digit code sent to $_sentTo.',
+    ),
+    const SizedBox(height: DoodhSpacing.lg),
+    DoodhCard(
+      color: DoodhColors.mint,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          DoodhField(
+            label: '6-digit verification code',
+            controller: _codeController,
+            enabled: !_busy,
+            keyboardType: TextInputType.number,
+            prefixIcon: const Icon(Icons.password_outlined),
+            inputFormatters: [LengthLimitingTextInputFormatter(6)],
+            validator: (value) => value == null || value.trim().length != 6
+                ? 'Enter the 6-digit code.'
+                : null,
+          ),
+        ],
+      ),
+    ),
+    const SizedBox(height: DoodhSpacing.lg),
+    DoodhButton(
+      label: 'Verify mobile',
+      icon: Icons.verified_outlined,
+      busy: _busy,
+      expand: true,
+      onPressed: _verify,
+    ),
+    TextButton.icon(
+      onPressed: _busy ? null : _resendCode,
+      icon: const Icon(Icons.refresh),
+      label: const Text('Send a new code'),
+    ),
   ];
 
   Future<void> _requestCode() async {
@@ -1043,22 +1167,13 @@ class _EmailChangeScreenState extends ConsumerState<EmailChangeScreen> {
       appBar: AppBar(
         title: Text(_verifying ? 'Verify email' : 'Change email'),
       ),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: _verifying
-                      ? _verificationFields(context)
-                      : _addressFields(context),
-                ),
-              ),
-            ),
+      body: DoodhPage(
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: _verifying
+                ? _verificationFields(context)
+                : _addressFields(context),
           ),
         ),
       ),
@@ -1071,34 +1186,28 @@ class _EmailChangeScreenState extends ConsumerState<EmailChangeScreen> {
         'Add an email address',
         style: Theme.of(context).textTheme.headlineSmall,
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: DoodhSpacing.sm),
       const Text(
         'We will send a one-time code to confirm this address. It will be '
         'used for account notifications and as a sign-in identifier.',
       ),
-      const SizedBox(height: 24),
-      TextFormField(
+      const SizedBox(height: DoodhSpacing.lg),
+      DoodhField(
+        label: 'Email address',
         controller: _emailController,
         enabled: !_busy,
         keyboardType: TextInputType.emailAddress,
         autofillHints: const [AutofillHints.email],
-        decoration: const InputDecoration(
-          labelText: 'Email address',
-          prefixIcon: Icon(Icons.mail_outline),
-          border: OutlineInputBorder(),
-        ),
+        prefixIcon: const Icon(Icons.mail_outline),
         validator: _validateEmail,
       ),
-      const SizedBox(height: 20),
-      FilledButton.icon(
-        onPressed: _busy ? null : _requestCode,
-        icon: _busy
-            ? const SizedBox.square(
-                dimension: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.sms_outlined),
-        label: const Text('Send verification code'),
+      const SizedBox(height: DoodhSpacing.lg),
+      DoodhButton(
+        label: 'Send verification code',
+        icon: Icons.sms_outlined,
+        busy: _busy,
+        expand: true,
+        onPressed: _requestCode,
       ),
     ];
   }
@@ -1109,38 +1218,31 @@ class _EmailChangeScreenState extends ConsumerState<EmailChangeScreen> {
         'Verify your email',
         style: Theme.of(context).textTheme.headlineSmall,
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: DoodhSpacing.sm),
       Text(
         'Enter the 6-digit code sent to $_sentTo.',
       ),
-      const SizedBox(height: 24),
-      TextFormField(
+      const SizedBox(height: DoodhSpacing.lg),
+      DoodhField(
+        label: '6-digit verification code',
         controller: _codeController,
         enabled: !_busy,
         keyboardType: TextInputType.number,
-        maxLength: 6,
-        decoration: const InputDecoration(
-          labelText: '6-digit verification code',
-          prefixIcon: Icon(Icons.password_outlined),
-          border: OutlineInputBorder(),
-          counterText: '',
-        ),
+        prefixIcon: const Icon(Icons.password_outlined),
+        inputFormatters: [LengthLimitingTextInputFormatter(6)],
         validator: (value) => value == null || value.trim().length != 6
             ? 'Enter the 6-digit code.'
             : null,
       ),
-      const SizedBox(height: 20),
-      FilledButton.icon(
-        onPressed: _busy ? null : _verify,
-        icon: _busy
-            ? const SizedBox.square(
-                dimension: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : const Icon(Icons.verified_outlined),
-        label: const Text('Verify email'),
+      const SizedBox(height: DoodhSpacing.lg),
+      DoodhButton(
+        label: 'Verify email',
+        icon: Icons.verified_outlined,
+        busy: _busy,
+        expand: true,
+        onPressed: _verify,
       ),
-      const SizedBox(height: 4),
+      const SizedBox(height: DoodhSpacing.xs),
       TextButton.icon(
         onPressed: _busy ? null : _resendCode,
         icon: const Icon(Icons.refresh),

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Infrastructure.Notifications;
 using Microsoft.AspNetCore.DataProtection;
@@ -75,6 +76,35 @@ public sealed class PaymentWalletServiceTests
         Assert.Equal(startingBalance, entries[1].BalanceBefore);
         Assert.Equal(-payableAmount, entries[1].Amount);
         Assert.Equal(expectedBalance, entries[1].BalanceAfter);
+    }
+
+    [Fact]
+    public async Task WalletPayment_ConsumesChargeInclusiveFrozenPayable_ForOrderWithMappedCharge()
+    {
+        // Stage 2 boundary proof: the product-mapped charge is frozen into the
+        // order snapshot at checkout (PayableAmount = subtotal + ChargesTotal);
+        // the payment then consumes exactly that frozen amount — no
+        // recalculation, no gateway/wallet changes.
+        await using var harness = await PaymentHarness.CreateAsync(payableAmount: 100m);
+        harness.Order.AddCharges([new OrderCharge("GST", "GST-MAP", "Mapped item GST", 5m, 100m, 5m)]);
+        await harness.Db.SaveChangesAsync();
+        await harness.SeedWalletAsync(200m, "topup-1");
+
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Wallet),
+            "payment-mapped-1",
+            CancellationToken.None);
+
+        Assert.Equal(105m, created.Amount);
+        Assert.Equal(PaymentStatus.Success, created.Status);
+        Assert.Equal(OrderStatus.Confirmed, (await harness.Db.Orders.SingleAsync()).Status);
+        var stored = await harness.Db.Orders.Include(x => x.Charges).SingleAsync();
+        Assert.Single(stored.Charges);
+        Assert.Equal(105m, stored.PayableAmount);
+        var debit = await harness.Db.WalletTransactions.SingleAsync(x =>
+            x.Type == WalletTransactionType.OrderDebit);
+        Assert.Equal(-105m, debit.Amount);
     }
 
     [Theory]
@@ -1388,6 +1418,95 @@ public sealed class PaymentWalletServiceTests
             payment.Currency,
             isSuccessful,
             isTerminalFailure);
+
+    // ---------------------------------------------------- charge-inclusive totals
+
+    [Fact]
+    public async Task WalletPayment_WithOrderCharges_DebitsChargeInclusiveTotal()
+    {
+        await using var harness = await PaymentHarness.CreateAsync(payableAmount: 100m);
+        await harness.SeedWalletAsync(120m, "topup-1");
+        harness.Order.AddCharges([new OrderCharge("GST", "GST-5", null, 5m, 100m, 5m)]);
+        await harness.Db.SaveChangesAsync();
+        await harness.Db.Entry(harness.Order).ReloadAsync();
+        Assert.Equal(105m, harness.Order.PayableAmount);
+
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Wallet),
+            "charge-wallet-1",
+            CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Success, created.Status);
+        Assert.Equal(105m, created.Amount);
+        var wallet = await harness.Db.Wallets.SingleAsync(w => w.CustomerId == harness.Customer.Id);
+        Assert.Equal(15m, wallet.Balance);
+        Assert.Equal(OrderStatus.Confirmed, (await harness.Db.Orders.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task RazorpayPayment_GatewayOrderCarriesChargeInclusiveMinorUnits()
+    {
+        var options = Options.Create(new PaymentOptions
+        {
+            Provider = "Razorpay",
+            Currency = "INR",
+            PaymentExpiryMinutes = 15,
+            RazorpayKeyId = "rzp_test_public",
+            RazorpayKeySecret = "api-secret",
+            MockSigningSecret = "unused"
+        });
+        var gateway = new TestRazorpayGateway(options);
+        await using var harness = await PaymentHarness.CreateAsync(
+            payableAmount: 100m,
+            paymentOptions: options,
+            gateway: gateway);
+        harness.Order.AddCharges([
+            new OrderCharge("GST", "CGST", null, 2.5m, 100m, 2.5m),
+            new OrderCharge("GST", "SGST", null, 2.5m, 100m, 2.5m)]);
+        await harness.Db.SaveChangesAsync();
+        await harness.Db.Entry(harness.Order).ReloadAsync();
+
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Razorpay),
+            "charge-gateway-1",
+            CancellationToken.None);
+
+        Assert.Equal(PaymentStatus.Pending, created.Status);
+        Assert.Equal(105m, created.Amount);
+        // Razorpay must receive paise of the charge-inclusive total (₹105 → 10500).
+        var field = typeof(TestRazorpayGateway).GetField("orders", BindingFlags.NonPublic | BindingFlags.Instance);
+        Assert.NotNull(field);
+        var orders = Assert.IsType<Dictionary<Guid, GatewayOrderRequest>>(field!.GetValue(gateway));
+        var request = Assert.Single(orders.Values);
+        Assert.Equal(10500, request.AmountMinor);
+        Assert.Equal("INR", request.Currency);
+    }
+
+    [Fact]
+    public async Task OrderTotal_MatchesPaymentAmount_WithMultipleChargeComponents()
+    {
+        await using var harness = await PaymentHarness.CreateAsync(payableAmount: 200m);
+        await harness.SeedWalletAsync(250m, "topup-parity");
+        harness.Order.AddCharges([
+            new OrderCharge("GST", "CGST", null, 2.5m, 200m, 5m),
+            new OrderCharge("GST", "SGST", null, 2.5m, 200m, 5m)]);
+        await harness.Db.SaveChangesAsync();
+        await harness.Db.Entry(harness.Order).ReloadAsync();
+
+        Assert.Equal(10m, harness.Order.ChargesTotal);
+        Assert.Equal(210m, harness.Order.PayableAmount);
+
+        var created = await harness.PaymentService.CreateAsync(
+            harness.Customer.Id,
+            new CreatePaymentRequest(harness.Order.PublicId, PaymentMethod.Wallet),
+            "charge-parity-1",
+            CancellationToken.None);
+
+        Assert.Equal(harness.Order.PayableAmount, created.Amount);
+        Assert.Equal(OrderStatus.Confirmed, (await harness.Db.Orders.SingleAsync()).Status);
+    }
 
     private sealed class PaymentHarness : IAsyncDisposable
     {

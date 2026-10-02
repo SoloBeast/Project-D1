@@ -105,8 +105,8 @@ class NumberSeries {
     scopeKey: json['scopeKey'] == null
         ? null
         : (json['scopeKey'] as String).isEmpty
-            ? null
-            : json['scopeKey'] as String,
+        ? null
+        : json['scopeKey'] as String,
     nextNumber: json['nextNumber'] as String?,
     lastUsedAt: json['lastUsedAt'] == null
         ? null
@@ -136,8 +136,8 @@ class NumberSeries {
   static int? _nullableLong(Object? value) => value == null
       ? null
       : value is num
-          ? value.toInt()
-          : int.tryParse(value.toString());
+      ? value.toInt()
+      : int.tryParse(value.toString());
 }
 
 /// A template preview computed WITHOUT consuming or advancing the live sequence.
@@ -159,8 +159,8 @@ class NumberSeriesPreview {
         scopeKey: json['scopeKey'] == null
             ? null
             : (json['scopeKey'] as String).isEmpty
-                ? null
-                : json['scopeKey'] as String,
+            ? null
+            : json['scopeKey'] as String,
       );
 
   final String code;

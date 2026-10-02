@@ -1,4 +1,5 @@
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
@@ -74,7 +75,7 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
         onRefresh: _load,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
+          padding: DoodhSpacing.pagePadding,
           children: [
             if (branches.length > 1)
               DropdownButtonFormField<int>(
@@ -110,7 +111,8 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
               const SizedBox(height: 12),
               _MetricGrid(
                 children: [
-                  _MetricTile(
+                  DoodhMetricTile(
+                    height: double.infinity,
                     icon: Icons.water_drop_outlined,
                     label: 'Produced',
                     value: state.dashboard == null
@@ -120,7 +122,8 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
                             state.dashboard!.unit,
                           ),
                   ),
-                  _MetricTile(
+                  DoodhMetricTile(
+                    height: double.infinity,
                     icon: Icons.inventory_2_outlined,
                     label: 'Available',
                     value: state.dashboard == null
@@ -130,12 +133,14 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
                             state.dashboard!.unit,
                           ),
                   ),
-                  _MetricTile(
+                  DoodhMetricTile(
+                    height: double.infinity,
                     icon: Icons.fact_check_outlined,
                     label: 'Production entries',
                     value: '${state.dashboard?.productionEntryCount ?? 0}',
                   ),
-                  _MetricTile(
+                  DoodhMetricTile(
+                    height: double.infinity,
                     icon: Icons.inventory_outlined,
                     label: 'Available batches',
                     value: '${state.dashboard?.availableBatchCount ?? 0}',
@@ -241,7 +246,7 @@ class _DairyProductionEntryScreenState
       body: Form(
         key: _formKey,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: DoodhSpacing.pagePadding,
           children: [
             Text(
               branchTitle,
@@ -440,7 +445,7 @@ class _DairyBatchDetailScreenState
                   .loadBatch(widget.batchId),
             )
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: DoodhSpacing.pagePadding,
               children: [
                 Text(
                   batch.batchNumber,
@@ -523,11 +528,12 @@ class _DairyAvailabilityScreenState
               onRefresh: _load,
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
+                padding: DoodhSpacing.pagePadding,
                 children: [
                   _MetricGrid(
                     children: [
-                      _MetricTile(
+                      DoodhMetricTile(
+                        height: double.infinity,
                         icon: Icons.water_drop_outlined,
                         label: 'Produced',
                         value: formatMilkQuantity(
@@ -535,7 +541,8 @@ class _DairyAvailabilityScreenState
                           availability.unit,
                         ),
                       ),
-                      _MetricTile(
+                      DoodhMetricTile(
+                        height: double.infinity,
                         icon: Icons.local_drink_outlined,
                         label: 'Used',
                         value: formatMilkQuantity(
@@ -543,7 +550,8 @@ class _DairyAvailabilityScreenState
                           availability.unit,
                         ),
                       ),
-                      _MetricTile(
+                      DoodhMetricTile(
+                        height: double.infinity,
                         icon: Icons.inventory_2_outlined,
                         label: 'Available',
                         value: formatMilkQuantity(
@@ -551,7 +559,8 @@ class _DairyAvailabilityScreenState
                           availability.unit,
                         ),
                       ),
-                      _MetricTile(
+                      DoodhMetricTile(
+                        height: double.infinity,
                         icon: Icons.layers_outlined,
                         label: 'Batches',
                         value: '${availability.availableBatchCount}',
@@ -798,7 +807,7 @@ class _DairyUsageEntryScreenState extends ConsumerState<DairyUsageEntryScreen> {
       body: Form(
         key: _formKey,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: DoodhSpacing.pagePadding,
           children: [
             Text(
               'Batch ${widget.batchId}',
@@ -894,33 +903,6 @@ class _MetricGrid extends StatelessWidget {
         children: children,
       );
     },
-  );
-}
-
-class _MetricTile extends StatelessWidget {
-  const _MetricTile({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: Theme.of(context).colorScheme.primary),
-          const Spacer(),
-          Text(value, style: Theme.of(context).textTheme.titleLarge),
-          Text(label, maxLines: 2, overflow: TextOverflow.ellipsis),
-        ],
-      ),
-    ),
   );
 }
 

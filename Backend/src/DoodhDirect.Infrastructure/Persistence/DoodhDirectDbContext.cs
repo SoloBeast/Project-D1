@@ -37,14 +37,19 @@ public sealed class DoodhDirectDbContext(
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<SystemConfiguration> SystemConfigurations => Set<SystemConfiguration>();
+    public DbSet<BrandingAsset> BrandingAssets => Set<BrandingAsset>();
     public DbSet<CustomerProfile> CustomerProfiles => Set<CustomerProfile>();
     public DbSet<CustomerAddress> CustomerAddresses => Set<CustomerAddress>();
     public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Branch> Branches => Set<Branch>();
     public DbSet<ProductBranch> ProductBranches => Set<ProductBranch>();
+    public DbSet<ProductCharge> ProductCharges => Set<ProductCharge>();
+    public DbSet<ProductImage> ProductImages => Set<ProductImage>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<OrderCharge> OrderCharges => Set<OrderCharge>();
+    public DbSet<Charge> Charges => Set<Charge>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentWebhook> PaymentWebhooks => Set<PaymentWebhook>();
     public DbSet<Refund> Refunds => Set<Refund>();
@@ -53,6 +58,7 @@ public sealed class DoodhDirectDbContext(
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<SubscriptionSchedule> SubscriptionSchedules => Set<SubscriptionSchedule>();
     public DbSet<SubscriptionDelivery> SubscriptionDeliveries => Set<SubscriptionDelivery>();
+    public DbSet<SubscriptionCharge> SubscriptionCharges => Set<SubscriptionCharge>();
     public DbSet<Delivery> Deliveries => Set<Delivery>();
     public DbSet<DeliveryAssignment> DeliveryAssignments => Set<DeliveryAssignment>();
     public DbSet<DeliveryBatchAllocation> DeliveryBatchAllocations => Set<DeliveryBatchAllocation>();
@@ -92,14 +98,19 @@ public sealed class DoodhDirectDbContext(
         ConfigureRefreshToken(modelBuilder);
         ConfigureAuditLog(modelBuilder, usesSqlite);
         ConfigureSystemConfiguration(modelBuilder);
+        ConfigureBrandingAsset(modelBuilder, usesSqlite);
         ConfigureCustomerProfile(modelBuilder);
         ConfigureCustomerAddress(modelBuilder);
         ConfigureProductCategory(modelBuilder);
         ConfigureProduct(modelBuilder);
         ConfigureBranch(modelBuilder, usesSqlite);
         ConfigureProductBranch(modelBuilder);
+        ConfigureProductCharge(modelBuilder);
+        ConfigureProductImage(modelBuilder, usesSqlite);
         ConfigureOrder(modelBuilder, usesSqlite);
         ConfigureOrderItem(modelBuilder);
+        ConfigureOrderCharge(modelBuilder);
+        ConfigureCharge(modelBuilder);
         ConfigurePayment(modelBuilder);
         ConfigurePaymentWebhook(modelBuilder);
         ConfigureRefund(modelBuilder);
@@ -108,6 +119,7 @@ public sealed class DoodhDirectDbContext(
         ConfigureSubscription(modelBuilder);
         ConfigureSubscriptionSchedule(modelBuilder);
         ConfigureSubscriptionDelivery(modelBuilder);
+        ConfigureSubscriptionCharge(modelBuilder);
         ConfigureDelivery(modelBuilder, usesSqlite);
         ConfigureDeliveryAssignment(modelBuilder);
         ConfigureDeliveryBatchAllocation(modelBuilder, usesSqlite);
@@ -454,6 +466,34 @@ public sealed class DoodhDirectDbContext(
         entity.HasOne(x => x.Category).WithMany(x => x.Products).HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Restrict);
     }
 
+    private static void ConfigureProductImage(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<ProductImage>();
+        entity.ToTable("ProductImage", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_ProductImage_FileSize", "[FileSize] > 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        // At most one current image per product; the row is the authoritative
+        // product → image reference (no back-reference column on Product).
+        entity.HasIndex(x => x.ProductId).IsUnique();
+        entity.Property(x => x.StorageKey).HasMaxLength(500).IsRequired();
+        entity.HasIndex(x => x.StorageKey).IsUnique();
+        entity.Property(x => x.FileName).HasMaxLength(255).IsRequired();
+        entity.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.FileSize).IsRequired();
+        entity.Property(x => x.UploadedAt)
+            .HasColumnName("UploadedAtUtc")
+            .IsRequired();
+        entity.HasOne(x => x.Product).WithMany(x => x.ProductImages).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.UploadedByUser).WithMany().HasForeignKey(x => x.UploadedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
     private static void ConfigureBranch(ModelBuilder modelBuilder, bool usesSqlite)
     {
         var entity = modelBuilder.Entity<Branch>();
@@ -524,6 +564,7 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
         entity.Property(x => x.Subtotal).HasPrecision(18, 2).IsRequired();
         entity.Property(x => x.DiscountAmount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.ChargesTotal).HasPrecision(18, 2).IsRequired();
         entity.Property(x => x.PayableAmount).HasPrecision(18, 2).IsRequired();
         entity.Property(x => x.BranchCodeSnapshot).HasMaxLength(50).IsRequired();
         entity.Property(x => x.BranchNameSnapshot).HasMaxLength(200).IsRequired();
@@ -547,6 +588,66 @@ public sealed class DoodhDirectDbContext(
         entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.CustomerAddress).WithMany().HasForeignKey(x => x.CustomerAddressId).IsRequired(false).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureOrderCharge(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<OrderCharge>();
+        entity.ToTable("OrderCharge", table =>
+        {
+            table.HasCheckConstraint("CK_OrderCharge_Percentage", "[Percentage] > 0");
+            table.HasCheckConstraint("CK_OrderCharge_BaseAmount", "[BaseAmount] >= 0");
+            table.HasCheckConstraint("CK_OrderCharge_Amount", "[Amount] >= 0");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.ChargeType).HasMaxLength(40).IsRequired();
+        entity.Property(x => x.ChargeCode).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.Description).HasMaxLength(200);
+        entity.Property(x => x.Percentage).HasPrecision(5, 2).IsRequired();
+        entity.Property(x => x.BaseAmount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.Amount).HasPrecision(18, 2).IsRequired();
+        entity.HasIndex(x => x.OrderId);
+        entity.HasOne(x => x.Order)
+            .WithMany(x => x.Charges)
+            .HasForeignKey(x => x.OrderId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureCharge(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<Charge>();
+        entity.ToTable("Charge", table =>
+        {
+            table.HasCheckConstraint("CK_Charge_Percentage", "[Percentage] > 0 AND [Percentage] <= 100");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.ChargeType).HasMaxLength(40).IsRequired();
+        entity.Property(x => x.ChargeCode).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.Description).HasMaxLength(200);
+        entity.Property(x => x.Percentage).HasPrecision(5, 2).IsRequired();
+        entity.Property(x => x.IsActive).IsRequired();
+        entity.Property(x => x.IsUsed).IsRequired();
+        // Default true: legacy charges were globally applicable before the
+        // applicability mode existed, so the migration preserves their behavior.
+        entity.Property(x => x.ApplicableOnAll).IsRequired().HasDefaultValue(true);
+        // ChargeCode is the stable business key order snapshots reference — unique
+        // regardless of case so admin edits can never create ambiguous codes.
+        entity.HasIndex(x => x.ChargeCode).IsUnique();
+    }
+
+    private static void ConfigureProductCharge(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<ProductCharge>();
+        entity.ToTable("ProductCharge");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        // One row per product/charge pair — duplicate assignments are rejected.
+        entity.HasIndex(x => new { x.ProductId, x.ChargeId }).IsUnique();
+        entity.HasOne(x => x.Product).WithMany(x => x.ProductCharges).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.Charge).WithMany().HasForeignKey(x => x.ChargeId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureOrderItem(ModelBuilder modelBuilder)
@@ -737,6 +838,7 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.EndDate).HasColumnType("date").IsRequired();
         entity.Property(x => x.Quantity).HasPrecision(18, 3).IsRequired();
         entity.Property(x => x.UnitPrice).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.ChargesTotal).HasPrecision(18, 2).IsRequired();
         entity.Property(x => x.PayableAmount).HasPrecision(18, 2).IsRequired();
         entity.Property(x => x.ProductSkuSnapshot).HasMaxLength(50).IsRequired();
         entity.Property(x => x.ProductNameSnapshot).HasMaxLength(200).IsRequired();
@@ -786,6 +888,30 @@ public sealed class DoodhDirectDbContext(
         entity.HasIndex(x => new { x.Status, x.ScheduledDate });
         entity.HasOne(x => x.Subscription).WithMany(x => x.Deliveries).HasForeignKey(x => x.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureSubscriptionCharge(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<SubscriptionCharge>();
+        entity.ToTable("SubscriptionCharge", table =>
+        {
+            table.HasCheckConstraint("CK_SubscriptionCharge_Percentage", "[Percentage] > 0");
+            table.HasCheckConstraint("CK_SubscriptionCharge_BaseAmount", "[BaseAmount] >= 0");
+            table.HasCheckConstraint("CK_SubscriptionCharge_Amount", "[Amount] >= 0");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.ChargeType).HasMaxLength(40).IsRequired();
+        entity.Property(x => x.ChargeCode).HasMaxLength(20).IsRequired();
+        entity.Property(x => x.Description).HasMaxLength(200);
+        entity.Property(x => x.Percentage).HasPrecision(5, 2).IsRequired();
+        entity.Property(x => x.BaseAmount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.Amount).HasPrecision(18, 2).IsRequired();
+        entity.HasIndex(x => x.SubscriptionId);
+        entity.HasOne(x => x.Subscription)
+            .WithMany(x => x.Charges)
+            .HasForeignKey(x => x.SubscriptionId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureDelivery(ModelBuilder modelBuilder, bool usesSqlite)
@@ -1188,6 +1314,34 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.Value).HasMaxLength(4000).IsRequired();
         entity.Property(x => x.ValueType).HasMaxLength(30).IsRequired();
         entity.Property(x => x.Description).HasMaxLength(500);
+    }
+
+    private static void ConfigureBrandingAsset(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<BrandingAsset>();
+        entity.ToTable("BrandingAsset", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_BrandingAsset_FileSize", "[FileSize] > 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        // Globally one active asset per kind (Logo / StartupAnimation) — the
+        // row is the authoritative branding reference for the whole business.
+        entity.Property(x => x.AssetKind).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.HasIndex(x => x.AssetKind).IsUnique();
+        entity.Property(x => x.StorageKey).HasMaxLength(500).IsRequired();
+        entity.HasIndex(x => x.StorageKey).IsUnique();
+        entity.Property(x => x.FileName).HasMaxLength(255).IsRequired();
+        entity.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.FileSize).IsRequired();
+        entity.Property(x => x.UploadedAt)
+            .HasColumnName("UploadedAtUtc")
+            .IsRequired();
+        entity.HasOne(x => x.UploadedByUser).WithMany().HasForeignKey(x => x.UploadedByUserId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureCamera(ModelBuilder modelBuilder, bool usesSqlite)

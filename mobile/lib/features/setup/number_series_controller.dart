@@ -100,8 +100,7 @@ class NumberSeriesController extends Notifier<NumberSeriesState> {
     } on Object {
       state = state.copyWith(
         isLoading: false,
-        errorMessage:
-            'Unable to load number series. Check your connection and try again.',
+        errorMessage: 'Unable to load number series. Check your connection and try again.',
       );
     }
   }
@@ -141,8 +140,7 @@ class NumberSeriesController extends Notifier<NumberSeriesState> {
     } on Object {
       state = state.copyWith(
         isPreviewing: false,
-        errorMessage:
-            'Unable to preview the template. Check your connection and try again.',
+        errorMessage: 'Unable to preview the template. Check your connection and try again.',
       );
     }
   }
@@ -194,7 +192,12 @@ class NumberSeriesController extends Notifier<NumberSeriesState> {
 
     state = state.copyWith(isSaving: true, clearError: true);
     try {
-      final updated = await _repository.update(token, code, request, scope: scope);
+      final updated = await _repository.update(
+        token,
+        code,
+        request,
+        scope: scope,
+      );
       if (token != _token) return null;
       final series = await _repository.list(token);
       if (token != _token) return null;
@@ -269,10 +272,7 @@ class NumberSeriesController extends Notifier<NumberSeriesState> {
 
   /// Permanently deletes a series and refreshes the list. Returns true on
   /// success, false on failure.
-  Future<bool> delete(
-    String code, {
-    String? scope,
-  }) async {
+  Future<bool> delete(String code, {String? scope}) async {
     final token = _token;
     if (token == null) return false;
 

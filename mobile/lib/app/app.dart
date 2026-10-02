@@ -6,6 +6,9 @@ import 'package:doodh_direct_mobile/features/auth/otp_onboarding_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/otp_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/security_screens.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/branding/admin_branding_screen.dart';
+import 'package:doodh_direct_mobile/features/branding/branding_gate.dart';
+import 'package:doodh_direct_mobile/features/branding/branding_splash.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_screens.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_screens.dart';
@@ -27,8 +30,11 @@ import 'package:doodh_direct_mobile/features/orders/order_screens.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_screens.dart';
 import 'package:doodh_direct_mobile/features/otp_config/otp_config_screen.dart';
 import 'package:doodh_direct_mobile/features/integrations/integrations_screen.dart';
+import 'package:doodh_direct_mobile/features/setup/charge_screens.dart';
 import 'package:doodh_direct_mobile/features/setup/number_series_models.dart';
 import 'package:doodh_direct_mobile/features/setup/number_series_screens.dart';
+import 'package:doodh_direct_mobile/features/subscriptions/add_vacation_screen.dart';
+import 'package:doodh_direct_mobile/features/subscriptions/my_calendar_screen.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_screens.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_screens.dart';
 import 'package:flutter/material.dart';
@@ -162,16 +168,18 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/', redirect: (context, state) => '/home'),
       GoRoute(
         path: '/restore',
-        builder: (context, state) => const _SessionRestoreScreen(),
+        // Branded startup screen: renders the configured/last-known-good
+        // branding (or the bundled fallback) while the stored session is
+        // restored. Routing still belongs to the redirect above.
+        builder: (context, state) => const BrandingSplashScreen(),
       ),
       GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       // Mobile OTP sign-in. A mobile entered on /login is carried here so the
       // field pre-fills and an OTP is requested without retyping.
       GoRoute(
         path: '/otp',
-        builder: (context, state) => OtpScreen(
-          initialMobile: state.uri.queryParameters['mobile'],
-        ),
+        builder: (context, state) =>
+            OtpScreen(initialMobile: state.uri.queryParameters['mobile']),
       ),
       // Customer onboarding for a mobile the OTP provider attested but that has
       // no account yet. Only reachable from a completed verify-otp handshake
@@ -248,9 +256,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/checkout/address/new',
-        builder: (context, state) => const CustomerAddressEditScreen(
-          checkoutMode: true,
-        ),
+        builder: (context, state) =>
+            const CustomerAddressEditScreen(checkoutMode: true),
       ),
       GoRoute(
         path: '/customer/addresses/:addressId/edit',
@@ -316,6 +323,16 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/subscriptions',
         builder: (context, state) => const SubscriptionListScreen(),
+      ),
+      GoRoute(
+        path: '/my-calendar',
+        builder: (context, state) => const MyCalendarScreen(),
+      ),
+      GoRoute(
+        path: '/subscriptions/vacation',
+        builder: (context, state) => AddVacationScreen(
+          initialFromDate: _optionalQueryDate(state, 'from'),
+        ),
       ),
       GoRoute(
         path: '/subscriptions/new',
@@ -397,6 +414,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const NumberSeriesListScreen(),
       ),
       GoRoute(
+        path: '/admin/setup/tax-charges',
+        builder: (context, state) => const ChargeListScreen(),
+      ),
+      GoRoute(
         path: '/admin/setup/number-series/new',
         builder: (context, state) =>
             const NumberSeriesConfigScreen(code: '', series: null),
@@ -413,6 +434,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: '/admin/setup/branding',
+        builder: (context, state) => const AdminBrandingScreen(),
+      ),
+      GoRoute(
         path: '/admin/setup/refund-replacement',
         builder: (context, state) => const RefundReplacementConfigScreen(),
       ),
@@ -427,9 +452,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/admin/employees/:id',
         builder: (context, state) {
-          final id = int.tryParse(
-            _requiredPathParameter(state, 'id') ?? '',
-          );
+          final id = int.tryParse(_requiredPathParameter(state, 'id') ?? '');
           final extra = state.extra;
           final employee = extra is Employee ? extra : null;
           return id == null
@@ -699,6 +722,15 @@ String? _requiredPathParameter(GoRouterState state, String name) {
   return value == null || value.isEmpty ? null : value;
 }
 
+/// Parses an optional `yyyy-MM-dd` query parameter (e.g. the prefilled From
+/// date on the Add Vacation screen). Unparseable values are ignored rather
+/// than surfacing a route error — the user can simply pick a date manually.
+DateTime? _optionalQueryDate(GoRouterState state, String name) {
+  final value = state.uri.queryParameters[name]?.trim();
+  if (value == null || value.isEmpty) return null;
+  return DateTime.tryParse(value);
+}
+
 /// True only for a complete invitation route containing a token. Invitation
 /// links are handled before all session/startup redirects so their token stays
 /// in the route and never enters generic return-intent state.
@@ -850,14 +882,6 @@ class _RouteErrorScreen extends StatelessWidget {
   );
 }
 
-class _SessionRestoreScreen extends StatelessWidget {
-  const _SessionRestoreScreen();
-
-  @override
-  Widget build(BuildContext context) =>
-      const Scaffold(body: Center(child: CircularProgressIndicator()));
-}
-
 class _RouterRefreshNotifier extends ChangeNotifier {
   void notify() => notifyListeners();
 }
@@ -883,6 +907,11 @@ class DoodhDirectApp extends ConsumerWidget {
       title: 'DoodhDirect',
       routerConfig: ref.watch(routerProvider),
       theme: buildDoodhTheme(),
+      // Startup branding gate: holds the configured animation briefly above
+      // whatever the router renders (no routing involved), then reveals the
+      // app. Passes through untouched when no animation is configured.
+      builder: (context, child) =>
+          BrandingGate(child: child ?? const SizedBox.shrink()),
     );
   }
 }

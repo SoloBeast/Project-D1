@@ -425,6 +425,65 @@ void main() {
 
       expect(tester.takeException(), isNull);
     });
+
+    // Tax & Charges discoverability: the tile must appear in System Setup for
+    // every READ or MANAGE holder (regression: the tile was invisible to
+    // SystemAdmin because the backend seed missed the permission codes).
+    testWidgets('shows the Tax & Charges tile with SETUP.TAX_CHARGES.READ', (
+      tester,
+    ) async {
+      await _pumpAdminHome(
+        tester,
+        permissions: const ['SETUP.TAX_CHARGES.READ'],
+        branchIds: const [],
+      );
+
+      expect(find.text('System Setup'), findsOneWidget);
+      expect(find.text('Tax & Charges'), findsOneWidget);
+    });
+
+    testWidgets('MANAGE permission alone also exposes the Tax & Charges tile', (
+      tester,
+    ) async {
+      await _pumpAdminHome(
+        tester,
+        permissions: const ['SETUP.TAX_CHARGES.MANAGE'],
+        branchIds: const [],
+      );
+
+      expect(find.text('System Setup'), findsOneWidget);
+      expect(find.text('Tax & Charges'), findsOneWidget);
+    });
+
+    testWidgets('tapping Tax & Charges navigates to the tax-charges list', (
+      tester,
+    ) async {
+      await _pumpAdminHome(
+        tester,
+        permissions: const ['SETUP.TAX_CHARGES.READ'],
+        branchIds: const [],
+        destinations: const {
+          '/admin/setup/tax-charges': 'Tax charges destination',
+        },
+      );
+
+      await tester.tap(find.text('Tax & Charges'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tax charges destination'), findsOneWidget);
+    });
+
+    testWidgets('unauthorized admins see no Tax & Charges tile', (tester) async {
+      await _pumpAdminHome(
+        tester,
+        // Branch permission only: exercises the grid without granting any
+        // Tax & Charges or Number Series access.
+        permissions: const ['BRANCHES.READ'],
+        branchIds: const [],
+      );
+
+      expect(find.text('Tax & Charges'), findsNothing);
+    });
   });
 }
 

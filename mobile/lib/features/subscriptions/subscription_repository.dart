@@ -97,6 +97,20 @@ class SubscriptionRepository {
     );
   }
 
+  /// Saves an inclusive date-range vacation. The backend resolves the range
+  /// to per-occurrence skips and reports ineligible dates explicitly.
+  Future<VacationResult> createVacation({
+    required String token,
+    required CreateVacationRequest request,
+  }) async {
+    final response = await api.post(
+      '/api/v1/subscriptions/vacation',
+      body: request.toJson(),
+      accessToken: token,
+    );
+    return VacationResult.fromJson(response['data'] as Map<String, dynamic>);
+  }
+
   Future<List<SubscriptionDelivery>> getCalendar(
     String token,
     String subscriptionId,

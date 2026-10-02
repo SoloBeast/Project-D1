@@ -1,6 +1,9 @@
 import 'package:doodh_direct_mobile/core/utils/india_mobile.dart';
 import 'package:doodh_direct_mobile/core/widgets/country_code_mobile_field.dart';
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/branding/doodh_brand_mark.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -45,121 +48,124 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final busy = session.isLoading;
 
     return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Icon(
-                    Icons.local_drink,
-                    size: 56,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  const SizedBox(height: 20),
-                  Text(
-                    'DoodhDirect',
-                    style: Theme.of(context).textTheme.headlineMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Sign in to your account',
-                    style: Theme.of(context).textTheme.titleMedium,
-                    textAlign: TextAlign.center,
-                  ),
-                  if (session.errorMessage != null) ...[
-                    const SizedBox(height: 20),
-                    MaterialBanner(
-                      content: Text(session.errorMessage!),
-                      actions: [
-                        TextButton(
-                          onPressed: () => ref
-                              .read(sessionControllerProvider.notifier)
-                              .clearError(),
-                          child: const Text('Dismiss'),
-                        ),
-                      ],
-                    ),
-                  ],
-                  const SizedBox(height: 24),
-                  if (!_showPasswordSignIn) ...[
-                    // Primary: mobile OTP first.
-                    Form(
-                      key: _otpFormKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
+      body: DoodhPage(
+        child: ListView(
+          children: [
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: DoodhContentMax.narrow,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: DoodhSpacing.md),
+                    // Business ask: the (business-uploaded) logo sits BESIDE
+                    // the DoodhDirect name — same presentation as the shell
+                    // header, never a standalone mark.
+                    const Center(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          CountryCodeMobileField(
-                            key: _otpCountryKey,
-                            controller: _otpMobileController,
-                            enabled: !busy,
-                            autofocus: true,
-                            onSubmitted: busy ? null : (_) => _sendOtp(),
-                          ),
-                          const SizedBox(height: 20),
-                          FilledButton.icon(
-                            onPressed: busy ? null : _sendOtp,
-                            icon: busy
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.sms_outlined),
-                            label: const Text('Send OTP'),
-                          ),
-                          const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: busy
-                                ? null
-                                : () => setState(
-                                    () => _showPasswordSignIn = true,
-                                  ),
-                            child: const Text('Use password instead'),
+                          DoodhBrandMark(showWordmark: false, height: 56),
+                          SizedBox(width: DoodhSpacing.md),
+                          Flexible(
+                            child: Text(
+                              'DoodhDirect',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 30,
+                                fontWeight: FontWeight.w800,
+                                color: DoodhColors.ink,
+                              ),
+                            ),
                           ),
                         ],
                       ),
                     ),
-                  ] else ...[
-                    // Secondary: password sign-in (email-or-mobile + password).
-                    Form(
-                      key: _passwordFormKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          TextFormField(
-                            controller: _loginController,
-                            enabled: !busy,
-                            autofillHints: const [
-                              AutofillHints.username,
-                              AutofillHints.email,
-                              AutofillHints.telephoneNumber,
-                            ],
-                            decoration: const InputDecoration(
-                              labelText: 'Email or mobile',
-                              prefixIcon: Icon(Icons.person_outline),
-                              border: OutlineInputBorder(),
+                    const SizedBox(height: DoodhSpacing.xs),
+                    Text(
+                      'Sign in to your account',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: DoodhColors.muted,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    if (session.errorMessage != null) ...[
+                      const SizedBox(height: DoodhSpacing.lg),
+                      DoodhInfoBanner(
+                        tone: DoodhTone.error,
+                        message: session.errorMessage!,
+                        onDismiss: () => ref
+                            .read(sessionControllerProvider.notifier)
+                            .clearError(),
+                      ),
+                    ],
+                    const SizedBox(height: DoodhSpacing.lg),
+                    if (!_showPasswordSignIn)
+                      // Primary: mobile OTP first.
+                      Form(
+                        key: _otpFormKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            CountryCodeMobileField(
+                              key: _otpCountryKey,
+                              controller: _otpMobileController,
+                              enabled: !busy,
+                              autofocus: true,
+                              onSubmitted: busy ? null : (_) => _sendOtp(),
                             ),
-                            validator: (value) =>
-                                value == null || value.trim().isEmpty
-                                ? 'Enter your email or mobile number.'
-                                : null,
-                          ),
-                          const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _passwordController,
-                            enabled: !busy,
-                            obscureText: _obscurePassword,
-                            autofillHints: const [AutofillHints.password],
-                            decoration: InputDecoration(
-                              labelText: 'Password',
+                            const SizedBox(height: DoodhSpacing.lg),
+                            DoodhButton(
+                              label: 'Send OTP',
+                              icon: Icons.sms_outlined,
+                              busy: busy,
+                              expand: true,
+                              onPressed: _sendOtp,
+                            ),
+                            const SizedBox(height: DoodhSpacing.xs),
+                            TextButton(
+                              onPressed: busy
+                                  ? null
+                                  : () => setState(
+                                      () => _showPasswordSignIn = true,
+                                    ),
+                              child: const Text('Use password instead'),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      // Secondary: password sign-in (email-or-mobile + password).
+                      Form(
+                        key: _passwordFormKey,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            DoodhField(
+                              label: 'Email or mobile',
+                              controller: _loginController,
+                              enabled: !busy,
+                              autofillHints: const [
+                                AutofillHints.username,
+                                AutofillHints.email,
+                                AutofillHints.telephoneNumber,
+                              ],
+                              prefixIcon: const Icon(Icons.person_outline),
+                              validator: (value) =>
+                                  value == null || value.trim().isEmpty
+                                  ? 'Enter your email or mobile number.'
+                                  : null,
+                            ),
+                            const SizedBox(height: DoodhSpacing.md),
+                            DoodhField(
+                              label: 'Password',
+                              controller: _passwordController,
+                              enabled: !busy,
+                              obscureText: _obscurePassword,
+                              autofillHints: const [AutofillHints.password],
                               prefixIcon: const Icon(Icons.lock_outline),
-                              border: const OutlineInputBorder(),
                               suffixIcon: IconButton(
                                 tooltip: _obscurePassword
                                     ? 'Show password'
@@ -173,52 +179,47 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                       : Icons.visibility_off_outlined,
                                 ),
                               ),
+                              validator: (value) =>
+                                  value == null || value.isEmpty
+                                  ? 'Enter your password.'
+                                  : null,
+                              onSubmitted: busy ? null : (_) => _submit(),
                             ),
-                            validator: (value) =>
-                                value == null || value.isEmpty
-                                ? 'Enter your password.'
-                                : null,
-                            onFieldSubmitted: busy ? null : (_) => _submit(),
-                          ),
-                          const SizedBox(height: 20),
-                          FilledButton.icon(
-                            onPressed: busy ? null : _submit,
-                            icon: busy
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
+                            const SizedBox(height: DoodhSpacing.lg),
+                            DoodhButton(
+                              label: 'Sign in',
+                              icon: Icons.login,
+                              busy: busy,
+                              expand: true,
+                              onPressed: _submit,
+                            ),
+                            const SizedBox(height: DoodhSpacing.xs),
+                            TextButton.icon(
+                              onPressed: busy
+                                  ? null
+                                  : () => context.go(
+                                      _withRedirect('/forgot-password'),
                                     ),
-                                  )
-                                : const Icon(Icons.login),
-                            label: const Text('Sign in'),
-                          ),
-                          const SizedBox(height: 12),
-                          TextButton.icon(
-                            onPressed: busy
-                                ? null
-                                : () => context.go(
-                                    _withRedirect('/forgot-password'),
-                                  ),
-                            icon: const Icon(Icons.lock_reset_outlined),
-                            label: const Text('Forgot password?'),
-                          ),
-                          TextButton(
-                            onPressed: busy
-                                ? null
-                                : () => setState(
-                                    () => _showPasswordSignIn = false,
-                                  ),
-                            child: const Text('Sign in with mobile OTP'),
-                          ),
-                        ],
+                              icon: const Icon(Icons.lock_reset_outlined),
+                              label: const Text('Forgot password?'),
+                            ),
+                            TextButton(
+                              onPressed: busy
+                                  ? null
+                                  : () => setState(
+                                      () => _showPasswordSignIn = false,
+                                    ),
+                              child: const Text('Sign in with mobile OTP'),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                    const SizedBox(height: DoodhSpacing.xl),
                   ],
-                ],
+                ),
               ),
             ),
-          ),
+          ],
         ),
       ),
     );

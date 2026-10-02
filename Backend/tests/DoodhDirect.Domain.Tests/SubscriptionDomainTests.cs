@@ -1,3 +1,4 @@
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Subscriptions;
 
 namespace DoodhDirect.Domain.Tests;
@@ -181,6 +182,38 @@ public sealed class SubscriptionDomainTests
         var subscription = CreateSubscription();
 
         Assert.Throws<ArgumentException>(() => subscription.Activate(new DateTime(2026, 8, 16, 7, 30, 0, DateTimeKind.Utc)));
+    }
+
+    [Fact]
+    public void AddCharges_AppliesOnceAndFreezesProductValuePlusRoundedAmounts()
+    {
+        var subscription = CreateSubscription(totalEntitlement: 4, quantity: 2m, unitPrice: 80m);
+
+        subscription.AddCharges(
+        [
+            new SubscriptionCharge("GST", "CGST", "Central GST", 5m, 640m, 32m),
+            new SubscriptionCharge("GST", "SGST", "State GST", 5m, 640m, 32m),
+        ]);
+
+        Assert.Equal(64m, subscription.ChargesTotal);
+        Assert.Equal(704m, subscription.PayableAmount);
+        Assert.Equal(2, subscription.Charges.Count);
+        Assert.Throws<InvalidOperationException>(() => subscription.AddCharges(
+        [
+            new SubscriptionCharge("GST", "CGST", "Central GST", 5m, 640m, 32m),
+        ]));
+    }
+
+    [Fact]
+    public void AddCharges_EmptyPreservesConstructorPayable()
+    {
+        var subscription = CreateSubscription(totalEntitlement: 4, quantity: 2m, unitPrice: 80m);
+
+        subscription.AddCharges([]);
+
+        Assert.Empty(subscription.Charges);
+        Assert.Equal(0m, subscription.ChargesTotal);
+        Assert.Equal(640m, subscription.PayableAmount);
     }
 
     private static Subscription CreateActiveSubscription(int totalEntitlement = 4)

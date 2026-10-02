@@ -1,4 +1,4 @@
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
@@ -281,7 +281,7 @@ class _IntegrationConfigurationScreenState
     final scheme = Theme.of(context).colorScheme;
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: DoodhSpacing.pagePadding,
       children: [
         const _ScopeInfoCard(),
         const SizedBox(height: 12),
@@ -290,24 +290,28 @@ class _IntegrationConfigurationScreenState
           const SizedBox(height: 12),
         ],
         if (state.savedMessage != null) ...[
-          _SavedBanner(message: state.savedMessage!),
+          DoodhSavedBanner(message: state.savedMessage!),
           const SizedBox(height: 12),
         ],
         if (state.testMessage != null) ...[
-          _TestResultBanner(message: state.testMessage!),
+          DoodhInfoBanner(
+            tone: DoodhTone.success,
+            icon: Icons.send_outlined,
+            message: state.testMessage!,
+          ),
           const SizedBox(height: 12),
         ],
         if (state.errorMessage != null) ...[
-          _ErrorBanner(message: state.errorMessage!),
+          DoodhErrorBanner(message: state.errorMessage!),
           const SizedBox(height: 12),
         ],
-        _SectionCard(
+        DoodhSectionCard(
           icon: Icons.mail_outlined,
           title: 'Email (SMTP) delivery',
           subtitle:
               'The mail ID DoodhDirect uses to send employee invitation links '
               'and transactional email.',
-          configured: configuration.isEmailConfigured,
+          trailing: _ConfiguredChip(configured: configuration.isEmailConfigured),
           children: [
             TextField(
               controller: _emailFromAddress,
@@ -422,11 +426,13 @@ class _IntegrationConfigurationScreenState
           ],
         ),
         const SizedBox(height: 12),
-        _SectionCard(
+        DoodhSectionCard(
           icon: Icons.payments_outlined,
           title: 'Razorpay',
           subtitle: 'Runtime payment credentials used to collect payments.',
-          configured: configuration.isRazorpayConfigured,
+          trailing: _ConfiguredChip(
+            configured: configuration.isRazorpayConfigured,
+          ),
           children: [
             TextField(
               controller: _razorpayKeyId,
@@ -474,11 +480,13 @@ class _IntegrationConfigurationScreenState
           ],
         ),
         const SizedBox(height: 12),
-        _SectionCard(
+        DoodhSectionCard(
           icon: Icons.map_outlined,
           title: 'Google Maps',
           subtitle: 'Backend/server key and web client key used to load maps.',
-          configured: configuration.isGoogleMapsConfigured,
+          trailing: _ConfiguredChip(
+            configured: configuration.isGoogleMapsConfigured,
+          ),
           children: [
             TextField(
               controller: _googleMapsApiKey,
@@ -626,112 +634,17 @@ class _IntegrationConfigurationScreenState
 }
 
 /// A rounded chip showing whether an integration section is configured.
-class _StatusChip extends StatelessWidget {
-  const _StatusChip({required this.configured});
+class _ConfiguredChip extends StatelessWidget {
+  const _ConfiguredChip({required this.configured});
 
   final bool configured;
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final color = configured ? DoodhColors.tealDark : scheme.error;
-    final background = configured ? DoodhColors.mint : scheme.errorContainer;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            configured ? Icons.check_circle_outline : Icons.error_outline,
-            size: 14,
-            color: color,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            configured ? 'Configured' : 'Not configured',
-            style: Theme.of(
-              context,
-            ).textTheme.labelSmall?.copyWith(color: color),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Card grouping one integration section: header row (icon, title, subtitle,
-/// optional status chip) followed by the child fields.
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.children,
-    this.configured,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final List<Widget> children;
-  final bool? configured;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(icon, color: scheme.primary),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title, style: theme.textTheme.titleMedium),
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (configured != null) ...[
-                  const SizedBox(width: 8),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: _StatusChip(configured: configured!),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: children,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => DoodhChip(
+    label: configured ? 'Configured' : 'Not configured',
+    tone: configured ? DoodhTone.success : DoodhTone.error,
+    icon: configured ? Icons.check_circle_outline : Icons.error_outline,
+  );
 }
 
 class _ScopeInfoCard extends StatelessWidget {
@@ -744,7 +657,7 @@ class _ScopeInfoCard extends StatelessWidget {
     return Card(
       color: scheme.surfaceContainerHighest,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.cardPadding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -806,68 +719,3 @@ class _ReadOnlyBanner extends StatelessWidget {
   }
 }
 
-class _SavedBanner extends StatelessWidget {
-  const _SavedBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    color: DoodhColors.mint,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          const Icon(Icons.check_circle_outline, color: DoodhColors.tealDark),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message)),
-        ],
-      ),
-    ),
-  );
-}
-
-class _TestResultBanner extends StatelessWidget {
-  const _TestResultBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    color: DoodhColors.mint,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          const Icon(Icons.send_outlined, color: DoodhColors.tealDark),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message)),
-        ],
-      ),
-    ),
-  );
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    color: Theme.of(context).colorScheme.errorContainer,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          Icon(
-            Icons.error_outline,
-            color: Theme.of(context).colorScheme.error,
-          ),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message)),
-        ],
-      ),
-    ),
-  );
-}

@@ -22,6 +22,7 @@ class SubscriptionState {
     this.subscriptions = const <SubscriptionDetails>[],
     this.selectedSubscription,
     this.calendar = const <SubscriptionDelivery>[],
+    this.calendarsBySubscription = const <String, List<SubscriptionDelivery>>{},
     this.isLoading = false,
     this.isSaving = false,
     this.isOffline = false,
@@ -31,6 +32,12 @@ class SubscriptionState {
   final List<SubscriptionDetails> subscriptions;
   final SubscriptionDetails? selectedSubscription;
   final List<SubscriptionDelivery> calendar;
+
+  /// Occurrence calendars keyed by owning subscription publicId. Populated by
+  /// [SubscriptionController.loadCalendar] (one subscription) and
+  /// [SubscriptionController.loadAllCalendars] (every active subscription) so
+  /// customer-wide surfaces can resolve each occurrence's real owner.
+  final Map<String, List<SubscriptionDelivery>> calendarsBySubscription;
   final bool isLoading;
   final bool isSaving;
   final bool isOffline;
@@ -41,6 +48,7 @@ class SubscriptionState {
     SubscriptionDetails? selectedSubscription,
     bool clearSelectedSubscription = false,
     List<SubscriptionDelivery>? calendar,
+    Map<String, List<SubscriptionDelivery>>? calendarsBySubscription,
     bool clearCalendar = false,
     bool? isLoading,
     bool? isSaving,
@@ -53,6 +61,8 @@ class SubscriptionState {
         ? null
         : selectedSubscription ?? this.selectedSubscription,
     calendar: clearCalendar ? const [] : calendar ?? this.calendar,
+    calendarsBySubscription:
+        calendarsBySubscription ?? this.calendarsBySubscription,
     isLoading: isLoading ?? this.isLoading,
     isSaving: isSaving ?? this.isSaving,
     isOffline: isOffline ?? this.isOffline,
@@ -166,7 +176,47 @@ class SubscriptionController extends Notifier<SubscriptionState> {
     );
     try {
       final calendar = await _repository.getCalendar(token, subscriptionId);
-      state = state.copyWith(calendar: calendar, isLoading: false);
+      state = state.copyWith(
+        calendar: calendar,
+        calendarsBySubscription: {
+          ...state.calendarsBySubscription,
+          subscriptionId: calendar,
+        },
+        isLoading: false,
+      );
+    } on Object catch (error) {
+      _setFailure(error);
+    }
+  }
+
+  /// Loads occurrence calendars for EVERY active subscription and merges them
+  /// into [SubscriptionState.calendar] so customer-wide surfaces (home week
+  /// strip, Upcoming Deliveries, the date sheet) reflect all scheduled orders
+  /// — never just the first active subscription's.
+  Future<void> loadAllCalendars() async {
+    final token = _token;
+    if (token == null) return;
+
+    final actives = state.subscriptions
+        .where((item) => item.status == SubscriptionStatus.active)
+        .toList(growable: false);
+    if (actives.isEmpty) return;
+
+    state = state.copyWith(isLoading: true, isOffline: false, clearError: true);
+    try {
+      final results = await Future.wait([
+        for (final subscription in actives)
+          _repository.getCalendar(token, subscription.publicId),
+      ]);
+      final bySubscription = <String, List<SubscriptionDelivery>>{
+        for (var index = 0; index < actives.length; index++)
+          actives[index].publicId: results[index],
+      };
+      state = state.copyWith(
+        calendar: [for (final calendar in bySubscription.values) ...calendar],
+        calendarsBySubscription: bySubscription,
+        isLoading: false,
+      );
     } on Object catch (error) {
       _setFailure(error);
     }
@@ -192,6 +242,32 @@ class SubscriptionController extends Notifier<SubscriptionState> {
   Future<bool> cancel(String subscriptionId) =>
       _saveSubscription(() => _repository.cancel(_token!, subscriptionId));
 
+  /// Result of a saved vacation range (null when the save did not complete).
+  ///
+  /// The UI uses this to show the factual per-date outcome instead of assuming
+  /// every date in the range was skipped. Calendars are reloaded from the
+  /// backend so the display always reflects server-authoritative state.
+  Future<VacationResult?> createVacation(CreateVacationRequest request) async {
+    final token = _token;
+    if (token == null) return null;
+
+    state = state.copyWith(isSaving: true, isOffline: false, clearError: true);
+    try {
+      final result = await _repository.createVacation(
+        token: token,
+        request: request,
+      );
+      state = state.copyWith(isSaving: false);
+      // Authoritative refresh of every active subscription's calendar, never
+      // local-only state.
+      await loadAllCalendars();
+      return result;
+    } on Object catch (error) {
+      _setFailure(error, saving: true);
+      return null;
+    }
+  }
+
   Future<bool> skip(String subscriptionId, String deliveryId) async {
     final token = _token;
     if (token == null) return false;
@@ -207,6 +283,15 @@ class SubscriptionController extends Notifier<SubscriptionState> {
         calendar: state.calendar
             .map((item) => item.publicId == delivery.publicId ? delivery : item)
             .toList(growable: false),
+        calendarsBySubscription: {
+          for (final entry in state.calendarsBySubscription.entries)
+            entry.key: entry.value
+                .map(
+                  (item) =>
+                      item.publicId == delivery.publicId ? delivery : item,
+                )
+                .toList(growable: false),
+        },
         isSaving: false,
       );
       return true;

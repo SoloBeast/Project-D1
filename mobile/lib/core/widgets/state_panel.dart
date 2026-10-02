@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:flutter/material.dart';
 
 class StatePanel extends StatelessWidget {
@@ -23,22 +24,34 @@ class StatePanel extends StatelessWidget {
         ),
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
+            constraints: const BoxConstraints(maxWidth: DoodhContentMax.narrow),
             child: Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(DoodhSpacing.lg),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(icon, size: 48, color: Theme.of(context).colorScheme.primary),
-                  const SizedBox(height: 16),
-                  Text(
-                    title,
-                    style: Theme.of(context).textTheme.titleLarge,
-                    textAlign: TextAlign.center,
+                  ExcludeSemantics(
+                    child: Icon(
+                      icon,
+                      size: 48,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: DoodhSpacing.md),
+                  Semantics(
+                    header: true,
+                    child: Text(
+                      title,
+                      style: Theme.of(context).textTheme.titleLarge,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  const SizedBox(height: DoodhSpacing.sm),
                   Text(message, textAlign: TextAlign.center),
-                  if (action != null) ...[const SizedBox(height: 20), action!],
+                  if (action != null) ...[
+                    const SizedBox(height: DoodhSpacing.lg),
+                    action!,
+                  ],
                 ],
               ),
             ),
@@ -57,6 +70,7 @@ class LoadingStatePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Semantics(
     label: message,
+    liveRegion: true,
     child: const Center(child: CircularProgressIndicator()),
   );
 }

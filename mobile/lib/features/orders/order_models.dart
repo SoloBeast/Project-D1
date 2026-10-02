@@ -89,8 +89,11 @@ class CheckoutAddressSelection {
 }
 
 class CheckoutRequest {
-  const CheckoutRequest({this.addressId, this.manualAddress, required this.items})
-    : assert((addressId != null) != (manualAddress != null));
+  const CheckoutRequest({
+    this.addressId,
+    this.manualAddress,
+    required this.items,
+  }) : assert((addressId != null) != (manualAddress != null));
 
   final String? addressId;
   final CheckoutAddressDraft? manualAddress;
@@ -152,6 +155,8 @@ class CheckoutPreview {
     required this.items,
     required this.subtotal,
     required this.discountAmount,
+    this.charges = const <OrderChargeLine>[],
+    this.chargesTotal = 0,
     required this.payableAmount,
   });
 
@@ -177,6 +182,11 @@ class CheckoutPreview {
             .toList(growable: false),
         subtotal: (json['subtotal'] as num).toDouble(),
         discountAmount: (json['discountAmount'] as num).toDouble(),
+        charges: (json['charges'] as List<dynamic>? ?? const [])
+            .cast<Map<String, dynamic>>()
+            .map(OrderChargeLine.fromJson)
+            .toList(growable: false),
+        chargesTotal: (json['chargesTotal'] as num? ?? 0).toDouble(),
         payableAmount: (json['payableAmount'] as num).toDouble(),
       );
 
@@ -197,6 +207,8 @@ class CheckoutPreview {
   final List<CheckoutLine> items;
   final double subtotal;
   final double discountAmount;
+  final List<OrderChargeLine> charges;
+  final double chargesTotal;
   final double payableAmount;
 }
 
@@ -230,6 +242,54 @@ class OrderItem {
   final double lineTotal;
 }
 
+/// One charge line exactly as the server applied it at checkout (or previewed
+/// it). The client renders these values verbatim — it never recomputes amounts
+/// from percentages, and order snapshots are historical (master edits later do
+/// not change them).
+class OrderChargeLine {
+  const OrderChargeLine({
+    required this.chargeType,
+    required this.chargeCode,
+    required this.description,
+    required this.percentage,
+    required this.baseAmount,
+    required this.amount,
+  });
+
+  factory OrderChargeLine.fromJson(Map<String, dynamic> json) =>
+      OrderChargeLine(
+        chargeType: json['chargeType'] as String,
+        chargeCode: json['chargeCode'] as String,
+        description: json['description'] == null
+            ? null
+            : json['description'] as String,
+        percentage: (json['percentage'] as num).toDouble(),
+        baseAmount: (json['baseAmount'] as num).toDouble(),
+        amount: (json['amount'] as num).toDouble(),
+      );
+
+  final String chargeType;
+  final String chargeCode;
+  final String? description;
+  final double percentage;
+  final double baseAmount;
+  final double amount;
+
+  /// Consumer-facing label: the configured description when present, otherwise
+  /// a safe fallback built from the master fields (never internal IDs).
+  String get displayLabel {
+    final normalized = description?.trim();
+    if (normalized != null && normalized.isNotEmpty) return normalized;
+    return chargeType.trim().isEmpty ? chargeCode : chargeType;
+  }
+
+  String get formattedAmount => '₹${amount.toStringAsFixed(2)}';
+
+  String get formattedPercentage => percentage == percentage.roundToDouble()
+      ? '${percentage.round()}%'
+      : '${percentage.toStringAsFixed(2)}%';
+}
+
 class OrderSummary {
   const OrderSummary({
     required this.publicId,
@@ -243,6 +303,8 @@ class OrderSummary {
     required this.items,
     required this.subtotal,
     required this.discountAmount,
+    this.charges = const <OrderChargeLine>[],
+    this.chargesTotal = 0,
     required this.payableAmount,
     required this.cancelledAt,
     required this.paymentPublicId,
@@ -268,6 +330,13 @@ class OrderSummary {
         .toList(growable: false),
     subtotal: (json['subtotal'] as num).toDouble(),
     discountAmount: (json['discountAmount'] as num).toDouble(),
+    // Historical snapshot: the frozen charge lines from checkout time. Never
+    // re-derived from the current master.
+    charges: (json['charges'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map(OrderChargeLine.fromJson)
+        .toList(growable: false),
+    chargesTotal: (json['chargesTotal'] as num? ?? 0).toDouble(),
     payableAmount: (json['payableAmount'] as num).toDouble(),
     cancelledAt: json['cancelledAt'] == null
         ? null
@@ -291,6 +360,8 @@ class OrderSummary {
   final List<OrderItem> items;
   final double subtotal;
   final double discountAmount;
+  final List<OrderChargeLine> charges;
+  final double chargesTotal;
   final double payableAmount;
   final DateTime? cancelledAt;
   final String? paymentPublicId;
@@ -311,9 +382,7 @@ class OrderCartItem {
   const OrderCartItem({required this.product, required this.quantity});
 
   factory OrderCartItem.fromJson(Map<String, dynamic> json) => OrderCartItem(
-    product: CatalogueProduct.fromJson(
-      json['product'] as Map<String, dynamic>,
-    ),
+    product: CatalogueProduct.fromJson(json['product'] as Map<String, dynamic>),
     quantity: (json['quantity'] as num).toDouble(),
   );
 

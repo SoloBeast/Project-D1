@@ -450,6 +450,11 @@ void main() {
     testWidgets(
       'setup shows eligible products, addresses, and finite controls',
       (tester) async {
+        // The setup form is a long ListView that builds sections lazily, so a
+        // tall surface keeps every section mounted for inspection.
+        await tester.binding.setSurfaceSize(const Size(800, 2400));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
         await pumpScreen(
           tester,
           const SubscriptionSetupScreen(),
@@ -458,19 +463,14 @@ void main() {
         );
 
         expect(find.text('New subscription'), findsOneWidget);
-        expect(find.text('Whole Milk'), findsOneWidget);
+        // The product name is shown both in the summary card and as the
+        // selected value of the "Change product" dropdown.
+        expect(find.text('Whole Milk'), findsNWidgets(2));
         expect(find.text('Home - Pune'), findsOneWidget);
         expect(find.text('Total deliveries'), findsOneWidget);
-        await tester.scrollUntilVisible(
-          find.text('Prepaid estimate'),
-          300,
-          scrollable: find.byType(Scrollable).first,
-        );
-        expect(find.text('Prepaid estimate'), findsOneWidget);
-        await tester.scrollUntilVisible(
-          find.text('Continue to payment'),
-          300,
-          scrollable: find.byType(Scrollable).first,
+        expect(
+          find.bySemanticsLabel(RegExp('Prepaid estimate for')),
+          findsOneWidget,
         );
         expect(find.text('Continue to payment'), findsOneWidget);
       },
@@ -479,6 +479,9 @@ void main() {
     testWidgets('setup tolerates duplicate address IDs across rebuilds', (
       tester,
     ) async {
+      await tester.binding.setSurfaceSize(const Size(800, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
       await pumpScreen(
         tester,
         const SubscriptionSetupScreen(),
@@ -491,7 +494,11 @@ void main() {
         ),
       );
 
+      // Deduplication keeps the first entry for the shared public ID, so the
+      // original "Home - Pune" address stays selected after the rebuild and no
+      // duplicate dropdown entries are rendered.
       expect(find.text('Home - Pune'), findsOneWidget);
+      expect(find.text('Replacement Home - Pune'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pump();
       expect(tester.takeException(), isNull);
@@ -531,18 +538,49 @@ void main() {
       expect(find.text('6 of 30 deliveries used'), findsOneWidget);
       expect(find.text('24 deliveries remaining'), findsOneWidget);
       expect(find.text('Active'), findsOneWidget);
+      expect(find.text('Your plan'), findsOneWidget);
+      expect(find.text('Delivery days'), findsOneWidget);
+      expect(find.text('Active window'), findsOneWidget);
+      expect(find.text('Unit price'), findsOneWidget);
+      expect(
+        find.bySemanticsLabel(
+          RegExp('Whole Milk, 1.125 litre per delivery, Active'),
+        ),
+        findsOneWidget,
+      );
       await tester.scrollUntilVisible(
         find.text('View delivery calendar'),
         300,
         scrollable: find.byType(Scrollable).first,
       );
-      expect(find.text('Update schedule'), findsOneWidget);
+      // Schedule updates are disabled: hold (pause/resume) or cancel only.
+      expect(find.text('Update schedule'), findsNothing);
       expect(find.text('Pause subscription'), findsOneWidget);
       expect(find.text('Cancel subscription'), findsOneWidget);
       expect(find.text('Resume subscription'), findsNothing);
       expect(find.text('Retry payment'), findsNothing);
       expect(find.text('View delivery calendar'), findsOneWidget);
       expect(find.text('Complete Payment'), findsNothing);
+    });
+
+    testWidgets('detail surfaces the next scheduled occurrence for active plans', (
+      tester,
+    ) async {
+      final futureSubscription = SubscriptionDetails.fromJson(
+        subscriptionJson(startDate: '2030-01-01', endDate: '2030-12-31'),
+      );
+      await pumpScreen(
+        tester,
+        const SubscriptionDetailScreen(subscriptionId: 'subscription-1'),
+        subscriptionState: SubscriptionState(
+          subscriptions: [futureSubscription],
+          selectedSubscription: futureSubscription,
+        ),
+      );
+
+      expect(find.text('Your plan'), findsOneWidget);
+      expect(find.text('Delivery days'), findsOneWidget);
+      expect(find.text('Next delivery'), findsOneWidget);
     });
 
     testWidgets(
@@ -630,6 +668,11 @@ void main() {
       );
       addTearDown(router.dispose);
 
+      // The redesigned detail screen is taller than the default test viewport,
+      // so enlarge the surface before tapping the payment action.
+      await tester.binding.setSurfaceSize(const Size(800, 1600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -648,7 +691,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       final initialLoads = controller.loadedSubscriptionIds.length;
-      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      await tester.ensureVisible(
+        find.widgetWithText(FilledButton, 'Complete Payment'),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Complete Payment'));
       await tester.pumpAndSettle();
@@ -680,6 +725,38 @@ void main() {
       expect(find.textContaining('Scheduled'), findsOneWidget);
       expect(find.textContaining('Delivered'), findsOneWidget);
       expect(find.byTooltip('Skip delivery'), findsOneWidget);
+    });
+
+    testWidgets('calendar separates upcoming deliveries from history', (
+      tester,
+    ) async {
+      final future = DateTime.now().add(const Duration(days: 5));
+      final futureIso =
+          '${future.year.toString().padLeft(4, '0')}-'
+          '${future.month.toString().padLeft(2, '0')}-'
+          '${future.day.toString().padLeft(2, '0')}';
+
+      await pumpScreen(
+        tester,
+        const SubscriptionCalendarScreen(subscriptionId: 'subscription-1'),
+        subscriptionState: SubscriptionState(
+          calendar: [
+            SubscriptionDelivery.fromJson(
+              deliveryJson(
+                status: 'Scheduled',
+                scheduledDate: futureIso,
+                publicId: 'delivery-future',
+              ),
+            ),
+            _delivery,
+            SubscriptionDelivery.fromJson(deliveryJson(status: 'Delivered')),
+          ],
+        ),
+      );
+
+      expect(find.text('Upcoming deliveries'), findsOneWidget);
+      expect(find.text('Delivery history'), findsOneWidget);
+      expect(find.byTooltip('Skip delivery'), findsNWidgets(2));
     });
 
     testWidgets('list distinguishes API and offline empty states', (
@@ -722,7 +799,11 @@ final createRequest = CreateSubscriptionRequest(
 
 final _subscription = SubscriptionDetails.fromJson(subscriptionJson());
 final _delivery = SubscriptionDelivery.fromJson(deliveryJson());
-Map<String, dynamic> subscriptionJson({String status = 'Active'}) => {
+Map<String, dynamic> subscriptionJson({
+  String status = 'Active',
+  String startDate = '2026-08-17',
+  String endDate = '2026-10-23',
+}) => {
   'publicId': 'subscription-1',
   'status': status,
   'productId': 'product-1',
@@ -732,8 +813,8 @@ Map<String, dynamic> subscriptionJson({String status = 'Active'}) => {
   'quantity': 1.125,
   'unitPrice': 60,
   'payableAmount': 2025,
-  'startDate': '2026-08-17',
-  'endDate': '2026-10-23',
+  'startDate': startDate,
+  'endDate': endDate,
   'totalEntitlement': 30,
   'usedEntitlement': 6,
   'remainingEntitlement': 24,
@@ -780,9 +861,13 @@ Map<String, dynamic> paymentJson({
   'createdAtUtc': '2026-08-16T09:00:00Z',
 };
 
-Map<String, dynamic> deliveryJson({String status = 'Scheduled'}) => {
-  'publicId': status == 'Scheduled' ? 'delivery-1' : 'delivery-2',
-  'scheduledDate': '2026-08-17',
+Map<String, dynamic> deliveryJson({
+  String status = 'Scheduled',
+  String scheduledDate = '2026-08-17',
+  String? publicId,
+}) => {
+  'publicId': publicId ?? (status == 'Scheduled' ? 'delivery-1' : 'delivery-2'),
+  'scheduledDate': scheduledDate,
   'slot': 'Evening',
   'quantity': 1.125,
   'status': status,

@@ -39,7 +39,9 @@ class NumberSeriesRepository {
       accessToken: accessToken,
       body: request.toJson(),
     );
-    return NumberSeriesPreview.fromJson(response['data'] as Map<String, dynamic>);
+    return NumberSeriesPreview.fromJson(
+      response['data'] as Map<String, dynamic>,
+    );
   }
 
   Future<NumberSeries> create(
@@ -86,11 +88,7 @@ class NumberSeriesRepository {
 
   /// Permanently deletes a series (any scope, active or inactive) and reloads
   /// the remaining list.
-  Future<void> delete(
-    String accessToken,
-    String code, {
-    String? scope,
-  }) async {
+  Future<void> delete(String accessToken, String code, {String? scope}) async {
     await _api.delete(
       _path('/${Uri.encodeComponent(code)}', scope: scope),
       accessToken: accessToken,

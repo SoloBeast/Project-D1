@@ -32,6 +32,122 @@ namespace DoodhDirect.Api.IntegrationTests;
 public sealed class DeliveryServiceTests
 {
     [Fact]
+    public async Task MaterializeEligible_NeverCreatesDeliveryForCommittedSkippedOccurrence()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+
+        // A second occurrence inside the subscription term, still skip-eligible
+        // under the 24h cutoff (day-after-tomorrow's delivery: its midnight
+        // start minus 24h is still in the future at the harness's 09:30 now).
+        var targetDate = harness.Today.AddDays(2);
+        var trackedSubscription = await harness.Db.Subscriptions
+            .Include(x => x.Deliveries)
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        trackedSubscription.AddDelivery(targetDate);
+        await harness.Db.SaveChangesAsync();
+        var tomorrowOccurrence = await harness.Db.SubscriptionDeliveries
+            .SingleAsync(x => x.ScheduledDate == targetDate);
+
+        // Customer skips the future occurrence (race simulation: the skip
+        // commits before the manager's materialization runs).
+        trackedSubscription.Skip(
+            tomorrowOccurrence,
+            harness.TimeProvider.Now,
+            TimeSpan.FromHours(24));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var result = await harness.Service.MaterializeEligibleAsync(
+            harness.ManagerActor,
+            harness.Today.AddDays(2),
+            CancellationToken.None);
+
+        // The one-time-order delivery and the still-Scheduled today occurrence
+        // are created; the committed-Skipped occurrence is dropped by the
+        // in-transaction re-check.
+        Assert.Equal(1, result.OrdersCreated);
+        Assert.Equal(1, result.SubscriptionOccurrencesCreated);
+        Assert.Empty(await harness.Db.Deliveries
+            .AsNoTracking()
+            .Where(x => x.SubscriptionDeliveryId == tomorrowOccurrence.Id)
+            .ToListAsync());
+        Assert.Single(await harness.Db.Deliveries
+            .AsNoTracking()
+            .Where(x => x.SubscriptionDeliveryId == harness.SubscriptionDelivery.Id)
+            .ToListAsync());
+        // OTP exists only for real materialized work (order + today's task).
+        Assert.Equal(
+            2,
+            await harness.Db.DeliveryOtps.AsNoTracking().CountAsync());
+        Assert.Equal(
+            2,
+            await harness.Db.NotificationEvents.AsNoTracking()
+                .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued));
+    }
+
+    [Fact]
+    public async Task FetchSubscriptionDeliveries_NeverCreatesDeliveryForCommittedSkippedOccurrence()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+
+        var targetDate = harness.Today.AddDays(2);
+        var trackedSubscription = await harness.Db.Subscriptions
+            .Include(x => x.Deliveries)
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        trackedSubscription.AddDelivery(targetDate);
+        await harness.Db.SaveChangesAsync();
+        var tomorrowOccurrenceId = await harness.Db.SubscriptionDeliveries
+            .Where(x => x.ScheduledDate == targetDate)
+            .Select(x => x.Id)
+            .SingleAsync();
+        var tomorrowOccurrence = await harness.Db.SubscriptionDeliveries
+            .SingleAsync(x => x.Id == tomorrowOccurrenceId);
+
+        trackedSubscription.Skip(
+            tomorrowOccurrence,
+            harness.TimeProvider.Now,
+            TimeSpan.FromHours(24));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var result = await harness.Service.FetchSubscriptionDeliveriesAsync(
+            harness.ManagerActor,
+            harness.Today.AddDays(2),
+            CancellationToken.None);
+
+        // Only the still-Scheduled today occurrence materializes.
+        Assert.Equal(0, result.OrdersCreated);
+        Assert.Equal(1, result.SubscriptionOccurrencesCreated);
+        Assert.Empty(await harness.Db.Deliveries
+            .AsNoTracking()
+            .Where(x => x.SubscriptionDeliveryId == tomorrowOccurrenceId)
+            .ToListAsync());
+        Assert.Single(await harness.Db.Deliveries
+            .AsNoTracking()
+            .Where(x => x.SubscriptionDeliveryId == harness.SubscriptionDelivery.Id)
+            .ToListAsync());
+    }
+
+    [Fact]
+    public async Task MaterializeEligible_WithNoSubscriptionOccurrencesOnlyCreatesOrderDelivery()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+
+        // Sanity counterpart: with the occurrence still Scheduled the
+        // materialization creates the subscription delivery and its OTP.
+        var result = await harness.Service.MaterializeEligibleAsync(
+            harness.ManagerActor,
+            harness.Today,
+            CancellationToken.None);
+
+        Assert.Equal(new DeliveryMaterializationResult(1, 1), result);
+        Assert.Equal(
+            1,
+            await harness.Db.Deliveries.AsNoTracking()
+                .CountAsync(x => x.SubscriptionDeliveryId == harness.SubscriptionDelivery.Id));
+    }
+
+    [Fact]
     public async Task MaterializeEligible_CreatesOrderAndSubscriptionDeliveriesAndIsIdempotent()
     {
         await using var harness = await DeliveryHarness.CreateAsync();

@@ -1,4 +1,4 @@
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
@@ -166,7 +166,7 @@ class _RefundReplacementConfigScreenState
     final hasChanges = _hasChanges();
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: DoodhSpacing.pagePadding,
       children: [
         const _ScopeInfoCard(),
         const SizedBox(height: 12),
@@ -177,11 +177,11 @@ class _RefundReplacementConfigScreenState
         ],
         const SizedBox(height: 12),
         if (state.savedMessage != null) ...[
-          _SavedBanner(message: state.savedMessage!),
+          DoodhSavedBanner(message: state.savedMessage!),
           const SizedBox(height: 12),
         ],
         if (state.errorMessage != null) ...[
-          _ErrorBanner(message: state.errorMessage!),
+          DoodhErrorBanner(message: state.errorMessage!),
           const SizedBox(height: 12),
         ],
         TextField(
@@ -251,7 +251,7 @@ class _ScopeInfoCard extends StatelessWidget {
     return Card(
       color: scheme.surfaceContainerHighest,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.cardPadding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -336,47 +336,3 @@ class _ReadOnlyBanner extends StatelessWidget {
   }
 }
 
-class _SavedBanner extends StatelessWidget {
-  const _SavedBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    color: DoodhColors.mint,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          const Icon(Icons.check_circle_outline, color: DoodhColors.tealDark),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message)),
-        ],
-      ),
-    ),
-  );
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    color: Theme.of(context).colorScheme.errorContainer,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          Icon(
-            Icons.error_outline,
-            color: Theme.of(context).colorScheme.error,
-          ),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message)),
-        ],
-      ),
-    ),
-  );
-}

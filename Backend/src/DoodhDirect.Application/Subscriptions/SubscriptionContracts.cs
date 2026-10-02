@@ -22,6 +22,33 @@ public sealed record UpdateSubscriptionRequest(
 
 public sealed record SkipSubscriptionDeliveryRequest(Guid DeliveryId);
 
+/// <summary>
+/// Customer-wide inclusive date-range vacation. A command input only: the
+/// backend resolves it to existing per-occurrence skips. No vacation entity
+/// is persisted; the per-occurrence Skipped status remains authoritative.
+/// </summary>
+public sealed record CreateVacationRequest(DateOnly FromDate, DateOnly ToDate);
+
+public sealed record VacationSkippedItem(
+    DateOnly Date,
+    Guid SubscriptionId,
+    Guid DeliveryId,
+    string ProductName,
+    SubscriptionDeliverySlot Slot);
+
+public sealed record VacationIneligibleItem(
+    DateOnly Date,
+    Guid SubscriptionId,
+    string ProductName,
+    string Reason);
+
+public sealed record VacationResult(
+    DateOnly FromDate,
+    DateOnly ToDate,
+    int SkippedCount,
+    IReadOnlyList<VacationSkippedItem> SkippedDates,
+    IReadOnlyList<VacationIneligibleItem> Ineligible);
+
 public sealed record RetrySubscriptionPaymentRequest(PaymentMethod PaymentMethod);
 
 public sealed record SubscriptionScheduleResult(
@@ -120,6 +147,15 @@ public interface ISubscriptionService
         long customerId,
         Guid subscriptionId,
         SkipSubscriptionDeliveryRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves the inclusive customer-wide date range to per-occurrence
+    /// skips across all of the customer's Active/Paused subscriptions.
+    /// </summary>
+    Task<VacationResult> CreateVacationAsync(
+        long customerId,
+        CreateVacationRequest request,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<SubscriptionDeliveryResult>> GetCalendarAsync(

@@ -106,6 +106,15 @@ public sealed class SubscriptionsController(ISubscriptionService subscriptionSer
         Ok(ApiResponse<SubscriptionDeliveryResult>.Ok(await subscriptionService.SkipAsync(
             RequireUserId(), subscriptionId, request, cancellationToken)));
 
+    [HttpPost("vacation")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.SubscriptionsManageOwn)]
+    [ProducesResponseType(typeof(ApiResponse<VacationResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<VacationResult>>> CreateVacation(
+        [FromBody] CreateVacationRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<VacationResult>.Ok(await subscriptionService.CreateVacationAsync(
+            RequireUserId(), request, cancellationToken)));
+
     [HttpGet("{subscriptionId:guid}/calendar")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.SubscriptionsReadOwn)]
     [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<SubscriptionDeliveryResult>>), StatusCodes.Status200OK)]

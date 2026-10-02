@@ -446,6 +446,136 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.ToTable("ProductCategory", "dbo");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Catalogue.ProductImage", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ProductId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime>("UploadedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UploadedAtUtc");
+
+                    b.Property<long>("UploadedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductId")
+                        .IsUnique();
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("StorageKey")
+                        .IsUnique();
+
+                    b.HasIndex("UploadedByUserId");
+
+                    b.ToTable("ProductImage", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_ProductImage_FileSize", "[FileSize] > 0");
+                        });
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Configuration.BrandingAsset", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("AssetKind")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
+
+                    b.Property<DateTime>("UploadedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UploadedAtUtc");
+
+                    b.Property<long>("UploadedByUserId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AssetKind")
+                        .IsUnique();
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("StorageKey")
+                        .IsUnique();
+
+                    b.HasIndex("UploadedByUserId");
+
+                    b.ToTable("BrandingAsset", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_BrandingAsset_FileSize", "[FileSize] > 0");
+                        });
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Configuration.SystemConfiguration", b =>
                 {
                     b.Property<long>("Id")
@@ -2503,6 +2633,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("datetime2")
                         .HasColumnName("CancelledAtUtc");
 
+                    b.Property<decimal>("ChargesTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<string>("CitySnapshot")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -3164,6 +3298,70 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Setup.Charge", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<bool>("ApplicableOnAll")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("ChargeCode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ChargeType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CreatedAtUtc");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("IsUsed")
+                        .HasColumnType("bit");
+
+                    b.Property<decimal>("Percentage")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<Guid>("PublicId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWSEQUENTIALID()");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("UpdatedAtUtc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChargeCode")
+                        .IsUnique();
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.ToTable("Charge", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_Charge_Percentage", "[Percentage] > 0 AND [Percentage] <= 100");
+                        });
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Setup.NumberSeries", b =>
                 {
                     b.Property<long>("Id")
@@ -3251,6 +3449,132 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.ToTable("NumberSeries", "dbo");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Setup.OrderCharge", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("BaseAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("ChargeCode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ChargeType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<long>("OrderId")
+                        .HasColumnType("bigint");
+
+                    b.Property<decimal>("Percentage")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId");
+
+                    b.ToTable("OrderCharge", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_OrderCharge_Amount", "[Amount] >= 0");
+
+                            t.HasCheckConstraint("CK_OrderCharge_BaseAmount", "[BaseAmount] >= 0");
+
+                            t.HasCheckConstraint("CK_OrderCharge_Percentage", "[Percentage] > 0");
+                        });
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Setup.ProductCharge", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("ChargeId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("ProductId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChargeId");
+
+                    b.HasIndex("ProductId", "ChargeId")
+                        .IsUnique();
+
+                    b.ToTable("ProductCharge", "dbo");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Setup.SubscriptionCharge", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<decimal>("BaseAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("ChargeCode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("ChargeType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("nvarchar(40)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<decimal>("Percentage")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<long>("SubscriptionId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SubscriptionId");
+
+                    b.ToTable("SubscriptionCharge", "dbo", t =>
+                        {
+                            t.HasCheckConstraint("CK_SubscriptionCharge_Amount", "[Amount] >= 0");
+
+                            t.HasCheckConstraint("CK_SubscriptionCharge_BaseAmount", "[BaseAmount] >= 0");
+
+                            t.HasCheckConstraint("CK_SubscriptionCharge_Percentage", "[Percentage] > 0");
+                        });
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Subscriptions.Subscription", b =>
                 {
                     b.Property<long>("Id")
@@ -3284,6 +3608,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("CancelledAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("CancelledAtUtc");
+
+                    b.Property<decimal>("ChargesTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("datetime2")
@@ -3688,6 +4016,36 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Navigation("Branch");
 
                     b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Catalogue.ProductImage", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Catalogue.Product", "Product")
+                        .WithMany("ProductImages")
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Identity.User", "UploadedByUser")
+                        .WithMany()
+                        .HasForeignKey("UploadedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Product");
+
+                    b.Navigation("UploadedByUser");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Configuration.BrandingAsset", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Identity.User", "UploadedByUser")
+                        .WithMany()
+                        .HasForeignKey("UploadedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("UploadedByUser");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Customer.CustomerAddress", b =>
@@ -4306,6 +4664,47 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Navigation("Order");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Setup.OrderCharge", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Orders.Order", "Order")
+                        .WithMany("Charges")
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Order");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Setup.ProductCharge", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Setup.Charge", "Charge")
+                        .WithMany()
+                        .HasForeignKey("ChargeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("DoodhDirect.Domain.Catalogue.Product", "Product")
+                        .WithMany("ProductCharges")
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Charge");
+
+                    b.Navigation("Product");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Setup.SubscriptionCharge", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Subscriptions.Subscription", "Subscription")
+                        .WithMany("Charges")
+                        .HasForeignKey("SubscriptionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Subscription");
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Subscriptions.Subscription", b =>
                 {
                     b.HasOne("DoodhDirect.Domain.Catalogue.Branch", "Branch")
@@ -4435,6 +4834,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("DoodhDirect.Domain.Catalogue.Product", b =>
                 {
                     b.Navigation("ProductBranches");
+
+                    b.Navigation("ProductCharges");
+
+                    b.Navigation("ProductImages");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Catalogue.ProductCategory", b =>
@@ -4520,6 +4923,8 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("DoodhDirect.Domain.Orders.Order", b =>
                 {
+                    b.Navigation("Charges");
+
                     b.Navigation("Items");
                 });
 
@@ -4535,6 +4940,8 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("DoodhDirect.Domain.Subscriptions.Subscription", b =>
                 {
+                    b.Navigation("Charges");
+
                     b.Navigation("Deliveries");
 
                     b.Navigation("Schedules");

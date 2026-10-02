@@ -214,7 +214,7 @@ class _CustomerMilkTestScreenState
             : RefreshIndicator(
                 onRefresh: _load,
                 child: ListView(
-                  padding: const EdgeInsets.all(16),
+                  padding: DoodhSpacing.pagePadding,
                   children: [
                     _StatusHeader(
                       status: test.status,
@@ -508,7 +508,7 @@ class _BranchMilkTestInspectionScreenState
                 onRefresh: _load,
                 child: ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(16),
+                  padding: DoodhSpacing.pagePadding,
                   children: [
                     _StatusHeader(
                       status: test.status,
@@ -654,7 +654,7 @@ class _StaffMilkTestScreenState
             : RefreshIndicator(
                 onRefresh: _load,
                 child: ListView(
-                  padding: const EdgeInsets.all(16),
+                  padding: DoodhSpacing.pagePadding,
                   children: [
                     _StatusHeader(
                       status: test.status,
@@ -1110,7 +1110,7 @@ class _StatusHeader extends StatelessWidget {
   Widget build(BuildContext context) => Card(
     color: DoodhColors.mint,
     child: Padding(
-      padding: const EdgeInsets.all(16),
+      padding: DoodhSpacing.cardPadding,
       child: Row(
         children: [
           const CircleAvatar(

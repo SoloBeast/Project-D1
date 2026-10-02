@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/features/customer/current_location_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -297,7 +298,7 @@ class _MapStatePanel extends StatelessWidget {
     ),
     child: Center(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.cardPadding,
         child: Text(message, textAlign: TextAlign.center),
       ),
     ),

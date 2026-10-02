@@ -1,3 +1,5 @@
+import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -53,38 +55,46 @@ class _OtpOnboardingScreenState extends ConsumerState<OtpOnboardingScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Create password')),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 440),
-              child: missingContext
-                  ? _MissingContextNotice()
-                  : Form(
-                      key: _formKey,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            'You are almost in',
-                            style: Theme.of(context).textTheme.headlineSmall,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Your mobile ${_displayMobile(mobile)} is verified. '
-                            'Set a password to create your customer account.',
-                          ),
-                          const SizedBox(height: 24),
-                          TextFormField(
-                            controller: _passwordController,
-                            enabled: !_busy,
-                            obscureText: _obscure,
-                            autofillHints: const [AutofillHints.newPassword],
-                            decoration: InputDecoration(
-                              labelText: 'New password',
+      body: DoodhPage(
+        child: missingContext
+            ? Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: DoodhContentMax.narrow,
+                  ),
+                  child: const _MissingContextNotice(),
+                ),
+              )
+            : Form(
+                key: _formKey,
+                child: ListView(
+                  children: [
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: DoodhContentMax.narrow,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const SizedBox(height: DoodhSpacing.sm),
+                            Text(
+                              'You are almost in',
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                            const SizedBox(height: DoodhSpacing.sm),
+                            Text(
+                              'Your mobile ${_displayMobile(mobile)} is verified. '
+                              'Set a password to create your customer account.',
+                            ),
+                            const SizedBox(height: DoodhSpacing.lg),
+                            DoodhField(
+                              label: 'New password',
+                              controller: _passwordController,
+                              enabled: !_busy,
+                              obscureText: _obscure,
+                              autofillHints: const [AutofillHints.newPassword],
                               prefixIcon: const Icon(Icons.lock_outline),
-                              border: const OutlineInputBorder(),
                               suffixIcon: IconButton(
                                 tooltip: _obscure
                                     ? 'Show password'
@@ -97,46 +107,39 @@ class _OtpOnboardingScreenState extends ConsumerState<OtpOnboardingScreen> {
                                       : Icons.visibility_off_outlined,
                                 ),
                               ),
+                              validator: (value) =>
+                                  value == null || value.length < 8
+                                  ? 'Use at least 8 characters.'
+                                  : null,
                             ),
-                            validator: (value) =>
-                                value == null || value.length < 8
-                                ? 'Use at least 8 characters.'
-                                : null,
-                          ),
-                          const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _confirmController,
-                            enabled: !_busy,
-                            obscureText: true,
-                            decoration: const InputDecoration(
-                              labelText: 'Confirm password',
-                              prefixIcon: Icon(Icons.lock_reset_outlined),
-                              border: OutlineInputBorder(),
+                            const SizedBox(height: DoodhSpacing.md),
+                            DoodhField(
+                              label: 'Confirm password',
+                              controller: _confirmController,
+                              enabled: !_busy,
+                              obscureText: true,
+                              prefixIcon: const Icon(Icons.lock_reset_outlined),
+                              validator: (value) =>
+                                  value != _passwordController.text
+                                  ? 'Passwords do not match.'
+                                  : null,
                             ),
-                            validator: (value) =>
-                                value != _passwordController.text
-                                ? 'Passwords do not match.'
-                                : null,
-                          ),
-                          const SizedBox(height: 20),
-                          FilledButton.icon(
-                            onPressed: _busy ? null : _submit,
-                            icon: _busy
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.person_add_alt),
-                            label: const Text('Create account'),
-                          ),
-                        ],
+                            const SizedBox(height: DoodhSpacing.lg),
+                            DoodhButton(
+                              label: 'Create account',
+                              icon: Icons.person_add_alt,
+                              busy: _busy,
+                              expand: true,
+                              onPressed: _submit,
+                            ),
+                            const SizedBox(height: DoodhSpacing.xl),
+                          ],
+                        ),
                       ),
                     ),
-            ),
-          ),
-        ),
+                  ],
+                ),
+              ),
       ),
     );
   }
@@ -190,6 +193,8 @@ class _OtpOnboardingScreenState extends ConsumerState<OtpOnboardingScreen> {
 /// onboarding requires — e.g. a stale/deep link. There is nothing safe to
 /// complete without server-verified context, so the user returns to sign in.
 class _MissingContextNotice extends StatelessWidget {
+  const _MissingContextNotice();
+
   @override
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -198,16 +203,17 @@ class _MissingContextNotice extends StatelessWidget {
         'Sign in required',
         style: Theme.of(context).textTheme.headlineSmall,
       ),
-      const SizedBox(height: 8),
+      const SizedBox(height: DoodhSpacing.sm),
       const Text(
         'Your verification details are missing or have expired. Sign in again '
         'to continue.',
       ),
-      const SizedBox(height: 20),
-      FilledButton.icon(
+      const SizedBox(height: DoodhSpacing.md),
+      DoodhButton(
+        label: 'Sign in',
+        icon: Icons.login,
+        expand: true,
         onPressed: () => context.go('/login'),
-        icon: const Icon(Icons.login),
-        label: const Text('Sign in'),
       ),
     ],
   );

@@ -35,6 +35,7 @@ public sealed class SubscriptionsControllerTests
             [nameof(SubscriptionsController.Resume)] = ("POST", "{subscriptionId:guid}/resume"),
             [nameof(SubscriptionsController.Cancel)] = ("POST", "{subscriptionId:guid}/cancel"),
             [nameof(SubscriptionsController.Skip)] = ("POST", "{subscriptionId:guid}/skip"),
+            [nameof(SubscriptionsController.CreateVacation)] = ("POST", "vacation"),
             [nameof(SubscriptionsController.GetCalendar)] = ("GET", "{subscriptionId:guid}/calendar")
         };
         var actions = controllerType
@@ -65,6 +66,7 @@ public sealed class SubscriptionsControllerTests
     [InlineData(nameof(SubscriptionsController.Resume), AuthorizationCodes.SubscriptionsManageOwn)]
     [InlineData(nameof(SubscriptionsController.Cancel), AuthorizationCodes.SubscriptionsManageOwn)]
     [InlineData(nameof(SubscriptionsController.Skip), AuthorizationCodes.SubscriptionsManageOwn)]
+    [InlineData(nameof(SubscriptionsController.CreateVacation), AuthorizationCodes.SubscriptionsManageOwn)]
     [InlineData(nameof(SubscriptionsController.GetCalendar), AuthorizationCodes.SubscriptionsReadOwn)]
     public void Action_RequiresExpectedPermissionAndIsNotAnonymous(string methodName, string permission)
     {
@@ -159,6 +161,14 @@ public sealed class SubscriptionsControllerTests
             StatusCodes.Status200OK));
         Assert.Equal((customerId, subscriptionId, skipRequest), service.SkipCall);
 
+        var vacationRequest = new CreateVacationRequest(
+            new DateOnly(2026, 10, 15),
+            new DateOnly(2026, 10, 22));
+        Assert.Same(service.Vacation, AssertSuccess(
+            await controller.CreateVacation(vacationRequest, CancellationToken.None),
+            StatusCodes.Status200OK));
+        Assert.Equal((customerId, vacationRequest), service.VacationCall);
+
         Assert.Same(service.Deliveries, AssertSuccess(
             await controller.GetCalendar(subscriptionId, CancellationToken.None),
             StatusCodes.Status200OK));
@@ -226,6 +236,18 @@ public sealed class SubscriptionsControllerTests
         public (long CustomerId, Guid SubscriptionId)? CancelCall { get; private set; }
         public (long CustomerId, Guid SubscriptionId, SkipSubscriptionDeliveryRequest Request)? SkipCall { get; private set; }
         public (long CustomerId, Guid SubscriptionId)? CalendarCall { get; private set; }
+        public (long CustomerId, CreateVacationRequest Request)? VacationCall { get; private set; }
+        public VacationResult Vacation { get; } = new(
+            new DateOnly(2026, 10, 15),
+            new DateOnly(2026, 10, 22),
+            6,
+            [new VacationSkippedItem(
+                new DateOnly(2026, 10, 15),
+                Guid.NewGuid(),
+                Guid.NewGuid(),
+                "Whole Milk",
+                SubscriptionDeliverySlot.Morning)],
+            []);
 
         public CapturingSubscriptionService()
         {
@@ -337,6 +359,15 @@ public sealed class SubscriptionsControllerTests
         {
             SkipCall = (customerId, subscriptionId, request);
             return Task.FromResult(Delivery);
+        }
+
+        public Task<VacationResult> CreateVacationAsync(
+            long customerId,
+            CreateVacationRequest request,
+            CancellationToken cancellationToken)
+        {
+            VacationCall = (customerId, request);
+            return Task.FromResult(Vacation);
         }
 
         public Task<IReadOnlyList<SubscriptionDeliveryResult>> GetCalendarAsync(

@@ -1,12 +1,16 @@
+using System.Globalization;
+using System.Text.Json;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Payments;
 using DoodhDirect.Application.Subscriptions;
+using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Configuration;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Deliveries;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -41,90 +45,130 @@ public sealed class SubscriptionService(
                 customerId, existing, request, normalizedKey, cancellationToken);
         }
 
-        var address = await dbContext.CustomerAddresses
-            .SingleOrDefaultAsync(x => x.PublicId == request.AddressId && x.UserId == customerId && x.IsActive, cancellationToken)
-            ?? throw new NotFoundException("The selected address was not found or is inactive.");
-        var product = await dbContext.Products
-            .Include(x => x.ProductBranches)
-            .SingleOrDefaultAsync(x => x.PublicId == request.ProductId && x.IsActive, cancellationToken)
-            ?? throw new NotFoundException("The selected product was not found or is inactive.");
-
-        var allocation = await branchAllocationService.AllocateAsync(
-            address.Latitude,
-            address.Longitude,
-            [(product.Id, request.Quantity)],
-            cancellationToken);
-        var branch = await dbContext.Branches
-            .SingleAsync(x => x.Id == allocation.BranchId, cancellationToken);
-
-        var dates = GenerateDates(request.StartDate, request.DeliveryDays, request.TotalEntitlement);
-        var subscription = new Subscription(
-            customerId,
-            product.Id,
-            address.Id,
-            branch.Id,
-            normalizedKey,
-            request.StartDate,
-            dates[^1],
-            request.Quantity,
-            product.Price,
-            request.TotalEntitlement,
-            product.Sku,
-            product.Name,
-            product.UnitOfMeasure,
-            branch.Code,
-            branch.Name,
-            FormatAddress(address));
-
-        foreach (var day in request.DeliveryDays.Distinct())
-        {
-            subscription.AddSchedule(day, request.Slot);
-        }
-        foreach (var date in dates)
-        {
-            subscription.AddDelivery(date, request.Slot);
-        }
-
-        dbContext.Subscriptions.Add(subscription);
-        var createdEventKey = $"subscription:{subscription.PublicId:N}:created";
-        var paymentPendingEventKey = $"subscription:{subscription.PublicId:N}:payment-pending";
-        notificationEventWriter.Add(new NotificationEventRequest(
-            customerId,
-            NotificationEventTypes.SubscriptionCreated,
-            createdEventKey,
-            new Dictionary<string, string>
-            {
-                ["message"] = $"Your {subscription.ProductNameSnapshot} subscription has been created.",
-                ["subscriptionId"] = subscription.PublicId.ToString()
-            },
-            $"/subscriptions/{subscription.PublicId}"));
-        notificationEventWriter.Add(new NotificationEventRequest(
-            customerId,
-            NotificationEventTypes.SubscriptionPaymentPending,
-            paymentPendingEventKey,
-            new Dictionary<string, string>
-            {
-                ["amount"] = subscription.PayableAmount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
-                ["currency"] = "INR",
-                ["message"] = "Payment is pending for your subscription.",
-                ["subscriptionId"] = subscription.PublicId.ToString()
-            },
-            $"/subscriptions/{subscription.PublicId}"));
+        Subscription? subscription = null;
+        var createdEventKey = string.Empty;
+        var paymentPendingEventKey = string.Empty;
         try
         {
-            await dbContext.SaveChangesAsync(cancellationToken);
+            // Authoritative creation runs inside the existing SERIALIZABLE
+            // transaction: product/branch reads, charge-master resolution,
+            // monetary construction, charge snapshots, MarkUsed and the single
+            // SaveChanges commit atomically. Payment creation stays outside
+            // (external gateway I/O must never hold a database transaction).
+            subscription = await ExecuteSerializableAsync(async () =>
+            {
+                var address = await dbContext.CustomerAddresses
+                    .SingleOrDefaultAsync(x => x.PublicId == request.AddressId && x.UserId == customerId && x.IsActive, cancellationToken)
+                    ?? throw new NotFoundException("The selected address was not found or is inactive.");
+                var product = await dbContext.Products
+                    .Include(x => x.ProductBranches)
+                    .SingleOrDefaultAsync(x => x.PublicId == request.ProductId && x.IsActive, cancellationToken)
+                    ?? throw new NotFoundException("The selected product was not found or is inactive.");
+
+                var allocation = await branchAllocationService.AllocateAsync(
+                    address.Latitude,
+                    address.Longitude,
+                    [(product.Id, request.Quantity)],
+                    cancellationToken);
+                var branch = await dbContext.Branches
+                    .SingleAsync(x => x.Id == allocation.BranchId, cancellationToken);
+
+                var dates = GenerateDates(request.StartDate, request.DeliveryDays, request.TotalEntitlement);
+                var created = new Subscription(
+                    customerId,
+                    product.Id,
+                    address.Id,
+                    branch.Id,
+                    normalizedKey,
+                    request.StartDate,
+                    dates[^1],
+                    request.Quantity,
+                    product.Price,
+                    request.TotalEntitlement,
+                    product.Sku,
+                    product.Name,
+                    product.UnitOfMeasure,
+                    branch.Code,
+                    branch.Name,
+                    FormatAddress(address));
+
+                foreach (var day in request.DeliveryDays.Distinct())
+                {
+                    created.AddSchedule(day, request.Slot);
+                }
+                foreach (var date in dates)
+                {
+                    created.AddDelivery(date, request.Slot);
+                }
+
+                // Stage 3: charges apply ONCE to the complete prepaid product
+                // value. PayableAmount still equals the constructor-established
+                // product value here (AddCharges has not run), so it is the
+                // frozen base — never a second live Product.Price read.
+                var (charges, chargeMasters) = await ResolveSubscriptionChargesAsync(
+                    product.Id,
+                    created.PayableAmount,
+                    cancellationToken);
+                created.AddCharges(charges);
+                foreach (var master in chargeMasters)
+                {
+                    if (!master.IsUsed)
+                    {
+                        master.MarkUsed();
+                    }
+                }
+
+                dbContext.Subscriptions.Add(created);
+                createdEventKey = $"subscription:{created.PublicId:N}:created";
+                paymentPendingEventKey = $"subscription:{created.PublicId:N}:payment-pending";
+                notificationEventWriter.Add(new NotificationEventRequest(
+                    customerId,
+                    NotificationEventTypes.SubscriptionCreated,
+                    createdEventKey,
+                    new Dictionary<string, string>
+                    {
+                        ["message"] = $"Your {created.ProductNameSnapshot} subscription has been created.",
+                        ["subscriptionId"] = created.PublicId.ToString()
+                    },
+                    $"/subscriptions/{created.PublicId}"));
+                notificationEventWriter.Add(new NotificationEventRequest(
+                    customerId,
+                    NotificationEventTypes.SubscriptionPaymentPending,
+                    paymentPendingEventKey,
+                    new Dictionary<string, string>
+                    {
+                        ["amount"] = created.PayableAmount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+                        ["currency"] = "INR",
+                        ["message"] = "Payment is pending for your subscription.",
+                        ["subscriptionId"] = created.PublicId.ToString()
+                    },
+                    $"/subscriptions/{created.PublicId}"));
+                // Captured for the DbUpdateException fallback below: if the
+                // save fails, the failed graph must be detached before the
+                // winning-row reload (mirrors the previous structure).
+                subscription = created;
+                await dbContext.SaveChangesAsync(cancellationToken);
+                return created;
+            }, cancellationToken);
         }
         catch (DbUpdateException)
         {
-            foreach (var schedule in subscription.Schedules)
+            if (subscription is not null)
             {
-                dbContext.Entry(schedule).State = EntityState.Detached;
+                foreach (var schedule in subscription.Schedules)
+                {
+                    dbContext.Entry(schedule).State = EntityState.Detached;
+                }
+                foreach (var delivery in subscription.Deliveries)
+                {
+                    dbContext.Entry(delivery).State = EntityState.Detached;
+                }
+                foreach (var charge in subscription.Charges)
+                {
+                    dbContext.Entry(charge).State = EntityState.Detached;
+                }
+                dbContext.Entry(subscription).State = EntityState.Detached;
             }
-            foreach (var delivery in subscription.Deliveries)
-            {
-                dbContext.Entry(delivery).State = EntityState.Detached;
-            }
-            dbContext.Entry(subscription).State = EntityState.Detached;
             foreach (var eventKey in new[] { createdEventKey, paymentPendingEventKey })
             {
                 var notificationEvent = dbContext.NotificationEvents.Local
@@ -144,9 +188,9 @@ public sealed class SubscriptionService(
             throw;
         }
 
-        await LoadNavigationAsync(subscription, cancellationToken);
+        await LoadNavigationAsync(subscription!, cancellationToken);
         return await CompleteCreationAsync(
-            customerId, subscription, request, normalizedKey, cancellationToken);
+            customerId, subscription!, request, normalizedKey, cancellationToken);
     }
 
     public async Task<IReadOnlyList<SubscriptionResult>> GetForCustomerAsync(long customerId, CancellationToken cancellationToken) =>
@@ -259,33 +303,135 @@ public sealed class SubscriptionService(
         return subscription.ToResult();
     }
 
-    public async Task<SubscriptionDeliveryResult> SkipAsync(
+    public Task<SubscriptionDeliveryResult> SkipAsync(
         long customerId,
         Guid subscriptionId,
         SkipSubscriptionDeliveryRequest request,
+        CancellationToken cancellationToken) =>
+        ExecuteSerializableAsync(async () =>
+        {
+            var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
+            var delivery = subscription.Deliveries.SingleOrDefault(x => x.PublicId == request.DeliveryId)
+                ?? throw new NotFoundException("The subscription delivery was not found.");
+            var now = timeProvider.Now;
+            await EnsureNoMaterializedDeliveryAsync(delivery, cancellationToken);
+            subscription.Skip(delivery, now, await GetCutoffAsync(cancellationToken));
+            AddSkipAudit(customerId, subscription, delivery, now);
+            notificationEventWriter.Add(new NotificationEventRequest(
+                customerId,
+                NotificationEventTypes.SubscriptionSkipped,
+                $"subscription-delivery:{delivery.PublicId:N}:skipped",
+                new Dictionary<string, string>
+                {
+                    ["date"] = delivery.ScheduledDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    ["message"] = $"Your delivery for {delivery.ScheduledDate:dd MMM yyyy} has been skipped.",
+                    ["subscriptionId"] = subscription.PublicId.ToString()
+                },
+                $"/subscriptions/{subscription.PublicId}",
+                delivery.StatusChangedAt));
+            await InvalidateMaterializedOtpsAsync([delivery.Id], now, cancellationToken);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await LoadDeliveryNavigationAsync(delivery, cancellationToken);
+            return delivery.ToResult();
+        }, cancellationToken);
+
+    public Task<VacationResult> CreateVacationAsync(
+        long customerId,
+        CreateVacationRequest request,
         CancellationToken cancellationToken)
     {
-        var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
-        var delivery = subscription.Deliveries.SingleOrDefault(x => x.PublicId == request.DeliveryId)
-            ?? throw new NotFoundException("The subscription delivery was not found.");
-        var now = timeProvider.Now;
-        subscription.Skip(delivery, now, await GetCutoffAsync(cancellationToken));
-        notificationEventWriter.Add(new NotificationEventRequest(
-            customerId,
-            NotificationEventTypes.SubscriptionSkipped,
-            $"subscription-delivery:{delivery.PublicId:N}:skipped",
-            new Dictionary<string, string>
+        ValidateVacationRange(request);
+        return ExecuteSerializableAsync(async () =>
+        {
+            var now = timeProvider.Now;
+            var cutoff = await GetCutoffAsync(cancellationToken);
+
+            // Fresh read inside the serializable transaction: eligibility is
+            // evaluated against committed state only.
+            var subscriptions = await dbContext.Subscriptions
+                .Include(x => x.Product)
+                .Include(x => x.Deliveries)
+                .Where(x => x.CustomerId == customerId &&
+                    (x.Status == SubscriptionStatus.Active || x.Status == SubscriptionStatus.Paused))
+                .OrderBy(x => x.Id)
+                .ToListAsync(cancellationToken);
+
+            var occurrences = subscriptions
+                .SelectMany(x => x.Deliveries)
+                .Where(x => x.ScheduledDate >= request.FromDate && x.ScheduledDate <= request.ToDate)
+                .ToArray();
+
+            var occurrenceIds = occurrences.Select(x => x.Id).ToArray();
+            var materializedIds = occurrenceIds.Length == 0
+                ? new HashSet<long>()
+                : (await dbContext.Deliveries
+                    .AsNoTracking()
+                    .Where(x => x.SubscriptionDeliveryId != null && occurrenceIds.Contains(x.SubscriptionDeliveryId.Value))
+                    .Select(x => x.SubscriptionDeliveryId!.Value)
+                    .ToListAsync(cancellationToken)).ToHashSet();
+
+            var skipped = new List<VacationSkippedItem>();
+            var ineligible = new List<VacationIneligibleItem>();
+            foreach (var occurrence in occurrences.OrderBy(x => x.ScheduledDate).ThenBy(x => x.Slot).ThenBy(x => x.Id))
             {
-                ["date"] = delivery.ScheduledDate.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
-                ["message"] = $"Your delivery for {delivery.ScheduledDate:dd MMM yyyy} has been skipped.",
-                ["subscriptionId"] = subscription.PublicId.ToString()
-            },
-            $"/subscriptions/{subscription.PublicId}",
-            delivery.StatusChangedAt));
-        await InvalidateMaterializedOtpsAsync([delivery.Id], now, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await LoadDeliveryNavigationAsync(delivery, cancellationToken);
-        return delivery.ToResult();
+                var subscription = occurrence.Subscription;
+                if (occurrence.Status != SubscriptionDeliveryStatus.Scheduled)
+                {
+                    ineligible.Add(new VacationIneligibleItem(
+                        occurrence.ScheduledDate,
+                        subscription.PublicId,
+                        subscription.ProductNameSnapshot,
+                        IneligibleReason(occurrence.Status)));
+                    continue;
+                }
+                if (materializedIds.Contains(occurrence.Id))
+                {
+                    ineligible.Add(new VacationIneligibleItem(
+                        occurrence.ScheduledDate,
+                        subscription.PublicId,
+                        subscription.ProductNameSnapshot,
+                        "deliveryPrepared"));
+                    continue;
+                }
+                var deliveryStarts = DateTime.SpecifyKind(
+                    occurrence.ScheduledDate.ToDateTime(TimeOnly.MinValue),
+                    DateTimeKind.Unspecified);
+                if (now > deliveryStarts - cutoff)
+                {
+                    ineligible.Add(new VacationIneligibleItem(
+                        occurrence.ScheduledDate,
+                        subscription.PublicId,
+                        subscription.ProductNameSnapshot,
+                        "cutoffPassed"));
+                    continue;
+                }
+
+                subscription.Skip(occurrence, now, cutoff);
+                AddSkipAudit(customerId, subscription, occurrence, now);
+                skipped.Add(new VacationSkippedItem(
+                    occurrence.ScheduledDate,
+                    subscription.PublicId,
+                    occurrence.PublicId,
+                    subscription.ProductNameSnapshot,
+                    occurrence.Slot));
+            }
+
+            dbContext.AddAuditLog(new AuditLog(
+                customerId,
+                "SUBSCRIPTION.VACATION",
+                "Subscription",
+                $"{request.FromDate:yyyy-MM-dd}/{request.ToDate:yyyy-MM-dd}",
+                null,
+                JsonSerializer.Serialize(new { skippedCount = skipped.Count, ineligibleCount = ineligible.Count }),
+                null,
+                null,
+                null,
+                now));
+
+            await AddVacationNotificationAsync(customerId, request, skipped.Count, now, cancellationToken);
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return new VacationResult(request.FromDate, request.ToDate, skipped.Count, skipped, ineligible);
+        }, cancellationToken);
     }
 
     public async Task<IReadOnlyList<SubscriptionDeliveryResult>> GetCalendarAsync(long customerId, Guid subscriptionId, CancellationToken cancellationToken)
@@ -317,6 +463,63 @@ public sealed class SubscriptionService(
         delivery.Subscription.MarkDelivered(delivery, now);
         await InvalidateMaterializedOtpsAsync([delivery.Id], now, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Resolves the once-at-creation subscription charges for the single
+    /// subscription product: active globals plus active item-level charges
+    /// mapped to that product. The subscription has exactly one product, so
+    /// every applicable charge shares the same frozen <paramref name="productValue"/>
+    /// base (the complete prepaid product value). Grouping is by Charge.Id; the
+    /// Stage 1 invariant
+    /// (ApplicableOnAll = true ⇒ zero mappings) keeps the sets disjoint, and as
+    /// pure defense a charge present in both resolves once as global — its current
+    /// master flag — without mutating master data. Each amount is rounded
+    /// independently (subscription convention); result is ordered by
+    /// ChargeType, ChargeCode.
+    /// </summary>
+    private async Task<(IReadOnlyCollection<SubscriptionCharge> Charges, IReadOnlyList<Charge> Masters)> ResolveSubscriptionChargesAsync(
+        long productId,
+        decimal productValue,
+        CancellationToken cancellationToken)
+    {
+        // GLOBAL set: active charges whose master flag is ApplicableOnAll.
+        var globalMasters = await dbContext.Charges
+            .Where(charge => charge.IsActive && charge.ApplicableOnAll)
+            .OrderBy(charge => charge.ChargeType)
+            .ThenBy(charge => charge.ChargeCode)
+            .ToListAsync(cancellationToken);
+        var globalIds = globalMasters.Select(charge => charge.Id).ToHashSet();
+
+        // PRODUCT-MAPPED set: the single product's mappings to active
+        // item-level charges. (ProductId, ChargeId) is unique, so each charge
+        // appears at most once; DistinctBy is pure defense.
+        var mappedMasters = (await dbContext.ProductCharges
+            .Where(link => link.ProductId == productId)
+            .Where(link => link.Charge.IsActive && !link.Charge.ApplicableOnAll)
+            .Select(link => link.Charge)
+            .ToListAsync(cancellationToken))
+            .DistinctBy(charge => charge.Id)
+            .Where(charge => !globalIds.Contains(charge.Id))
+            .OrderBy(charge => charge.ChargeType)
+            .ThenBy(charge => charge.ChargeCode)
+            .ToList();
+
+        var masters = globalMasters
+            .Concat(mappedMasters)
+            .OrderBy(charge => charge.ChargeType)
+            .ThenBy(charge => charge.ChargeCode)
+            .ToList();
+        var rows = masters
+            .Select(charge => new SubscriptionCharge(
+                charge.ChargeType,
+                charge.ChargeCode,
+                charge.Description,
+                charge.Percentage,
+                productValue,
+                decimal.Round(productValue * charge.Percentage / 100m, 2, MidpointRounding.AwayFromZero)))
+            .ToArray();
+        return (rows, masters);
     }
 
     private async Task<CreatedSubscriptionResult> CompleteCreationAsync(
@@ -431,6 +634,148 @@ public sealed class SubscriptionService(
         }
 
         return TimeSpan.FromHours(hours);
+    }
+
+    private void ValidateVacationRange(CreateVacationRequest request)
+    {
+        if (request.ToDate < request.FromDate)
+        {
+            throw new ValidationAppException("The vacation end date cannot precede its start date.", "toDate");
+        }
+
+        if (request.FromDate < timeProvider.Today)
+        {
+            throw new ValidationAppException("The vacation start date cannot be in the past.", "fromDate");
+        }
+
+        // Same inclusive-term cap as subscription creation (1-366 entitlement days).
+        if (request.ToDate > request.FromDate.AddDays(365))
+        {
+            throw new ValidationAppException("The vacation range cannot exceed 366 days.", "toDate");
+        }
+    }
+
+    private static string IneligibleReason(SubscriptionDeliveryStatus status) => status switch
+    {
+        SubscriptionDeliveryStatus.Skipped => "alreadySkipped",
+        SubscriptionDeliveryStatus.Delivered => "alreadyDelivered",
+        SubscriptionDeliveryStatus.Failed => "failed",
+        SubscriptionDeliveryStatus.Cancelled => "cancelled",
+        _ => "notScheduled"
+    };
+
+    /// <summary>
+    /// One summary notification per vacation request. The unique event key
+    /// (customer + inclusive range) makes retries idempotent: NotificationEvent
+    /// has a unique index on EventKey, so a repeated request cannot enqueue a
+    /// duplicate summary.
+    /// </summary>
+    private async Task AddVacationNotificationAsync(
+        long customerId,
+        CreateVacationRequest request,
+        int skippedCount,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.NotificationEvents
+            .AsNoTracking()
+            .AnyAsync(x => x.UserId == customerId &&
+                x.EventType == NotificationEventTypes.SubscriptionVacationSet &&
+                x.EventKey == VacationEventKey(customerId, request), cancellationToken);
+        if (existing)
+        {
+            return;
+        }
+
+        var message = skippedCount == 0
+            ? $"Vacation set from {request.FromDate:dd MMM yyyy} to {request.ToDate:dd MMM yyyy}. " +
+              "No deliveries were scheduled in this period."
+            : $"Vacation set from {request.FromDate:dd MMM yyyy} to {request.ToDate:dd MMM yyyy}. " +
+              $"{skippedCount} " + (skippedCount == 1 ? "delivery was" : "deliveries were") + " skipped.";
+        notificationEventWriter.Add(new NotificationEventRequest(
+            customerId,
+            NotificationEventTypes.SubscriptionVacationSet,
+            VacationEventKey(customerId, request),
+            new Dictionary<string, string>
+            {
+                ["message"] = message,
+                ["fromDate"] = request.FromDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["toDate"] = request.ToDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["skippedCount"] = skippedCount.ToString(CultureInfo.InvariantCulture)
+            },
+            "/subscriptions"));
+    }
+
+    private static string VacationEventKey(long customerId, CreateVacationRequest request) =>
+        $"subscription-vacation:{customerId}:{request.FromDate:yyyyMMdd}-{request.ToDate:yyyyMMdd}";
+
+    private void AddSkipAudit(long customerId, Subscription subscription, SubscriptionDelivery delivery, DateTime now) =>
+        dbContext.AddAuditLog(new AuditLog(
+            customerId,
+            "SUBSCRIPTION.SKIP",
+            "SubscriptionDelivery",
+            delivery.PublicId.ToString(),
+            null,
+            JsonSerializer.Serialize(new
+            {
+                subscriptionId = subscription.PublicId,
+                scheduledDate = delivery.ScheduledDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+            }),
+            null,
+            null,
+            null,
+            now));
+
+    private async Task EnsureNoMaterializedDeliveryAsync(
+        SubscriptionDelivery delivery,
+        CancellationToken cancellationToken)
+    {
+        if (await dbContext.Deliveries.AsNoTracking()
+                .AnyAsync(x => x.SubscriptionDeliveryId == delivery.Id, cancellationToken))
+        {
+            throw new BusinessRuleException(
+                "Delivery is already being prepared for this date and can no longer be skipped.");
+        }
+    }
+
+    private async Task ExecuteSerializableAsync(Func<Task> operation, CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            await operation();
+            return;
+        }
+
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable,
+                cancellationToken);
+            await operation();
+            await transaction.CommitAsync(cancellationToken);
+        });
+    }
+
+    private async Task<T> ExecuteSerializableAsync<T>(
+        Func<Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        if (dbContext.Database.CurrentTransaction is not null)
+        {
+            return await operation();
+        }
+
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await dbContext.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable,
+                cancellationToken);
+            var result = await operation();
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        });
     }
 
     private static DateOnly[] GenerateDates(DateOnly startDate, IReadOnlyCollection<DayOfWeek> days, int entitlement)

@@ -1,6 +1,6 @@
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
@@ -44,12 +44,8 @@ class _CustomerDeliveryListScreenState
         reload: () => ref
             .read(deliveryControllerProvider.notifier)
             .loadCustomerDeliveries(),
-        itemBuilder: (delivery) => DeliveryListTile(
-          reference: delivery.referenceNumber,
-          status: delivery.status,
-          date: delivery.scheduledDate,
-          subtitle: delivery.destinationAddress,
-          tracking: delivery.isTrackingActive,
+        itemBuilder: (delivery) => _CustomerDeliveryCard(
+          delivery: delivery,
           onTap: () => context.push('/deliveries/${delivery.deliveryId}'),
         ),
       ),
@@ -97,64 +93,129 @@ class _CustomerDeliveryDetailScreenState
               onRefresh: () => ref
                   .read(deliveryControllerProvider.notifier)
                   .loadCustomerDelivery(widget.deliveryId),
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-                children: [
-                  _DeliveryHeader(
-                    reference: delivery.referenceNumber,
-                    source: delivery.sourceType,
-                    status: delivery.status,
-                    date: delivery.scheduledDate,
-                  ),
-                  const SizedBox(height: 16),
-                  _DeliveryProgress(status: delivery.status),
-                  const SizedBox(height: 16),
-                  _InfoTile(
-                    icon: Icons.location_on_outlined,
-                    title: 'Delivery address',
-                    text: delivery.destinationAddress,
-                  ),
-                  if (delivery.activeOtp != null)
-                    _CustomerOtpCard(code: delivery.activeOtp!),
-                  _InfoTile(
-                    icon: Icons.badge_outlined,
-                    title: 'Assigned to',
-                    text: delivery.assignedEmployeeName ?? 'Assignment pending',
-                  ),
-                  if (delivery.isTrackingActive &&
-                      delivery.latestLocation != null)
-                    const _LiveLocationCard()
-                  else
-                    const _InfoTile(
-                      icon: Icons.location_searching_outlined,
-                      title: 'Live location',
-                      text: 'Location becomes available while your delivery is on the way.',
-                    ),
-                  if (delivery.failureReason != null)
-                    _InfoTile(
-                      icon: Icons.error_outline,
-                      title: 'Failure reason',
-                      text: delivery.failureReason!,
-                    ),
-                  const SizedBox(height: 16),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.science_outlined),
-                    label: const Text('Doorstep milk test'),
-                    onPressed: () => context.push(
-                      '/deliveries/${widget.deliveryId}/milk-test',
-                    ),
-                  ),
-                  if (delivery.status == DeliveryStatus.delivered) ...[
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      icon: const Icon(Icons.support_agent_outlined),
-                      label: const Text('Refund or replacement'),
-                      onPressed: () => context.push(
-                        '/deliveries/${widget.deliveryId}/refund-replacement',
-                      ),
-                    ),
-                  ],
-                ],
+              child: DoodhPage(
+                child: DoodhResponsive(
+                  builder: (context, size) {
+                    // Phones scan top to bottom: current status, timeline,
+                    // then supporting details. Tablets and web get the same
+                    // content as two balanced columns on a reading width.
+                    Widget primaryColumn() => Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _TrackingHero(delivery: delivery),
+                        const SizedBox(height: DoodhSpacing.md),
+                        _TrackingTimeline(delivery: delivery),
+                        if (delivery.activeOtp != null) ...[
+                          const SizedBox(height: DoodhSpacing.md),
+                          _TrackingOtpCard(code: delivery.activeOtp!),
+                        ],
+                        if (delivery.failureReason != null) ...[
+                          const SizedBox(height: DoodhSpacing.md),
+                          DoodhInfoBanner(
+                            tone: DoodhTone.error,
+                            title: 'Delivery failed',
+                            message: delivery.failedAt == null
+                                ? delivery.failureReason!
+                                : '${delivery.failureReason!} · '
+                                      'Attempted on '
+                                      '${formatDeliveryDate(delivery.failedAt!)}',
+                          ),
+                        ],
+                      ],
+                    );
+
+                    Widget secondaryColumn() => Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        DoodhSectionCard(
+                          title: 'Delivery details',
+                          icon: Icons.local_shipping_outlined,
+                          children: [
+                            DoodhInfoTile(
+                              icon: Icons.event_outlined,
+                              title: 'Scheduled for',
+                              subtitle:
+                                  '${formatDeliveryDate(delivery.scheduledDate)} · '
+                                  '${delivery.sourceType.label}',
+                            ),
+                            DoodhInfoTile(
+                              icon: Icons.location_on_outlined,
+                              title: 'Delivery address',
+                              subtitle: delivery.destinationAddress,
+                            ),
+                            _TrackingPersonTile(delivery: delivery),
+                            if (delivery.isTrackingActive &&
+                                delivery.latestLocation != null)
+                              const _TrackingLiveLocationTile()
+                            else
+                              const DoodhInfoTile(
+                                icon: Icons.location_searching_outlined,
+                                title: 'Live location',
+                                subtitle:
+                                    'Location becomes available while your delivery is on the way.',
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: DoodhSpacing.md),
+                        DoodhSectionCard(
+                          title: 'Milk test',
+                          icon: Icons.science_outlined,
+                          subtitle: 'Check the dedicated doorstep test workflow',
+                          children: [
+                            DoodhActionTile(
+                              icon: Icons.science_outlined,
+                              title: 'Doorstep milk test',
+                              subtitle:
+                                  'Open the test details and customer actions',
+                              onTap: () => context.push(
+                                '/deliveries/${widget.deliveryId}/milk-test',
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: DoodhSpacing.md),
+                        DoodhSectionCard(
+                          title: 'Support',
+                          icon: Icons.support_agent_outlined,
+                          children: [
+                            DoodhActionTile(
+                              icon: Icons.assignment_return_outlined,
+                              title: 'Refund or replacement',
+                              subtitle:
+                                  'Check backend-confirmed availability for this delivery',
+                              onTap: () => context.push(
+                                '/deliveries/${widget.deliveryId}/refund-replacement',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+
+                    final content = size == DoodhWindowSize.compact
+                        ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              primaryColumn(),
+                              const SizedBox(height: DoodhSpacing.md),
+                              secondaryColumn(),
+                            ],
+                          )
+                        : Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: primaryColumn()),
+                              const SizedBox(width: DoodhSpacing.lg),
+                              Expanded(child: secondaryColumn()),
+                            ],
+                          );
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.only(bottom: DoodhSpacing.xl),
+                      children: [content],
+                    );
+                  },
+                ),
               ),
             ),
     );
@@ -206,65 +267,67 @@ class _DeliveryInspectionScreenState
                     date: delivery.scheduledDate,
                   ),
                   const SizedBox(height: 12),
-                  _InfoTile(
+                  DoodhInfoTile(
                     icon: Icons.person_outline,
                     title: delivery.customerName,
-                    text: delivery.customerMobile,
+                    subtitle: delivery.customerMobile,
                   ),
-                  _InfoTile(
+                  DoodhInfoTile(
                     icon: Icons.delivery_dining_outlined,
                     title: 'Delivery handled by',
-                    text: delivery.assignedEmployeeName ??
+                    subtitle:
+                        delivery.assignedEmployeeName ??
                         (delivery.assignedEmployeeId != null
                             ? 'Employee ${delivery.assignedEmployeeId}'
                             : 'Not assigned'),
                   ),
-                  _InfoTile(
+                  DoodhInfoTile(
                     icon: Icons.location_on_outlined,
                     title: 'Destination',
-                    text: delivery.destinationAddress,
+                    subtitle: delivery.destinationAddress,
                   ),
                   _NavigateButton(delivery: delivery),
                   if (delivery.deliveryInstructions != null)
-                    _InfoTile(
+                    DoodhInfoTile(
                       icon: Icons.notes_outlined,
                       title: 'Instructions',
-                      text: delivery.deliveryInstructions!,
+                      subtitle: delivery.deliveryInstructions!,
                     ),
                   if (delivery.orderSummary != null) ...[
                     const SizedBox(height: 8),
                     DoodhSectionHeader(title: 'Linked order'),
-                    _InfoTile(
+                    DoodhInfoTile(
                       icon: Icons.receipt_long_outlined,
                       title: delivery.orderSummary!.orderNumber,
-                      text: delivery.orderSummary!.items.join(', '),
+                      subtitle: delivery.orderSummary!.items.join(', '),
                     ),
                   ],
                   const SizedBox(height: 8),
                   DoodhSectionHeader(title: 'Timeline'),
-                  _InfoTile(
+                  DoodhInfoTile(
                     icon: Icons.event_outlined,
                     title: 'Scheduled',
-                    text: delivery.scheduledDate.toLocal().toString(),
+                    subtitle: delivery.scheduledDate.toLocal().toString(),
                   ),
                   if (delivery.completedAt != null)
-                    _InfoTile(
+                    DoodhInfoTile(
                       icon: Icons.check_circle_outline,
                       title: 'Completed',
-                      text: delivery.completedAt!.toLocal().toString(),
+                      subtitle: delivery.completedAt!.toLocal().toString(),
                     ),
                   if (delivery.failedAt != null)
-                    _InfoTile(
+                    DoodhInfoTile(
                       icon: Icons.error_outline,
                       title: 'Failed',
-                      text: delivery.failureReason ??
+                      subtitle:
+                          delivery.failureReason ??
                           delivery.failedAt!.toLocal().toString(),
                     ),
                   if (delivery.remarks != null)
-                    _InfoTile(
+                    DoodhInfoTile(
                       icon: Icons.comment_outlined,
                       title: 'Remarks',
-                      text: delivery.remarks!,
+                      subtitle: delivery.remarks!,
                     ),
                   if (state.errorMessage != null)
                     _ErrorText(state.errorMessage!),
@@ -396,7 +459,7 @@ class _StaffDeliveryDetailScreenState
                   .loadStaffDelivery(widget.deliveryId),
             )
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: DoodhSpacing.pagePadding,
               children: [
                 _DeliveryHeader(
                   reference: delivery.referenceNumber,
@@ -405,22 +468,22 @@ class _StaffDeliveryDetailScreenState
                   date: delivery.scheduledDate,
                 ),
                 const SizedBox(height: 12),
-                _InfoTile(
+                DoodhInfoTile(
                   icon: Icons.person_outline,
                   title: delivery.customerName,
-                  text: delivery.customerMobile,
+                  subtitle: delivery.customerMobile,
                 ),
-                _InfoTile(
+                DoodhInfoTile(
                   icon: Icons.location_on_outlined,
                   title: 'Destination',
-                  text: delivery.destinationAddress,
+                  subtitle: delivery.destinationAddress,
                 ),
                 _NavigateButton(delivery: delivery),
                 if (delivery.deliveryInstructions != null)
-                  _InfoTile(
+                  DoodhInfoTile(
                     icon: Icons.notes_outlined,
                     title: 'Instructions',
-                    text: delivery.deliveryInstructions!,
+                    subtitle: delivery.deliveryInstructions!,
                   ),
                 if (state.errorMessage != null) _ErrorText(state.errorMessage!),
                 const SizedBox(height: 12),
@@ -749,7 +812,7 @@ class _DeliveryManagementDetailScreenState
                   .loadManagedDelivery(widget.deliveryId),
             )
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: DoodhSpacing.pagePadding,
               children: [
                 _DeliveryHeader(
                   reference: delivery.referenceNumber,
@@ -758,15 +821,15 @@ class _DeliveryManagementDetailScreenState
                   date: delivery.scheduledDate,
                 ),
                 const SizedBox(height: 12),
-                _InfoTile(
+                DoodhInfoTile(
                   icon: Icons.person_outline,
                   title: delivery.customerName,
-                  text: delivery.destinationAddress,
+                  subtitle: delivery.destinationAddress,
                 ),
-                _InfoTile(
+                DoodhInfoTile(
                   icon: Icons.badge_outlined,
                   title: 'Assigned employee',
-                  text: delivery.assignedEmployeeName ?? 'Unassigned',
+                  subtitle: delivery.assignedEmployeeName ?? 'Unassigned',
                 ),
                 if (state.errorMessage != null) _ErrorText(state.errorMessage!),
                 const SizedBox(height: 16),
@@ -892,6 +955,78 @@ class _StaffActions extends ConsumerWidget {
   }
 }
 
+class _CustomerDeliveryCard extends StatelessWidget {
+  const _CustomerDeliveryCard({required this.delivery, required this.onTap});
+
+  final CustomerDelivery delivery;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => DoodhCard(
+    onTap: onTap,
+    semanticLabel:
+        '${delivery.referenceNumber}, ${delivery.status.label}, '
+        '${formatDeliveryDate(delivery.scheduledDate)}, '
+        '${delivery.destinationAddress}',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                delivery.referenceNumber,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            DoodhStatusPill(
+              label: delivery.status.label,
+              tone: _deliveryTone(delivery.status),
+            ),
+          ],
+        ),
+        const SizedBox(height: DoodhSpacing.sm),
+        Text(formatDeliveryDate(delivery.scheduledDate)),
+        const SizedBox(height: DoodhSpacing.xs),
+        Text(
+          delivery.destinationAddress,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const Divider(height: DoodhSpacing.lg),
+        Row(
+          children: [
+            Icon(
+              delivery.isTrackingActive
+                  ? Icons.location_searching
+                  : Icons.local_shipping_outlined,
+              size: 18,
+            ),
+            const SizedBox(width: DoodhSpacing.xs),
+            Expanded(
+              child: Text(
+                delivery.isTrackingActive
+                    ? 'Live tracking is active'
+                    : 'View delivery progress and support',
+              ),
+            ),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+DoodhStatusTone _deliveryTone(DeliveryStatus status) => switch (status) {
+  DeliveryStatus.delivered => DoodhStatusTone.success,
+  DeliveryStatus.failed => DoodhStatusTone.error,
+  DeliveryStatus.outForDelivery || DeliveryStatus.arrived =>
+    DoodhStatusTone.warning,
+  _ => DoodhStatusTone.neutral,
+};
+
 class DeliveryListTile extends StatelessWidget {
   const DeliveryListTile({
     super.key,
@@ -958,104 +1093,118 @@ class _DeliveryHeader extends StatelessWidget {
   );
 }
 
-class _CustomerOtpCard extends StatelessWidget {
-  const _CustomerOtpCard({required this.code});
+// ---------------------------------------------------------------------------
+// Customer order tracking / delivery details
+// ---------------------------------------------------------------------------
 
-  final String code;
+/// Reference-styled tracking hero: order identity plus the current server
+/// status with a short factual explanation. Never implies progress that the
+/// [DeliveryStatus] does not report.
+class _TrackingHero extends StatelessWidget {
+  const _TrackingHero({required this.delivery});
 
-  @override
-  Widget build(BuildContext context) => Card(
-    child: ListTile(
-      leading: const Icon(Icons.password_outlined),
-      title: const Text('Delivery OTP'),
-      subtitle: const Text(
-        'Share this code with the delivery staff at your door.',
-      ),
-      trailing: Text(
-        code,
-        style: Theme.of(context).textTheme.titleLarge
-            ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: 2),
-      ),
-    ),
-  );
-}
-
-class _InfoTile extends StatelessWidget {
-  const _InfoTile({
-    required this.icon,
-    required this.title,
-    required this.text,
-  });
-  final IconData icon;
-  final String title;
-  final String text;
-  @override
-  Widget build(BuildContext context) => ListTile(
-    contentPadding: EdgeInsets.zero,
-    leading: Icon(icon),
-    title: Text(title),
-    subtitle: Text(text),
-  );
-}
-
-class _LiveLocationCard extends StatelessWidget {
-  const _LiveLocationCard();
-
-  @override
-  Widget build(BuildContext context) => Card(
-    color: DoodhColors.mint,
-    child: const ListTile(
-      leading: Icon(Icons.my_location_outlined, color: DoodhColors.tealDark),
-      title: Text('Live tracking is active'),
-      subtitle: Text(
-        'Your delivery partner is currently sharing an updated location.',
-      ),
-      trailing: Icon(Icons.circle, size: 12, color: DoodhColors.teal),
-    ),
-  );
-}
-
-class _DeliveryProgress extends StatelessWidget {
-  const _DeliveryProgress({required this.status});
-  final DeliveryStatus status;
+  final CustomerDelivery delivery;
 
   @override
   Widget build(BuildContext context) {
-    final stages = [
-      (DeliveryStatus.assigned, 'Assigned', Icons.assignment_ind_outlined),
-      (DeliveryStatus.pickedUp, 'Picked up', Icons.inventory_2_outlined),
-      (DeliveryStatus.outForDelivery, 'Out for delivery', Icons.route_outlined),
-      (DeliveryStatus.arrived, 'Arrived', Icons.location_on_outlined),
-      (DeliveryStatus.delivered, 'Delivered', Icons.check_circle_outline),
-    ];
-    final current = stages.indexWhere((stage) => stage.$1 == status);
-    final activeIndex = current < 0
-        ? (status == DeliveryStatus.failed ? 3 : 0)
-        : current;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    final explanation = switch (delivery.status) {
+      DeliveryStatus.readyForAssignment =>
+        'Your delivery is confirmed and waiting to be assigned.',
+      DeliveryStatus.assigned =>
+        'A delivery partner has been assigned to your delivery.',
+      DeliveryStatus.pickedUp =>
+        'Your delivery has been picked up from the branch.',
+      DeliveryStatus.outForDelivery =>
+        'Your delivery is on the way to your address.',
+      DeliveryStatus.arrived =>
+        'Your delivery partner has reached your address.',
+      DeliveryStatus.delivered => 'Your delivery has been completed.',
+      DeliveryStatus.failed =>
+        'This delivery attempt could not be completed.',
+      DeliveryStatus.unknown =>
+        'The current delivery status is being updated by the branch.',
+    };
+    final (statusIcon, _) = _customerStatusVisuals(delivery.status);
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label:
+          'Delivery ${delivery.referenceNumber}. Status: ${delivery.status.label}. '
+          '$explanation',
+      child: DoodhCard(
+        color: DoodhColors.tealDark,
+        padding: const EdgeInsets.all(DoodhSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Delivery progress',
-              style: Theme.of(context).textTheme.titleMedium,
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    delivery.referenceNumber,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+                DoodhChip(
+                  label: delivery.sourceType.label,
+                  tone: DoodhTone.info,
+                ),
+              ],
             ),
-            const SizedBox(height: 14),
-            for (var index = 0; index < stages.length; index++)
-              _ProgressStage(
-                icon: stages[index].$3,
-                label: stages[index].$2,
-                active: index <= activeIndex,
-                current: index == activeIndex,
-                last: index == stages.length - 1,
+            const SizedBox(height: DoodhSpacing.xs),
+            Text(
+              'Scheduled for ${formatDeliveryDate(delivery.scheduledDate)}',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Colors.white70,
               ),
-            if (status == DeliveryStatus.failed)
-              const DoodhStatusPill(
-                label: 'Delivery needs attention',
-                tone: DoodhStatusTone.error,
+            ),
+            const Divider(color: Colors.white24, height: DoodhSpacing.lg),
+            Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: const BoxDecoration(
+                    color: DoodhColors.mint,
+                    shape: BoxShape.circle,
+                  ),
+                  child: ExcludeSemantics(
+                    child: Icon(statusIcon, color: DoodhColors.tealDark),
+                  ),
+                ),
+                const SizedBox(width: DoodhSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        delivery.status.label,
+                        style: Theme.of(context).textTheme.titleLarge
+                            ?.copyWith(color: Colors.white),
+                      ),
+                      const SizedBox(height: DoodhSpacing.xs),
+                      Text(
+                        explanation,
+                        style: Theme.of(context).textTheme.bodyMedium
+                            ?.copyWith(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (delivery.status == DeliveryStatus.delivered &&
+                delivery.completedAt != null) ...[
+              const SizedBox(height: DoodhSpacing.md),
+              Text(
+                'Completed on ${formatDeliveryDate(delivery.completedAt!)}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Colors.white70,
+                ),
               ),
+            ],
           ],
         ),
       ),
@@ -1063,52 +1212,255 @@ class _DeliveryProgress extends StatelessWidget {
   }
 }
 
-class _ProgressStage extends StatelessWidget {
-  const _ProgressStage({
+/// Timeline of the real delivery stages. Only the server-provided timestamps
+/// (assignedAt / completedAt / failedAt on the customer payload) are shown —
+/// nothing is inferred or fabricated.
+class _TrackingTimeline extends StatelessWidget {
+  const _TrackingTimeline({required this.delivery});
+
+  final CustomerDelivery delivery;
+
+  @override
+  Widget build(BuildContext context) {
+    const stages = [
+      (DeliveryStatus.assigned, 'Assigned', Icons.assignment_ind_outlined),
+      (DeliveryStatus.pickedUp, 'Picked up', Icons.inventory_2_outlined),
+      (
+        DeliveryStatus.outForDelivery,
+        'Out for delivery',
+        Icons.route_outlined,
+      ),
+      (DeliveryStatus.arrived, 'Arrived', Icons.location_on_outlined),
+      (DeliveryStatus.delivered, 'Delivered', Icons.check_circle_outline),
+    ];
+    final current = stages.indexWhere(
+      (stage) => stage.$1 == delivery.status,
+    );
+    final activeIndex = current < 0
+        ? (delivery.status == DeliveryStatus.failed ? 3 : 0)
+        : current;
+    return DoodhSectionCard(
+      title: 'Delivery progress',
+      icon: Icons.timeline_outlined,
+      children: [
+        for (var index = 0; index < stages.length; index++)
+          _TrackingStageRow(
+            icon: stages[index].$3,
+            label: stages[index].$2,
+            state: delivery.status == DeliveryStatus.failed &&
+                    index == activeIndex
+                ? _TrackingStageState.failed
+                : index < activeIndex
+                ? _TrackingStageState.completed
+                : index == activeIndex
+                ? _TrackingStageState.current
+                : _TrackingStageState.pending,
+            last: index == stages.length - 1,
+          ),
+        if (delivery.status == DeliveryStatus.failed)
+          Padding(
+            padding: const EdgeInsets.only(top: DoodhSpacing.sm),
+            child: DoodhStatusPill(
+              label: 'Delivery needs attention',
+              tone: DoodhStatusTone.error,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+enum _TrackingStageState { completed, current, pending, failed }
+
+/// One timeline row with a connector spine, kept screen-reader friendly:
+/// each stage exposes its label and completion state as semantics.
+class _TrackingStageRow extends StatelessWidget {
+  const _TrackingStageRow({
     required this.icon,
     required this.label,
-    required this.active,
-    required this.current,
+    required this.state,
     required this.last,
   });
+
   final IconData icon;
   final String label;
-  final bool active;
-  final bool current;
+  final _TrackingStageState state;
   final bool last;
 
   @override
-  Widget build(BuildContext context) => Row(
-    children: [
-      SizedBox(
-        width: 28,
-        child: Icon(
-          icon,
-          size: 19,
-          color: active ? DoodhColors.tealDark : DoodhColors.muted,
-        ),
-      ),
-      Expanded(
-        child: Text(
-          label,
-          style: TextStyle(
-            fontWeight: current ? FontWeight.w800 : FontWeight.w500,
-            color: active ? DoodhColors.ink : DoodhColors.muted,
+  Widget build(BuildContext context) {
+    final color = switch (state) {
+      _TrackingStageState.completed => DoodhColors.tealDark,
+      _TrackingStageState.current => DoodhColors.tealDark,
+      _TrackingStageState.failed => DoodhColors.coral,
+      _TrackingStageState.pending => DoodhColors.muted,
+    };
+    final stateLabel = switch (state) {
+      _TrackingStageState.completed => 'completed',
+      _TrackingStageState.current => 'current step',
+      _TrackingStageState.failed => 'not completed, delivery failed',
+      _TrackingStageState.pending => 'pending',
+    };
+    final mark = switch (state) {
+  _TrackingStageState.completed => Icons.check,
+  _TrackingStageState.failed => Icons.close,
+  _ => null,
+};
+    return Semantics(
+      container: true,
+      label: '$label: $stateLabel',
+      child: ExcludeSemantics(
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Column(
+                children: [
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: state == _TrackingStageState.pending
+                          ? Colors.transparent
+                          : color.withValues(alpha: 0.14),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: color, width: 1.6),
+                    ),
+                    child: Icon(
+                      mark ?? icon,
+                      size: mark == null ? 16 : 16,
+                      color: color,
+                    ),
+                  ),
+                  if (!last)
+                    Expanded(
+                      child: Container(
+                        width: 2,
+                        color: state == _TrackingStageState.completed
+                            ? DoodhColors.teal
+                            : DoodhColors.line,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(width: DoodhSpacing.sm),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4, bottom: DoodhSpacing.md),
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontWeight: state == _TrackingStageState.current
+                          ? FontWeight.w800
+                          : FontWeight.w500,
+                      color: state == _TrackingStageState.pending
+                          ? DoodhColors.muted
+                          : DoodhColors.ink,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
-      if (!last)
-        SizedBox(
-          width: 30,
-          child: Icon(
-            Icons.chevron_right,
-            size: 18,
-            color: active ? DoodhColors.teal : DoodhColors.line,
+    );
+  }
+}
+
+/// In-app delivery OTP presentation. The code comes from the customer payload
+/// (`activeOtp`) exactly as before; generation/verification logic is untouched.
+class _TrackingOtpCard extends StatelessWidget {
+  const _TrackingOtpCard({required this.code});
+
+  final String code;
+
+  @override
+  Widget build(BuildContext context) => DoodhCard(
+    color: DoodhColors.warningSurface,
+    child: Row(
+      children: [
+        const ExcludeSemantics(
+          child: Icon(Icons.password_outlined, color: DoodhColors.tealDark),
+        ),
+        const SizedBox(width: DoodhSpacing.md),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Delivery OTP', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: DoodhSpacing.xs),
+              Text(
+                'Share this code with the delivery staff at your door.',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
           ),
         ),
-    ],
+        Semantics(
+          container: true,
+          label: 'Delivery OTP code $code',
+          child: ExcludeSemantics(
+            child: Text(
+              code,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+                letterSpacing: 2,
+                color: DoodhColors.tealDark,
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
   );
 }
+
+/// Assigned delivery partner shown with the display name the customer API
+/// already exposes — no internal IDs or contact details.
+class _TrackingPersonTile extends StatelessWidget {
+  const _TrackingPersonTile({required this.delivery});
+
+  final CustomerDelivery delivery;
+
+  @override
+  Widget build(BuildContext context) => DoodhInfoTile(
+    icon: Icons.delivery_dining_outlined,
+    title: 'Delivery handled by',
+    subtitle: delivery.assignedEmployeeName ?? 'Assignment pending',
+  );
+}
+
+/// Live tracking availability. Coordinates are intentionally NOT rendered for
+/// customers; the active/unavailable states match the previous behaviour.
+class _TrackingLiveLocationTile extends StatelessWidget {
+  const _TrackingLiveLocationTile();
+
+  @override
+  Widget build(BuildContext context) => DoodhInfoTile(
+    icon: Icons.my_location_outlined,
+    title: 'Live tracking is active',
+    subtitle:
+        'Your delivery partner is currently sharing an updated location.',
+  );
+}
+
+(IconData, DoodhStatusTone) _customerStatusVisuals(
+  DeliveryStatus status,
+) => switch (status) {
+  DeliveryStatus.delivered => (
+    Icons.check_circle_outline,
+    DoodhStatusTone.success,
+  ),
+  DeliveryStatus.failed => (Icons.report_problem_outlined, DoodhStatusTone.error),
+  DeliveryStatus.arrived => (Icons.location_on_outlined, DoodhStatusTone.warning),
+  DeliveryStatus.outForDelivery => (Icons.route_outlined, DoodhStatusTone.warning),
+  DeliveryStatus.pickedUp => (
+    Icons.inventory_2_outlined,
+    DoodhStatusTone.warning,
+  ),
+  _ => (Icons.assignment_ind_outlined, DoodhStatusTone.neutral),
+};
 
 class _ErrorText extends StatelessWidget {
   const _ErrorText(this.message);
@@ -1545,10 +1897,10 @@ class _BatchAllocationSection extends ConsumerWidget {
         ),
         const SizedBox(height: 4),
         if (allocations.isEmpty)
-          const _InfoTile(
+          const DoodhInfoTile(
             icon: Icons.inventory_2_outlined,
             title: 'No allocations yet',
-            text:
+            subtitle:
                 'Select the milk batches that will fulfill this delivery before it is assigned.',
           )
         else
@@ -1742,7 +2094,7 @@ class _BatchAllocationEditorScreenState
                     child: Text('No available milk batches for this branch.'),
                   )
                 : ListView(
-                    padding: const EdgeInsets.all(16),
+                    padding: DoodhSpacing.pagePadding,
                     children: [
                       for (final batch in widget.initial.eligibleBatches)
                         _EligibleBatchRow(
@@ -1766,7 +2118,7 @@ class _BatchAllocationEditorScreenState
           SafeArea(
             top: false,
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: DoodhSpacing.cardPadding,
               child: FilledButton.icon(
                 icon: const Icon(Icons.save_outlined),
                 label: Text(

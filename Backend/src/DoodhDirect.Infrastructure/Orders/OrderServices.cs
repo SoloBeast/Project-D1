@@ -4,6 +4,7 @@ using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Setup;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Deliveries;
@@ -96,7 +97,8 @@ public sealed class OrderService(
     public async Task<CheckoutResult> PreviewAsync(long customerId, CheckoutRequest request, CancellationToken cancellationToken)
     {
         var calculation = await CalculateAsync(customerId, request, cancellationToken);
-        return calculation.ToResult();
+        var (charges, _) = await ResolveChargesAsync(calculation, track: false, cancellationToken);
+        return calculation.ToResult(charges);
     }
 
     public async Task<OrderResult> CreateAsync(
@@ -169,6 +171,31 @@ public sealed class OrderService(
                         line.Product.UnitOfMeasure));
                 }
 
+                // Active charges are read INSIDE the serializable transaction so an
+                // admin edit either lands fully before or fully after this checkout —
+                // the order always freezes one consistent set. Each amount is rounded
+                // independently (approved rule); PayableAmount becomes charge-inclusive.
+                var (charges, chargeMasters) = await ResolveChargesAsync(
+                    calculation,
+                    track: true,
+                    cancellationToken);
+                order.AddCharges(charges.Lines
+                    .Select(line => new OrderCharge(
+                        line.ChargeType,
+                        line.ChargeCode,
+                        line.Description,
+                        line.Percentage,
+                        line.BaseAmount,
+                        line.Amount))
+                    .ToArray());
+                foreach (var master in chargeMasters)
+                {
+                    if (!master.IsUsed)
+                    {
+                        master.MarkUsed();
+                    }
+                }
+
                 dbContext.Orders.Add(order);
                 notificationEventKey = $"order:{order.PublicId:N}:created";
                 notificationEventWriter.Add(new NotificationEventRequest(
@@ -191,6 +218,11 @@ public sealed class OrderService(
                 foreach (var item in order.Items)
                 {
                     dbContext.Entry(item).State = EntityState.Detached;
+                }
+
+                foreach (var charge in order.Charges)
+                {
+                    dbContext.Entry(charge).State = EntityState.Detached;
                 }
             }
 
@@ -353,8 +385,101 @@ public sealed class OrderService(
         return new Calculation(address, allocation, lines, subtotal, 0m);
     }
 
+    /// <summary>
+    /// Computes the Stage 2 charge block for a checkout. Exactly two active sets
+    /// apply: GLOBAL charges (<see cref="Charge.ApplicableOnAll"/> — order-level
+    /// base, subtotal − discount) and PRODUCT-MAPPED charges (active charges with
+    /// a <see cref="ProductCharge"/> mapping to at least one ordered product —
+    /// base = the sum of the ALREADY-ROUNDED line totals of the mapped lines,
+    /// aggregated to exactly ONE <c>OrderCharge</c> row per Charge). Inactive
+    /// charges never apply; their master mappings stay untouched. Both sets are
+    /// read INSIDE the caller's authoritative transaction when
+    /// <paramref name="track"/> is true, so a concurrent admin edit lands fully
+    /// before or fully after the checkout. Grouping is by <see cref="Entity.Id"/>;
+    /// the Stage 1 invariant (ApplicableOnAll = true ⇒ zero mappings) keeps the
+    /// sets disjoint, and as pure defense a charge present in both resolves once
+    /// as global — its current master flag — without mutating master data.
+    /// Each amount is rounded independently (approved rule); order of application
+    /// is irrelevant because every percentage applies to its own fixed base.
+    /// </summary>
+    private async Task<(ChargeCalculation Charges, IReadOnlyList<Charge> Masters)> ResolveChargesAsync(
+        Calculation calculation,
+        bool track,
+        CancellationToken cancellationToken)
+    {
+        var orderBase = decimal.Round(
+            calculation.Subtotal - calculation.DiscountAmount,
+            2,
+            MidpointRounding.AwayFromZero);
+        var productIds = calculation.Lines.Select(line => line.Product.Id).Distinct().ToArray();
+
+        // GLOBAL set: active charges whose master flag is ApplicableOnAll.
+        var chargesQuery = track
+            ? dbContext.Charges.Where(charge => charge.IsActive)
+            : dbContext.Charges.AsNoTracking().Where(charge => charge.IsActive);
+        var globalMasters = await chargesQuery
+            .Where(charge => charge.ApplicableOnAll)
+            .OrderBy(charge => charge.ChargeType)
+            .ThenBy(charge => charge.ChargeCode)
+            .ToListAsync(cancellationToken);
+        var globalIds = globalMasters.Select(charge => charge.Id).ToHashSet();
+
+        // PRODUCT-MAPPED set: one bounded join (never N+1) over the ordered
+        // products' mappings, restricted to active item-level charges.
+        var mappedLinksQuery = (track
+                ? dbContext.ProductCharges
+                : dbContext.ProductCharges.AsNoTracking())
+            .Where(link => productIds.Contains(link.ProductId))
+            .Where(link => link.Charge.IsActive && !link.Charge.ApplicableOnAll)
+            .Select(link => new { link.ProductId, Charge = link.Charge });
+        var mappedLinks = await mappedLinksQuery.ToListAsync(cancellationToken);
+
+        // The per-line contribution uses the SAME rounding as OrderItem.LineTotal
+        // (and the checkout lines shown to the customer), so a mapped charge's
+        // base is the sum of the established rounded line totals — never a raw
+        // quantity × price recomputation.
+        var lineTotalByProductId = calculation.Lines.ToDictionary(
+            line => line.Product.Id,
+            line => decimal.Round(line.Quantity * line.Product.Price, 2, MidpointRounding.AwayFromZero));
+
+        var mappedMasters = mappedLinks
+            .Select(link => link.Charge)
+            .DistinctBy(charge => charge.Id)
+            .Where(charge => !globalIds.Contains(charge.Id))
+            .OrderBy(charge => charge.ChargeType)
+            .ThenBy(charge => charge.ChargeCode)
+            .ToList();
+
+        var entries = new List<(Charge Master, decimal BaseAmount)>();
+        entries.AddRange(globalMasters.Select(charge => (Master: charge, orderBase)));
+        foreach (var charge in mappedMasters)
+        {
+            var aggregatedBase = decimal.Round(
+                mappedLinks
+                    .Where(link => link.Charge.Id == charge.Id)
+                    .Sum(link => lineTotalByProductId[link.ProductId]),
+                2,
+                MidpointRounding.AwayFromZero);
+            entries.Add((charge, aggregatedBase));
+        }
+
+        var lines = entries
+            .OrderBy(entry => entry.Master.ChargeType)
+            .ThenBy(entry => entry.Master.ChargeCode)
+            .Select(entry => new OrderChargeResult(
+                entry.Master.ChargeType,
+                entry.Master.ChargeCode,
+                entry.Master.Description,
+                entry.Master.Percentage,
+                entry.BaseAmount,
+                decimal.Round(entry.BaseAmount * entry.Master.Percentage / 100m, 2, MidpointRounding.AwayFromZero)))
+            .ToArray();
+        return (new ChargeCalculation(lines, lines.Sum(line => line.Amount)), [.. entries.Select(entry => entry.Master)]);
+    }
+
     private IQueryable<Order> QueryOrders() => dbContext.Orders
         .Include(order => order.Items).ThenInclude(item => item.Product)
+        .Include(order => order.Charges)
         .Include(order => order.Branch)
         .Include(order => order.CustomerAddress);
 
@@ -388,6 +513,14 @@ public sealed class OrderService(
         }
 
         var orderIds = orders.Select(order => order.Id).ToArray();
+        var chargeRows = await dbContext.Set<OrderCharge>()
+            .Where(charge => orderIds.Contains(charge.OrderId))
+            .OrderBy(charge => charge.ChargeType)
+            .ThenBy(charge => charge.ChargeCode)
+            .ToListAsync(cancellationToken);
+        var chargesByOrder = chargeRows
+            .GroupBy(charge => charge.OrderId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyCollection<OrderCharge>)group.ToArray());
         var paymentAttempts = await dbContext.Payments
             .Where(payment => payment.OrderId.HasValue && orderIds.Contains(payment.OrderId.Value))
             .ToListAsync(cancellationToken);
@@ -408,7 +541,8 @@ public sealed class OrderService(
         return orders
             .Select(order => order.ToResult(
                 payments.GetValueOrDefault(order.Id),
-                deliveries.GetValueOrDefault(order.Id)))
+                deliveries.GetValueOrDefault(order.Id),
+                chargesByOrder.GetValueOrDefault(order.Id, [])))
             .ToArray();
     }
 
@@ -438,7 +572,7 @@ public sealed class OrderService(
         decimal Subtotal,
         decimal DiscountAmount)
     {
-        public CheckoutResult ToResult() => new(
+        public CheckoutResult ToResult(ChargeCalculation charges) => new(
             Address.PublicId,
             Address.Label,
             Address.AddressLine1,
@@ -463,7 +597,19 @@ public sealed class OrderService(
                 decimal.Round(line.Quantity * line.Product.Price, 2, MidpointRounding.AwayFromZero))).ToArray(),
             Subtotal,
             DiscountAmount,
-            Subtotal - DiscountAmount);
+            charges.Lines,
+            charges.Total,
+            decimal.Round(Subtotal - DiscountAmount + charges.Total, 2, MidpointRounding.AwayFromZero));
+    }
+
+    /// <summary>
+    /// Server-authoritative active charges for one checkout: every Active master
+    /// record, each rounded independently per the approved rule (base × % / 100,
+    /// 2dp, AwayFromZero); the total is the exact sum of the rounded amounts.
+    /// </summary>
+    private sealed record ChargeCalculation(IReadOnlyCollection<OrderChargeResult> Lines, decimal Total)
+    {
+        public static readonly ChargeCalculation Empty = new([], 0m);
     }
 
     private sealed record CalculationLine(Product Product, decimal Quantity);

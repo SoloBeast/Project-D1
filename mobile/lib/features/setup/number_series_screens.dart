@@ -1,4 +1,4 @@
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/material.dart';
@@ -34,10 +34,13 @@ class _NumberSeriesListScreenState
   Widget build(BuildContext context) {
     final state = ref.watch(numberSeriesControllerProvider);
     final canManage =
-        ref.watch(sessionControllerProvider).session?.user.permissions.contains(
-              kNumberSeriesManagePermission,
-            ) ??
-            false;
+        ref
+            .watch(sessionControllerProvider)
+            .session
+            ?.user
+            .permissions
+            .contains(kNumberSeriesManagePermission) ??
+        false;
 
     return Scaffold(
       appBar: AppBar(
@@ -47,9 +50,8 @@ class _NumberSeriesListScreenState
             tooltip: 'Refresh',
             onPressed: state.isLoading
                 ? null
-                : () => ref
-                      .read(numberSeriesControllerProvider.notifier)
-                      .load(),
+                : () =>
+                      ref.read(numberSeriesControllerProvider.notifier).load(),
             icon: const Icon(Icons.refresh),
           ),
           if (canManage)
@@ -79,14 +81,12 @@ class _NumberSeriesListScreenState
     if (state.series.isEmpty) {
       return EmptyStatePanel(
         title: 'No number series',
-        message:
-            canManage
-                ? 'Create a numbering series to start generating business numbers.'
-                : 'Number series configured for this account are not available.',
+        message: canManage
+            ? 'Create a numbering series to start generating business numbers.'
+            : 'Number series configured for this account are not available.',
         action: canManage
             ? FilledButton.icon(
-                onPressed: () =>
-                    context.push('/admin/setup/number-series/new'),
+                onPressed: () => context.push('/admin/setup/number-series/new'),
                 icon: const Icon(Icons.add),
                 label: const Text('New series'),
               )
@@ -94,19 +94,17 @@ class _NumberSeriesListScreenState
       );
     }
 
-    final items = [...state.series]..sort(
-      (a, b) => a.code.compareTo(b.code),
-    );
+    final items = [...state.series]..sort((a, b) => a.code.compareTo(b.code));
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: DoodhSpacing.pagePadding,
       children: [
         if (state.savedMessage != null) ...[
-          _SavedBanner(message: state.savedMessage!),
+          DoodhSavedBanner(message: state.savedMessage!),
           const SizedBox(height: 12),
         ],
         if (state.errorMessage != null) ...[
-          _ErrorBanner(message: state.errorMessage!),
+          DoodhErrorBanner(message: state.errorMessage!),
           const SizedBox(height: 12),
         ],
         ...items.map(
@@ -119,51 +117,6 @@ class _NumberSeriesListScreenState
       ],
     );
   }
-}
-
-class _SavedBanner extends StatelessWidget {
-  const _SavedBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    color: DoodhColors.mint,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          const Icon(Icons.check_circle_outline, color: DoodhColors.tealDark),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message)),
-        ],
-      ),
-    ),
-  );
-}
-
-class _ErrorBanner extends StatelessWidget {
-  const _ErrorBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    color: Theme.of(context).colorScheme.errorContainer,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          Icon(
-            Icons.error_outline,
-            color: Theme.of(context).colorScheme.error,
-          ),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message)),
-        ],
-      ),
-    ),
-  );
 }
 
 class _SeriesCard extends ConsumerWidget {
@@ -181,7 +134,7 @@ class _SeriesCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.cardPadding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -193,9 +146,20 @@ class _SeriesCard extends ConsumerWidget {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
-                _ScopeBadge(scopeKey: series.scopeKey),
+                DoodhChip(
+                  label:
+                      (series.scopeKey != null && series.scopeKey!.isNotEmpty)
+                      ? series.scopeKey!
+                      : 'Global',
+                  tone: (series.scopeKey != null && series.scopeKey!.isNotEmpty)
+                      ? DoodhTone.info
+                      : DoodhTone.neutral,
+                ),
                 const SizedBox(width: 8),
-                _ActiveBadge(isActive: series.isActive),
+                DoodhChip(
+                  label: series.isActive ? 'Active' : 'Inactive',
+                  tone: series.isActive ? DoodhTone.success : DoodhTone.neutral,
+                ),
               ],
             ),
             const SizedBox(height: 4),
@@ -223,7 +187,11 @@ class _SeriesCard extends ConsumerWidget {
                           ? null
                           : () => ref
                                 .read(numberSeriesControllerProvider.notifier)
-                                .setActive(series.code, false, scope: series.scopeKey),
+                                .setActive(
+                                  series.code,
+                                  false,
+                                  scope: series.scopeKey,
+                                ),
                       icon: const Icon(Icons.pause_outlined, size: 18),
                       label: const Text('Deactivate'),
                     )
@@ -233,7 +201,11 @@ class _SeriesCard extends ConsumerWidget {
                           ? null
                           : () => ref
                                 .read(numberSeriesControllerProvider.notifier)
-                                .setActive(series.code, true, scope: series.scopeKey),
+                                .setActive(
+                                  series.code,
+                                  true,
+                                  scope: series.scopeKey,
+                                ),
                       icon: const Icon(Icons.play_arrow_outlined, size: 18),
                       label: const Text('Activate'),
                     ),
@@ -272,10 +244,7 @@ class _SeriesCard extends ConsumerWidget {
     return '—';
   }
 
-  Future<void> _confirmDelete(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
+  Future<void> _confirmDelete(BuildContext context, WidgetRef ref) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -312,71 +281,10 @@ class _SeriesCard extends ConsumerWidget {
   }
 }
 
-class _ScopeBadge extends StatelessWidget {
-  const _ScopeBadge({required this.scopeKey});
-
-  final String? scopeKey;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final scoped = scopeKey != null && scopeKey!.isNotEmpty;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: scoped
-            ? scheme.secondaryContainer
-            : scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        scoped ? scopeKey! : 'Global',
-        style: TextStyle(
-          color: scoped
-              ? scheme.onSecondaryContainer
-              : scheme.onSurfaceVariant,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
-class _ActiveBadge extends StatelessWidget {
-  const _ActiveBadge({required this.isActive});
-
-  final bool isActive;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: isActive ? DoodhColors.mint : scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        isActive ? 'Active' : 'Inactive',
-        style: TextStyle(
-          color: isActive ? DoodhColors.tealDark : scheme.onSurfaceVariant,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
 /// Configuration screen for a single series. Supports live preview (without
 /// consuming) and safe edits.
 class NumberSeriesConfigScreen extends ConsumerStatefulWidget {
-  const NumberSeriesConfigScreen({
-    super.key,
-    required this.code,
-    this.series,
-  });
+  const NumberSeriesConfigScreen({super.key, required this.code, this.series});
 
   final String code;
   final NumberSeries? series;
@@ -439,10 +347,13 @@ class _NumberSeriesConfigScreenState
   Widget build(BuildContext context) {
     final state = ref.watch(numberSeriesControllerProvider);
     final canManage =
-        ref.watch(sessionControllerProvider).session?.user.permissions.contains(
-              kNumberSeriesManagePermission,
-            ) ??
-            false;
+        ref
+            .watch(sessionControllerProvider)
+            .session
+            ?.user
+            .permissions
+            .contains(kNumberSeriesManagePermission) ??
+        false;
     if (!canManage) {
       return Scaffold(
         appBar: AppBar(title: const Text('Configure series')),
@@ -457,7 +368,7 @@ class _NumberSeriesConfigScreenState
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: DoodhSpacing.pagePadding,
         children: [
           if (widget.series != null) ...[
             Text(
@@ -503,8 +414,9 @@ class _NumberSeriesConfigScreenState
             decoration: InputDecoration(
               labelText: 'Scope key',
               hintText: 'e.g. MAIN',
-              helperText: 'Branch/division key. Required when the template '
-                    'contains {SCOPE}.',
+              helperText:
+                  'Branch/division key. Required when the template '
+                  'contains {SCOPE}.',
               errorText: _templateContainsScope && _draftScopeValue == null
                   ? 'Enter a scope key — the template uses {SCOPE}.'
                   : null,
@@ -587,9 +499,7 @@ class _NumberSeriesConfigScreenState
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
                   '${entry.key}: ${entry.value}',
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.error,
-                  ),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
             ),
@@ -619,8 +529,8 @@ class _NumberSeriesConfigScreenState
             onPressed: state.isSaving
                 ? null
                 : _validate()
-                    ? () => _save(context)
-                    : null,
+                ? () => _save(context)
+                : null,
             icon: state.isSaving
                 ? const SizedBox(
                     width: 16,
@@ -640,8 +550,7 @@ class _NumberSeriesConfigScreenState
     return code.isEmpty ? 'NEW' : code;
   }
 
-  bool get _templateContainsScope =>
-      _template.text.trim().contains('{SCOPE}');
+  bool get _templateContainsScope => _template.text.trim().contains('{SCOPE}');
 
   /// The scope used for preview — always the current draft scope value.
   String? get _previewScope => _draftScopeValue;

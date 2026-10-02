@@ -2,6 +2,7 @@ using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Common;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.Setup;
 
 namespace DoodhDirect.Domain.Orders;
 
@@ -67,6 +68,7 @@ public sealed class Order : AuditableEntity
         Subtotal = subtotal;
         DiscountAmount = discountAmount;
         PayableAmount = subtotal - discountAmount;
+        ChargesTotal = 0m;
         BranchCodeSnapshot = Required(branchCode, nameof(branchCode));
         BranchNameSnapshot = Required(branchName, nameof(branchName));
         AddressLabelSnapshot = Required(addressLabel, nameof(addressLabel));
@@ -93,6 +95,8 @@ public sealed class Order : AuditableEntity
     public OrderStatus Status { get; private set; }
     public decimal Subtotal { get; private set; }
     public decimal DiscountAmount { get; private set; }
+    /// <summary>Sum of the frozen <see cref="Charges"/> amounts; included in PayableAmount.</summary>
+    public decimal ChargesTotal { get; private set; }
     public decimal PayableAmount { get; private set; }
     public string BranchCodeSnapshot { get; private set; } = string.Empty;
     public string BranchNameSnapshot { get; private set; } = string.Empty;
@@ -115,11 +119,35 @@ public sealed class Order : AuditableEntity
     public CustomerAddress? CustomerAddress { get; private set; }
     public Branch Branch { get; private set; } = null!;
     public ICollection<OrderItem> Items { get; private set; } = [];
+    public ICollection<OrderCharge> Charges { get; private set; } = [];
 
     public void AddItem(OrderItem item)
     {
         ArgumentNullException.ThrowIfNull(item);
         Items.Add(item);
+    }
+
+    /// <summary>
+    /// Freezes the charge snapshot for this order. Must be called once, before the
+    /// first save: PayableAmount becomes subtotal − discount + Σ(rounded amounts).
+    /// Rows are stored exactly as supplied (already rounded by the caller) so they
+    /// sum exactly to <see cref="ChargesTotal"/>.
+    /// </summary>
+    public void AddCharges(IReadOnlyCollection<OrderCharge> charges)
+    {
+        ArgumentNullException.ThrowIfNull(charges);
+        if (Charges.Count > 0)
+        {
+            throw new InvalidOperationException("Order charges have already been applied.");
+        }
+
+        foreach (var charge in charges)
+        {
+            Charges.Add(charge);
+            ChargesTotal = decimal.Round(ChargesTotal + charge.Amount, 2, MidpointRounding.AwayFromZero);
+        }
+
+        PayableAmount = decimal.Round(Subtotal - DiscountAmount + ChargesTotal, 2, MidpointRounding.AwayFromZero);
     }
 
     public void ConfirmPayment()

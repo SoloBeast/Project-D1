@@ -1,6 +1,7 @@
 import 'package:doodh_direct_mobile/app/app.dart';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
+import 'package:doodh_direct_mobile/features/auth/register_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_repository.dart';
@@ -44,12 +45,11 @@ void main() {
         harness.router.routerDelegate.currentConfiguration.uri.path,
         '/home',
       );
-      expect(find.text('Good day, Asha'), findsOneWidget);
-      expect(find.text('Your shortcuts'), findsOneWidget);
-      // The hero card, quick actions and context cards repeat labels such as
-      // 'Shop', 'Subscribe' and 'Wallet', so assert on a label unique to the
-      // customer role home to prove the role screen rendered.
-      expect(find.text('My orders'), findsOneWidget);
+      expect(find.text('Fresh dairy, delivered with care.'), findsOneWidget);
+      // The branded shell and quick actions repeat labels such as 'Shop',
+      // 'Subscribe' and 'Wallet', so assert on a label unique to the customer
+      // role home to prove the role screen rendered.
+      expect(find.text('My Deliveries'), findsOneWidget);
       expect(find.text('Welcome to DoodhDirect'), findsNothing);
       expect(tester.takeException(), isNull);
     });
@@ -415,8 +415,8 @@ void main() {
         harness.router.routerDelegate.currentConfiguration.uri.path,
         '/home',
       );
-      expect(find.text('Good day, Asha'), findsOneWidget);
-      expect(find.text('My orders'), findsOneWidget);
+      expect(find.text('Fresh dairy, delivered with care.'), findsOneWidget);
+      expect(find.text('My Deliveries'), findsOneWidget);
       expect(find.text('Welcome to DoodhDirect'), findsNothing);
       expect(otpAuth.verifyCalls, 1);
       expect(otpAuth.verifyMobile, '+919876543210');
@@ -594,8 +594,8 @@ void main() {
         harness.router.routerDelegate.currentConfiguration.uri.path,
         '/home',
       );
-      expect(find.text('Good day, Asha'), findsOneWidget);
-      expect(find.text('My orders'), findsOneWidget);
+      expect(find.text('Fresh dairy, delivered with care.'), findsOneWidget);
+      expect(find.text('My Deliveries'), findsOneWidget);
       expect(
         find.text('Account created. Welcome to DoodhDirect!'),
         findsOneWidget,
@@ -741,7 +741,7 @@ void main() {
       expect(find.text('Secure your account'), findsOneWidget);
       expect(find.text('New password'), findsOneWidget);
       expect(find.text('No password set'), findsNothing);
-      expect(find.text('Good day, Asha'), findsNothing);
+      expect(find.text('My Deliveries'), findsNothing);
       expect(find.text('Welcome to DoodhDirect'), findsNothing);
       expect(tester.takeException(), isNull);
     });
@@ -762,6 +762,45 @@ void main() {
       expect(uri.queryParameters['redirectTo'], isNull);
       expect(find.text('Sign in to your account'), findsOneWidget);
       expect(find.text('Secure your account'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('register screen', () {
+    testWidgets(
+        'register surface presents the modernized account-creation hierarchy',
+        (tester) async {
+      // RegisterScreen is not a standalone route (accounts are created through
+      // the OTP onboarding flow), so it is exercised directly. This guards the
+      // modernized layout: the title, the sign-in rationale, the optional-field
+      // guidance, the single dominant primary action and the return link.
+      await tester.binding.setSurfaceSize(const Size(800, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _RestoringAuthRepository(),
+            ),
+          ],
+          child: const MaterialApp(home: RegisterScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Customer registration'), findsOneWidget);
+      expect(
+        find.text('Use an email address or mobile number to sign in later.'),
+        findsOneWidget,
+      );
+      expect(find.text('Full name'), findsOneWidget);
+      expect(find.text('Email address (optional)'), findsOneWidget);
+      expect(find.text('Mobile number (optional)'), findsOneWidget);
+      expect(find.text('Password'), findsOneWidget);
+      expect(find.text('Confirm password'), findsOneWidget);
+      // Exactly one dominant primary action; no duplicate submit affordance.
+      expect(find.widgetWithText(FilledButton, 'Create account'), findsOneWidget);
+      expect(find.text('Back to sign in'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });

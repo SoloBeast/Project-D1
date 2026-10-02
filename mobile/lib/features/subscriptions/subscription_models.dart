@@ -323,6 +323,122 @@ class SubscriptionDetails {
       : (usedEntitlement / totalEntitlement).clamp(0, 1).toDouble();
 }
 
+/// Customer-wide inclusive date-range vacation request.
+///
+/// A command input only: the backend resolves it to existing per-occurrence
+/// skips; no vacation entity is persisted anywhere.
+class CreateVacationRequest {
+  const CreateVacationRequest({required this.fromDate, required this.toDate});
+
+  final DateTime fromDate;
+  final DateTime toDate;
+
+  Map<String, dynamic> toJson() => {
+    'fromDate': formatApiDate(fromDate),
+    'toDate': formatApiDate(toDate),
+  };
+}
+
+/// Why one occurrence inside the vacation range could not be skipped.
+enum VacationIneligibleReason {
+  cutoffPassed('Skip cutoff passed'),
+  deliveryPrepared('Delivery already being prepared'),
+  alreadySkipped('Already skipped'),
+  alreadyDelivered('Already delivered'),
+  failed('Failed'),
+  cancelled('Cancelled'),
+  notScheduled('Not scheduled');
+
+  const VacationIneligibleReason(this.label);
+
+  final String label;
+
+  static VacationIneligibleReason fromApi(String value) =>
+      VacationIneligibleReason.values.firstWhere(
+        (reason) => reason.name == value,
+        orElse: () => VacationIneligibleReason.notScheduled,
+      );
+}
+
+class VacationSkippedItem {
+  const VacationSkippedItem({
+    required this.date,
+    required this.subscriptionId,
+    required this.deliveryId,
+    required this.productName,
+    required this.slot,
+  });
+
+  factory VacationSkippedItem.fromJson(Map<String, dynamic> json) =>
+      VacationSkippedItem(
+        date: DateTime.parse(json['date'] as String),
+        subscriptionId: json['subscriptionId'] as String,
+        deliveryId: json['deliveryId'] as String,
+        productName: json['productName'] as String,
+        slot: SubscriptionDeliverySlot.fromApi(json['slot'] as String),
+      );
+
+  final DateTime date;
+  final String subscriptionId;
+  final String deliveryId;
+  final String productName;
+  final SubscriptionDeliverySlot slot;
+}
+
+class VacationIneligibleItem {
+  const VacationIneligibleItem({
+    required this.date,
+    required this.subscriptionId,
+    required this.productName,
+    required this.reason,
+  });
+
+  factory VacationIneligibleItem.fromJson(Map<String, dynamic> json) =>
+      VacationIneligibleItem(
+        date: DateTime.parse(json['date'] as String),
+        subscriptionId: json['subscriptionId'] as String,
+        productName: json['productName'] as String,
+        reason: VacationIneligibleReason.fromApi(json['reason'] as String),
+      );
+
+  final DateTime date;
+  final String subscriptionId;
+  final String productName;
+  final VacationIneligibleReason reason;
+}
+
+class VacationResult {
+  const VacationResult({
+    required this.fromDate,
+    required this.toDate,
+    required this.skippedCount,
+    required this.skippedDates,
+    required this.ineligible,
+  });
+
+  factory VacationResult.fromJson(Map<String, dynamic> json) => VacationResult(
+    fromDate: DateTime.parse(json['fromDate'] as String),
+    toDate: DateTime.parse(json['toDate'] as String),
+    skippedCount: json['skippedCount'] as int,
+    skippedDates: (json['skippedDates'] as List<dynamic>? ?? const <dynamic>[])
+        .cast<Map<String, dynamic>>()
+        .map(VacationSkippedItem.fromJson)
+        .toList(growable: false),
+    ineligible: (json['ineligible'] as List<dynamic>? ?? const <dynamic>[])
+        .cast<Map<String, dynamic>>()
+        .map(VacationIneligibleItem.fromJson)
+        .toList(growable: false),
+  );
+
+  final DateTime fromDate;
+  final DateTime toDate;
+  final int skippedCount;
+  final List<VacationSkippedItem> skippedDates;
+  final List<VacationIneligibleItem> ineligible;
+
+  bool get hasIneligible => ineligible.isNotEmpty;
+}
+
 class CreatedSubscription {
   const CreatedSubscription({
     required this.subscription,

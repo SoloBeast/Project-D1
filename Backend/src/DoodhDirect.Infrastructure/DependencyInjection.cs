@@ -1,4 +1,5 @@
 using DoodhDirect.Application.Abstractions;
+using DoodhDirect.Application.Branding;
 using DoodhDirect.Application.Branches;
 using DoodhDirect.Application.Cameras;
 using DoodhDirect.Application.Catalogue;
@@ -16,6 +17,7 @@ using DoodhDirect.Application.RefundReplacement;
 using DoodhDirect.Application.Setup;
 using DoodhDirect.Application.Subscriptions;
 using DoodhDirect.Application.Wallets;
+using DoodhDirect.Infrastructure.Branding;
 using DoodhDirect.Infrastructure.Branches;
 using DoodhDirect.Infrastructure.Cameras;
 using DoodhDirect.Infrastructure.Catalogue;
@@ -144,6 +146,7 @@ public static class DependencyInjection
         services.AddScoped<ICatalogueService, CatalogueService>();
         services.AddScoped<IBranchAllocationService, BranchAllocationService>();
         services.AddScoped<IOrderService, OrderService>();
+        services.AddScoped<IChargeService, ChargeService>();
         services.AddScoped<ISubscriptionService, SubscriptionService>();
         services.AddSingleton<DeliveryOtpSendGate>();
         services.AddScoped<DeliveryService>();
@@ -172,7 +175,14 @@ public static class DependencyInjection
         services.AddScoped<IBranchService, BranchService>();
         services.AddSingleton<IDeliveryRealtimePublisher, NullDeliveryRealtimePublisher>();
         services.AddSingleton<IMilkTestImageValidator, MilkTestImageValidator>();
+        services.AddSingleton<IProductImageValidator, ProductImageValidator>();
         services.AddSingleton<IMediaStorage, LocalMediaStorage>();
+        services.AddOptions<BrandingMediaOptions>()
+            .Bind(configuration.GetSection(BrandingMediaOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+        services.AddSingleton<IBrandingAssetValidator, BrandingAssetValidator>();
+        services.AddScoped<IBrandingService, BrandingService>();
         services.AddHttpClient<RazorpayPaymentGateway>(client =>
         {
             client.BaseAddress = new Uri("https://api.razorpay.com/v1/");

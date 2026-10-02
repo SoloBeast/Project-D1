@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,6 +22,8 @@ class CatalogueState {
     this.products = const [],
     this.categories = const [],
     this.selectedCategoryId,
+    this.searchQuery = '',
+    this.availableOnly = false,
     this.isLoading = false,
     this.errorMessage,
   });
@@ -27,14 +31,47 @@ class CatalogueState {
   final List<CatalogueProduct> products;
   final List<ProductCategory> categories;
   final String? selectedCategoryId;
+
+  /// Client-side search term over the already-loaded catalogue. Kept purely in
+  /// memory; it never changes which API call is made.
+  final String searchQuery;
+
+  /// When true, only products flagged available by at least one branch are
+  /// shown. Presentation filter over authoritative availability data.
+  final bool availableOnly;
+
   final bool isLoading;
   final String? errorMessage;
+
+  /// Products after applying the in-memory search + availability filters.
+  ///
+  /// Category filtering stays server-side (see [CatalogueController.load] and
+  /// [CatalogueController.selectCategory]); this only narrows what is already
+  /// loaded so the API contract is untouched.
+  List<CatalogueProduct> get visibleProducts {
+    final query = searchQuery.trim().toLowerCase();
+    return products
+        .where((product) {
+          if (availableOnly && !product.isAvailable) return false;
+          if (query.isEmpty) return true;
+          return product.name.toLowerCase().contains(query) ||
+              product.category.name.toLowerCase().contains(query) ||
+              product.sku.toLowerCase().contains(query) ||
+              (product.description?.toLowerCase().contains(query) ?? false);
+        })
+        .toList(growable: false);
+  }
+
+  /// True when filters are narrowing the full product list.
+  bool get hasActiveFilters => searchQuery.trim().isNotEmpty || availableOnly;
 
   CatalogueState copyWith({
     List<CatalogueProduct>? products,
     List<ProductCategory>? categories,
     String? selectedCategoryId,
     bool clearCategory = false,
+    String? searchQuery,
+    bool? availableOnly,
     bool? isLoading,
     String? errorMessage,
     bool clearError = false,
@@ -44,6 +81,8 @@ class CatalogueState {
     selectedCategoryId: clearCategory
         ? null
         : selectedCategoryId ?? this.selectedCategoryId,
+    searchQuery: searchQuery ?? this.searchQuery,
+    availableOnly: availableOnly ?? this.availableOnly,
     isLoading: isLoading ?? this.isLoading,
     errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
   );
@@ -71,6 +110,22 @@ class CatalogueController extends Notifier<CatalogueState> {
     } on Object catch (error) {
       state = state.copyWith(isLoading: false, errorMessage: _message(error));
     }
+  }
+
+  /// Updates the in-memory search term. No network request is issued.
+  void setSearchQuery(String query) {
+    state = state.copyWith(searchQuery: query);
+  }
+
+  /// Toggles the presentation-only availability filter.
+  void setAvailableOnly({required bool value}) {
+    state = state.copyWith(availableOnly: value);
+  }
+
+  /// Clears every in-memory filter (search + availability) without changing
+  /// the selected category or reloading from the server.
+  void clearFilters() {
+    state = state.copyWith(searchQuery: '', availableOnly: false);
   }
 
   Future<void> selectCategory(String? categoryId) async {
@@ -174,6 +229,46 @@ class AdminCatalogueController extends Notifier<AdminCatalogueState> {
     String productId,
     BranchAvailabilityDraft draft,
   ) => _save(() => _repository.setBranchAvailability(productId, draft, _token));
+
+  /// Adds or replaces the product image. Runs outside [_save] so the product
+  /// form stays interactive and surfaces image-specific errors inline.
+  Future<bool> upsertProductImage(
+    String productId, {
+    required Uint8List bytes,
+    required String fileName,
+    required String contentType,
+  }) async {
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      await _repository.upsertProductImage(
+        productId,
+        _token,
+        bytes: bytes,
+        fileName: fileName,
+        contentType: contentType,
+      );
+      await load();
+      state = state.copyWith(isSaving: false);
+      return true;
+    } on Object catch (error) {
+      state = state.copyWith(isSaving: false, errorMessage: _message(error));
+      return false;
+    }
+  }
+
+  /// Removes the current product image.
+  Future<bool> removeProductImage(String productId) async {
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      await _repository.removeProductImage(productId, _token);
+      await load();
+      state = state.copyWith(isSaving: false);
+      return true;
+    } on Object catch (error) {
+      state = state.copyWith(isSaving: false, errorMessage: _message(error));
+      return false;
+    }
+  }
 
   Future<bool> _save(Future<Object> Function() operation) async {
     state = state.copyWith(isSaving: true, clearError: true);
