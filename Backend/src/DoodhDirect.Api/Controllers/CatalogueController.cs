@@ -255,10 +255,16 @@ public sealed record UpsertProductApiRequest(
     Guid CategoryId,
     [Required, MaxLength(20)] string UnitOfMeasure,
     decimal Price,
-    [Required, MinLength(1)] IReadOnlyList<Guid> BranchIds)
+    [Required, MinLength(1)] IReadOnlyList<Guid> BranchIds,
+    // Item-level Tax & Charges assignment (charge public ids). MUST be bound
+    // here: the admin clients already send `applicableChargeIds`, and without
+    // this property the JSON binder silently dropped the field — the product
+    // saved with no charge mappings at all. Null means "not supplied" (the
+    // service then treats it as no charges, matching the application default).
+    IReadOnlyList<Guid>? ApplicableChargeIds = null)
 {
     public UpsertProductRequest ToApplicationRequest() =>
-        new(Sku, Name, Description, CategoryId, UnitOfMeasure, Price, BranchIds);
+        new(Sku, Name, Description, CategoryId, UnitOfMeasure, Price, BranchIds, ApplicableChargeIds);
 }
 
 public sealed record UpsertProductCategoryApiRequest(

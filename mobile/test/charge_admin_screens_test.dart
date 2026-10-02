@@ -42,6 +42,7 @@ class _FakeChargeRepository implements ChargeRepository {
     bool isActive = true,
     bool applicableOnAll = true,
     bool isUsed = false,
+    int productCount = 0,
   }) => Charge(
     publicId: publicId,
     chargeType: chargeType,
@@ -51,6 +52,7 @@ class _FakeChargeRepository implements ChargeRepository {
     isActive: isActive,
     applicableOnAll: applicableOnAll,
     isUsed: isUsed,
+    productCount: productCount,
     createdAt: DateTime(2026, 9, 28),
     updatedAt: DateTime(2026, 9, 28),
   );
@@ -685,6 +687,49 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repo.updateCalls.single.$2.description, 'new');
+  });
+
+  testWidgets('assigned charge locks the applicability toggle', (tester) async {
+    // ITMTST is item-level and mapped to 2 products: the switch must be
+    // disabled with an explanation instead of accepting a doomed tap.
+    final seed = _FakeChargeRepository();
+    final repo = _FakeChargeRepository(
+      charges: [
+        seed._charge(
+          publicId: 'c-9',
+          chargeCode: 'ITMTST',
+          applicableOnAll: false,
+          productCount: 2,
+        ),
+      ],
+    );
+    await _pumpList(tester, repository: repo);
+
+    expect(
+      find.byTooltip(
+        'Assigned to 2 products — remove them from those products first',
+      ),
+      findsOneWidget,
+    );
+    final switchWidget = tester.widget<Switch>(
+      _switchInTooltip(
+        'Assigned to 2 products — remove them from those products first',
+      ),
+    );
+    expect(switchWidget.value, isFalse);
+    expect(switchWidget.onChanged, isNull);
+    expect(repo.setApplicabilityCalls, isEmpty);
+  });
+
+  testWidgets('unassigned item charge keeps an enabled toggle', (tester) async {
+    final repo = _FakeChargeRepository(charges: [_itemCharge('ITEM-12')]);
+    await _pumpList(tester, repository: repo);
+
+    expect(find.byTooltip('Applicable on All'), findsOneWidget);
+    expect(
+      tester.widget<Switch>(_switchInTooltip('Applicable on All')).onChanged,
+      isNotNull,
+    );
   });
 
   testWidgets('server validation errors are shown with the field name', (

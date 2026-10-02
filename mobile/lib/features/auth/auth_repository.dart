@@ -6,8 +6,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 const apiBaseUrl = String.fromEnvironment(
   'DOOHDIRECT_API_URL',
-  defaultValue: 'http://localhost:5209',
-  // defaultValue: 'http://10.0.2.2:5209',
+  // defaultValue: 'http://localhost:5209',
+  defaultValue: 'http://10.0.2.2:5209',
   // defaultValue: 'https://mem-submissions-cfr-virtually.trycloudflare.com',
 
 );

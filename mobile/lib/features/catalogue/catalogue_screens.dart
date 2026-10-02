@@ -1790,10 +1790,20 @@ class _ProductRowState extends State<_ProductRow> {
 
   bool get _isDraft => _product == null;
 
+  /// Selectable branch ids offered for (re-)assignment. Historical links to
+  /// archived/inactive branches are NOT included: the server rejects them in
+  /// `branchIds` (422) and preserves those rows itself on update — mirroring
+  /// the Edit-product dialog's `_initialBranchSelection`.
+  Set<String> _selectableBranchIds() =>
+      widget.branches.map((branch) => branch.publicId).toSet();
+
   Set<String> _initialBranchIds() {
     final product = widget.product;
     if (product != null) {
-      return ProductDraft.fromProduct(product).branchIds.toSet();
+      final selectable = _selectableBranchIds();
+      return ProductDraft.fromProduct(product).branchIds
+          .where(selectable.contains)
+          .toSet();
     }
     final fallback = _defaultBranchId();
     return fallback == null ? <String>{} : {fallback};
@@ -1870,9 +1880,12 @@ class _ProductRowState extends State<_ProductRow> {
 
   bool get _dirty {
     final product = _product;
+    // Compare against the selectable subset (same filter as the initial
+    // selection): historical links to archived branches are preserved
+    // server-side and must not mark the row dirty.
     final baseBranchIds = product == null
         ? _defaultBranchIdsForCompare()
-        : ProductDraft.fromProduct(product).branchIds.toSet();
+        : _initialBranchIds();
     final baseChargeIds = product == null
         ? <String>{}
         : ProductDraft.fromProduct(product).chargeIds.toSet();

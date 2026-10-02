@@ -33,13 +33,24 @@ public sealed class ChargeService(
             .OrderBy(charge => charge.ChargeType)
             .ThenBy(charge => charge.ChargeCode)
             .ToListAsync(cancellationToken);
-        return charges.Select(ToResult).ToArray();
+        // One grouped query (not N+1): how many products each charge is
+        // assigned to, so the admin UI can lock the applicability toggle.
+        var counts = await dbContext.ProductCharges
+            .AsNoTracking()
+            .GroupBy(link => link.ChargeId)
+            .Select(group => new { ChargeId = group.Key, Count = group.Count() })
+            .ToDictionaryAsync(entry => entry.ChargeId, entry => entry.Count, cancellationToken);
+        return charges
+            .Select(charge => ToResult(
+                charge,
+                counts.TryGetValue(charge.Id, out var count) ? count : 0))
+            .ToArray();
     }
 
     public async Task<ChargeResult> GetAsync(Guid publicId, CancellationToken cancellationToken)
     {
         var charge = await FindAsync(publicId, cancellationToken);
-        return ToResult(charge);
+        return await ToResultAsync(charge, cancellationToken);
     }
 
     public async Task<ChargeResult> CreateAsync(
@@ -80,7 +91,7 @@ public sealed class ChargeService(
             $"Charge '{charge.ChargeCode}' created.",
             now));
         await dbContext.SaveChangesAsync(cancellationToken);
-        return ToResult(charge);
+        return ToResult(charge, productCount: 0);
     }
 
     public async Task<ChargeResult> UpdateAsync(
@@ -117,7 +128,7 @@ public sealed class ChargeService(
             $"Charge '{charge.ChargeCode}' updated.",
             now));
         await dbContext.SaveChangesAsync(cancellationToken);
-        return ToResult(charge);
+        return await ToResultAsync(charge, cancellationToken);
     }
 
     public async Task<ChargeResult> SetActiveAsync(
@@ -129,7 +140,7 @@ public sealed class ChargeService(
         var charge = await FindAsync(publicId, cancellationToken);
         if (charge.IsActive == isActive)
         {
-            return ToResult(charge);
+            return await ToResultAsync(charge, cancellationToken);
         }
 
         var now = timeProvider.Now;
@@ -157,7 +168,7 @@ public sealed class ChargeService(
             $"Charge '{charge.ChargeCode}' {(isActive ? "activated" : "deactivated")}.",
             now));
         await dbContext.SaveChangesAsync(cancellationToken);
-        return ToResult(charge);
+        return await ToResultAsync(charge, cancellationToken);
     }
 
     /// <summary>
@@ -175,7 +186,7 @@ public sealed class ChargeService(
         var charge = await FindAsync(publicId, cancellationToken);
         if (charge.ApplicableOnAll == applicableOnAll)
         {
-            return ToResult(charge);
+            return await ToResultAsync(charge, cancellationToken);
         }
 
         var now = timeProvider.Now;
@@ -213,7 +224,7 @@ public sealed class ChargeService(
         if (!changed)
         {
             // Nothing was written (a concurrent toggle won the race).
-            return ToResult(charge);
+            return await ToResultAsync(charge, cancellationToken);
         }
 
         dbContext.AddAuditLog(new AuditLog(
@@ -228,7 +239,7 @@ public sealed class ChargeService(
             $"Charge '{charge.ChargeCode}' {(applicableOnAll ? "is now applicable on all products" : "is now product-assigned")}.",
             now));
         await dbContext.SaveChangesAsync(cancellationToken);
-        return ToResult(charge);
+        return await ToResultAsync(charge, cancellationToken);
     }
 
     public async Task DeleteAsync(Guid publicId, long actorUserId, CancellationToken cancellationToken)
@@ -300,7 +311,7 @@ public sealed class ChargeService(
         });
     }
 
-    private static ChargeResult ToResult(Charge charge) => new(
+    private static ChargeResult ToResult(Charge charge, int productCount) => new(
         charge.PublicId,
         charge.ChargeType,
         charge.ChargeCode,
@@ -310,7 +321,15 @@ public sealed class ChargeService(
         charge.ApplicableOnAll,
         charge.IsUsed,
         charge.CreatedAt,
-        charge.UpdatedAt);
+        charge.UpdatedAt,
+        productCount);
+
+    private async Task<ChargeResult> ToResultAsync(Charge charge, CancellationToken cancellationToken) =>
+        ToResult(
+            charge,
+            await dbContext.ProductCharges.CountAsync(
+                link => link.ChargeId == charge.Id,
+                cancellationToken));
 
     private static string ToSnapshotJson(Charge charge) => JsonSerializer.Serialize(new
     {

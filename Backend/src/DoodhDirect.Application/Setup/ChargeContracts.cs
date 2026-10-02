@@ -15,7 +15,14 @@ public sealed record ChargeResult(
     bool ApplicableOnAll,
     bool IsUsed,
     DateTime CreatedAt,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    /// <summary>
+    /// Number of products this charge is currently assigned to via
+    /// ProductCharge mappings. The admin UI locks the "Applicable on All"
+    /// toggle while this is non-zero (the server refuses enabling the global
+    /// mode with any mapping present).
+    /// </summary>
+    int ProductCount = 0);
 
 public sealed record CreateChargeRequest(
     string ChargeType,

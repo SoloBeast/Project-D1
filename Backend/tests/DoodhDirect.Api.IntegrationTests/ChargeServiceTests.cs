@@ -217,6 +217,31 @@ public sealed class ChargeServiceTests
             list.Select(charge => charge.ChargeCode).ToArray());
     }
 
+    [Fact]
+    public async Task List_ReportsAssignedProductCounts()
+    {
+        await using var db = ChargeDb.Create();
+        var service = new ChargeService(db, new TestIndiaTimeProvider(Frozen));
+        var mapped = await service.CreateAsync(
+            new CreateChargeRequest("GST", "GST-P", null, 5m, ApplicableOnAll: false),
+            11,
+            CancellationToken.None);
+        await service.CreateAsync(
+            new CreateChargeRequest("GST", "GST-5", null, 5m),
+            11,
+            CancellationToken.None);
+        await SeedMappedProductAsync(db, "GST-P");
+        await SeedMappedProductAsync(db, "GST-P");
+
+        var list = await service.ListAsync(CancellationToken.None);
+
+        Assert.Equal(2, list.Single(charge => charge.PublicId == mapped.PublicId).ProductCount);
+        Assert.Equal(0, list.Single(charge => charge.ChargeCode == "GST-5").ProductCount);
+        // Single-record reads carry the same count so the toggle guard never
+        // works from a stale zero.
+        Assert.Equal(2, (await service.GetAsync(mapped.PublicId, CancellationToken.None)).ProductCount);
+    }
+
     // ---------------------------------------------------------------- applicability mode
 
     [Fact]

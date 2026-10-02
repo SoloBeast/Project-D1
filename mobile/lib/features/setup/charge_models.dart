@@ -13,6 +13,7 @@ class Charge {
     required this.isActive,
     this.applicableOnAll = true,
     required this.isUsed,
+    this.productCount = 0,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -30,6 +31,7 @@ class Charge {
     // every charge is globally applicable, so fall back to true.
     applicableOnAll: (json['applicableOnAll'] as bool?) ?? true,
     isUsed: json['isUsed'] as bool,
+    productCount: (json['productCount'] as num?)?.toInt() ?? 0,
     createdAt: DateTime.tryParse(json['createdAt'] as String? ?? ''),
     updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? ''),
   );
@@ -50,6 +52,11 @@ class Charge {
   /// True once any order snapshot references this charge's code — the backend
   /// then refuses deletes and type edits, so the UI mirrors that.
   final bool isUsed;
+
+  /// Number of products this charge is assigned to. While non-zero on an
+  /// item-level charge the server refuses enabling "Applicable on All", so
+  /// the UI locks that toggle instead of letting the tap fail.
+  final int productCount;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 }

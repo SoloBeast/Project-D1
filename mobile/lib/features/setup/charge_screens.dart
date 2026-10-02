@@ -903,22 +903,32 @@ class _ChargeRowState extends State<_ChargeRow> {
 
   /// Bare mode toggle (no text — the column header carries the meaning).
   /// Existing rows show the server state; the draft keeps local state that
-  /// is sent on creation.
-  Widget _modeSwitch(Charge? charge, bool editable) => Tooltip(
-    message: 'Applicable on All',
-    child: Switch(
-      value: charge?.applicableOnAll ?? _draftApplicableOnAll,
-      onChanged: !editable
-          ? null
-          : (value) {
-              if (charge == null) {
-                setState(() => _draftApplicableOnAll = value);
-              } else {
-                widget.onToggleApplicability!(value);
-              }
-            },
-    ),
-  );
+  /// is sent on creation. Enabling the global mode is refused server-side
+  /// while any product assignment exists, so an assigned item-level charge
+  /// renders a locked switch explaining what to do instead of a toggle
+  /// whose tap could only fail.
+  Widget _modeSwitch(Charge? charge, bool editable) {
+    final assigned = charge?.productCount ?? 0;
+    final locked = charge != null && !charge.applicableOnAll && assigned > 0;
+    return Tooltip(
+      message: locked
+          ? 'Assigned to $assigned product${assigned == 1 ? '' : 's'} — '
+                'remove ${assigned == 1 ? 'it' : 'them'} from those products first'
+          : 'Applicable on All',
+      child: Switch(
+        value: charge?.applicableOnAll ?? _draftApplicableOnAll,
+        onChanged: !editable || locked
+            ? null
+            : (value) {
+                if (charge == null) {
+                  setState(() => _draftApplicableOnAll = value);
+                } else {
+                  widget.onToggleApplicability!(value);
+                }
+              },
+      ),
+    );
+  }
 
   /// Bare active toggle (no text). Draft rows start active on the server, so
   /// the draft shows a disabled ON switch.
