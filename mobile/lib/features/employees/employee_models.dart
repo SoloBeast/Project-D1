@@ -116,6 +116,25 @@ enum EmployeeRole {
   }
 }
 
+/// One branch assignment within an employee's (single-role) assignment set.
+///
+/// Mirrors the backend `EmployeeBranchAssignment`. Dairy Managers may hold one
+/// row per assigned branch; every other employee role holds at most one. The
+/// backend is authoritative — the client renders this set verbatim and never
+/// invents a primary/default branch.
+class EmployeeBranchAssignment {
+  const EmployeeBranchAssignment({required this.branchId, this.branchName});
+
+  factory EmployeeBranchAssignment.fromJson(Map<String, dynamic> json) =>
+      EmployeeBranchAssignment(
+        branchId: (json['branchId'] as num).toInt(),
+        branchName: json['branchName'] as String?,
+      );
+
+  final int branchId;
+  final String? branchName;
+}
+
 /// A single employee (or pending invite) visible to Owner / System Administrator.
 class Employee {
   const Employee({
@@ -130,6 +149,7 @@ class Employee {
     this.roleName,
     this.branchId,
     this.branchName,
+    this.branchAssignments = const <EmployeeBranchAssignment>[],
     this.invitationStatus,
     this.invitationExpiresAt,
     this.registeredAt,
@@ -149,6 +169,15 @@ class Employee {
     invitationId: _nullableLong(json['invitationId']),
     branchId: _nullableLong(json['branchId']),
     branchName: json['branchName'] as String?,
+    branchAssignments:
+        (json['branchAssignments'] as List<dynamic>?)
+            ?.map(
+              (item) => EmployeeBranchAssignment.fromJson(
+                item as Map<String, dynamic>,
+              ),
+            )
+            .toList(growable: false) ??
+        const <EmployeeBranchAssignment>[],
     isActive: json['isActive'] as bool,
     invitationStatus: json['invitationStatus'] == null
         ? null
@@ -178,6 +207,10 @@ class Employee {
   final String? roleName;
   final int? branchId;
   final String? branchName;
+
+  /// The complete branch assignment collection. Never a truncated sample:
+  /// multi-branch Dairy Managers carry one entry per assigned branch.
+  final List<EmployeeBranchAssignment> branchAssignments;
   final bool isActive;
   final EmployeeInvitationStatus? invitationStatus;
   final DateTime? invitationExpiresAt;
@@ -187,6 +220,29 @@ class Employee {
   final DateTime? archivedAt;
 
   EmployeeRole? get assignableRole => EmployeeRole.fromApiCode(roleCode);
+
+  /// Every assigned branch id: the authoritative set when non-empty, falling
+  /// back to the legacy single [branchId] for responses that predate it.
+  List<int> get allBranchIds => branchAssignments.isNotEmpty
+      ? branchAssignments.map((assignment) => assignment.branchId).toList()
+      : [?branchId];
+
+  /// Display names for every assignment, falling back to the legacy single
+  /// [branchName] for responses that predate the collection.
+  List<String> get allBranchNames {
+    if (branchAssignments.isNotEmpty) {
+      return branchAssignments
+          .map(
+            (assignment) =>
+                (assignment.branchName?.isNotEmpty ?? false)
+                ? assignment.branchName!
+                : 'Branch ${assignment.branchId}',
+          )
+          .toList();
+    }
+    if (branchName != null && branchName!.isNotEmpty) return [branchName!];
+    return const <String>[];
+  }
 
   static int _long(Object? value) => (value as num).toInt();
 
@@ -259,6 +315,12 @@ class EmployeeBranchOption {
 }
 
 /// Payload for creating an employee and, by default, a secure invitation.
+///
+/// The branch set follows the Stage 2 contract: [branchIds], when supplied,
+/// is authoritative and [branchId] must be omitted to avoid ambiguity; the
+/// legacy single [branchId] carries single-branch assignments for every other
+/// role. Dairy Managers may submit several active branches; other roles submit
+/// exactly one; System Administrators submit neither.
 class CreateEmployeeRequest {
   const CreateEmployeeRequest({
     required this.displayName,
@@ -267,6 +329,7 @@ class CreateEmployeeRequest {
     required this.roleCode,
     required this.branchId,
     this.sendInvitation = true,
+    this.branchIds,
   });
 
   final String displayName;
@@ -274,6 +337,7 @@ class CreateEmployeeRequest {
   final String email;
   final String roleCode;
   final int? branchId;
+  final List<int>? branchIds;
   final bool sendInvitation;
 
   Map<String, dynamic> toJson() => {
@@ -281,12 +345,19 @@ class CreateEmployeeRequest {
     'mobile': mobile,
     'email': email.trim(),
     'roleCode': roleCode,
-    if (branchId != null) 'branchId': branchId,
+    if (branchIds != null) 'branchIds': branchIds,
+    if (branchId != null && branchIds == null) 'branchId': branchId,
     'sendInvitation': sendInvitation,
   };
 }
 
 /// Payload for updating permitted employee attributes.
+///
+/// Branch-set semantics mirror [CreateEmployeeRequest]: a non-null [branchIds]
+/// replaces the full assignment set; a null [branchIds] with a non-null
+/// [branchId] narrows to that single branch; both null leaves assignments
+/// untouched (required when saving unrelated fields on multi-branch
+/// employees so their assignments are never silently dropped).
 class UpdateEmployeeRequest {
   const UpdateEmployeeRequest({
     required this.displayName,
@@ -294,19 +365,22 @@ class UpdateEmployeeRequest {
     this.email,
     this.roleCode,
     this.branchId,
+    this.branchIds,
   });
 
   final String displayName;
   final String? email;
   final String? roleCode;
   final int? branchId;
+  final List<int>? branchIds;
   final bool isActive;
 
   Map<String, dynamic> toJson() => {
     'displayName': displayName,
     if (email != null && email!.trim().isNotEmpty) 'email': email!.trim(),
     if (roleCode != null) 'roleCode': roleCode,
-    if (branchId != null) 'branchId': branchId,
+    if (branchIds != null) 'branchIds': branchIds,
+    if (branchId != null && branchIds == null) 'branchId': branchId,
     'isActive': isActive,
   };
 }
@@ -390,6 +464,7 @@ class EmployeeInvitationVerification {
     this.branchCode,
     this.branchName,
     this.reason,
+    this.branchAssignments = const <EmployeeBranchAssignment>[],
   });
 
   factory EmployeeInvitationVerification.fromJson(Map<String, dynamic> json) =>
@@ -405,6 +480,15 @@ class EmployeeInvitationVerification {
         branchCode: json['branchCode'] as String?,
         branchName: json['branchName'] as String?,
         reason: json['reason'] as String?,
+        branchAssignments:
+            (json['branchAssignments'] as List<dynamic>?)
+                ?.map(
+                  (item) => EmployeeBranchAssignment.fromJson(
+                    item as Map<String, dynamic>,
+                  ),
+                )
+                .toList(growable: false) ??
+            const <EmployeeBranchAssignment>[],
       );
 
   final bool isValid;
@@ -413,6 +497,27 @@ class EmployeeInvitationVerification {
   final String? email;
   final String roleCode;
   final int? branchId;
+
+  /// The complete invited branch set. Falls back to the legacy single branch
+  /// fields for responses that predate the collection.
+  final List<EmployeeBranchAssignment> branchAssignments;
+
+  /// Display names for every invited branch.
+  List<String> get allBranchNames {
+    if (branchAssignments.isNotEmpty) {
+      return branchAssignments
+          .map(
+            (assignment) =>
+                (assignment.branchName?.isNotEmpty ?? false)
+                ? assignment.branchName!
+                : 'Branch ${assignment.branchId}',
+          )
+          .toList();
+    }
+    if (branchName != null && branchName!.isNotEmpty) return [branchName!];
+    if (branchCode != null && branchCode!.isNotEmpty) return [branchCode!];
+    return const <String>[];
+  }
 
   /// Branch code resolved from the invitation's persisted branch, when the
   /// invitation carries one (e.g. null for SYSTEM_ADMIN invitations).

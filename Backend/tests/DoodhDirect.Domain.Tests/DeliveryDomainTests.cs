@@ -260,6 +260,57 @@ public sealed class DeliveryDomainTests
         Assert.Throws<ArgumentException>(() => new DeliveryLocation(1, EmployeeId, 0m, 0m, null, DateTime.Now));
     }
 
+    [Fact]
+    public void Cancel_VoidsReadyAndAssignedDeliveriesPreservingHistory()
+    {
+        var ready = CreateOrderDelivery();
+        ready.Cancel(IndiaLocalNow, " Subscription cancelled. ");
+
+        Assert.Equal(DeliveryStatus.Cancelled, ready.Status);
+        Assert.Equal("Subscription cancelled.", ready.Remarks);
+
+        var assigned = CreateAssignedDelivery();
+        var assignedEmployee = assigned.AssignedEmployeeId;
+        assigned.Cancel(IndiaLocalNow, null);
+
+        Assert.Equal(DeliveryStatus.Cancelled, assigned.Status);
+        Assert.Equal(assignedEmployee, assigned.AssignedEmployeeId);
+        Assert.Single(assigned.Assignments);
+    }
+
+    [Fact]
+    public void Cancel_RejectsPickedUpInTransitAndTerminalDeliveries()
+    {
+        var pickedUp = CreateAssignedDelivery();
+        pickedUp.PickUp(EmployeeId, IndiaLocalNow.AddMinutes(1), null);
+        Assert.Throws<InvalidOperationException>(() => pickedUp.Cancel(IndiaLocalNow.AddMinutes(2), null));
+
+        var inTransit = CreateAssignedDelivery();
+        inTransit.PickUp(EmployeeId, IndiaLocalNow.AddMinutes(1), null);
+        inTransit.Start(EmployeeId, IndiaLocalNow.AddMinutes(2));
+        Assert.Throws<InvalidOperationException>(() => inTransit.Cancel(IndiaLocalNow.AddMinutes(3), null));
+
+        var cancelled = CreateOrderDelivery();
+        cancelled.Cancel(IndiaLocalNow, null);
+        Assert.Throws<InvalidOperationException>(() => cancelled.Cancel(IndiaLocalNow.AddMinutes(1), null));
+    }
+
+    [Fact]
+    public void Fail_RejectsCancelledDeliveries()
+    {
+        var cancelled = CreateAssignedDelivery();
+        cancelled.Cancel(IndiaLocalNow, null);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            cancelled.Fail(EmployeeId, IndiaLocalNow.AddMinutes(1), "Customer not available", null, null, null));
+        Assert.Throws<InvalidOperationException>(() =>
+            cancelled.FailForCustomerMilkTest(IndiaLocalNow.AddMinutes(1), null));
+        Assert.Throws<InvalidOperationException>(() =>
+            cancelled.Assign(OtherEmployeeId, assignedByUserId: 30, IndiaLocalNow.AddMinutes(1), null));
+        Assert.Throws<InvalidOperationException>(() =>
+            cancelled.PickUp(EmployeeId, IndiaLocalNow.AddMinutes(1), null));
+    }
+
     private static Delivery CreateAssignedDelivery()
     {
         var delivery = CreateOrderDelivery();

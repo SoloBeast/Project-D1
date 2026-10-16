@@ -283,7 +283,9 @@ public sealed class ApiFoundationTests : IClassFixture<FoundationApiFactory>
     }
 }
 
-public sealed class FoundationApiFactory : WebApplicationFactory<Program>
+// Unsealed (test-only) so slice-specific suites can derive a host variant
+// (e.g. without background workers) without duplicating the fixture.
+public class FoundationApiFactory : WebApplicationFactory<Program>
 {
     private readonly SqliteConnection connection;
 

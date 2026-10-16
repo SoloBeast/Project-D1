@@ -11,6 +11,18 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace DoodhDirect.Api.Controllers;
 
+/// <summary>
+/// D1-A multipart form for failing a subscription delivery with staff proof.
+/// </summary>
+public sealed class FailDeliveryWithProofForm
+{
+    public string Reason { get; set; } = string.Empty;
+    public string? Remarks { get; set; }
+    public decimal? Latitude { get; set; }
+    public decimal? Longitude { get; set; }
+    public IFormFile? Proof { get; set; }
+}
+
 public abstract class DeliveryControllerBase : ControllerBase
 {
     protected DeliveryActor RequireActor()
@@ -158,6 +170,47 @@ public sealed class DeliveryStaffController(
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<DeliveryResult>.Ok(await deliveryService.FailAsync(
             RequireActor(), deliveryId, request, cancellationToken)));
+
+    /// <summary>
+    /// D1-A: fails a subscription delivery with the required staff proof image
+    /// (multipart). The failure, proof, remedy ticket, snapshots, deadline and
+    /// audit commit in one transaction; the customer is notified to choose
+    /// Refund or Re-Delivery. One-time order deliveries keep the JSON
+    /// <c>fail</c> endpoint (proof is not supported there).
+    /// </summary>
+    [HttpPost("{deliveryId:guid}/fail-with-proof")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.DeliveriesOperateAssigned)]
+    [Consumes("multipart/form-data")]
+    [ProducesResponseType(typeof(ApiResponse<DeliveryResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<DeliveryResult>>> FailWithProof(
+        Guid deliveryId,
+        [FromForm] FailDeliveryWithProofForm request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Proof is null || request.Proof.Length == 0)
+        {
+            throw new ValidationAppException("A proof image is required to fail a subscription delivery.", "proof");
+        }
+
+        await using var content = new MemoryStream();
+        await request.Proof.CopyToAsync(content, cancellationToken);
+        content.Position = 0;
+        var proof = new FailDeliveryProof(
+            content,
+            request.Proof.FileName,
+            string.IsNullOrWhiteSpace(request.Proof.ContentType)
+                ? "application/octet-stream"
+                : request.Proof.ContentType,
+            request.Proof.Length);
+        var result = await deliveryService.FailAsync(
+            RequireActor(),
+            deliveryId,
+            new FailDeliveryRequest(request.Reason, request.Remarks, request.Latitude, request.Longitude),
+            cancellationToken,
+            proof);
+        return Ok(ApiResponse<DeliveryResult>.Ok(result));
+    }
 
     [HttpPost("{deliveryId:guid}/location")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.DeliveriesTrackAssigned)]

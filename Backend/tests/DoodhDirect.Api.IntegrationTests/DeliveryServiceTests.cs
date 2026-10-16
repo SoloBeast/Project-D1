@@ -5,7 +5,9 @@ using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Dairy;
 using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.MilkTesting;
 using DoodhDirect.Application.Notifications;
+using DoodhDirect.Application.RefundReplacement;
 using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Dairy;
@@ -14,11 +16,13 @@ using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.MilkTesting;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Auditing;
+using DoodhDirect.Domain.RefundReplacement;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Domain.Setup;
 using DoodhDirect.Infrastructure.Dairy;
 using DoodhDirect.Infrastructure.Deliveries;
 using DoodhDirect.Infrastructure.Notifications;
+using DoodhDirect.Infrastructure.RefundReplacement;
 using DoodhDirect.Infrastructure.Persistence;
 using DoodhDirect.Infrastructure.Setup;
 using Microsoft.Data.Sqlite;
@@ -1239,15 +1243,7 @@ public sealed class DeliveryServiceTests
         var deliveryId = await harness.MaterializeSubscriptionAsync();
         await harness.AssignAsync(deliveryId, harness.Staff);
 
-        var failed = await harness.Service.FailAsync(
-            harness.StaffActor(harness.Staff),
-            deliveryId,
-            new FailDeliveryRequest(
-                DeliveryFailureReasons.CustomerNotAvailable,
-                "No response",
-                12.972m,
-                77.595m),
-            CancellationToken.None);
+        var failed = await harness.FailSubscriptionAsync(deliveryId, harness.Staff);
 
         Assert.Equal(DeliveryStatus.Failed, failed.Status);
         Assert.Equal(DeliveryFailureReasons.CustomerNotAvailable, failed.FailureReason);
@@ -1712,15 +1708,7 @@ public sealed class DeliveryServiceTests
 
         var deliveryId = await harness.MaterializeSubscriptionAsync();
         await harness.AssignAsync(deliveryId, harness.Staff);
-        var failed = await harness.Service.FailAsync(
-            harness.StaffActor(harness.Staff),
-            deliveryId,
-            new FailDeliveryRequest(
-                DeliveryFailureReasons.CustomerNotAvailable,
-                "No response",
-                12.972m,
-                77.595m),
-            CancellationToken.None);
+        var failed = await harness.FailSubscriptionAsync(deliveryId, harness.Staff);
         Assert.Equal(DeliveryStatus.Failed, failed.Status);
         Assert.Equal(0, await harness.Db.MilkUsages.AsNoTracking().CountAsync());
 
@@ -2294,11 +2282,7 @@ public sealed class DeliveryServiceTests
         await harness.AssignAsync(subscriptionDeliveryId, harness.Staff);
         var failedBatchId = await harness.RecordMilkBatchAsync();
         await harness.SaveAllocationAsync(subscriptionDeliveryId, failedBatchId, 1m);
-        await harness.Service.FailAsync(
-            harness.StaffActor(harness.Staff),
-            subscriptionDeliveryId,
-            new FailDeliveryRequest(DeliveryFailureReasons.CustomerNotAvailable, "Test", null, null),
-            CancellationToken.None);
+        await harness.FailSubscriptionAsync(subscriptionDeliveryId, harness.Staff);
 
         var failed = await Assert.ThrowsAsync<BusinessRuleException>(() =>
             harness.Service.SaveBatchAllocationsAsync(
@@ -2420,6 +2404,8 @@ public sealed class DeliveryServiceTests
             CapturingOtpDeliveryService otpDelivery,
             DeliveryOtpHandoffProtector otpProtector,
             CapturingRealtimePublisher realtime,
+            CapturingMediaStorage proofStorage,
+            RefundReplacementConfigurationService configurationService,
             DeliveryService service,
             User customer,
             User manager,
@@ -2442,6 +2428,8 @@ public sealed class DeliveryServiceTests
             OtpDelivery = otpDelivery;
             OtpProtector = otpProtector;
             Realtime = realtime;
+            ProofStorage = proofStorage;
+            ConfigurationService = configurationService;
             Service = service;
             Customer = customer;
             Manager = manager;
@@ -2459,6 +2447,8 @@ public sealed class DeliveryServiceTests
         public DoodhDirectDbContext Db { get; }
         public TestClock Clock { get; }
         public TestIndiaTimeProvider TimeProvider { get; }
+        public CapturingMediaStorage ProofStorage { get; }
+        public RefundReplacementConfigurationService ConfigurationService { get; }
         public CapturingOtpDeliveryService OtpDelivery { get; }
         public DeliveryOtpHandoffProtector OtpProtector { get; }
         public CapturingRealtimePublisher Realtime { get; }
@@ -2518,6 +2508,28 @@ public sealed class DeliveryServiceTests
                 deliveryId,
                 new AssignDeliveryRequest(employee.PublicId, null),
                 CancellationToken.None);
+
+        public static FailDeliveryProof ProofImage(byte[]? bytes = null)
+        {
+            bytes ??= [0xFF, 0xD8, 0xFF, 0xE0, 0x01];
+            return new FailDeliveryProof(
+                new MemoryStream(bytes, writable: false),
+                "proof.jpg",
+                "image/jpeg",
+                bytes.Length);
+        }
+
+        public Task<DeliveryResult> FailSubscriptionAsync(Guid deliveryId, User employee) =>
+            Service.FailAsync(
+                StaffActor(employee),
+                deliveryId,
+                new FailDeliveryRequest(
+                    DeliveryFailureReasons.CustomerNotAvailable,
+                    "No response",
+                    12.972m,
+                    77.595m),
+                CancellationToken.None,
+                ProofImage());
 
         public async Task AdvanceToArrivedAsync(Guid deliveryId, User employee)
         {
@@ -2585,7 +2597,9 @@ public sealed class DeliveryServiceTests
         public DeliveryService CreateService(
             DoodhDirectDbContext db,
             CapturingRealtimePublisher? realtime = null,
-            INotificationEventWriter? notificationEventWriter = null) => new(
+            INotificationEventWriter? notificationEventWriter = null,
+            IMediaStorage? mediaStorage = null,
+            IRefundReplacementConfigurationService? configuration = null) => new(
                 db,
                 TimeProvider,
                 new TestPasswordHasher(),
@@ -2594,7 +2608,9 @@ public sealed class DeliveryServiceTests
                 DeliveryOptionsFor(subscriptionGenerationWindowDays),
                 notificationEventWriter ?? new TestNotificationEventWriter(db, Clock),
                 new NumberSeriesService(db, TimeProvider),
-                OtpProtector);
+                OtpProtector,
+                refundReplacementConfigurationService: configuration ?? ConfigurationService,
+                refundReplacementMediaStorage: mediaStorage ?? ProofStorage);
 
         public static async Task<DeliveryHarness> CreateAsync(
             DateTime? indiaLocalNow = null,
@@ -2626,6 +2642,14 @@ public sealed class DeliveryServiceTests
                 "DELIVERY_MAIN", "Delivery MAIN", "DLV/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "MAIN"));
             db.NumberSeries.Add(new NumberSeries(
                 "DELIVERY_NORTH", "Delivery NORTH", "DLV/{SCOPE}/{NUMBER:000000}", 1, 1, NumberSeriesResetPolicy.Never, "NORTH"));
+            // D1-A delivery-fail remedy tickets share the refund/replacement series.
+            db.NumberSeries.Add(new NumberSeries(
+                RefundReplacementService.SeriesCode,
+                "Refund/replacement request numbers",
+                "RR/{NUMBER:000000}",
+                1,
+                1,
+                NumberSeriesResetPolicy.Never));
 
             var customer = User(UserType.Customer, "Customer", "9999999999");
             var manager = User(UserType.Employee, "Delivery Manager", "9000000000");
@@ -2722,6 +2746,8 @@ public sealed class DeliveryServiceTests
             var otpDelivery = new CapturingOtpDeliveryService();
             var otpProtector = new DeliveryOtpHandoffProtector(new EphemeralDataProtectionProvider());
             var realtime = new CapturingRealtimePublisher();
+            var proofStorage = new CapturingMediaStorage();
+            var configurationService = new RefundReplacementConfigurationService(db, timeProvider);
             var service = new DeliveryService(
                 db,
                 timeProvider,
@@ -2731,7 +2757,9 @@ public sealed class DeliveryServiceTests
                 DeliveryOptionsFor(subscriptionGenerationWindowDays),
                 new TestNotificationEventWriter(db, clock),
                 new NumberSeriesService(db, timeProvider),
-                otpProtector);
+                otpProtector,
+                refundReplacementConfigurationService: configurationService,
+                refundReplacementMediaStorage: proofStorage);
             return new DeliveryHarness(
                 connection,
                 connectionString,
@@ -2742,6 +2770,8 @@ public sealed class DeliveryServiceTests
                 otpDelivery,
                 otpProtector,
                 realtime,
+                proofStorage,
+                configurationService,
                 service,
                 customer,
                 manager,
@@ -2834,6 +2864,44 @@ public sealed class DeliveryServiceTests
             {
                 throw new InvalidOperationException("Simulated downstream persistence failure.");
             }
+        }
+    }
+
+    internal sealed class CapturingMediaStorage : IMediaStorage
+    {
+        public Dictionary<string, byte[]> Files { get; } = [];
+        public List<string> DeletedKeys { get; } = [];
+
+        public async Task<StoredMediaResult> SaveAsync(
+            string storageKey,
+            Stream content,
+            string contentType,
+            CancellationToken cancellationToken)
+        {
+            using var buffered = new MemoryStream();
+            await content.CopyToAsync(buffered, cancellationToken);
+            Files.Add(storageKey, buffered.ToArray());
+            return new StoredMediaResult(storageKey, contentType, buffered.Length);
+        }
+
+        public Task<StoredMediaContent> OpenReadAsync(string storageKey, CancellationToken cancellationToken)
+        {
+            if (!Files.TryGetValue(storageKey, out var content))
+            {
+                throw new NotFoundException("The media was not found.");
+            }
+
+            return Task.FromResult(new StoredMediaContent(
+                new MemoryStream(content, writable: false),
+                "image/jpeg",
+                content.Length));
+        }
+
+        public Task DeleteIfExistsAsync(string storageKey, CancellationToken cancellationToken)
+        {
+            Files.Remove(storageKey);
+            DeletedKeys.Add(storageKey);
+            return Task.CompletedTask;
         }
     }
 

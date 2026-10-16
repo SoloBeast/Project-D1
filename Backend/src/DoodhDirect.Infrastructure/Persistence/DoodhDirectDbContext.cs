@@ -83,6 +83,7 @@ public sealed class DoodhDirectDbContext(
     public DbSet<DeliveryLocation> DeliveryLocations => Set<DeliveryLocation>();
     public DbSet<NumberSeries> NumberSeries => Set<NumberSeries>();
     public DbSet<EmployeeInvitation> EmployeeInvitations => Set<EmployeeInvitation>();
+    public DbSet<EmployeeInvitationBranch> EmployeeInvitationBranches => Set<EmployeeInvitationBranch>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -144,6 +145,7 @@ public sealed class DoodhDirectDbContext(
         ConfigureDeliveryLocation(modelBuilder, usesSqlite);
         ConfigureNumberSeries(modelBuilder, usesSqlite);
         ConfigureEmployeeInvitation(modelBuilder);
+        ConfigureEmployeeInvitationBranch(modelBuilder);
     }
 
     public void AddAuditLog(AuditLog audit)
@@ -886,8 +888,18 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.AddressSnapshot).HasMaxLength(2000).IsRequired();
         entity.HasIndex(x => new { x.SubscriptionId, x.ScheduledDate }).IsUnique();
         entity.HasIndex(x => new { x.Status, x.ScheduledDate });
+        entity.Property(x => x.IsReplacement).IsRequired().HasDefaultValue(false);
+        entity.Property(x => x.ReplacesSubscriptionDeliveryId).IsRequired(false);
+        entity.Property(x => x.RefundReplacementRequestId).IsRequired(false);
+        entity.Property(x => x.ReplacementReason).HasMaxLength(SubscriptionDelivery.MaximumReplacementReasonLength).IsRequired(false);
+        // D1-D: locate the replacement(s) routed from an approved
+        // refund/replacement request without loading occurrence history.
+        entity.HasIndex(x => x.RefundReplacementRequestId)
+            .HasFilter("[RefundReplacementRequestId] IS NOT NULL");
         entity.HasOne(x => x.Subscription).WithMany(x => x.Deliveries).HasForeignKey(x => x.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.ReplacesSubscriptionDelivery).WithMany(x => x.ReplacementDeliveries).HasForeignKey(x => x.ReplacesSubscriptionDeliveryId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.RefundReplacementRequest).WithMany(x => x.ReplacementDeliveries).HasForeignKey(x => x.RefundReplacementRequestId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureSubscriptionCharge(ModelBuilder modelBuilder)
@@ -1234,14 +1246,21 @@ public sealed class DoodhDirectDbContext(
                 table.HasCheckConstraint(
                     "CK_RefundReplacementRequest_Lifecycle",
                     "([Status] = 'Pending' AND [DecidedByUserId] IS NULL AND [DecidedAtUtc] IS NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
+                    "([Status] = 'AwaitingCustomerChoice' AND [DecidedByUserId] IS NULL AND [DecidedAtUtc] IS NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
                     "([Status] = 'Approved' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
                     "([Status] = 'Rejected' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
-                    "([Status] = 'Completed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL)");
+                    "([Status] = 'Completed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL) OR " +
+                    "([Status] = 'Failed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL) OR " +
+                    "([Status] = 'Cancelled' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL)");
                 table.HasCheckConstraint(
                     "CK_RefundReplacementRequest_TimestampOrder",
                     "([DeadlineUtc] IS NULL OR [DeadlineUtc] > [SubmittedAtUtc]) AND " +
                     "([DecidedAtUtc] IS NULL OR [DecidedAtUtc] >= [SubmittedAtUtc]) AND " +
                     "([CompletedAtUtc] IS NULL OR ([DecidedAtUtc] IS NOT NULL AND [CompletedAtUtc] >= [DecidedAtUtc]))");
+                table.HasCheckConstraint(
+                    "CK_RefundReplacementRequest_ExactlyOneSource",
+                    "(([OrderId] IS NULL AND [SubscriptionDeliveryId] IS NOT NULL) OR " +
+                    "([OrderId] IS NOT NULL AND [SubscriptionDeliveryId] IS NULL))");
             }
         });
         entity.HasKey(x => x.Id);
@@ -1262,12 +1281,37 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.DecisionRemarks).HasMaxLength(1000);
         entity.Property(x => x.CompletedAt).HasColumnName("CompletedAtUtc");
         entity.Property(x => x.CompletionRemarks).HasMaxLength(1000);
+        entity.Property(x => x.OrderId).IsRequired(false);
+        entity.Property(x => x.SubscriptionDeliveryId).IsRequired(false);
+        entity.Property(x => x.CustomerChoice).HasConversion<string>().HasMaxLength(30).IsRequired(false);
+        entity.Property(x => x.CustomerChoiceAt).HasColumnName("CustomerChoiceAtUtc");
+        var refundRowVersion = entity.Property(x => x.RowVersion);
+        if (usesSqlite)
+        {
+            refundRowVersion.IsConcurrencyToken().ValueGeneratedNever();
+        }
+        else
+        {
+            refundRowVersion.IsRowVersion();
+        }
+        entity.Property(x => x.FailedAt).HasColumnName("FailedAtUtc");
+        entity.Property(x => x.DeliveryFailWindowHoursSnapshot);
+        entity.Property(x => x.DeliveryFailDeductionPercentageSnapshot).HasPrecision(5, 2);
+        entity.Property(x => x.FailureReasonSnapshot).HasMaxLength(120);
         entity.HasIndex(x => x.DeliveryId)
             .IsUnique()
-            .HasFilter("[Status] IN ('Pending', 'Approved')");
+            .HasFilter("[Status] IN ('Pending', 'Approved', 'AwaitingCustomerChoice')");
+        entity.HasIndex(x => x.SubscriptionDeliveryId)
+            .HasFilter("[SubscriptionDeliveryId] IS NOT NULL");
         entity.HasIndex(x => new { x.CustomerId, x.SubmittedAt });
         entity.HasIndex(x => new { x.BranchId, x.Status, x.SubmittedAt });
+        // D1-C: the timeout worker filters expired awaiting-choice tickets at
+        // the database level (Status + persisted Deadline) without loading
+        // history into memory.
+        entity.HasIndex(x => new { x.Status, x.Deadline })
+            .HasFilter("[Status] = 'AwaitingCustomerChoice'");
         entity.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.SubscriptionDelivery).WithMany().HasForeignKey(x => x.SubscriptionDeliveryId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Delivery).WithMany().HasForeignKey(x => x.DeliveryId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
@@ -1543,6 +1587,22 @@ public sealed class DoodhDirectDbContext(
         entity.HasIndex(x => new { x.Status, x.ExpiresAt });
         entity.HasIndex(x => new { x.BranchId, x.Status }).HasFilter("[BranchId] IS NOT NULL");
         entity.HasIndex(x => new { x.CreatedByUserId, x.CreatedAt });
+    }
+
+    /// <summary>
+    /// Stage 2 multi-branch Dairy Manager: one link row per invited branch.
+    /// The unique index prevents duplicate branch rows per invitation (retry
+    /// safety); cascade delete follows the parent invitation.
+    /// </summary>
+    private static void ConfigureEmployeeInvitationBranch(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<EmployeeInvitationBranch>();
+        entity.ToTable("EmployeeInvitationBranch");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.HasIndex(x => new { x.InvitationId, x.BranchId }).IsUnique();
+        entity.HasIndex(x => x.BranchId);
+        entity.HasOne(x => x.Invitation).WithMany(x => x.BranchLinks).HasForeignKey(x => x.InvitationId).OnDelete(DeleteBehavior.Cascade);
     }
 
     private static void ConfigureNumberSeries(ModelBuilder modelBuilder, bool usesSqlite)

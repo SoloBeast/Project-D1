@@ -232,8 +232,6 @@ void main() {
         await tester.tap(find.text('Preview order'));
         await tester.pumpAndSettle();
 
-        expect(find.text('Server quote'), findsOneWidget);
-        expect(find.text('Server verified'), findsOneWidget);
         expect(find.text('Whole Milk × 2'), findsOneWidget);
         expect(find.text('Subtotal'), findsOneWidget);
         // The subtotal matches the cart line total, so it appears in both the
@@ -245,15 +243,9 @@ void main() {
         expect(
           find.bySemanticsLabel(
             RegExp(
-              r'Authoritative checkout quote for Home\. '
+              r'Checkout quote for Home\. '
               r'Final amount payable ₹110\.00',
             ),
-          ),
-          findsOneWidget,
-        );
-        expect(
-          find.bySemanticsLabel(
-            RegExp(r'Success: Server verified'),
           ),
           findsOneWidget,
         );

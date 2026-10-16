@@ -98,6 +98,31 @@ void main() {
         SubscriptionDeliveryStatus.unknown,
       );
     });
+
+    test('calendar occurrences parse replacement metadata; replacements never offer skip', () {
+      // Ordinary occurrences stay unflagged with Skip available.
+      final ordinary = SubscriptionDelivery.fromJson(deliveryJson());
+      expect(ordinary.isReplacement, isFalse);
+      expect(ordinary.canSkip, isTrue);
+
+      // The backend flag maps directly — never inferred client-side.
+      final replacement = SubscriptionDelivery.fromJson(
+        deliveryJson(publicId: 'delivery-r')..['isReplacement'] = true,
+      );
+      expect(replacement.isReplacement, isTrue);
+      expect(replacement.status, SubscriptionDeliveryStatus.scheduled);
+      expect(replacement.canSkip, isFalse);
+      // Status-level semantics are untouched; the delivery-level gate
+      // carries the replacement rule.
+      expect(replacement.status.canSkip, isTrue);
+
+      // Legacy payloads without the flag keep ordinary semantics.
+      expect(deliveryJson().containsKey('isReplacement'), isFalse);
+      expect(
+        SubscriptionDelivery.fromJson(deliveryJson()).canSkip,
+        isTrue,
+      );
+    });
   });
 
   group('subscription repository', () {

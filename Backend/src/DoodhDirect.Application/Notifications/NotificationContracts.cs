@@ -29,6 +29,41 @@ public static class NotificationEventTypes
     public const string ComplaintUpdated = "COMPLAINT_UPDATED";
     public const string ReplacementUpdated = "REPLACEMENT_UPDATED";
     public const string RefundReplacementSubmitted = "REFUND_REPLACEMENT_SUBMITTED";
+    /// <summary>
+    /// D1-A: a subscription delivery failed and its remedy ticket awaits the
+    /// customer's Refund / Re-Delivery choice before the persisted deadline.
+    /// </summary>
+    public const string RefundReplacementChoiceRequired = "REFUND_REPLACEMENT_CHOICE_REQUIRED";
+    /// <summary>
+    /// D1-B: the customer recorded a Refund / Re-Delivery choice. Fanned out
+    /// to branch Admin / Dairy Manager / Support staff (one event per
+    /// recipient with a deterministic key).
+    /// </summary>
+    public const string RefundReplacementChoiceRecorded = "REFUND_REPLACEMENT_CHOICE_RECORDED";
+    /// <summary>
+    /// D1-C: the choice deadline passed with no customer choice, so the system
+    /// automatically selected Refund, approved it, and credited the wallet.
+    /// One deterministic event per ticket (key contains the ticket reference).
+    /// </summary>
+    public const string RefundReplacementAutoRefunded = "REFUND_REPLACEMENT_AUTO_REFUNDED";
+    /// <summary>
+    /// D1-D slice 5: the subscription was cancelled while an approved
+    /// re-delivery replacement was still pending, so the replacement was
+    /// voided and the frozen entitlement share (less the ticket's snapshotted
+    /// deduction) was credited to the wallet. One deterministic event per
+    /// ticket (key contains the ticket reference).
+    /// </summary>
+    public const string RefundReplacementCancelRefunded = "REFUND_REPLACEMENT_CANCEL_REFUNDED";
+    /// <summary>
+    /// D1-D slice 5.1: a failed re-delivery replacement's refund-only remedy
+    /// was successfully resolved (timeout auto-refund), so the original
+    /// approved ReDelivery ticket — whose remedy can never be fulfilled — was
+    /// closed with an explicit non-delivery outcome. No second refund moves;
+    /// the wallet credit named in the payload belongs to the refunding
+    /// (second) ticket. One deterministic event per original ticket (key
+    /// contains the original ticket reference).
+    /// </summary>
+    public const string RedeliveryFailedResolved = "REFUND_REPLACEMENT_REDELIVERY_FAILED_RESOLVED";
     public const string RefundReplacementDecided = "REFUND_REPLACEMENT_DECIDED";
     public const string RefundReplacementCompleted = "REFUND_REPLACEMENT_COMPLETED";
 
@@ -77,6 +112,11 @@ public static class NotificationEventTypes
         ComplaintUpdated,
         ReplacementUpdated,
         RefundReplacementSubmitted,
+        RefundReplacementChoiceRequired,
+        RefundReplacementChoiceRecorded,
+        RefundReplacementAutoRefunded,
+        RefundReplacementCancelRefunded,
+        RedeliveryFailedResolved,
         RefundReplacementDecided,
         RefundReplacementCompleted
     ];

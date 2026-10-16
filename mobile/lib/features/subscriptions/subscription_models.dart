@@ -192,6 +192,10 @@ class SubscriptionDelivery {
     required this.branchName,
     required this.address,
     required this.statusChangedAt,
+    // D1-D slice 7.2: read-model flag mapped directly from the persisted
+    // occurrence. Defaults to false so older cached payloads and existing
+    // constructions keep ordinary semantics.
+    this.isReplacement = false,
   });
 
   factory SubscriptionDelivery.fromJson(Map<String, dynamic> json) =>
@@ -208,6 +212,7 @@ class SubscriptionDelivery {
         branchName: json['branchName'] as String,
         address: json['address'] as String,
         statusChangedAt: _optionalDateTime(json['statusChangedAt']),
+        isReplacement: (json['isReplacement'] as bool?) ?? false,
       );
 
   final String publicId;
@@ -220,6 +225,12 @@ class SubscriptionDelivery {
   final String branchName;
   final String address;
   final DateTime? statusChangedAt;
+  final bool isReplacement;
+
+  /// Individual Skip availability. A re-delivery replacement never offers
+  /// per-date Skip — the backend rejects it (vacation/skip guards) and
+  /// fulfillment requires an explicit operational decision instead.
+  bool get canSkip => status.canSkip && !isReplacement;
 }
 
 class SubscriptionDetails {

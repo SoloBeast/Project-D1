@@ -351,11 +351,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Dairy Manager').last);
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byType(DropdownButtonFormField<EmployeeBranchOption>),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Main Branch (MAIN)').last);
+      // Dairy Managers use the multi-select: check the Main Branch row.
+      await tester.tap(find.byType(CheckboxListTile).first);
       await tester.pumpAndSettle();
 
       await tester.tap(find.widgetWithText(FilledButton, 'Create'));
@@ -365,6 +362,11 @@ void main() {
       expect(find.text('Invitation link'), findsOneWidget);
       expect(find.text('/invite/inv-token-9'), findsOneWidget);
       expect(find.text('Expires: 01-09-2026'), findsOneWidget);
+      // Invitation review names every invited branch.
+      expect(
+        find.text('Invited branches: Main Branch (MAIN)'),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
@@ -859,6 +861,453 @@ void main() {
       expect(find.text('Home'), findsOneWidget);
     });
   });
+
+  group('employee multi-branch dairy manager', () {
+    Future<void> fillCreateBasics(WidgetTester tester) async {
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Full name *'),
+        'Meera Nair',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Mobile number *'),
+        '9876543212',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Email *'),
+        'meera@example.com',
+      );
+      await tester.tap(find.byType(DropdownButtonFormField<EmployeeRole>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dairy Manager').last);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('create submits every selected branch as branchIds', (
+      tester,
+    ) async {
+      final controller = _SeededEmployeeController(
+        EmployeeState(
+          branchOptions: [
+            _branchOption(),
+            _branchOption(id: 9, code: 'NORTH', name: 'North Branch'),
+          ],
+        ),
+      );
+      await _pumpConfig(
+        tester,
+        const CreateEmployeeScreen(),
+        controller,
+        routePath: '/admin/employees/new',
+      );
+      await fillCreateBasics(tester);
+
+      // The multi-select names every active branch; check two of them.
+      expect(find.byType(BranchMultiSelect), findsOneWidget);
+      expect(find.text('Main Branch (MAIN)'), findsOneWidget);
+      expect(find.text('North Branch (NORTH)'), findsOneWidget);
+      await tester.tap(find.byType(CheckboxListTile).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(CheckboxListTile).last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.pumpAndSettle();
+
+      expect(controller.createCount, 1);
+      final request = controller.lastCreateRequest;
+      expect(request?.roleCode, 'DAIRY_MANAGER');
+      // The authoritative set carries both branches; the legacy single
+      // field is omitted so the server never reinterprets the intent.
+      expect(request?.branchIds, [7, 9]);
+      expect(request?.branchId, isNull);
+    });
+
+    testWidgets('create requires at least one branch for dairy managers', (
+      tester,
+    ) async {
+      final controller = _SeededEmployeeController(
+        EmployeeState(branchOptions: [_branchOption()]),
+      );
+      await _pumpConfig(
+        tester,
+        const CreateEmployeeScreen(),
+        controller,
+        routePath: '/admin/employees/new',
+      );
+      await fillCreateBasics(tester);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Select at least one branch.'), findsOneWidget);
+      expect(controller.createCount, 0);
+    });
+
+    testWidgets('inactive branches are never offered for new assignments', (
+      tester,
+    ) async {
+      final controller = _SeededEmployeeController(
+        EmployeeState(
+          branchOptions: [
+            _branchOption(),
+            _branchOption(
+              id: 11,
+              code: 'EAST',
+              name: 'East Archived Branch',
+              isActive: false,
+            ),
+          ],
+        ),
+      );
+      await _pumpConfig(
+        tester,
+        const CreateEmployeeScreen(),
+        controller,
+        routePath: '/admin/employees/new',
+      );
+      await fillCreateBasics(tester);
+
+      // Only the active branch is selectable; the inactive one is absent.
+      expect(find.byType(CheckboxListTile), findsOneWidget);
+      expect(find.text('Main Branch (MAIN)'), findsOneWidget);
+      expect(find.text('East Archived Branch (EAST)'), findsNothing);
+    });
+
+    testWidgets('other roles keep the single-branch dropdown', (
+      tester,
+    ) async {
+      final controller = _SeededEmployeeController(
+        EmployeeState(branchOptions: [_branchOption()]),
+      );
+      await _pumpConfig(
+        tester,
+        const CreateEmployeeScreen(),
+        controller,
+        routePath: '/admin/employees/new',
+      );
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Full name *'),
+        'Suresh Kumar',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Mobile number *'),
+        '9876543211',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Email *'),
+        'suresh@example.com',
+      );
+      await tester.tap(find.byType(DropdownButtonFormField<EmployeeRole>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delivery Boy / Delivery Staff').last);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(BranchMultiSelect), findsNothing);
+      expect(
+        find.byType(DropdownButtonFormField<EmployeeBranchOption>),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byType(DropdownButtonFormField<EmployeeBranchOption>),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Main Branch (MAIN)').last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+      await tester.pumpAndSettle();
+
+      expect(controller.createCount, 1);
+      expect(controller.lastCreateRequest?.branchId, 7);
+      expect(controller.lastCreateRequest?.branchIds, isNull);
+    });
+
+    testWidgets('edit shows every assignment and preserves them on save', (
+      tester,
+    ) async {
+      final controller = _SeededEmployeeController(
+        EmployeeState(
+          branchOptions: [
+            _branchOption(),
+            _branchOption(id: 9, code: 'NORTH', name: 'North Branch'),
+          ],
+        ),
+      );
+      final employee = _employee(
+        roleCode: 'DAIRY_MANAGER',
+        roleName: 'Dairy Manager',
+        branchId: 7,
+        branchName: 'Main Branch',
+        branchAssignments: const [
+          EmployeeBranchAssignment(branchId: 7, branchName: 'Main Branch'),
+          EmployeeBranchAssignment(branchId: 9, branchName: 'North Branch'),
+        ],
+      );
+      await _pumpConfig(
+        tester,
+        EmployeeEditScreen(employeeId: 42, employee: employee),
+        controller,
+        routePath: '/admin/employees/:id',
+        initialPath: '/admin/employees/42',
+      );
+
+      // Both assignments render checked in the multi-select.
+      expect(
+        find.bySemanticsLabel('Assigned branches, 2 selected'),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(CheckboxListTile, 'Main Branch (MAIN)'),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(CheckboxListTile, 'North Branch (NORTH)'),
+        findsOneWidget,
+      );
+
+      // Saving without touching branches omits the branch fields so the
+      // server keeps the persisted set.
+      await tester.tap(find.widgetWithText(FilledButton, 'Save changes'));
+      await tester.pumpAndSettle();
+
+      expect(controller.updateCount, 1);
+      expect(controller.lastUpdateRequest?.branchIds, isNull);
+      expect(controller.lastUpdateRequest?.branchId, isNull);
+    });
+
+    testWidgets('edit persists an added branch assignment', (tester) async {
+      final controller = _SeededEmployeeController(
+        EmployeeState(
+          branchOptions: [
+            _branchOption(),
+            _branchOption(id: 9, code: 'NORTH', name: 'North Branch'),
+          ],
+        ),
+      );
+      final employee = _employee(
+        roleCode: 'DAIRY_MANAGER',
+        roleName: 'Dairy Manager',
+        branchAssignments: const [
+          EmployeeBranchAssignment(branchId: 7, branchName: 'Main Branch'),
+        ],
+      );
+      await _pumpConfig(
+        tester,
+        EmployeeEditScreen(employeeId: 42, employee: employee),
+        controller,
+        routePath: '/admin/employees/:id',
+        initialPath: '/admin/employees/42',
+      );
+
+      await tester.tap(
+        find.widgetWithText(CheckboxListTile, 'North Branch (NORTH)'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save changes'));
+      await tester.pumpAndSettle();
+
+      expect(controller.updateCount, 1);
+      expect(controller.lastUpdateRequest?.branchIds, [7, 9]);
+    });
+
+    testWidgets('edit persists a removed branch assignment', (tester) async {
+      final controller = _SeededEmployeeController(
+        EmployeeState(
+          branchOptions: [
+            _branchOption(),
+            _branchOption(id: 9, code: 'NORTH', name: 'North Branch'),
+          ],
+        ),
+      );
+      final employee = _employee(
+        roleCode: 'DAIRY_MANAGER',
+        roleName: 'Dairy Manager',
+        branchId: 7,
+        branchName: 'Main Branch',
+        branchAssignments: const [
+          EmployeeBranchAssignment(branchId: 7, branchName: 'Main Branch'),
+          EmployeeBranchAssignment(branchId: 9, branchName: 'North Branch'),
+        ],
+      );
+      await _pumpConfig(
+        tester,
+        EmployeeEditScreen(employeeId: 42, employee: employee),
+        controller,
+        routePath: '/admin/employees/:id',
+        initialPath: '/admin/employees/42',
+      );
+
+      await tester.tap(
+        find.widgetWithText(CheckboxListTile, 'Main Branch (MAIN)'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save changes'));
+      await tester.pumpAndSettle();
+
+      expect(controller.updateCount, 1);
+      expect(controller.lastUpdateRequest?.branchIds, [9]);
+    });
+
+    testWidgets('list shows every permitted assignment without duplicates', (
+      tester,
+    ) async {
+      final employee = _employee(
+        roleCode: 'DAIRY_MANAGER',
+        roleName: 'Dairy Manager',
+        branchId: 7,
+        branchName: 'Main Branch',
+        branchAssignments: const [
+          EmployeeBranchAssignment(branchId: 7, branchName: 'Main Branch'),
+          EmployeeBranchAssignment(branchId: 9, branchName: 'North Branch'),
+        ],
+      );
+      await _pumpConfig(
+        tester,
+        const EmployeeListScreen(),
+        _SeededEmployeeController(
+          EmployeeState(
+            employees: [
+              employee,
+              // A repeated row for the same account (e.g. visible across
+              // two branches) must not render a second card.
+              _employee(displayName: 'Duplicate Row'),
+            ],
+            branchOptions: [
+              _branchOption(),
+              _branchOption(id: 9, code: 'NORTH', name: 'North Branch'),
+            ],
+          ),
+        ),
+      );
+
+      expect(
+        find.text('Branches: Main Branch, North Branch'),
+        findsOneWidget,
+      );
+      expect(find.text('Ramesh Kumar'), findsOneWidget);
+      expect(find.text('Duplicate Row'), findsNothing);
+    });
+
+    testWidgets('list labels retained inactive assignments', (tester) async {
+      final employee = _employee(
+        roleCode: 'DAIRY_MANAGER',
+        roleName: 'Dairy Manager',
+        branchId: 7,
+        branchName: 'Main Branch',
+        branchAssignments: const [
+          EmployeeBranchAssignment(branchId: 7, branchName: 'Main Branch'),
+          EmployeeBranchAssignment(branchId: 11, branchName: 'East Branch'),
+        ],
+      );
+      await _pumpConfig(
+        tester,
+        const EmployeeListScreen(),
+        _SeededEmployeeController(
+          EmployeeState(
+            employees: [employee],
+            branchOptions: [_branchOption()],
+          ),
+        ),
+      );
+
+      // Retained history stays visible and is marked inactive instead of
+      // being dropped.
+      expect(
+        find.text('Branches: Main Branch, East Branch (inactive)'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('read-only viewers see assignments but no manage actions', (
+      tester,
+    ) async {
+      final employee = _employee(
+        roleCode: 'DAIRY_MANAGER',
+        roleName: 'Dairy Manager',
+        branchId: 7,
+        branchName: 'Main Branch',
+        branchAssignments: const [
+          EmployeeBranchAssignment(branchId: 7, branchName: 'Main Branch'),
+          EmployeeBranchAssignment(branchId: 9, branchName: 'North Branch'),
+        ],
+      );
+      await _pumpConfig(
+        tester,
+        const EmployeeListScreen(),
+        _SeededEmployeeController(
+          EmployeeState(
+            employees: [employee],
+            branchOptions: [
+              _branchOption(),
+              _branchOption(id: 9, code: 'NORTH', name: 'North Branch'),
+            ],
+          ),
+        ),
+        permissions: const [kEmployeesReadPermission],
+      );
+
+      expect(
+        find.text('Branches: Main Branch, North Branch'),
+        findsOneWidget,
+      );
+      expect(find.text('Deactivate'), findsNothing);
+      expect(find.byTooltip('Edit Ramesh Kumar'), findsNothing);
+      expect(find.text('Create employee'), findsNothing);
+    });
+
+    testWidgets('invitation review names every invited branch', (
+      tester,
+    ) async {
+      await _pumpConfig(
+        tester,
+        const EmployeeInvitationScreen(token: 'inv-token-9'),
+        _SeededEmployeeController(
+          EmployeeState(
+            invitationVerification: _verification(
+              roleCode: 'DAIRY_MANAGER',
+              branchId: 7,
+              branchCode: 'MAIN',
+              branchName: 'Main Branch',
+              branchAssignments: const [
+                EmployeeBranchAssignment(
+                  branchId: 7,
+                  branchName: 'Main Branch',
+                ),
+                EmployeeBranchAssignment(
+                  branchId: 9,
+                  branchName: 'North Branch',
+                ),
+              ],
+            ),
+            branchOptions: const [],
+          ),
+        ),
+        routePath: '/invite/:token',
+        initialPath: '/invite/inv-token-9',
+      );
+
+      expect(find.text('Your assigned profile'), findsOneWidget);
+      expect(find.text('Role: Dairy Manager'), findsOneWidget);
+      expect(
+        find.text('Branches: Main Branch, North Branch'),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'Your role and branches were assigned by your '
+          'administrator. They cannot be changed here.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(DropdownButtonFormField<EmployeeRole>), findsNothing);
+      expect(
+        find.byType(DropdownButtonFormField<EmployeeBranchOption>),
+        findsNothing,
+      );
+    });
+  });
 }
 
 bool _obscureText(WidgetTester tester, Finder field) => tester
@@ -1130,6 +1579,7 @@ Employee _employee({
   String? roleName = 'Delivery Boy',
   int? branchId = 7,
   String? branchName = 'Main Branch',
+  List<EmployeeBranchAssignment> branchAssignments = const [],
   bool isActive = true,
   int? invitationId = 9,
   EmployeeInvitationStatus? invitationStatus = EmployeeInvitationStatus.invited,
@@ -1145,6 +1595,7 @@ Employee _employee({
   roleName: roleName,
   branchId: branchId,
   branchName: branchName,
+  branchAssignments: branchAssignments,
   isActive: isActive,
   invitationId: invitationId,
   invitationStatus: invitationStatus,
@@ -1153,14 +1604,19 @@ Employee _employee({
   createdAt: DateTime(2026, 8, 1, 10),
 );
 
-EmployeeBranchOption _branchOption({int id = 7}) => EmployeeBranchOption(
+EmployeeBranchOption _branchOption({
+  int id = 7,
+  String code = 'MAIN',
+  String name = 'Main Branch',
+  bool isActive = true,
+}) => EmployeeBranchOption(
   id: id,
   publicId: 'branch-$id',
-  code: 'MAIN',
-  name: 'Main Branch',
+  code: code,
+  name: name,
   city: 'Mumbai',
   state: 'MH',
-  isActive: true,
+  isActive: isActive,
 );
 
 EmployeeInvitationResult _invitation({
@@ -1181,6 +1637,7 @@ EmployeeInvitationVerification _verification({
   String? branchCode,
   String? branchName,
   String? reason,
+  List<EmployeeBranchAssignment> branchAssignments = const [],
 }) => EmployeeInvitationVerification(
   isValid: isValid,
   displayName: 'Ramesh Kumar',
@@ -1191,4 +1648,5 @@ EmployeeInvitationVerification _verification({
   branchCode: branchCode,
   branchName: branchName,
   reason: reason,
+  branchAssignments: branchAssignments,
 );

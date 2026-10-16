@@ -2,6 +2,7 @@ using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Common;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.RefundReplacement;
 using DoodhDirect.Domain.Setup;
 
 namespace DoodhDirect.Domain.Subscriptions;
@@ -155,6 +156,83 @@ public sealed class Subscription : AuditableEntity
             BranchNameSnapshot,
             AddressSnapshot));
     }
+
+    /// <summary>
+    /// D1-D: creates a replacement occurrence for a failed delivery as a NEW
+    /// <see cref="SubscriptionDelivery"/> row in <c>Scheduled</c> status.
+    /// The failed source row is preserved untouched. The replacement copies the
+    /// source's frozen quantity/branch/snapshots/slot and links back to the
+    /// source occurrence and the originating refund/replacement request.
+    /// Unlike <see cref="AddDelivery"/>, the replacement date MAY fall after
+    /// <see cref="EndDate"/> (the purchase term itself is never extended);
+    /// the per-date uniqueness guard still applies. Creation never consumes
+    /// entitlement and never touches financial fields — fulfillment happens
+    /// later through <see cref="MarkDelivered"/> on the replacement row.
+    /// At most one replacement may exist per original failure.
+    /// </summary>
+    public SubscriptionDelivery AddReplacementDelivery(
+        SubscriptionDelivery failedDelivery,
+        DateOnly replacementDate,
+        long refundReplacementRequestId,
+        string? reason)
+    {
+        ArgumentNullException.ThrowIfNull(failedDelivery);
+        EnsureOwned(failedDelivery);
+        if (failedDelivery.Status != SubscriptionDeliveryStatus.Failed)
+        {
+            throw new InvalidOperationException("Only a failed delivery can be replaced.");
+        }
+        if (failedDelivery.IsReplacement)
+        {
+            throw new InvalidOperationException("A replacement delivery cannot itself be replaced.");
+        }
+        if (IsReplaced(failedDelivery))
+        {
+            throw new InvalidOperationException("The failed delivery has already been replaced.");
+        }
+        if (refundReplacementRequestId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(refundReplacementRequestId));
+        }
+        if (Deliveries.Any(x => x.ScheduledDate == replacementDate))
+        {
+            throw new InvalidOperationException("A delivery already exists for this date.");
+        }
+
+        var normalizedReason = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+        if (normalizedReason is not null
+            && normalizedReason.Length > SubscriptionDelivery.MaximumReplacementReasonLength)
+        {
+            throw new ArgumentException(
+                $"The replacement reason cannot exceed {SubscriptionDelivery.MaximumReplacementReasonLength} characters.",
+                nameof(reason));
+        }
+
+        var replacement = new SubscriptionDelivery(
+            replacementDate,
+            failedDelivery.Slot,
+            failedDelivery.BranchId,
+            failedDelivery.Quantity,
+            failedDelivery.BranchCodeSnapshot,
+            failedDelivery.BranchNameSnapshot,
+            failedDelivery.AddressSnapshot)
+        {
+            IsReplacement = true,
+            ReplacesSubscriptionDelivery = failedDelivery,
+            ReplacesSubscriptionDeliveryId = failedDelivery.Id > 0 ? failedDelivery.Id : null,
+            RefundReplacementRequestId = refundReplacementRequestId,
+            ReplacementReason = normalizedReason,
+        };
+        Deliveries.Add(replacement);
+        return replacement;
+    }
+
+    private bool IsReplaced(SubscriptionDelivery failedDelivery) =>
+        Deliveries.Any(x =>
+            ReferenceEquals(x.ReplacesSubscriptionDelivery, failedDelivery)
+            || (x.ReplacesSubscriptionDeliveryId.HasValue
+                && failedDelivery.Id > 0
+                && x.ReplacesSubscriptionDeliveryId == failedDelivery.Id));
 
     /// <summary>
     /// Freezes the charge snapshot for this subscription. Must be called once, before
@@ -350,6 +428,9 @@ public sealed class SubscriptionSchedule : Entity
 
 public sealed class SubscriptionDelivery : PublicEntity
 {
+    /// <summary>D1-D: maximum length of the replacement reason snapshot.</summary>
+    public const int MaximumReplacementReasonLength = 200;
+
     private SubscriptionDelivery() { }
 
     internal SubscriptionDelivery(
@@ -385,14 +466,38 @@ public sealed class SubscriptionDelivery : PublicEntity
     public string AddressSnapshot { get; private set; } = string.Empty;
     public DateTime? StatusChangedAt { get; private set; }
 
+    /// <summary>
+    /// D1-D: true for replacement occurrences created via
+    /// <see cref="Subscription.AddReplacementDelivery"/>. Always false for
+    /// original term occurrences.
+    /// </summary>
+    public bool IsReplacement { get; internal set; }
+    /// <summary>D1-D: the failed occurrence this replacement fulfills. Null for originals.</summary>
+    public long? ReplacesSubscriptionDeliveryId { get; internal set; }
+    /// <summary>D1-D: the approved refund/replacement request that originated this replacement.</summary>
+    public long? RefundReplacementRequestId { get; internal set; }
+    /// <summary>D1-D: short operational reason snapshot. Null for originals.</summary>
+    public string? ReplacementReason { get; internal set; }
+
     public Subscription Subscription { get; private set; } = null!;
     public Branch Branch { get; private set; } = null!;
+    public SubscriptionDelivery? ReplacesSubscriptionDelivery { get; internal set; }
+    public RefundReplacementRequest? RefundReplacementRequest { get; internal set; }
+    public ICollection<SubscriptionDelivery> ReplacementDeliveries { get; private set; } = [];
 
     internal void Skip(DateTime indiaLocalNow, TimeSpan cutoff)
     {
         EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (Status == SubscriptionDeliveryStatus.Skipped) return;
         EnsureScheduled();
+        // D1-D slice 2.1 (Rule 7): a re-delivery replacement must never be
+        // silently consumed by ordinary vacation/skip behavior. A conflicting
+        // skip requires an explicit operational decision outside this path.
+        if (IsReplacement)
+        {
+            throw new InvalidOperationException(
+                "A re-delivery replacement cannot be skipped as vacation; it requires an explicit operational decision.");
+        }
 
         var deliveryStarts = DateTime.SpecifyKind(
             ScheduledDate.ToDateTime(TimeOnly.MinValue),

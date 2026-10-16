@@ -119,7 +119,9 @@ public sealed class AuthenticationService(
             authUser.Roles,
             authUser.Permissions,
             authUser.BranchIds,
-            now);
+            now,
+            storedToken.User.AuthorizationVersion,
+            authUser.BranchHistoryIds);
         storedToken.Revoke(now, tokenService.HashRefreshToken(tokens.RefreshToken));
         session.Touch(now, device.IpAddress);
         dbContext.RefreshTokens.Add(new RefreshToken(storedToken.UserId, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAt, session.Id, now));
@@ -356,7 +358,9 @@ public sealed class AuthenticationService(
             authUser.Roles,
             authUser.Permissions,
             authUser.BranchIds,
-            now);
+            now,
+            user.AuthorizationVersion,
+            authUser.BranchHistoryIds);
         dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAt, session.Id, now));
         dbContext.AddAuditLog(new AuditLog(
             user.Id,

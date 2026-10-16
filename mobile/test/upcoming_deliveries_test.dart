@@ -339,6 +339,30 @@ void main() {
     expect(find.text('No delivery items to show'), findsNothing);
   });
 
+  testWidgets('D1-D slice 7: voided (cancelled) deliveries are excluded', (
+    tester,
+  ) async {
+    await _pumpHome(
+      tester,
+      deliveries: [
+        _delivery(
+          id: 'd-void',
+          date: _day(1),
+          status: DeliveryStatus.cancelled,
+        ),
+        _delivery(id: 'd-next', date: _day(2), reference: 'REF-NEXT'),
+      ],
+    );
+
+    // The cancelled row never renders as an upcoming card.
+    expect(
+      find.byKey(const ValueKey('home-upcoming-cancel-d-void')),
+      findsNothing,
+    );
+    expect(find.text('Cancelled'), findsNothing);
+    expect(find.text('No delivery items to show'), findsNothing);
+  });
+
   testWidgets(
     'a scheduled TODAY calendar occurrence shows as an upcoming card with Skip '
     '(business bug: un-materialized delivery)',

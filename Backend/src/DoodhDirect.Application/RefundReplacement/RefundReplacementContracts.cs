@@ -10,6 +10,18 @@ public static class RefundReplacementConfigurationKeys
 {
     public const string Prefix = "RefundReplacement.";
     public const string WindowHours = Prefix + "WindowHours";
+    /// <summary>
+    /// D1-A: hours after the delivery-failed timestamp during which the
+    /// customer must choose Refund or Re-Delivery. Separate from
+    /// <see cref="WindowHours"/>; snapshotted onto each delivery-fail ticket.
+    /// </summary>
+    public const string DeliveryFailWindowHours = Prefix + "DeliveryFailWindowHours";
+    /// <summary>
+    /// D1-A: deduction % applied only by the later automatic-timeout refund.
+    /// Stored/configured now, snapshotted onto each delivery-fail ticket,
+    /// never calculated in this stage.
+    /// </summary>
+    public const string DeliveryFailDeductionPercentage = Prefix + "DeliveryFailDeductionPercentage";
 }
 
 /// <summary>
@@ -20,10 +32,14 @@ public static class RefundReplacementConfigurationKeys
 /// </summary>
 public sealed record RefundReplacementConfigurationResult(
     int WindowHours,
+    int DeliveryFailWindowHours,
+    decimal DeliveryFailDeductionPercentage,
     string Status);
 
 public sealed record UpdateRefundReplacementConfigurationRequest(
-    int? WindowHours);
+    int? WindowHours,
+    int? DeliveryFailWindowHours = null,
+    decimal? DeliveryFailDeductionPercentage = null);
 
 public interface IRefundReplacementConfigurationService
 {
@@ -85,14 +101,24 @@ public sealed record RefundReplacementImageResult(
 
 /// <summary>
 /// Full detail for one refund/replacement request (customer "my requests" and
-/// staff detail views share this shape).
+/// staff detail views share this shape). D1-D slice 6.1: for an approved
+/// re-delivery ticket the replacement fields are populated from the persisted
+/// replacement occurrence on every read, not only on the approval response.
+/// <c>ReplacementDeliveryNumber</c> is the operational delivery's public
+/// DELIVERY-series number and appears only once the replacement has
+/// materialized through the normal pipeline; it is never invented.
 /// </summary>
 public sealed record RefundReplacementRequestResult(
     Guid RequestId,
     string RequestNumber,
-    long OrderId,
-    Guid OrderPublicId,
-    string OrderNumber,
+    long? OrderId,
+    Guid? OrderPublicId,
+    string? OrderNumber,
+    Guid? SubscriptionDeliveryPublicId,
+    DateTime? FailedAt,
+    int? DeliveryFailWindowHoursSnapshot,
+    decimal? DeliveryFailDeductionPercentageSnapshot,
+    string? FailureReasonSnapshot,
     Guid DeliveryId,
     string? DeliveryNumber,
     long CustomerId,
@@ -106,6 +132,8 @@ public sealed record RefundReplacementRequestResult(
     RefundReplacementType Type,
     RefundReplacementSource Source,
     RefundReplacementStatus Status,
+    CustomerChoice? CustomerChoice,
+    DateTime? CustomerChoiceAt,
     string Reason,
     string? Remarks,
     DateTime SubmittedAt,
@@ -119,7 +147,16 @@ public sealed record RefundReplacementRequestResult(
     DateTime? CompletedAt,
     string? CompletionRemarks,
     bool ProofImageRequired,
-    IReadOnlyCollection<RefundReplacementImageResult> Images);
+    IReadOnlyCollection<RefundReplacementImageResult> Images,
+    Guid? ReplacementDeliveryPublicId = null,
+    DateOnly? ReplacementDate = null,
+    string? ReplacementDeliveryNumber = null,
+    /// <summary>
+    /// Audit remediation: true when this ticket's failed occurrence is itself
+    /// a re-delivery replacement, so Refund is the only available remedy and
+    /// rejection is refused. Computed from the persisted occurrence link.
+    /// </summary>
+    bool IsRefundOnly = false);
 
 /// <summary>
 /// Row for the branch-scoped staff list. Images are summarized by count so the
@@ -128,9 +165,14 @@ public sealed record RefundReplacementRequestResult(
 public sealed record RefundReplacementListItem(
     Guid RequestId,
     string RequestNumber,
-    long OrderId,
-    Guid OrderPublicId,
-    string OrderNumber,
+    long? OrderId,
+    Guid? OrderPublicId,
+    string? OrderNumber,
+    Guid? SubscriptionDeliveryPublicId,
+    DateTime? FailedAt,
+    int? DeliveryFailWindowHoursSnapshot,
+    decimal? DeliveryFailDeductionPercentageSnapshot,
+    string? FailureReasonSnapshot,
     Guid DeliveryId,
     string? DeliveryNumber,
     long CustomerId,
@@ -144,12 +186,20 @@ public sealed record RefundReplacementListItem(
     RefundReplacementType Type,
     RefundReplacementSource Source,
     RefundReplacementStatus Status,
+    CustomerChoice? CustomerChoice,
+    DateTime? CustomerChoiceAt,
     string Reason,
     string? Remarks,
     DateTime SubmittedAt,
     DateTime? Deadline,
     bool ProofImageRequired,
-    int ImageCount);
+    int ImageCount,
+    DateOnly? ReplacementDate = null,
+    /// <summary>
+    /// Audit remediation: true when this ticket's failed occurrence is itself
+    /// a re-delivery replacement, so Refund is the only available remedy.
+    /// </summary>
+    bool IsRefundOnly = false);
 
 public sealed record RefundReplacementListQuery(
     long? BranchId = null,
@@ -163,7 +213,73 @@ public sealed record RefundReplacementPageResult(
     int PageSize,
     int TotalCount);
 
-public sealed record DecideRefundReplacementRequest(string? Remarks);
+/// <summary>
+/// D1-B: the customer's explicit remedy choice on a delivery-fail ticket
+/// awaiting choice. The ticket is identified by the existing public request
+/// reference; the choice value binds from "Refund" / "ReDelivery".
+/// </summary>
+public sealed record ChooseRefundReplacementRequest(CustomerChoice Choice);
+
+/// <summary>
+/// D1-C: outcome of one automatic timeout resolution. All amounts are in the
+/// subscription currency; references are public business numbers only.
+/// </summary>
+public sealed record DeliveryFailTimeoutResult(
+    Guid RequestId,
+    string RequestNumber,
+    string DeliveryNumber,
+    decimal GrossRefund,
+    decimal DeductionPercentage,
+    decimal DeductionAmount,
+    decimal WalletCredit);
+
+/// <summary>
+/// D1-C: resolves delivery-fail tickets whose persisted customer-choice
+/// deadline passed with no choice. Each ticket is processed in its own
+/// authoritative transaction: the choice is set to Refund, the ticket is moved
+/// through the existing approve/complete flow, and the frozen refund (less the
+/// snapshotted deduction) is credited to the wallet. Already-resolved tickets
+/// are skipped without side effects so retries and restarts are safe.
+/// </summary>
+public interface IDeliveryFailTimeoutProcessor
+{
+    /// <summary>
+    /// Processes expired tickets in deadline order, up to the configured batch
+    /// size. Returns the number of tickets resolved. A ticket lost to a
+    /// concurrent winner (customer choice or another worker) is skipped, never
+    /// retried in the same cycle; unexpected failures are logged by the caller.
+    /// </summary>
+    Task<int> ProcessExpiredTicketsAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Processes one ticket by public id. Returns null when the ticket is not
+    /// eligible (missing, already resolved, not yet expired, or financially
+    /// unresolvable right now); otherwise resolves it and returns the outcome.
+    /// </summary>
+    Task<DeliveryFailTimeoutResult?> ProcessTicketAsync(
+        Guid requestId,
+        CancellationToken cancellationToken);
+}
+
+public record DecideRefundReplacementRequest(string? Remarks);
+
+/// <summary>
+/// D1-D: staff approval of a refund/replacement request. For delivery-fail
+/// tickets with customer choice ReDelivery, staff may confirm an explicit
+/// replacement date; when omitted the server proposes the next eligible date
+/// (weekday schedule, cutoff, active branch, no date conflict). The customer
+/// never picks the date. The occurrence being replaced is always derived from
+/// the ticket's own source reference — never from client input.
+/// </summary>
+public sealed record ApproveRefundReplacementRequest(string? Remarks, DateOnly? ReplacementDate = null)
+    : DecideRefundReplacementRequest(Remarks);
+
+/// <summary>
+/// D1-D: the server-proposed next eligible replacement date for a re-delivery
+/// ticket. Advisory: approval re-validates (or validates a staff-edited date)
+/// inside the authoritative transaction.
+/// </summary>
+public sealed record ReplacementDateProposalResult(Guid RequestId, DateOnly ProposedDate);
 
 public interface IRefundReplacementService
 {
@@ -207,10 +323,32 @@ public interface IRefundReplacementService
         Guid requestId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// D1-B: records the owning customer's Refund / Re-Delivery choice on a
+    /// ticket awaiting choice before its persisted choice deadline. Same-choice
+    /// retries return the current state without side effects; a different
+    /// choice after resolution is rejected. Notifies branch staff and audits.
+    /// </summary>
+    Task<RefundReplacementRequestResult> ChooseAsync(
+        RefundReplacementActor actor,
+        Guid requestId,
+        ChooseRefundReplacementRequest request,
+        CancellationToken cancellationToken);
+
     Task<RefundReplacementRequestResult> ApproveAsync(
         RefundReplacementActor actor,
         Guid requestId,
-        DecideRefundReplacementRequest request,
+        ApproveRefundReplacementRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// D1-D: proposes the next eligible replacement date for a re-delivery
+    /// ticket awaiting choice. Staff confirm or edit this date during approval;
+    /// approval re-validates inside its own transaction.
+    /// </summary>
+    Task<ReplacementDateProposalResult> ProposeReplacementDateAsync(
+        RefundReplacementActor actor,
+        Guid requestId,
         CancellationToken cancellationToken);
 
     Task<RefundReplacementRequestResult> RejectAsync(

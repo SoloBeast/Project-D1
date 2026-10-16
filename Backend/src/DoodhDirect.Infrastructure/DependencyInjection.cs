@@ -82,6 +82,10 @@ public static class DependencyInjection
             .Bind(configuration.GetSection(PaymentReconciliationOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
+        services.AddOptions<DeliveryFailTimeoutOptions>()
+            .Bind(configuration.GetSection(DeliveryFailTimeoutOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
         // NOTE: Razorpay credentials are not validated at boot. They may be configured at
         // runtime through the Integration settings store (Integration.Razorpay.*), which
         // overrides static appsettings values per call.
@@ -142,6 +146,7 @@ public static class DependencyInjection
         services.AddSingleton<ITokenService, JwtTokenService>();
         services.AddScoped<IAuthenticationService, AuthenticationService>();
         services.AddScoped<IOtpService, OtpService>();
+        services.AddScoped<IAuthorizationScopeValidator, AuthorizationScopeValidator>();
         services.AddScoped<ICustomerService, CustomerService>();
         services.AddScoped<ICatalogueService, CatalogueService>();
         services.AddScoped<IBranchAllocationService, BranchAllocationService>();
@@ -155,7 +160,10 @@ public static class DependencyInjection
         services.AddScoped<IDairyService, DairyService>();
         services.AddScoped<IMilkTestService, MilkTestService>();
         services.AddScoped<IRefundReplacementConfigurationService, RefundReplacementConfigurationService>();
+        services.AddScoped<IDeliveryFailTicketCreator, DeliveryFailTicketCreator>();
         services.AddScoped<IRefundReplacementService, RefundReplacementService>();
+        services.AddScoped<IDeliveryFailTimeoutProcessor, DeliveryFailTimeoutProcessor>();
+        services.AddHostedService<DeliveryFailTimeoutWorker>();
         services.AddScoped<ICameraService, CameraService>();
         services.AddScoped<INotificationEventWriter, NotificationEventWriter>();
         services.AddScoped<INotificationService, NotificationService>();

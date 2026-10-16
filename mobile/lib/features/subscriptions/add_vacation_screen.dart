@@ -5,6 +5,7 @@ import 'package:doodh_direct_mobile/features/subscriptions/subscription_controll
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 /// Customer vacation selection: an inclusive From/To date range that the
 /// backend resolves to per-occurrence skips across all of the customer's
@@ -105,6 +106,12 @@ class _AddVacationScreenState extends ConsumerState<AddVacationScreen> {
         title: const Text('Add Vacation'),
         actions: [
           IconButton(
+            key: const ValueKey('vacation-open-list-action'),
+            tooltip: 'My vacations',
+            onPressed: () => context.push('/subscriptions/vacations'),
+            icon: const Icon(Icons.event_busy_outlined),
+          ),
+          IconButton(
             tooltip: 'Refresh calendar',
             onPressed: state.isLoading
                 ? null
@@ -173,7 +180,9 @@ class _AddVacationScreenState extends ConsumerState<AddVacationScreen> {
               ),
               const SizedBox(height: DoodhSpacing.md),
               Text(
-                'No delivery would be made in your vacation period.',
+                'Only dates with a scheduled delivery are skipped — other '
+                'dates (or dates past the skip cutoff) are listed as not '
+                'skipped after saving.',
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: DoodhColors.muted,

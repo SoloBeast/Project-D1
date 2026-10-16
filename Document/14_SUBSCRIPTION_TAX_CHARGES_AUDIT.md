@@ -118,3 +118,238 @@
 7. **`IsUsed` semantics** — extend to "referenced by orders, subscription snapshots, or product mappings" (blocks type edit/delete). Confirm.
 8. Legacy subscriptions show no `charges[]` — UI copy for that state ("No charges recorded").
 9. Existing open polish: trailing-zero percentage display (2.50% → 2.5%) — applies to the new surfaces too.
+
+---
+
+## 15. FINAL BUSINESS CLARIFICATIONS — SUBSCRIPTION DELIVERY FAILURE
+
+**Status: design-only. No code was changed for this section.** These are the
+approved final rules. Implementation is explicitly deferred.
+
+**Freshly verified against the current tree** (this section only):
+`SubscriptionEntities.cs` (ctor / `AddCharges` / `MarkFailed` / `MarkDelivered` /
+`SubscriptionDelivery.Fail`), `SubscriptionService.cs` (`MarkDeliveryFailedAsync`,
+`ResolveSubscriptionChargesAsync`), `DeliveryEntities.cs` (`ReferenceNumber` /
+`DeliveryNumber` / `Fail`), `DeliveryService.cs` (materialization, number-series
+assignment), `RefundReplacementEntities.cs` + `RefundReplacementService.cs`
+(`RequestNumber`, `Deadline`, status machine), `PaymentService.cs` (`RefundAsync`:
+`StartRefund` / `CompleteRefund` / `refund:{id}` wallet key), `WalletService.cs`
+(`CreditSubscriptionRefundAsync`, `MutateAsync` idempotency lookup,
+`ExecuteAtomicAsync` SERIALIZABLE), `NotificationEntities.cs` +
+`DoodhDirectDbContext.cs` (unique `EventKey` index), `NotificationSecurityAndWorker.cs`
++ `PaymentReconciliationWorker.cs` + `DependencyInjection.cs` (worker precedent +
+registration), `RefundReplacementConfigurationService.cs` (existing `WindowHours`).
+
+### 15.1 Refundable amount (final rule)
+
+- The refundable amount **before** Delivery Fail Deduction % is a share of the
+  customer's **final charge-inclusive subscription amount actually paid** — i.e.
+  the frozen `Subscription.PayableAmount` (product value + all applicable Tax
+  & Charges). **Never** the bare product value.
+- Frozen financial state that must be read, never recomputed (§15.8):
+  `Subscription.PayableAmount`, `Subscription.ChargesTotal`, the
+  `SubscriptionCharge` snapshot rows, and the original payment (`payment.Amount`).
+- Single-product, fixed-entitlement model ⇒ exact per-delivery allocation:
+  - `Allocation = Round(PayableAmount / TotalEntitlement, 2, AwayFromZero)`
+    (project rounding convention: `decimal.Round(x, 2,
+    MidpointRounding.AwayFromZero)` — verified in `SubscriptionEntities.cs`,
+    `ResolveSubscriptionChargesAsync`, wallet and order paths).
+  - `Deduction = Round(Allocation × DeductionPct / 100, 2, AwayFromZero)` using
+    the **ticket's frozen** deduction % (§15.7).
+  - `WalletCredit = Allocation − Deduction` (exact decimal subtraction; both
+    inputs already 2dp).
+- Worked example from the business (exact): PayableAmount ₹840,
+  TotalEntitlement 5 ⇒ Allocation ₹168.00; Deduction 10% ⇒ ₹16.80;
+  wallet credit **₹151.20**.
+- **Rounding-drift note (accepted tolerance, no remainder ledger today):**
+  `SubscriptionDelivery` rows carry no money, so each failed occurrence refunds
+  the same independently-rounded share. When `PayableAmount / TotalEntitlement`
+  is not exact to 2dp, the sum of all per-occurrence shares can differ from
+  `PayableAmount` by at most ~1p × occurrences. No cumulative-remainder rule
+  exists — either accept this bound or add a remainder rule at build time.
+- **Entitlement accounting is untouched by failure:** `MarkFailed` does **not**
+  increment `UsedEntitlement` (only `MarkDelivered` does — verified
+  `SubscriptionEntities.cs`). The refund compensates the failed occurrence's
+  share; it does not "spend" entitlement and must not adjust it.
+- **Existing cap reused, not reinvented:** `Payment.RefundAsync` already caps at
+  `payment.Amount − payment.RefundedAmount` and tracks `CompleteRefund(amount)`.
+  Delivery-fail refunds must flow through the same `Payment.Refund` aggregate
+  (partial amounts allowed: `request.Amount ?? remainder`) so cumulative
+  delivery-fail refunds across a term can never exceed what was paid.
+- Supersedes §13.5 for this flow: delivery-fail refunds are per-occurrence
+  shares of the charge-inclusive payable, not full-payable refunds.
+
+### 15.2 Ticket reference (verified existing numbers)
+
+| Surface | Existing business number | Internal ids (never expose) |
+|---|---|---|
+| One-time delivery | `Order.OrderNumber` (also `Delivery.ReferenceNumber`) | `OrderId` |
+| Subscription-occurrence delivery | **`Delivery.DeliveryNumber`** (DELIVERY series) | `SubscriptionDeliveryId`, `Delivery.Id` |
+| Refund/replacement request | `RefundReplacementRequest.RequestNumber` (series-assigned once) | request `Id` |
+
+- Verified `DeliveryService.cs`: every materialized delivery gets
+  `AssignDeliveryNumber(GetNextNumberAsync("DELIVERY", …))` — one-time and
+  subscription occurrences alike — and `AssignDeliveryNumber` throws if called
+  twice (immutable). Staff/customer surfaces already fall back to
+  `DeliveryNumber ?? ReferenceNumber`.
+- **Decision:** the Delivery-Fail ticket surfaces **`Delivery.DeliveryNumber`**
+  as its customer/staff reference. Do **not** use `Delivery.ReferenceNumber`
+  for subscription occurrences: it is the internal composite
+  `SUB-{subscriptionPublicId:N}-{yyyyMMdd}` (verified `DeliveryService.cs`),
+  which leaks the subscription public id. Do not invent a new customer-facing
+  source id. (The ticket itself still gets its own series number, mirroring
+  the `RequestNumber` precedent — that is the *ticket's* number, not the
+  *source's*.)
+
+### 15.3 Automatic-timeout architecture (audited recommendation)
+
+- **Audit result: no Hangfire/Quartz anywhere** (zero references in `src` and
+  `tests` — adding either is rejected unless a future requirement forces it).
+  Correction to the request wording: there *is* an established lightweight
+  mechanism — **`BackgroundService` workers**, three of them:
+  `NotificationWorker` (10s poll), `PaymentReconciliationWorker` (60s poll +
+  batch), `StartupSeedWorker`, all registered in `DependencyInjection.cs` via
+  `AddHostedService`. The timeout processor **must follow this exact pattern**:
+  `BackgroundService.ExecuteAsync` → `while (!stoppingToken…)` →
+  `CreateAsyncScope` → scoped processor call → catch-all log →
+  `Task.Delay(pollInterval, stoppingToken)`; poll interval from an
+  `IOptions<T>` options class (precedent: `NotificationOptions`,
+  `PaymentReconciliationOptions`).
+- **Recommended flow (matches the approved sequence):**
+  1. Delivery marked Failed **and** the Delivery-Fail ticket created in the
+     **same transaction** (one ticket per `Delivery`; unique index on
+     `DeliveryId` so a double-fail attempt cannot mint two tickets).
+  2. Ticket persists: `FailedAt`, `CustomerChoiceDeadlineAt =
+     FailedAt + DeliveryFailWindowHours(snapshot)`, the window-hours snapshot,
+     the deduction-% snapshot (§15.7), status = awaiting-customer-choice.
+     Commit, then customer notification (event written in the same unit of
+     work, per the `notificationEventWriter.Add` + `SaveChangesAsync` convention).
+  3. Worker scans (indexed query): status awaiting-choice AND
+     `CustomerChoiceDeadlineAt <= now`. Required index: `(Status,
+     CustomerChoiceDeadlineAt)` — mirrors the existing
+     `(Status, OccurredAt)` index on `NotificationEvent`.
+  4. Per ticket, atomically: re-check still-awaiting → resolve Refund → record
+     `ResolutionSource = AutomaticTimeout` → approve → compute §15.1 amounts
+     from the **frozen subscription snapshot** → apply the **ticket's frozen**
+     deduction % → credit wallet exactly once (deterministic key §15.4) →
+     update ticket → audit (`AddAuditLog`, same as all money/config mutations)
+     → notify customer (deterministic event key §15.4).
+- **Hook point (design decision):** create the ticket in the *materialized*
+  `Delivery.Fail` path for `SubscriptionOccurrence` deliveries (the doorstep
+  event carrying `FailedAt`/`FailureReason`/employee), not in
+  `SubscriptionService.MarkDeliveryFailedAsync` alone (occurrence-level, no
+  doorstep evidence). Guard with the one-ticket-per-`DeliveryId` unique index.
+
+### 15.4 Idempotency (must all hold)
+
+1. **One ticket per delivery** — unique index on the ticket's `DeliveryId`;
+   the racing second insert fails instead of double-minting.
+2. **Status-gated transitions** — every state change re-checks
+   `status == awaiting-choice` *inside* the serializable unit (precedent:
+   materialization re-validates `Scheduled` in-transaction; domain `Fail`
+   rejects terminal states; `SubscriptionDelivery.Fail` is a silent no-op when
+   already `Failed`). Customer-chooses-Refund vs timeout-Refund therefore
+   collapses to exactly one winner; the loser sees a non-awaiting ticket.
+3. **Wallet credit exactly once** — `WalletService.MutateAsync` looks up
+   `(WalletId, IdempotencyKey)` inside its SERIALIZABLE unit and returns the
+   existing transaction on a hit (verified). The timeout path must use a
+   deterministic key derived from the ticket (precedent:
+   `$"refund:{refund.PublicId:N}"` in `PaymentService.RefundAsync`), e.g.
+   `delivery-fail:{ticketPublicId:N}:refund` — never a fresh GUID per attempt.
+4. **Payment-level bound** — route through `payment.StartRefund(amount, …)` +
+   `CompleteRefund(amount)` so the existing `Amount − RefundedAmount` cap and
+   the refund aggregate stay the single source of truth for cumulative refunds.
+5. **Notifications** — `NotificationEvent.EventKey` has a **unique index**
+   (verified `DoodhDirectDbContext.cs`) and writers enqueue with explicit keys
+   (precedent: `$"wallet-transaction:{id}:updated"`). Timeout notifications
+   must use deterministic keys (e.g.
+   `delivery-fail-timeout:{ticketPublicId:N}:resolved`) so a retried cycle
+   cannot duplicate the customer message; duplicate emission fails on the
+   unique index instead of double-sending.
+
+### 15.5 API-restart safety
+
+- The deadline (`CustomerChoiceDeadlineAt`) and all snapshots live in
+  **columns**, never in memory: no per-ticket timers, no in-memory queues.
+  After a restart the worker resumes scanning on its poll interval and picks
+  up every expired ticket — including ones that expired *during* the outage.
+- Tick processing itself must be crash-safe at every step: each cycle is one
+  serializable unit; a crash between cycles leaves the ticket awaiting-choice
+  (reprocessed) or fully resolved (skipped by the status gate) — never half
+  credited, by §15.4 rules 2–3.
+
+### 15.6 Multi-instance safety (existing conventions, no new infra)
+
+- No lease table, no distributed lock: the claim **is** the status transition
+  inside a SERIALIZABLE transaction (`ExecuteSerializableAsync` + execution
+  strategy with retry — the same shape as charge/product/payment mutations).
+  Two instances racing the same ticket serialize; the loser's in-transaction
+  re-check sees non-awaiting (or its write conflicts and retries into the
+  same observation) and processes zero rows.
+- Unique constraints are the backstop, not the mechanism: one-ticket-per-
+  `DeliveryId`, wallet `(WalletId, IdempotencyKey)`, `NotificationEvent.EventKey`,
+  following the existing `(CustomerId, IdempotencyKey)` payment and
+  `(ChargeId, ProductId)` mapping precedents.
+
+### 15.7 Configuration snapshot (final rule)
+
+- Two **new** admin-config keys are required (neither exists today — verified:
+  no deduction-% setting anywhere; the existing `RefundReplacementConfiguration`
+  `WindowHours` (default 48) is the *customer-initiated post-delivery request*
+  window and must **not** be reused): `DeliveryFailWindowHours` and
+  `DeliveryFailDeductionPercentage`, managed under the existing
+  refund/replacement-setup permission surface.
+- The ticket snapshots **both values as columns at creation**. Later admin
+  edits affect only tickets created afterwards. The timeout worker and the
+  deduction math read **only** the ticket columns — never live config.
+
+### 15.8 Subscription financial immutability (final rule)
+
+- Never modified after creation: `Subscription.PayableAmount`,
+  `Subscription.ChargesTotal`, `SubscriptionCharge` rows (one-shot `AddCharges`
+  guard throws on re-entry — verified), and the original payment
+  (`payment.Amount`). No setters exist on these paths by design.
+- The delivery-fail refund is a **separate** `Payment.Refund` + wallet
+  `RefundCredit` transaction pair against the original payment (§15.4.4 +
+  `CreditSubscriptionRefundAsync`), exactly like the existing wallet-refund
+  path. Nothing about the subscription row changes except delivery/occurrence
+  statuses, which already have their own transitions.
+
+### 15.9 Corrections to earlier sections of this report
+
+- §4 stated `ApplicableOnAll` / `ProductCharge` "do not exist yet" — **stale**:
+  Stage 1 has since implemented them (entity + migration
+  `20261001191437_ChargeApplicabilityAndProductCharges`, `ChargeService`
+  guards, concurrency tests). The §9 item 1 is therefore done, not pending.
+- New since this audit: `ChargeResult.ProductCount` (list/single reads carry
+  assigned-product counts; the admin UI locks the global toggle while > 0),
+  and `UpsertProductApiRequest.ApplicableChargeIds` (the HTTP layer previously
+  dropped the app's charge assignment — fixed with binding regression tests).
+- §13.5 is superseded by §15.1 for delivery-fail; it remains true only for
+  full payment-level refunds.
+- §8's gap note (no serializable transaction around subscription charge
+  resolution) is unchanged by this section and still stands.
+
+### 15.10 Build-time checklist (when implementation is approved)
+
+1. `DeliveryFailTicket` entity/table (+ unique `DeliveryId`, status enum with
+   awaiting-choice, `ResolutionSource` Manual/AutomaticTimeout, snapshot
+   columns, persisted deadline, `(Status, CustomerChoiceDeadlineAt)` index) —
+   **not** shoehorned into `RefundReplacementRequest` (its ctor requires
+   one-time `OrderId`/`DeliveryId`; different lifecycle).
+2. Ticket creation inside the `Delivery.Fail` subscription-occurrence path,
+   same transaction; new `DELIVERYFAIL`-family number-series ticket number
+   (precedent: `DELIVERY` numbers, `RequestNumber`).
+3. Customer choice endpoints (Refund / Re-Delivery) honoring the deadline and
+   the §15.4 status gate; re-delivery path definition is out of scope of these
+   rules and needs its own business sign-off (new occurrence vs reschedule).
+4. `DeliveryFailTimeoutWorker : BackgroundService` + options + registration +
+   per-ticket serializable processing per §15.3–§15.6.
+5. Config keys + admin read/update (owner/admin permission surface, same as
+   `RefundReplacementConfigurationService`).
+6. Tests: per-occurrence math incl. the §15.1 example (840/5, 10% → 151.20)
+   and non-even-split rounding; double-fail single ticket; customer-vs-timeout
+   race → one resolution; restart-mid-cycle → no double credit (wallet
+   transaction count = 1); concurrent workers → one refund; config change
+   mid-flight → ticket keeps snapshots; notifications emitted once per
+   deterministic key.

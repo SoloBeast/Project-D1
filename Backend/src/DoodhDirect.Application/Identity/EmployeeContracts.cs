@@ -3,10 +3,22 @@ using DoodhDirect.Domain.Identity;
 namespace DoodhDirect.Application.Identity;
 
 /// <summary>
-/// A single employee (or pending invite) visible to Owner / System Administrator.
-/// <see cref="RoleCode"/> and <see cref="BranchId"/> are authoritative values set by the
+/// One branch assignment within an employee's (single-role) assignment set.
+/// Stage 2 multi-branch Dairy Manager: a Dairy Manager holds one such row per
+/// assigned branch under the same role; every other employee role holds at most one.
+/// </summary>
+public sealed record EmployeeBranchAssignment(
+    long BranchId,
+    string? BranchName);
+
+/// <summary>
+/// A single employee (or pending invite) visible to the caller.
+/// <see cref="RoleCode"/> and the branch set are authoritative values set by the
 /// administrator when creating the invitation; the invitee can never change them from
-/// the client.
+/// the client. <see cref="BranchAssignments"/> is the complete assignment collection —
+/// never a truncated sample. The legacy <see cref="BranchId"/>/<see cref="BranchName"/>
+/// pair carries the first assignment (ordered by branch id) for backward compatibility
+/// and is null when the employee holds no branch assignment.
 /// </summary>
 public sealed record EmployeeResult(
     long Id,
@@ -25,7 +37,8 @@ public sealed record EmployeeResult(
     EmployeeInvitationStatus? InvitationStatus,
     DateTime? InvitationExpiresAt,
     DateTime? RegisteredAt,
-    DateTime? CreatedAt);
+    DateTime? CreatedAt,
+    IReadOnlyList<EmployeeBranchAssignment>? BranchAssignments = null);
 
 /// <summary>
 /// A branch option for the Create Employee screen. Exposes the internal <see cref="Id"/> required
@@ -41,7 +54,16 @@ public sealed record EmployeeBranchOption(
     string State,
     bool IsActive);
 
-/// <summary>Creates an employee and, when <see cref="SendInvitation"/> is true, a secure single-use invitation.</summary>
+/// <summary>
+/// Creates an employee and, when <see cref="SendInvitation"/> is true, a secure single-use invitation.
+/// Stage 2 multi-branch Dairy Manager: <see cref="BranchIds"/>, when supplied (non-null), is the
+/// authoritative branch set — every id must exist, be active, be distinct, and lie within the
+/// administrator's authority, otherwise the entire request is rejected. When <see cref="BranchIds"/>
+/// is null the legacy <see cref="BranchId"/> carries the single assignment. Supplying both is
+/// allowed only when <see cref="BranchId"/> is contained in <see cref="BranchIds"/>; any other
+/// combination is rejected rather than silently reinterpreted. Only DAIRY_MANAGER accepts more
+/// than one branch; every other branched role accepts exactly one; SYSTEM_ADMIN accepts none.
+/// </summary>
 public sealed record CreateEmployeeRequest(
     string DisplayName,
     string Mobile,
@@ -49,15 +71,22 @@ public sealed record CreateEmployeeRequest(
     string RoleCode,
     long? BranchId,
     bool SendInvitation = true,
-    DateTime? InvitationExpiresAt = null);
+    DateTime? InvitationExpiresAt = null,
+    IReadOnlyList<long>? BranchIds = null);
 
-/// <summary>Updates permitted employee attributes. Role and branch changes are audited.</summary>
+/// <summary>
+/// Updates permitted employee attributes. Role and branch changes are audited.
+/// Branch-set semantics mirror <see cref="CreateEmployeeRequest"/>: a non-null
+/// <see cref="BranchIds"/> replaces the full assignment set atomically, while null leaves
+/// assignments untouched unless <see cref="BranchId"/> (or the role) changes them.
+/// </summary>
 public sealed record UpdateEmployeeRequest(
     string DisplayName,
     string? Email,
     string? RoleCode,
     long? BranchId,
-    bool IsActive);
+    bool IsActive,
+    IReadOnlyList<long>? BranchIds = null);
 
 /// <summary>
 /// Resends an invitation. The invitation is invalidated and a fresh token is issued so the
@@ -109,7 +138,8 @@ public sealed record EmployeeInvitationVerificationResult(
     long? BranchId,
     string? Reason,
     string? BranchCode = null,
-    string? BranchName = null);
+    string? BranchName = null,
+    IReadOnlyList<EmployeeBranchAssignment>? BranchAssignments = null);
 
 public sealed record CompleteEmployeeRegistrationRequest(
     string Token,
@@ -142,9 +172,19 @@ public sealed record EmployeeDeleteResult(
 /// </summary>
 public interface IEmployeeService
 {
-    Task<IReadOnlyList<EmployeeResult>> ListAsync(CancellationToken cancellationToken);
+    /// <summary>
+    /// Lists employees visible to <paramref name="actorUserId"/>: existing employee-view
+    /// permissions apply, and each returned employee shares at least one assigned branch
+    /// with the caller's operational scope. Owner / System Administrator callers retain
+    /// global visibility. Returned employees are deduplicated by account.
+    /// </summary>
+    Task<IReadOnlyList<EmployeeResult>> ListAsync(long actorUserId, CancellationToken cancellationToken);
 
-    Task<EmployeeResult> GetAsync(long employeeId, CancellationToken cancellationToken);
+    /// <summary>
+    /// Returns one employee when <paramref name="actorUserId"/> is authorized to view
+    /// them (same scope rule as <see cref="ListAsync"/>); otherwise not found.
+    /// </summary>
+    Task<EmployeeResult> GetAsync(long actorUserId, long employeeId, CancellationToken cancellationToken);
 
     Task<CreateEmployeeResult> CreateAsync(
         CreateEmployeeRequest request,

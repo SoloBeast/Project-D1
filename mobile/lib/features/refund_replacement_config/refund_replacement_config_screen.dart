@@ -39,6 +39,10 @@ class RefundReplacementConfigScreen extends ConsumerStatefulWidget {
 class _RefundReplacementConfigScreenState
     extends ConsumerState<RefundReplacementConfigScreen> {
   final TextEditingController _windowHours = TextEditingController();
+  final TextEditingController _deliveryFailWindowHours =
+      TextEditingController();
+  final TextEditingController _deliveryFailDeductionPercentage =
+      TextEditingController();
 
   /// Whether the local form has been hydrated from the server configuration.
   bool _hydrated = false;
@@ -46,30 +50,45 @@ class _RefundReplacementConfigScreenState
   /// Snapshot of the last hydrated server value, used to decide whether the
   /// admin made a change worth saving.
   String _originalWindowHours = '';
+  String _originalDeliveryFailWindowHours = '';
+  String _originalDeliveryFailDeductionPercentage = '';
 
   /// Client-side validation message for the hours field, shown under the input.
   String? _validationError;
+  String? _deliveryFailWindowValidationError;
+  String? _deliveryFailDeductionValidationError;
 
   @override
   void initState() {
     super.initState();
     Future.microtask(
-      () => ref
-          .read(refundReplacementConfigControllerProvider.notifier)
-          .load(),
+      () => ref.read(refundReplacementConfigControllerProvider.notifier).load(),
     );
   }
 
   @override
   void dispose() {
     _windowHours.dispose();
+    _deliveryFailWindowHours.dispose();
+    _deliveryFailDeductionPercentage.dispose();
     super.dispose();
   }
 
   void _hydrateFrom(RefundReplacementConfiguration configuration) {
     _windowHours.text = configuration.windowHours.toString();
     _originalWindowHours = configuration.windowHours.toString();
+    _deliveryFailWindowHours.text = configuration.deliveryFailWindowHours
+        .toString();
+    _originalDeliveryFailWindowHours = configuration.deliveryFailWindowHours
+        .toString();
+    _deliveryFailDeductionPercentage.text = _formatPercentage(
+      configuration.deliveryFailDeductionPercentage,
+    );
+    _originalDeliveryFailDeductionPercentage =
+        _deliveryFailDeductionPercentage.text;
     _validationError = null;
+    _deliveryFailWindowValidationError = null;
+    _deliveryFailDeductionValidationError = null;
     _hydrated = true;
   }
 
@@ -78,7 +97,19 @@ class _RefundReplacementConfigScreenState
   }
 
   /// True when the local form differs from the last hydrated server value.
-  bool _hasChanges() => _windowHours.text.trim() != _originalWindowHours;
+  bool _hasChanges() =>
+      _windowHours.text.trim() != _originalWindowHours ||
+      _deliveryFailWindowHours.text.trim() !=
+          _originalDeliveryFailWindowHours ||
+      _deliveryFailDeductionPercentage.text.trim() !=
+          _originalDeliveryFailDeductionPercentage;
+
+  /// Displays whole percentages without a trailing `.0` while preserving
+  /// fractional values, so the field round-trips through the backend.
+  static String _formatPercentage(double value) =>
+      value == value.truncateToDouble()
+      ? value.toInt().toString()
+      : value.toString();
 
   @override
   Widget build(BuildContext context) {
@@ -146,9 +177,8 @@ class _RefundReplacementConfigScreenState
     if (state.errorMessage != null && configuration == null) {
       return ErrorStatePanel(
         message: state.errorMessage!,
-        onRetry: () => ref
-            .read(refundReplacementConfigControllerProvider.notifier)
-            .load(),
+        onRetry: () =>
+            ref.read(refundReplacementConfigControllerProvider.notifier).load(),
       );
     }
     if (configuration == null) {
@@ -200,6 +230,55 @@ class _RefundReplacementConfigScreenState
             errorText: _validationError ?? state.fieldErrors['windowHours'],
           ),
         ),
+        const SizedBox(height: 16),
+        Text(
+          'Delivery-fail settings',
+          style: Theme.of(context).textTheme.titleSmall
+              ?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _deliveryFailWindowHours,
+          enabled: canEdit,
+          keyboardType: TextInputType.number,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          onChanged: (_) =>
+              setState(() => _deliveryFailWindowValidationError = null),
+          decoration: InputDecoration(
+            labelText: 'Delivery Fail Window (Hours)',
+            hintText: 'e.g. 24',
+            helperText:
+                'Time allowed for a customer to choose Refund or Re-Delivery '
+                'after a delivery is marked Failed.',
+            border: const OutlineInputBorder(),
+            errorText:
+                _deliveryFailWindowValidationError ??
+                state.fieldErrors['deliveryFailWindowHours'],
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _deliveryFailDeductionPercentage,
+          enabled: canEdit,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+          ],
+          onChanged: (_) =>
+              setState(() => _deliveryFailDeductionValidationError = null),
+          decoration: InputDecoration(
+            labelText: 'Delivery Fail Deduction (%)',
+            hintText: 'e.g. 10',
+            helperText:
+                'Percentage deducted from an automatic refund when the '
+                'customer does not choose a remedy before the Delivery Fail '
+                'Window expires.',
+            border: const OutlineInputBorder(),
+            errorText:
+                _deliveryFailDeductionValidationError ??
+                state.fieldErrors['deliveryFailDeductionPercentage'],
+          ),
+        ),
         if (canManage) ...[
           const SizedBox(height: 16),
           FilledButton.icon(
@@ -224,15 +303,59 @@ class _RefundReplacementConfigScreenState
       setState(() => _validationError = 'Enter the window in whole hours.');
       return;
     }
-    final rangeError = RefundReplacementConfiguration.validateWindowHours(hours);
+    final rangeError = RefundReplacementConfiguration.validateWindowHours(
+      hours,
+    );
     if (rangeError != null) {
       setState(() => _validationError = rangeError);
+      return;
+    }
+    final failHours = int.tryParse(_deliveryFailWindowHours.text.trim());
+    if (failHours == null) {
+      setState(
+        () => _deliveryFailWindowValidationError =
+            'Enter the window in whole hours.',
+      );
+      return;
+    }
+    final failRangeError =
+        RefundReplacementConfiguration.validateDeliveryFailWindowHours(
+          failHours,
+        );
+    if (failRangeError != null) {
+      setState(() => _deliveryFailWindowValidationError = failRangeError);
+      return;
+    }
+    final deduction = double.tryParse(
+      _deliveryFailDeductionPercentage.text.trim(),
+    );
+    if (deduction == null) {
+      setState(
+        () => _deliveryFailDeductionValidationError =
+            'Enter the deduction as a number.',
+      );
+      return;
+    }
+    final deductionRangeError =
+        RefundReplacementConfiguration.validateDeliveryFailDeductionPercentage(
+          deduction,
+        );
+    if (deductionRangeError != null) {
+      setState(
+        () => _deliveryFailDeductionValidationError = deductionRangeError,
+      );
       return;
     }
 
     final saved = await ref
         .read(refundReplacementConfigControllerProvider.notifier)
-        .save(UpdateRefundReplacementConfigurationRequest(windowHours: hours));
+        .save(
+          UpdateRefundReplacementConfigurationRequest(
+            windowHours: hours,
+            deliveryFailWindowHours: failHours,
+            deliveryFailDeductionPercentage: deduction,
+          ),
+        );
     if (saved && mounted) {
       // Re-hydrate from the configuration returned by the successful PUT so
       // the form reflects the authoritative saved state.
@@ -335,4 +458,3 @@ class _ReadOnlyBanner extends StatelessWidget {
     );
   }
 }
-

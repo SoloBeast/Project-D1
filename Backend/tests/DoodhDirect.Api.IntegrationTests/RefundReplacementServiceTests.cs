@@ -10,6 +10,7 @@ using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.MilkTesting;
 using DoodhDirect.Domain.Orders;
+using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.RefundReplacement;
 using DoodhDirect.Domain.Setup;
 using DoodhDirect.Infrastructure.Persistence;
@@ -591,7 +592,7 @@ public sealed class RefundReplacementServiceTests
         var approved = await harness.Service.ApproveAsync(
             harness.StaffActor(harness.Staff),
             request.RequestId,
-            new DecideRefundReplacementRequest("Approved by support"),
+            new ApproveRefundReplacementRequest("Approved by support"),
             CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
@@ -626,14 +627,14 @@ public sealed class RefundReplacementServiceTests
         await harness.Service.ApproveAsync(
             harness.StaffActor(harness.Staff),
             request.RequestId,
-            new DecideRefundReplacementRequest(null),
+            new ApproveRefundReplacementRequest(null),
             CancellationToken.None);
 
         var approveAgain = await Assert.ThrowsAsync<ConflictException>(
             () => harness.Service.ApproveAsync(
                 harness.StaffActor(harness.Staff),
                 request.RequestId,
-                new DecideRefundReplacementRequest(null),
+                new ApproveRefundReplacementRequest(null),
                 CancellationToken.None));
         var rejectAfter = await Assert.ThrowsAsync<ConflictException>(
             () => harness.Service.RejectAsync(
@@ -672,8 +673,29 @@ public sealed class RefundReplacementServiceTests
         await harness.Service.ApproveAsync(
             harness.StaffActor(harness.Staff),
             request.RequestId,
-            new DecideRefundReplacementRequest(null),
+            new ApproveRefundReplacementRequest(null),
             CancellationToken.None);
+
+        // D1-D order-refund safety: this order-backed Refund completes only
+        // because a verified Payments settlement already exists for the
+        // order (seeded here through the same domain transitions the
+        // Payments refund flow itself uses).
+        var payment = new Payment(
+            harness.Order.Id,
+            harness.Customer.Id,
+            PaymentMethod.Wallet,
+            harness.Order.PayableAmount,
+            "INR",
+            $"order-settlement-{Guid.NewGuid():N}",
+            harness.Clock.Now.AddMinutes(15));
+        payment.Succeed(null, "WALLET", harness.Clock.Now);
+        var settlement = payment.StartRefund(
+            harness.Order.PayableAmount, "Order refund settlement", "order-settlement-refund", harness.Staff.Id);
+        settlement.Succeed(harness.Clock.Now);
+        payment.CompleteRefund(harness.Order.PayableAmount);
+        harness.Db.Payments.Add(payment);
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
 
         var completed = await harness.Service.CompleteAsync(
             harness.StaffActor(harness.Staff),
@@ -772,7 +794,7 @@ public sealed class RefundReplacementServiceTests
         await harness.Service.ApproveAsync(
             harness.StaffActor(harness.Staff),
             request.RequestId,
-            new DecideRefundReplacementRequest(null),
+            new ApproveRefundReplacementRequest(null),
             CancellationToken.None);
 
         var exception = await Assert.ThrowsAsync<ConflictException>(

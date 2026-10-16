@@ -56,6 +56,7 @@ SubscriptionDelivery _subscriptionOccurrence(
   DateTime date, {
   SubscriptionDeliveryStatus status = SubscriptionDeliveryStatus.scheduled,
   SubscriptionDeliverySlot slot = SubscriptionDeliverySlot.morning,
+  bool isReplacement = false,
 }) => SubscriptionDelivery(
   publicId: id,
   scheduledDate: date,
@@ -67,6 +68,7 @@ SubscriptionDelivery _subscriptionOccurrence(
   branchName: 'Main Branch',
   address: '1 Main Road, Bengaluru',
   statusChangedAt: null,
+  isReplacement: isReplacement,
 );
 
 CustomerDelivery _orderDelivery(String id, DateTime date) => CustomerDelivery(
@@ -718,6 +720,140 @@ void main() {
     expect(find.byType(SubscriptionCalendarScreen), findsNothing);
     expect(find.byKey(const ValueKey('my-calendar-card')), findsOneWidget);
   });
+
+  testWidgets(
+    'D1-D slice 7: materialized occurrence renders once in the day sheet (no duplicate)',
+    (tester) async {
+      // sub-1's scheduled occurrence AND its own materialized Delivery share
+      // the date. The sheet must show the authoritative Delivery row only —
+      // never the occurrence row as well.
+      final stamp =
+          '${_day(1).year.toString().padLeft(4, '0')}'
+          '${_day(1).month.toString().padLeft(2, '0')}'
+          '${_day(1).day.toString().padLeft(2, '0')}';
+      final ownReference = 'SUB-sub1-$stamp';
+      final deliveries = _SelectedDateDeliveryRepository()
+        ..customerDeliveries = [
+          CustomerDelivery(
+            deliveryId: 'd-mat',
+            sourceType: DeliverySourceType.subscriptionOccurrence,
+            referenceNumber: ownReference,
+            status: DeliveryStatus.outForDelivery,
+            scheduledDate: _day(1),
+            destinationAddress: '1 Main Road, Bengaluru',
+            assignedEmployeeId: null,
+            assignedEmployeeName: null,
+            isTrackingActive: false,
+            latestLocation: null,
+            completedAt: null,
+            failedAt: null,
+            failureReason: null,
+            activeOtp: null,
+          ),
+        ];
+      final subscriptions = _SelectedDateSubscriptionRepository()
+        ..calendar = [_subscriptionOccurrence('d-9', _day(1))];
+      await _pumpApp(
+        tester,
+        deliveryRepository: deliveries,
+        subscriptionRepository: subscriptions,
+      );
+
+      await _openDaySheet(tester, _day(1));
+
+      expect(find.text(_heading(_day(1))), findsOneWidget);
+      // The real Delivery row, exactly once…
+      expect(find.text('Subscription · $ownReference'), findsOneWidget);
+      // …and its own occurrence row (with the Skip affordance) is gone.
+      expect(
+        find.byKey(const ValueKey('date-delivery-skip-d-9')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'D1-D slice 7.2: replacement is labelled with no Skip while the ordinary row keeps Skip',
+    (tester) async {
+      final subscriptions = _SelectedDateSubscriptionRepository()
+        ..calendar = [
+          // Ordinary control: Skip stays available.
+          _subscriptionOccurrence('d-9', _day(1)),
+          // Replacement on the same date: labelled, never skippable.
+          _subscriptionOccurrence('d-12', _day(1), isReplacement: true),
+        ];
+      await _pumpApp(
+        tester,
+        deliveryRepository: _SelectedDateDeliveryRepository(),
+        subscriptionRepository: subscriptions,
+      );
+
+      await _openDaySheet(tester, _day(1));
+
+      final sheetScope = find.byType(BottomSheet);
+      // The replacement row carries its own scheduled date with the
+      // explicit label; the ordinary row keeps its Scheduled pill.
+      expect(
+        find.descendant(
+          of: sheetScope,
+          matching: find.text('Replacement delivery'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: sheetScope, matching: find.text('Scheduled')),
+        findsOneWidget,
+      );
+      // No inappropriate individual Skip action on the replacement row.
+      expect(
+        find.byKey(const ValueKey('date-delivery-skip-d-9')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('date-delivery-skip-d-12')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'D1-D slice 7.2: original failure stays visible on its own date with no Skip',
+    (tester) async {
+      final subscriptions = _SelectedDateSubscriptionRepository()
+        ..calendar = [
+          _subscriptionOccurrence(
+            'd-13',
+            _day(2),
+            status: SubscriptionDeliveryStatus.failed,
+          ),
+        ];
+      await _pumpApp(
+        tester,
+        deliveryRepository: _SelectedDateDeliveryRepository(),
+        subscriptionRepository: subscriptions,
+      );
+
+      await _openDaySheet(tester, _day(2));
+
+      final sheetScope = find.byType(BottomSheet);
+      expect(find.text(_heading(_day(2))), findsOneWidget);
+      expect(
+        find.descendant(of: sheetScope, matching: find.text('Failed')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: sheetScope,
+          matching: find.text('Replacement delivery'),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('date-delivery-skip-d-13')),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets(
     'My Calendar opens without any active subscription (customer-wide)',

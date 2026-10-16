@@ -812,7 +812,7 @@ class _CheckoutOrderSummaryCard extends StatelessWidget {
     return Semantics(
       container: true,
       label:
-          'Authoritative checkout quote for ${preview.addressLabel}. '
+          'Checkout quote for ${preview.addressLabel}. '
           'Final amount payable ₹${preview.payableAmount.toStringAsFixed(2)}',
       child: Card(
         child: Column(
@@ -823,30 +823,6 @@ class _CheckoutOrderSummaryCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.receipt_long_outlined,
-                        color: theme.colorScheme.primary,
-                      ),
-                      const SizedBox(width: DoodhSpacing.sm),
-                      Expanded(
-                        child: Semantics(
-                          header: true,
-                          child: Text(
-                            'Server quote',
-                            style: theme.textTheme.titleMedium,
-                          ),
-                        ),
-                      ),
-                      const DoodhChip(
-                        label: 'Server verified',
-                        tone: DoodhTone.success,
-                        icon: Icons.verified_outlined,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: DoodhSpacing.md),
                   ...preview.items.map(
                     (item) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 3),

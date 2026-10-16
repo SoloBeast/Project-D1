@@ -106,6 +106,24 @@ public sealed class CustomerRefundReplacementListController(
         Ok(ApiResponse<RefundReplacementRequestResult?>.Ok(
             await refundReplacementService.GetForCustomerAsync(
                 RequireRefundReplacementActor(), requestId, cancellationToken)));
+
+    /// <summary>
+    /// D1-B: records the owning customer's explicit Refund / Re-Delivery choice
+    /// on a delivery-fail ticket awaiting choice. Same-choice retries are
+    /// idempotent; anything else after resolution, or after the persisted
+    /// choice deadline, is rejected. Records no money movement and creates no
+    /// replacement delivery — the ticket waits for normal staff approval.
+    /// </summary>
+    [HttpPost("{requestId:guid}/choose")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementRequestOwn)]
+    [ProducesResponseType(typeof(ApiResponse<RefundReplacementRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<RefundReplacementRequestResult>>> Choose(
+        Guid requestId,
+        [FromBody] ChooseRefundReplacementRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
+            await refundReplacementService.ChooseAsync(
+                RequireRefundReplacementActor(), requestId, request, cancellationToken)));
 }
 
 /// <summary>
@@ -153,11 +171,21 @@ public sealed class RefundReplacementController(
     [ProducesResponseType(typeof(ApiResponse<RefundReplacementRequestResult>), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<RefundReplacementRequestResult>>> Approve(
         Guid requestId,
-        [FromBody] DecideRefundReplacementRequest request,
+        [FromBody] ApproveRefundReplacementRequest request,
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
             await refundReplacementService.ApproveAsync(
                 RequireRefundReplacementActor(), requestId, request, cancellationToken)));
+
+    [HttpGet("{requestId:guid}/replacement-date-proposal")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementManageBranch)]
+    [ProducesResponseType(typeof(ApiResponse<ReplacementDateProposalResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<ReplacementDateProposalResult>>> ProposeReplacementDate(
+        Guid requestId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<ReplacementDateProposalResult>.Ok(
+            await refundReplacementService.ProposeReplacementDateAsync(
+                RequireRefundReplacementActor(), requestId, cancellationToken)));
 
     [HttpPost("{requestId:guid}/reject")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementManageBranch)]

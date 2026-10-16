@@ -22,24 +22,31 @@ public abstract class ReportControllerBase : ControllerBase
             throw new UnauthorizedAppException();
         }
 
-        var branchIds = User.FindAll(AuthorizationCodes.BranchClaim)
-            .Select(claim => long.TryParse(
-                claim.Value,
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
-                out var branchId) && branchId > 0
-                ? branchId
-                : (long?)null)
-            .Where(branchId => branchId.HasValue)
-            .Select(branchId => branchId!.Value)
-            .Distinct()
-            .ToArray();
+        static long[] ReadIds(System.Security.Claims.ClaimsPrincipal user, string claimType) =>
+            user.FindAll(claimType)
+                .Select(claim => long.TryParse(
+                    claim.Value,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var branchId) && branchId > 0
+                    ? branchId
+                    : (long?)null)
+                .Where(branchId => branchId.HasValue)
+                .Select(branchId => branchId!.Value)
+                .Distinct()
+                .ToArray();
+
+        var branchIds = ReadIds(User, AuthorizationCodes.BranchClaim);
+        // Historical assignments (archived/inactive branches) grant reporting
+        // visibility only — never operational access. Operational services
+        // keep reading BranchClaim alone.
+        var branchHistoryIds = ReadIds(User, AuthorizationCodes.BranchHistoryClaim);
 
         var hasGlobalAccess = User.HasClaim(
             AuthorizationCodes.PermissionClaim,
             AuthorizationCodes.GlobalAccess);
 
-        return new ReportActor(userId, branchIds, hasGlobalAccess);
+        return new ReportActor(userId, branchIds, hasGlobalAccess, branchHistoryIds);
     }
 }
 

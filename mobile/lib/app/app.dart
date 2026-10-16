@@ -35,6 +35,7 @@ import 'package:doodh_direct_mobile/features/setup/number_series_models.dart';
 import 'package:doodh_direct_mobile/features/setup/number_series_screens.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/add_vacation_screen.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/my_calendar_screen.dart';
+import 'package:doodh_direct_mobile/features/subscriptions/vacation_list_screen.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_screens.dart';
 import 'package:doodh_direct_mobile/features/wallet/wallet_screens.dart';
 import 'package:flutter/material.dart';
@@ -333,6 +334,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => AddVacationScreen(
           initialFromDate: _optionalQueryDate(state, 'from'),
         ),
+      ),
+      GoRoute(
+        path: '/subscriptions/vacations',
+        builder: (context, state) => const VacationListScreen(),
       ),
       GoRoute(
         path: '/subscriptions/new',

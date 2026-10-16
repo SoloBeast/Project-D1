@@ -29,7 +29,7 @@ public sealed class EmployeeController(IEmployeeService employeeService) : Contr
     public async Task<ActionResult<ApiResponse<IReadOnlyList<EmployeeResult>>>> List(
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<IReadOnlyList<EmployeeResult>>.Ok(
-            await employeeService.ListAsync(cancellationToken)));
+            await employeeService.ListAsync(RequireUserId(), cancellationToken)));
 
     /// <summary>
     /// Branch options for the Create Employee screen. Unlike the catalogue endpoint this exposes the
@@ -50,7 +50,7 @@ public sealed class EmployeeController(IEmployeeService employeeService) : Contr
         long employeeId,
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<EmployeeResult>.Ok(
-            await employeeService.GetAsync(employeeId, cancellationToken)));
+            await employeeService.GetAsync(RequireUserId(), employeeId, cancellationToken)));
 
     [HttpPost]
     [Authorize(Policy = "permission:" + AuthorizationCodes.EmployeesManage)]

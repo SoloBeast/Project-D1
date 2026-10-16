@@ -164,11 +164,17 @@ public sealed class BranchService(
             {
                 branch.Activate();
                 AddAudit(actorUserId, ActionActivated, branch, null, BranchSnapshot(branch), null);
+                // Reactivation restores operational scope: force token refresh so
+                // the re-resolved claims carry the branch again.
+                await BumpAssignedUsersAsync(branch.Id, cancellationToken);
             }
             else if (!isActive && branch.IsActive)
             {
                 branch.Deactivate();
                 AddAudit(actorUserId, ActionDeactivated, branch, null, BranchSnapshot(branch), null);
+                // Deactivation removes operational scope immediately: previously
+                // issued tokens must fail per-request revalidation at once.
+                await BumpAssignedUsersAsync(branch.Id, cancellationToken);
             }
 
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -214,6 +220,7 @@ public sealed class BranchService(
             {
                 var now = timeProvider.Now;
                 branch.Archive(now);
+                await BumpAssignedUsersAsync(branch.Id, cancellationToken);
                 dbContext.AddAuditLog(new AuditLog(
                     actorUserId,
                     ActionArchived,
@@ -255,6 +262,7 @@ public sealed class BranchService(
                 var current = await FindBranchAsync(branchId, cancellationToken);
                 var now = timeProvider.Now;
                 current.Archive(now);
+                await BumpAssignedUsersAsync(current.Id, cancellationToken);
                 dbContext.AddAuditLog(new AuditLog(
                     actorUserId,
                     ActionArchived,
@@ -297,7 +305,24 @@ public sealed class BranchService(
         if (await dbContext.Cameras.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
         if (await dbContext.UserRoles.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
         if (await dbContext.EmployeeInvitations.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
+        // Stage 2 multi-branch invitations carry the authoritative set in link rows;
+        // the legacy BranchId scalar only tracks the lowest id.
+        if (await dbContext.EmployeeInvitationBranches.AnyAsync(x => x.BranchId == branchId, cancellationToken)) return true;
         return false;
+    }
+
+    /// <summary>
+    /// Invalidates previously issued access tokens for every user assigned to
+    /// the branch. Branch activation transitions change operational scope, so
+    /// affected tokens must fail per-request revalidation immediately.
+    /// </summary>
+    private async Task BumpAssignedUsersAsync(long branchId, CancellationToken cancellationToken)
+    {
+        var users = await dbContext.Users
+            .Where(x => x.UserRoles.Any(r => r.BranchId == branchId))
+            .ToListAsync(cancellationToken);
+        foreach (var user in users)
+            user.BumpAuthorizationVersion();
     }
 
     private async Task<Branch> FindBranchAsync(Guid branchId, CancellationToken cancellationToken) =>

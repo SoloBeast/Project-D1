@@ -44,6 +44,10 @@ void main() {
           RefundReplacementStatus.completed,
         );
         expect(
+          RefundReplacementStatus.parse('Failed'),
+          RefundReplacementStatus.failed,
+        );
+        expect(
           RefundReplacementStatus.parse(null),
           RefundReplacementStatus.unknown,
         );
@@ -51,6 +55,7 @@ void main() {
         expect(RefundReplacementStatus.approved.isTerminal, isFalse);
         expect(RefundReplacementStatus.rejected.isTerminal, isTrue);
         expect(RefundReplacementStatus.completed.isTerminal, isTrue);
+        expect(RefundReplacementStatus.failed.isTerminal, isTrue);
 
         expect(
           RefundReplacementSource.parse('CustomerPostDelivery'),
@@ -128,6 +133,24 @@ void main() {
       expect(decided.images, isEmpty);
     });
 
+    test('D1-D slice 7.1: parses the subscription-cancellation outcome', () {
+      final cancelled = RefundReplacementRequest.fromJson(
+        requestJson(status: 'Cancelled', type: 'Replacement'),
+      );
+      expect(cancelled.status, RefundReplacementStatus.cancelled);
+      expect(cancelled.status.label, 'Cancelled (refunded)');
+      expect(cancelled.status.isTerminal, isTrue);
+      // Distinct from both successful fulfillment and replacement failure.
+      expect(
+        RefundReplacementStatus.cancelled,
+        isNot(RefundReplacementStatus.completed),
+      );
+      expect(
+        RefundReplacementStatus.cancelled,
+        isNot(RefundReplacementStatus.failed),
+      );
+    });
+
     test('parses the staff list page rows with proof flags and paging', () {
       final page = RefundReplacementPage.fromJson({
         'items': [listItemJson(proofImageRequired: true, imageCount: 0)],
@@ -173,6 +196,42 @@ void main() {
       );
       expect(noDeadline.deadlineUtc, isNull);
     });
+
+    test(
+      'parses the persisted replacement date and public delivery number ',
+      () {
+        // Reads (list/detail GETs) echo the persisted replacement fields,
+        // so reloads render them without the approval response.
+        final approved = RefundReplacementRequest.fromJson(
+          requestJson(
+            status: 'Approved',
+            type: 'Replacement',
+            source: 'DeliveryFailed',
+            includeDecision: true,
+            images: false,
+          )
+            ..['replacementDate'] = '2026-08-25'
+            ..['replacementDeliveryNumber'] = 'DLV/BR-07/000123'
+            ..['replacementDeliveryPublicId'] =
+                '11111111-2222-3333-4444-555555555555',
+        );
+        expect(approved.replacementDate, DateTime.utc(2026, 8, 25));
+        expect(
+          approved.replacementDeliveryNumber,
+          'DLV/BR-07/000123',
+        );
+
+        final unmaterialized = RefundReplacementRequest.fromJson(
+          requestJson(status: 'Approved')..['replacementDate'] = '2026-08-25',
+        );
+        expect(unmaterialized.replacementDate, DateTime.utc(2026, 8, 25));
+        expect(unmaterialized.replacementDeliveryNumber, isNull);
+
+        final plain = RefundReplacementRequest.fromJson(requestJson());
+        expect(plain.replacementDate, isNull);
+        expect(plain.replacementDeliveryNumber, isNull);
+      },
+    );
   });
 
   group('refund/replacement repository', () {

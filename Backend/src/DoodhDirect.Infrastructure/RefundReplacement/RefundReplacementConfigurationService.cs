@@ -32,18 +32,34 @@ public sealed class RefundReplacementConfigurationService(
     public const int DefaultWindowHours = 48;
 
     /// <summary>
+    /// D1-A default: hours after the delivery-failed timestamp for the
+    /// customer to choose Refund or Re-Delivery.
+    /// </summary>
+    public const int DefaultDeliveryFailWindowHours = 24;
+
+    /// <summary>
+    /// D1-A default deduction % reserved for the later automatic-timeout refund.
+    /// </summary>
+    public const decimal DefaultDeliveryFailDeductionPercentage = 10m;
+
+    /// <summary>
     /// Valid range for the window (hours). Must be a positive integer so the
     /// deadline is always strictly after the delivery completion timestamp.
     /// </summary>
     public const int MinimumWindowHours = 1;
     public const int MaximumWindowHours = 24 * 365;
+    public const int MinimumDeliveryFailWindowHours = 1;
+    public const int MaximumDeliveryFailWindowHours = 24 * 365;
+    public const decimal MinimumDeliveryFailDeductionPercentage = 0m;
+    public const decimal MaximumDeliveryFailDeductionPercentage = 100m;
 
     public async Task<RefundReplacementConfigurationResult> GetAsync(CancellationToken cancellationToken)
     {
         var settings = await LoadAsync(cancellationToken);
-        var windowHours = ReadWindowHours(settings);
-
-        return ToResult(windowHours);
+        return ToResult(
+            ReadWindowHours(settings),
+            ReadDeliveryFailWindowHours(settings),
+            ReadDeliveryFailDeductionPercentage(settings));
     }
 
     public async Task<RefundReplacementConfigurationResult> UpdateAsync(
@@ -57,10 +73,16 @@ public sealed class RefundReplacementConfigurationService(
 
         var settings = await LoadAsync(cancellationToken);
         var before = ReadWindowHours(settings);
+        var beforeFailWindow = ReadDeliveryFailWindowHours(settings);
+        var beforeDeduction = ReadDeliveryFailDeductionPercentage(settings);
 
         var now = timeProvider.Now;
         var windowHours = request.WindowHours ?? before;
         windowHours = NormalizeWindowHours(windowHours);
+        var failWindowHours = request.DeliveryFailWindowHours ?? beforeFailWindow;
+        failWindowHours = NormalizeDeliveryFailWindowHours(failWindowHours);
+        var deductionPercentage = request.DeliveryFailDeductionPercentage ?? beforeDeduction;
+        deductionPercentage = NormalizeDeliveryFailDeductionPercentage(deductionPercentage);
 
         await SetValueAsync(
             settings,
@@ -71,6 +93,24 @@ public sealed class RefundReplacementConfigurationService(
             now,
             cancellationToken);
 
+        await SetValueAsync(
+            settings,
+            RefundReplacementConfigurationKeys.DeliveryFailWindowHours,
+            failWindowHours.ToString(CultureInfo.InvariantCulture),
+            "int",
+            "Delivery-fail customer-choice window in whole hours. The choice deadline is the delivery-failed timestamp + this window.",
+            now,
+            cancellationToken);
+
+        await SetValueAsync(
+            settings,
+            RefundReplacementConfigurationKeys.DeliveryFailDeductionPercentage,
+            deductionPercentage.ToString(CultureInfo.InvariantCulture),
+            "decimal",
+            "Delivery-fail deduction percentage reserved for the automatic timeout refund. Snapshotted onto each delivery-fail ticket.",
+            now,
+            cancellationToken);
+
         dbContext.AddAuditLog(new AuditLog(
             actorUserId,
             ActionConfigUpdated,
@@ -78,11 +118,15 @@ public sealed class RefundReplacementConfigurationService(
             EntityId,
             JsonSerializer.Serialize(new
             {
-                windowHours = before
+                windowHours = before,
+                deliveryFailWindowHours = beforeFailWindow,
+                deliveryFailDeductionPercentage = beforeDeduction
             }),
             JsonSerializer.Serialize(new
             {
-                windowHours
+                windowHours,
+                deliveryFailWindowHours = failWindowHours,
+                deliveryFailDeductionPercentage = deductionPercentage
             }),
             ipAddress,
             userAgent,
@@ -91,7 +135,7 @@ public sealed class RefundReplacementConfigurationService(
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        return ToResult(windowHours);
+        return ToResult(windowHours, failWindowHours, deductionPercentage);
     }
 
     private async Task<Dictionary<string, SystemConfiguration>> LoadAsync(
@@ -163,8 +207,75 @@ public sealed class RefundReplacementConfigurationService(
         return DefaultWindowHours;
     }
 
-    private static RefundReplacementConfigurationResult ToResult(int windowHours) =>
+    private static int NormalizeDeliveryFailWindowHours(int windowHours)
+    {
+        if (windowHours < MinimumDeliveryFailWindowHours || windowHours > MaximumDeliveryFailWindowHours)
+        {
+            throw new ValidationAppException(
+                $"The delivery fail window must be between {MinimumDeliveryFailWindowHours} and {MaximumDeliveryFailWindowHours} hours.",
+                "deliveryFailWindowHours");
+        }
+
+        return windowHours;
+    }
+
+    private static decimal NormalizeDeliveryFailDeductionPercentage(decimal percentage)
+    {
+        var rounded = decimal.Round(percentage, 2, MidpointRounding.AwayFromZero);
+        if (rounded < MinimumDeliveryFailDeductionPercentage || rounded > MaximumDeliveryFailDeductionPercentage)
+        {
+            throw new ValidationAppException(
+                "The delivery fail deduction percentage must be between 0 and 100.",
+                "deliveryFailDeductionPercentage");
+        }
+
+        return rounded;
+    }
+
+    private static int ReadDeliveryFailWindowHours(IReadOnlyDictionary<string, SystemConfiguration> settings)
+    {
+        if (!settings.TryGetValue(RefundReplacementConfigurationKeys.DeliveryFailWindowHours, out var entity))
+        {
+            return DefaultDeliveryFailWindowHours;
+        }
+
+        if (int.TryParse(entity.Value, NumberStyles.None, CultureInfo.InvariantCulture, out var value)
+            && value >= MinimumDeliveryFailWindowHours
+            && value <= MaximumDeliveryFailWindowHours)
+        {
+            return value;
+        }
+
+        return DefaultDeliveryFailWindowHours;
+    }
+
+    private static decimal ReadDeliveryFailDeductionPercentage(IReadOnlyDictionary<string, SystemConfiguration> settings)
+    {
+        if (!settings.TryGetValue(RefundReplacementConfigurationKeys.DeliveryFailDeductionPercentage, out var entity))
+        {
+            return DefaultDeliveryFailDeductionPercentage;
+        }
+
+        if (decimal.TryParse(entity.Value, NumberStyles.Number, CultureInfo.InvariantCulture, out var value))
+        {
+            var rounded = decimal.Round(value, 2, MidpointRounding.AwayFromZero);
+            if (rounded >= MinimumDeliveryFailDeductionPercentage
+                && rounded <= MaximumDeliveryFailDeductionPercentage)
+            {
+                return rounded;
+            }
+        }
+
+        return DefaultDeliveryFailDeductionPercentage;
+    }
+
+    private static RefundReplacementConfigurationResult ToResult(
+        int windowHours,
+        int deliveryFailWindowHours,
+        decimal deliveryFailDeductionPercentage) =>
         new(
             windowHours,
+            deliveryFailWindowHours,
+            deliveryFailDeductionPercentage,
             windowHours > 0 ? "Configured" : "Not Configured");
 }

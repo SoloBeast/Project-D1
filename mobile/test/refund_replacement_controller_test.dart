@@ -324,6 +324,7 @@ class _FakeRefundReplacementRepository extends RefundReplacementRepository {
     String token,
     String requestId, {
     String? remarks,
+    DateTime? replacementDate,
   }) async {
     lastToken = token;
     decidedAction = 'approve';

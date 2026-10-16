@@ -307,17 +307,23 @@ public sealed class ReportService(DoodhDirectDbContext db, IIndiaTimeProvider ti
 
     private async Task<ReportPage<AuditReportRow>> PageAudit(ReportActor a, ReportFilter f, CancellationToken ct)
     {
-        var q = db.AuditLogs.AsNoTracking(); if (!a.HasGlobalAccess) q = q.Where(x => x.UserId == a.UserId || (x.UserId.HasValue && db.UserRoles.Any(r => r.UserId == x.UserId && r.BranchId.HasValue && a.BranchIds.Contains(r.BranchId.Value)))); DateTime? from = f.DateRange?.From; DateTime? to = f.DateRange?.To; if (from.HasValue) q = q.Where(x => x.CreatedAt >= from.Value); if (to.HasValue) q = q.Where(x => x.CreatedAt < to.Value); if (!string.IsNullOrWhiteSpace(f.Search)) q = q.Where(x => x.Action.Contains(f.Search) || x.EntityType.Contains(f.Search)); var total = await q.CountAsync(ct); var data = await ApplyAuditSort(q, f).Skip((f.Page - 1) * f.PageSize).Take(f.PageSize).Select(x => new AuditReportRow(x.Id, x.UserId, x.Action, x.EntityType, x.EntityId, x.Reason, x.CreatedAt)).ToListAsync(ct); return MakePage(data, f, total);
+        var q = db.AuditLogs.AsNoTracking(); if (!a.HasGlobalAccess) q = q.Where(x => x.UserId == a.UserId || (x.UserId.HasValue && db.UserRoles.Any(r => r.UserId == x.UserId && r.BranchId.HasValue && (a.BranchIds.Contains(r.BranchId.Value) || (a.BranchHistoryIds != null && a.BranchHistoryIds.Contains(r.BranchId.Value)))))); DateTime? from = f.DateRange?.From; DateTime? to = f.DateRange?.To; if (from.HasValue) q = q.Where(x => x.CreatedAt >= from.Value); if (to.HasValue) q = q.Where(x => x.CreatedAt < to.Value); if (!string.IsNullOrWhiteSpace(f.Search)) q = q.Where(x => x.Action.Contains(f.Search) || x.EntityType.Contains(f.Search)); var total = await q.CountAsync(ct); var data = await ApplyAuditSort(q, f).Skip((f.Page - 1) * f.PageSize).Take(f.PageSize).Select(x => new AuditReportRow(x.Id, x.UserId, x.Action, x.EntityType, x.EntityId, x.Reason, x.CreatedAt)).ToListAsync(ct); return MakePage(data, f, total);
     }
 
     private async Task<HashSet<long>> ScopedCustomerIds(ReportActor a, ReportFilter f, CancellationToken ct) => (await ApplyBranches(db.Orders.AsNoTracking(), await ResolveBranchesAsync(a, f.BranchIds, ct)).Select(x => x.CustomerId).Concat(ApplyBranches(db.Subscriptions.AsNoTracking(), await ResolveBranchesAsync(a, f.BranchIds, ct)).Select(x => x.CustomerId)).Distinct().ToListAsync(ct)).ToHashSet();
     private async Task<HashSet<long>> ResolveBranchesAsync(ReportActor a, IReadOnlyCollection<Guid>? requested, CancellationToken ct)
     {
         ValidateActor(a);
+        // Reporting is read-only history as well as current operations:
+        // archived/inactive assignments retain visibility here, while
+        // operational services keep enforcing the active-only BranchIds set.
+        // Caller-requested branches are still intersected with this allowed
+        // set — a requested branch outside it is forbidden, never widened.
         var allowed = a.HasGlobalAccess
             ? await db.Branches.AsNoTracking().Select(x => new { x.Id, x.PublicId }).ToListAsync(ct)
             : await db.Branches.AsNoTracking()
-                .Where(x => a.BranchIds.Distinct().Contains(x.Id))
+                .Where(x => a.BranchIds.Distinct().Contains(x.Id) ||
+                    (a.BranchHistoryIds != null && a.BranchHistoryIds.Distinct().Contains(x.Id)))
                 .Select(x => new { x.Id, x.PublicId })
                 .ToListAsync(ct);
 
@@ -373,6 +379,6 @@ public sealed class ReportService(DoodhDirectDbContext db, IIndiaTimeProvider ti
     private static T ParseStatus<T>(string value) where T : struct, Enum => Enum.TryParse<T>(value, true, out var parsed) && Enum.IsDefined(parsed) ? parsed : throw new ValidationAppException($"Unknown {typeof(T).Name} value '{value}'.", nameof(ReportFilter.Statuses));
     private static ReportFilter Normalize(ReportFilter f, int maximumPageSize = MaximumPageSize) { if (f.Page < 1 || f.PageSize < 1 || f.PageSize > maximumPageSize) throw new ValidationAppException("Report paging values are invalid."); if (!Enum.IsDefined(f.SortDirection)) throw new ValidationAppException("The report sort direction is invalid.", nameof(ReportFilter.SortDirection)); if (f.SortBy is not null && string.IsNullOrWhiteSpace(f.SortBy)) throw new ValidationAppException("The report sort field cannot be blank.", nameof(ReportFilter.SortBy)); ValidateDateRange(f.DateRange); return f with { Search = f.Search?.Trim(), SortBy = f.SortBy?.Trim() }; }
     private static void ValidateDateRange(ReportDateRange? dateRange) { if (dateRange?.From > dateRange?.To) throw new ValidationAppException("The report date range is invalid.", nameof(ReportDateRange)); if (dateRange?.From is { Kind: not DateTimeKind.Unspecified } || dateRange?.To is { Kind: not DateTimeKind.Unspecified }) throw new ValidationAppException("Report dates must be India-local wall-clock values.", nameof(ReportDateRange)); }
-    private static void ValidateActor(ReportActor a) { if (a.UserId <= 0 || (!a.HasGlobalAccess && a.BranchIds.Count == 0)) throw new ForbiddenAppException("A valid report actor and branch scope are required."); }
+    private static void ValidateActor(ReportActor a) { if (a.UserId <= 0 || (!a.HasGlobalAccess && a.BranchIds.Count == 0 && (a.BranchHistoryIds == null || a.BranchHistoryIds.Count == 0))) throw new ForbiddenAppException("A valid report actor and branch scope are required."); }
     private static ReportPage<T> MakePage<T>(IReadOnlyCollection<T> data, ReportFilter f, int total) => new(data, f.Page, f.PageSize, total, f.Page * f.PageSize < total);
 }

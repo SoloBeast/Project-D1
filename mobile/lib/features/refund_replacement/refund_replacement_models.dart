@@ -18,47 +18,95 @@ enum RefundReplacementType {
 
 enum RefundReplacementStatus {
   pending,
+  awaitingCustomerChoice,
   approved,
   rejected,
   completed,
+  failed,
+  // D1-D slice 7.1: subscription cancelled while an approved re-delivery
+  // replacement was still pending — voided and refunded without delivery.
+  // Never a successful fulfillment (completed) nor a replacement failure
+  // (failed); the two cancellation/failure refunds stay distinguishable.
+  cancelled,
   unknown;
 
   static RefundReplacementStatus parse(Object? value) => switch (value) {
     'Pending' || 'pending' => pending,
+    'AwaitingCustomerChoice' ||
+    'awaitingCustomerChoice' => awaitingCustomerChoice,
     'Approved' || 'approved' => approved,
     'Rejected' || 'rejected' => rejected,
     'Completed' || 'completed' => completed,
+    'Failed' || 'failed' => failed,
+    'Cancelled' || 'cancelled' => cancelled,
     _ => unknown,
   };
 
   String get label => switch (this) {
     pending => 'Pending',
+    awaitingCustomerChoice => 'Awaiting choice',
     approved => 'Approved',
     rejected => 'Rejected',
     completed => 'Completed',
+    failed => 'Closed without delivery',
+    cancelled => 'Cancelled (refunded)',
     unknown => 'Unknown',
   };
 
   bool get isTerminal =>
       this == RefundReplacementStatus.rejected ||
-      this == RefundReplacementStatus.completed;
+      this == RefundReplacementStatus.completed ||
+      this == RefundReplacementStatus.failed ||
+      this == RefundReplacementStatus.cancelled;
+
+  bool get isAwaitingChoice => this == awaitingCustomerChoice;
+}
+
+/// D1-B: the customer's explicit remedy selection on a delivery-fail ticket.
+/// Null until the customer chooses; immutable once recorded. The UI never
+/// computes money, deductions, or replacement deliveries from this value.
+enum CustomerChoice {
+  refund,
+  reDelivery,
+  unknown;
+
+  static CustomerChoice? parse(Object? value) => switch (value) {
+    null => null,
+    'Refund' || 'refund' => refund,
+    'ReDelivery' || 'reDelivery' || 'redelivery' => reDelivery,
+    _ => unknown,
+  };
+
+  String get label => switch (this) {
+    refund => 'Refund',
+    reDelivery => 'Re-delivery',
+    unknown => 'Unknown',
+  };
+
+  String get wireValue => switch (this) {
+    refund => 'Refund',
+    reDelivery => 'ReDelivery',
+    unknown => 'Refund',
+  };
 }
 
 enum RefundReplacementSource {
   customerPostDelivery,
   milkTestRejected,
+  deliveryFailed,
   unknown;
 
   static RefundReplacementSource parse(Object? value) => switch (value) {
-    'CustomerPostDelivery' || 'customerPostDelivery' =>
-      customerPostDelivery,
+    'CustomerPostDelivery' || 'customerPostDelivery' => customerPostDelivery,
     'MilkTestRejected' || 'milkTestRejected' => milkTestRejected,
+    'DeliveryFailed' || 'deliveryFailed' => deliveryFailed,
     _ => unknown,
   };
 
   String get label => switch (this) {
     customerPostDelivery => 'Requested after delivery',
     milkTestRejected => 'Milk test rejected',
+    deliveryFailed => 'Delivery failed',
     unknown => 'Unknown',
   };
 }
@@ -85,7 +133,8 @@ class RefundReplacementEligibility {
         deadlineUtc: _optionalProtocolDate(json, 'deadline', 'deadlineUtc'),
         hasActiveRequest: json['hasActiveRequest'] as bool? ?? false,
         proofImageRequired: json['proofImageRequired'] as bool? ?? false,
-        isMilkTestRejectedFlow: json['isMilkTestRejectedFlow'] as bool? ?? false,
+        isMilkTestRejectedFlow:
+            json['isMilkTestRejectedFlow'] as bool? ?? false,
       );
 
   final bool isEligible;
@@ -160,15 +209,26 @@ class RefundReplacementRequest {
     required this.completionRemarks,
     required this.proofImageRequired,
     required this.images,
+    this.subscriptionDeliveryPublicId,
+    this.failedAtUtc,
+    this.failureReasonSnapshot,
+    this.customerChoice,
+    this.customerChoiceAtUtc,
+    this.replacementDate,
+    this.replacementDeliveryNumber,
+    // Audit remediation B: true when the failed occurrence is itself a
+    // re-delivery replacement, so Refund is the only remedy and rejection
+    // is refused. Defaults to false for older payloads.
+    this.isRefundOnly = false,
   });
 
   factory RefundReplacementRequest.fromJson(Map<String, dynamic> json) =>
       RefundReplacementRequest(
         requestId: json['requestId'] as String,
         requestNumber: json['requestNumber'] as String,
-        orderId: (json['orderId'] as num).toInt(),
+        orderId: (json['orderId'] as num?)?.toInt(),
         orderPublicId: json['orderPublicId'] as String?,
-        orderNumber: json['orderNumber'] as String,
+        orderNumber: json['orderNumber'] as String?,
         deliveryId: json['deliveryId'] as String,
         deliveryNumber: json['deliveryNumber'] as String?,
         customerId: (json['customerId'] as num).toInt(),
@@ -204,13 +264,29 @@ class RefundReplacementRequest {
         completionRemarks: json['completionRemarks'] as String?,
         proofImageRequired: json['proofImageRequired'] as bool? ?? false,
         images: _images(json['images']),
+        subscriptionDeliveryPublicId:
+            json['subscriptionDeliveryPublicId'] as String?,
+        failedAtUtc: _optionalProtocolDate(json, 'failedAt', 'failedAtUtc'),
+        failureReasonSnapshot:
+            json['failureReasonSnapshot'] as String? ??
+            json['failureReason'] as String?,
+        customerChoice: CustomerChoice.parse(json['customerChoice']),
+        customerChoiceAtUtc: _optionalProtocolDate(
+          json,
+          'customerChoiceAt',
+          'customerChoiceAtUtc',
+        ),
+        replacementDate: _optionalDateOnly(json['replacementDate']),
+        replacementDeliveryNumber:
+            json['replacementDeliveryNumber'] as String?,
+        isRefundOnly: (json['isRefundOnly'] as bool?) ?? false,
       );
 
   final String requestId;
   final String requestNumber;
-  final int orderId;
+  final int? orderId;
   final String? orderPublicId;
-  final String orderNumber;
+  final String? orderNumber;
   final String deliveryId;
   final String? deliveryNumber;
   final int customerId;
@@ -238,6 +314,62 @@ class RefundReplacementRequest {
   final String? completionRemarks;
   final bool proofImageRequired;
   final List<RefundReplacementImage> images;
+  final String? subscriptionDeliveryPublicId;
+  final DateTime? failedAtUtc;
+  final String? failureReasonSnapshot;
+  final CustomerChoice? customerChoice;
+  final DateTime? customerChoiceAtUtc;
+  /// D1-D slice 6.1: the server-approved replacement date (date-only, no
+  /// time) for a re-delivery ticket. The backend persists it on the
+  /// replacement occurrence and echoes it on every read (list and detail),
+  /// so it survives reloads without depending on the approval response.
+  /// [replacementDeliveryNumber] is the replacement operational delivery's
+  /// public DELIVERY-series number, present only once the replacement has
+  /// materialized through the normal pipeline; it is never invented. The
+  /// replacement delivery's public identifier is an opaque GUID, so it is
+  /// deliberately not modeled here and never shown as a business reference.
+  final DateTime? replacementDate;
+  final String? replacementDeliveryNumber;
+  final bool isRefundOnly;
+
+  /// True while the ticket awaits the customer's Refund / Re-Delivery choice.
+  bool get isAwaitingChoice =>
+      status.isAwaitingChoice && customerChoice == null;
+
+  /// True when staff may approve this ticket: an undecided normal request, or
+  /// a delivery-fail ticket whose customer choice is already recorded and is
+  /// waiting on the staff decision. Mirrors the backend's
+  /// Pending-or-AwaitingCustomerChoice approval precondition without
+  /// reproducing any date, cutoff, or eligibility business rules.
+  bool get isStaffDecidable =>
+      status == RefundReplacementStatus.pending ||
+      (status.isAwaitingChoice && customerChoice != null);
+
+  /// True when approving this ticket goes through the re-delivery date flow:
+  /// a subscription delivery-fail ticket with a recorded Re-Delivery choice.
+  /// The backend remains authoritative for every date rule; the UI only
+  /// surfaces the proposal and forwards the confirmed date.
+  bool get isRedeliveryApproval =>
+      isStaffDecidable &&
+      source == RefundReplacementSource.deliveryFailed &&
+      customerChoice == CustomerChoice.reDelivery &&
+      subscriptionDeliveryPublicId != null;
+
+  /// True for one-time order-backed tickets (no subscription occurrence).
+  /// Completing these records the out-of-system settlement only — no
+  /// in-system wallet credit or refund row is created (backend locked).
+  bool get isOneTimeOrderTicket =>
+      subscriptionDeliveryPublicId == null && orderId != null;
+
+  /// True when the persisted choice window has passed without a choice.
+  /// Advisory only; the backend deadline is authoritative and D1-C owns
+  /// timeout processing, so the UI never initiates a refund itself.
+  bool get isChoiceExpired {
+    if (customerChoice != null || !status.isAwaitingChoice) return false;
+    final deadline = deadlineUtc;
+    if (deadline == null) return false;
+    return !DateTime.now().toUtc().isBefore(deadline);
+  }
 }
 
 /// Lightweight row for the branch-scoped staff list.
@@ -267,15 +399,17 @@ class RefundReplacementListItem {
     required this.deadlineUtc,
     required this.proofImageRequired,
     required this.imageCount,
+    this.customerChoice,
+    this.customerChoiceAtUtc,
   });
 
   factory RefundReplacementListItem.fromJson(Map<String, dynamic> json) =>
       RefundReplacementListItem(
         requestId: json['requestId'] as String,
         requestNumber: json['requestNumber'] as String,
-        orderId: (json['orderId'] as num).toInt(),
+        orderId: (json['orderId'] as num?)?.toInt(),
         orderPublicId: json['orderPublicId'] as String?,
-        orderNumber: json['orderNumber'] as String,
+        orderNumber: json['orderNumber'] as String?,
         deliveryId: json['deliveryId'] as String,
         deliveryNumber: json['deliveryNumber'] as String?,
         customerId: (json['customerId'] as num).toInt(),
@@ -299,13 +433,19 @@ class RefundReplacementListItem {
         deadlineUtc: _optionalProtocolDate(json, 'deadline', 'deadlineUtc'),
         proofImageRequired: json['proofImageRequired'] as bool? ?? false,
         imageCount: (json['imageCount'] as num?)?.toInt() ?? 0,
+        customerChoice: CustomerChoice.parse(json['customerChoice']),
+        customerChoiceAtUtc: _optionalProtocolDate(
+          json,
+          'customerChoiceAt',
+          'customerChoiceAtUtc',
+        ),
       );
 
   final String requestId;
   final String requestNumber;
-  final int orderId;
+  final int? orderId;
   final String? orderPublicId;
-  final String orderNumber;
+  final String? orderNumber;
   final String deliveryId;
   final String? deliveryNumber;
   final int customerId;
@@ -325,6 +465,8 @@ class RefundReplacementListItem {
   final DateTime? deadlineUtc;
   final bool proofImageRequired;
   final int imageCount;
+  final CustomerChoice? customerChoice;
+  final DateTime? customerChoiceAtUtc;
 }
 
 class RefundReplacementPage {
@@ -378,3 +520,47 @@ List<RefundReplacementImage> _images(Object? value) =>
         .cast<Map<String, dynamic>>()
         .map(RefundReplacementImage.fromJson)
         .toList(growable: false);
+
+/// D1-D: the server-proposed next eligible replacement date for a re-delivery
+/// ticket awaiting staff approval. Advisory only; approval re-validates inside
+/// its own transaction, so the UI never enforces date rules itself.
+class ReplacementDateProposal {
+  const ReplacementDateProposal({
+    required this.requestId,
+    required this.proposedDate,
+  });
+
+  factory ReplacementDateProposal.fromJson(Map<String, dynamic> json) =>
+      ReplacementDateProposal(
+        requestId: json['requestId'] as String,
+        proposedDate: _requiredDateOnly(json['proposedDate']),
+      );
+
+  final String requestId;
+
+  /// Date-only (midnight UTC); formatted without timezone conversion so the
+  /// approved calendar day is shown exactly as the server sent it.
+  final DateTime proposedDate;
+}
+
+/// Parses a backend `DateOnly` (`yyyy-MM-dd`, no time component) into a
+/// date-only [DateTime]. Returns null for missing values.
+DateTime? _optionalDateOnly(Object? value) {
+  if (value == null) return null;
+  if (value is! String || value.isEmpty) {
+    throw FormatException('Invalid refund/replacement date value.');
+  }
+  return _parseDateOnly(value);
+}
+
+DateTime _requiredDateOnly(Object? value) {
+  if (value is! String || value.isEmpty) {
+    throw FormatException('Missing refund/replacement date value.');
+  }
+  return _parseDateOnly(value);
+}
+
+DateTime _parseDateOnly(String value) {
+  final parsed = DateTime.parse(value);
+  return DateTime.utc(parsed.year, parsed.month, parsed.day);
+}

@@ -65,7 +65,8 @@ public sealed record SubscriptionDeliveryResult(
     string BranchName,
     string Address,
     DateTime? StatusChangedAt,
-    SubscriptionDeliverySlot Slot = SubscriptionDeliverySlot.Morning);
+    SubscriptionDeliverySlot Slot = SubscriptionDeliverySlot.Morning,
+    bool IsReplacement = false);
 
 public sealed record SubscriptionResult(
     Guid PublicId,
@@ -210,5 +211,9 @@ public static class SubscriptionMappings
         delivery.BranchNameSnapshot,
         delivery.AddressSnapshot,
         delivery.StatusChangedAt,
-        delivery.Slot);
+        delivery.Slot,
+        // D1-D slice 7.2: read-model flag only, mapped directly from the
+        // persisted occurrence. Never inferred from dates, GUIDs, or display
+        // references.
+        delivery.IsReplacement);
 }

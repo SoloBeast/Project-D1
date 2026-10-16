@@ -364,6 +364,82 @@ void main() {
       );
       expect(state.isCompleting, isFalse);
     });
+
+    test('deduplicates employees repeated across visible branches', () async {
+      final repository = _FakeEmployeeRepository(
+        employees: [
+          _employee(
+            roleCode: 'DAIRY_MANAGER',
+            branchAssignments: const [
+              EmployeeBranchAssignment(branchId: 7, branchName: 'Main Branch'),
+              EmployeeBranchAssignment(
+                branchId: 9,
+                branchName: 'North Branch',
+              ),
+            ],
+          ),
+          // Same account returned for a second visible branch.
+          _employee(displayName: 'Duplicate Row'),
+        ],
+      );
+      final container = await _authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(employeeControllerProvider.notifier);
+
+      await controller.load();
+      final state = container.read(employeeControllerProvider);
+
+      // The full assignment set survives; the repeated row collapses to one.
+      expect(state.employees, hasLength(1));
+      expect(state.employees.single.allBranchIds, [7, 9]);
+      expect(state.isLoading, isFalse);
+    });
+
+    test('surfaces concurrent-update conflicts clearly', () async {
+      final repository = _FailingEmployeeRepository(
+        const ApiException(
+          409,
+          'CONCURRENCY_CONFLICT',
+          'The employee was modified by another administrator. Reload and try again.',
+        ),
+      );
+      final container = await _authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(employeeControllerProvider.notifier);
+
+      final updated = await controller.update(42, _updateRequest);
+      final state = container.read(employeeControllerProvider);
+
+      expect(updated, isNull);
+      expect(
+        state.errorMessage,
+        'The employee was modified by another administrator. Reload and try again.',
+      );
+      expect(state.isSaving, isFalse);
+    });
+
+    test('handles an authorization failure gracefully', () async {
+      final repository = _FailingEmployeeRepository(
+        const ApiException(
+          401,
+          'UNAUTHORIZED',
+          'Your session expired. Sign in again.',
+        ),
+      );
+      final container = await _authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller = container.read(employeeControllerProvider.notifier);
+
+      // The controller surfaces the failure once; token refresh and replay
+      // belong to the shared API client (see api_client_test.dart), so the
+      // stale token is never retried in a loop here.
+      await controller.load();
+      final state = container.read(employeeControllerProvider);
+
+      expect(state.errorMessage, 'Your session expired. Sign in again.');
+      expect(state.isLoading, isFalse);
+      expect(state.employees, isEmpty);
+    });
   });
 }
 
@@ -411,11 +487,12 @@ class _UnauthenticatedRepository extends AuthRepository {
 }
 
 class _FakeEmployeeRepository extends EmployeeRepository {
-  _FakeEmployeeRepository({EmployeeInvitationResult? invitation})
+  _FakeEmployeeRepository({EmployeeInvitationResult? invitation, this._employees})
     : _invitationResult = invitation,
       super(api: ApiClient(baseUrl: 'https://api.example.test'));
 
   final EmployeeInvitationResult? _invitationResult;
+  final List<Employee>? _employees;
 
   int callCount = 0;
   int loadCount = 0;
@@ -442,7 +519,7 @@ class _FakeEmployeeRepository extends EmployeeRepository {
     callCount++;
     loadCount++;
     lastToken = token;
-    return [_employee()];
+    return _employees ?? [_employee()];
   }
 
   @override
@@ -625,6 +702,7 @@ Employee _employee({
   String roleName = 'Delivery Boy',
   int? branchId = 7,
   String? branchName = 'Main Branch',
+  List<EmployeeBranchAssignment> branchAssignments = const [],
   bool isActive = true,
   int? invitationId = 9,
   EmployeeInvitationStatus? invitationStatus = EmployeeInvitationStatus.invited,
@@ -638,6 +716,7 @@ Employee _employee({
   roleName: roleName,
   branchId: branchId,
   branchName: branchName,
+  branchAssignments: branchAssignments,
   isActive: isActive,
   invitationId: invitationId,
   invitationStatus: invitationStatus,

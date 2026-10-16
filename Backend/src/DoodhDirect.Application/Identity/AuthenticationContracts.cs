@@ -17,7 +17,8 @@ public sealed record AuthUserResult(
     IReadOnlyCollection<string> Roles,
     IReadOnlyCollection<string> Permissions,
     IReadOnlyCollection<long> BranchIds,
-    IReadOnlyCollection<AuthUserBranchResult>? BranchDetails = null);
+    IReadOnlyCollection<AuthUserBranchResult>? BranchDetails = null,
+    IReadOnlyCollection<long>? BranchHistoryIds = null);
 
 public sealed record TokenPair(
     string AccessToken,
@@ -105,7 +106,9 @@ public interface ITokenService
         IReadOnlyCollection<string> roles,
         IReadOnlyCollection<string> permissions,
         IReadOnlyCollection<long> branchIds,
-        DateTime now);
+        DateTime now,
+        long authorizationVersion,
+        IReadOnlyCollection<long>? branchHistoryIds = null);
 
     string HashRefreshToken(string token);
 }
@@ -255,6 +258,17 @@ public static class AuthorizationCodes
 
     public const string PermissionClaim = "permission";
     public const string BranchClaim = "branch_id";
+    /// <summary>
+    /// Operational branch assignments that no longer grant access but retain
+    /// authorized historical visibility (archived or inactive branches).
+    /// Consumed only by reporting/history paths; never by operational checks.
+    /// </summary>
+    public const string BranchHistoryClaim = "branch_history";
+    /// <summary>
+    /// Mirror of <see cref="DoodhDirect.Domain.Identity.User.AuthorizationVersion"/>.
+    /// Revalidated per request; any mismatch fails authentication immediately.
+    /// </summary>
+    public const string ScopeVersionClaim = "scope_v";
 
     public static readonly IReadOnlyDictionary<string, string> Roles = new Dictionary<string, string>
     {

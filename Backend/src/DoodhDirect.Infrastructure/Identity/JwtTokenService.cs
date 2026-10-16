@@ -22,7 +22,9 @@ public sealed class JwtTokenService(
         IReadOnlyCollection<string> roles,
         IReadOnlyCollection<string> permissions,
         IReadOnlyCollection<long> branchIds,
-        DateTime now)
+        DateTime now,
+        long authorizationVersion,
+        IReadOnlyCollection<long>? branchHistoryIds = null)
     {
         var accessExpiry = DateTime.SpecifyKind(
             now.AddMinutes(_options.AccessTokenMinutes),
@@ -47,6 +49,13 @@ public sealed class JwtTokenService(
             new Claim(
                 AuthorizationCodes.BranchClaim,
                 branchId.ToString(System.Globalization.CultureInfo.InvariantCulture))));
+        claims.AddRange((branchHistoryIds ?? Array.Empty<long>()).Select(branchId =>
+            new Claim(
+                AuthorizationCodes.BranchHistoryClaim,
+                branchId.ToString(System.Globalization.CultureInfo.InvariantCulture))));
+        claims.Add(new Claim(
+            AuthorizationCodes.ScopeVersionClaim,
+            authorizationVersion.ToString(System.Globalization.CultureInfo.InvariantCulture)));
 
         var signingCredentials = new SigningCredentials(
             new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SigningKey)),

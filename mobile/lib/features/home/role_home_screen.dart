@@ -621,10 +621,11 @@ class _UpcomingDeliveryLine {
 
   /// Pre-materialized calendar occurrences are skipped per-date (same
   /// semantics as the selected-date sheet), never by cancelling the whole
-  /// subscription.
+  /// subscription. Re-delivery replacements never offer Skip (backend
+  /// validation rejects it); the delivery-level flag carries that rule.
   bool get canSkip =>
       occurrence != null &&
-      occurrence!.status.canSkip &&
+      occurrence!.canSkip &&
       subscription?.status.canUpdate == true;
 
   static String _formatQuantity(double value) => value == value.roundToDouble()
@@ -703,8 +704,11 @@ class UpcomingDeliveriesSection extends ConsumerWidget {
       final date = _indiaDateOf(item.scheduledDate);
       // Upcoming = today onward, before any terminal state.
       if (date.isBefore(todayDate)) continue;
+      // Terminal deliveries never render as upcoming: delivered, failed,
+      // and D1-D voided (cancelled) rows are history, not scheduled work.
       if (item.status == DeliveryStatus.delivered ||
-          item.status == DeliveryStatus.failed) {
+          item.status == DeliveryStatus.failed ||
+          item.status == DeliveryStatus.cancelled) {
         continue;
       }
 
@@ -713,18 +717,22 @@ class UpcomingDeliveriesSection extends ConsumerWidget {
       if (item.sourceType == DeliverySourceType.subscriptionOccurrence &&
           item.referenceNumber.length > 'SUB-'.length) {
         // SUB-{publicId:N}-{yyyyMMdd} — the GUID is the first 32 chars.
+        // A malformed reference must never crash the section: the row
+        // renders without subscription enrichment instead.
         final raw = item.referenceNumber
             .substring('SUB-'.length)
             .split('-')
             .first;
-        final dashed = <String>[
-          raw.substring(0, 8),
-          raw.substring(8, 12),
-          raw.substring(12, 16),
-          raw.substring(16, 20),
-          raw.substring(20, 32),
-        ].join('-');
-        subscription = subscriptionsByPublicId[dashed];
+        if (raw.length == 32) {
+          final dashed = <String>[
+            raw.substring(0, 8),
+            raw.substring(8, 12),
+            raw.substring(12, 16),
+            raw.substring(16, 20),
+            raw.substring(20, 32),
+          ].join('-');
+          subscription = subscriptionsByPublicId[dashed];
+        }
       }
       seenReferences.add(item.referenceNumber);
       lines.add(
@@ -1303,6 +1311,28 @@ class _DateDeliveriesSheet extends ConsumerWidget {
       return calendarOwner;
     }
 
+    // D1-D slice 7: an occurrence that already materialized into a real
+    // Delivery row renders exactly once — the Delivery row is authoritative
+    // for status, so its own occurrence is suppressed. Matching reuses the
+    // backend's deterministic reference `SUB-{subscriptionPublicId:N}-
+    // {yyyyMMdd}` (C# Guid "N" format is lowercase hex). Occurrences whose
+    // owner cannot be resolved keep rendering rather than vanishing.
+    final deliveryReferences = <String>{
+      for (final item in dayDeliveries) item.referenceNumber.toLowerCase(),
+    };
+    final visibleOccurrences = dayOccurrences.where((occurrence) {
+      final owner = ownerOf(occurrence);
+      if (owner == null) return true;
+      final date = occurrence.scheduledDate;
+      final stamp =
+          '${date.year.toString().padLeft(4, '0')}'
+          '${date.month.toString().padLeft(2, '0')}'
+          '${date.day.toString().padLeft(2, '0')}';
+      final ownReference =
+          'sub-${owner.publicId.replaceAll('-', '')}-$stamp';
+      return !deliveryReferences.contains(ownReference);
+    }).toList(growable: false);
+
     Widget occurrenceRow(SubscriptionDelivery occurrence) {
       final owner = ownerOf(occurrence);
       return Padding(
@@ -1403,7 +1433,7 @@ class _DateDeliveriesSheet extends ConsumerWidget {
                     DoodhSpacing.lg,
                   ),
                   children: [
-                    for (final occurrence in dayOccurrences)
+                    for (final occurrence in visibleOccurrences)
                       occurrenceRow(occurrence),
                     for (final item in dayDeliveries)
                       Padding(
@@ -1444,18 +1474,22 @@ class _DateSubscriptionRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final subscriptionState = ref.watch(subscriptionControllerProvider);
-    // Skip stays available only for Scheduled occurrences (status.canSkip)
-    // whose owning subscription is active — mirroring the subscriptions
-    // screen; backend remains authoritative.
+    // Skip stays available only for ordinary Scheduled occurrences whose
+    // owning subscription is active — mirroring the subscriptions screen;
+    // re-delivery replacements never offer Skip and the backend remains
+    // authoritative for every skip.
     final canSkip =
-        delivery.status.canSkip &&
+        delivery.canSkip &&
         owner != null &&
         owner!.status == SubscriptionStatus.active;
+    final isReplacement = delivery.isReplacement;
     return DoodhCard(
       color: DoodhColors.mint,
       semanticLabel:
-          'Subscription delivery, ${formatQuantity(delivery.quantity)}, '
-          '${delivery.slot.apiValue}, ${delivery.status.label}',
+          'Subscription ${isReplacement ? 'replacement' : ''} delivery, '
+          '${formatQuantity(delivery.quantity)}, '
+          '${delivery.slot.apiValue}, '
+          '${isReplacement ? 'Replacement delivery' : delivery.status.label}',
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1496,9 +1530,16 @@ class _DateSubscriptionRow extends ConsumerWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: DoodhSpacing.xs),
+                // D1-D slice 7.2: replacements carry their own scheduled
+                // date with an explicit Replacement delivery label; the
+                // original failed occurrence stays visible on its own date.
                 DoodhStatusPill(
-                  label: delivery.status.label,
-                  tone: _subscriptionStatusTone(delivery.status),
+                  label: isReplacement
+                      ? 'Replacement delivery'
+                      : delivery.status.label,
+                  tone: isReplacement
+                      ? DoodhStatusTone.success
+                      : _subscriptionStatusTone(delivery.status),
                 ),
               ],
             ),
@@ -1622,6 +1663,7 @@ DoodhStatusTone _subscriptionStatusTone(SubscriptionDeliveryStatus status) =>
 IconData _deliveryStatusIcon(DeliveryStatus status) => switch (status) {
   DeliveryStatus.delivered => Icons.check_circle,
   DeliveryStatus.failed => Icons.error_outline,
+  DeliveryStatus.cancelled => Icons.cancel_outlined,
   DeliveryStatus.readyForAssignment ||
   DeliveryStatus.assigned ||
   DeliveryStatus.pickedUp ||
@@ -1645,6 +1687,7 @@ IconData _subscriptionStatusIcon(SubscriptionDeliveryStatus status) =>
 Color _deliveryDotColor(DeliveryStatus status) => switch (status) {
   DeliveryStatus.delivered => DoodhColors.deliveredGreen,
   DeliveryStatus.failed => DoodhColors.coral,
+  DeliveryStatus.cancelled => DoodhColors.muted,
   DeliveryStatus.readyForAssignment ||
   DeliveryStatus.assigned ||
   DeliveryStatus.pickedUp ||
@@ -1668,55 +1711,6 @@ DateTime _dateOnly(DateTime value) =>
 
 String _weekday(DateTime value) =>
     const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][value.weekday - 1];
-
-class _QuickAction extends StatelessWidget {
-  const _QuickAction({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => Card(
-    child: InkWell(
-      borderRadius: DoodhRadii.md,
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: DoodhColors.teal, size: 28),
-            const SizedBox(height: 10),
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
-/// Trust signals shown on the customer and guest entry surfaces.
-///
-/// These restate existing product promises only — the app never invents
-/// promotions, prices or availability claims here.
-const List<DoodhTrustItem> _homeTrustItems = [
-  DoodhTrustItem(icon: Icons.verified_outlined, label: 'Farm fresh'),
-  DoodhTrustItem(icon: Icons.home_work_outlined, label: 'Doorstep delivery'),
-  DoodhTrustItem(icon: Icons.lock_outline, label: 'Secure payments'),
-];
 
 /// Adds a product to the cart without a confirmation snackbar — the header
 /// cart badge reflects the change immediately.
@@ -2402,78 +2396,60 @@ class _AdminTileData {
 /// contextual sign-in prompt. No customer-specific data is fetched or shown —
 /// protected quick actions simply route to the sign-in flow with a
 /// return-intent, so the guest is never shown fabricated account state.
-class GuestHomeScreen extends ConsumerWidget {
+class GuestHomeScreen extends ConsumerStatefulWidget {
   const GuestHomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<GuestHomeScreen> createState() => _GuestHomeScreenState();
+}
+
+class _GuestHomeScreenState extends ConsumerState<GuestHomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(
+      () => ref.read(catalogueControllerProvider.notifier).load(),
+    );
+  }
+
+  Future<void> _loadCatalogue() =>
+      ref.read(catalogueControllerProvider.notifier).load();
+
+  void _openCatalogue() => context.push('/catalogue');
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('DoodhDirect'),
         actions: const [_GuestSignInButton(), _CartButton()],
       ),
       body: SafeArea(
-        child: ListView(
-          padding: DoodhSpacing.pagePadding,
-          children: [
-            const _GuestGreetingHeader(),
-            const SizedBox(height: DoodhSpacing.lg),
-            // Guests can start a search straight from the entry surface. The
-            // query remains in shared catalogue state after navigation.
-            DoodhSearchBar(
-              key: const ValueKey('guest-home-search'),
-              hint: 'Search milk, paneer, ghee…',
-              onChanged: (value) => ref
-                  .read(catalogueControllerProvider.notifier)
-                  .setSearchQuery(value),
-              onSubmitted: (_) => context.push('/catalogue'),
-            ),
-            const SizedBox(height: DoodhSpacing.md),
-            const _GuestLoginPromptCard(),
-            const SizedBox(height: DoodhSpacing.md),
-            const DoodhSectionHeader(title: 'Explore'),
-            const SizedBox(height: DoodhSpacing.md),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final columns = constraints.maxWidth >= 720 ? 4 : 2;
-                return GridView.count(
-                  crossAxisCount: columns,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 12,
-                  crossAxisSpacing: 12,
-                  childAspectRatio: constraints.maxWidth >= 720 ? 1.7 : 1.35,
-                  children: [
-                    _QuickAction(
-                      icon: Icons.shopping_bag_outlined,
-                      label: 'Shop',
-                      onTap: () => context.push('/catalogue'),
-                    ),
-                    _QuickAction(
-                      icon: Icons.shopping_cart_outlined,
-                      label: 'My cart',
-                      onTap: () => context.go('/checkout'),
-                    ),
-                    _QuickAction(
-                      icon: Icons.lock_outline,
-                      label: 'Orders',
-                      onTap: () => context.go('/orders'),
-                    ),
-                    _QuickAction(
-                      icon: Icons.account_balance_wallet_outlined,
-                      label: 'Wallet',
-                      onTap: () => context.go('/wallet'),
-                    ),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: DoodhSpacing.md),
-            const DoodhTrustStrip(items: _homeTrustItems),
-            const SizedBox(height: DoodhSpacing.lg),
-            DoodhHeroCard(onBuy: () => context.push('/catalogue')),
-            const SizedBox(height: 24),
-          ],
+        child: RefreshIndicator(
+          onRefresh: _loadCatalogue,
+          child: ListView(
+            padding: DoodhSpacing.pagePadding,
+            physics: const AlwaysScrollableScrollPhysics(),
+            children: [
+              const _GuestGreetingHeader(),
+              const SizedBox(height: DoodhSpacing.lg),
+              // Guests can start a search straight from the entry surface. The
+              // query remains in shared catalogue state after navigation.
+              DoodhSearchBar(
+                key: const ValueKey('guest-home-search'),
+                hint: 'Search milk, paneer, ghee…',
+                onChanged: (value) => ref
+                    .read(catalogueControllerProvider.notifier)
+                    .setSearchQuery(value),
+                onSubmitted: (_) => _openCatalogue(),
+              ),
+              const SizedBox(height: DoodhSpacing.md),
+              const _GuestLoginPromptCard(),
+              _HomeCategoryDiscovery(onBrowseCatalogue: _openCatalogue),
+              _HomeProductDiscovery(onBrowseCatalogue: _openCatalogue),
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
       ),
     );

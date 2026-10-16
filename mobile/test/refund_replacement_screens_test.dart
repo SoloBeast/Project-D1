@@ -309,6 +309,298 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets(
+      'D1-D slice 7.1: staff distinguish cancellation resolution from failure',
+      (tester) async {
+        await _pump(
+          tester,
+          const StaffRefundReplacementListScreen(branchId: 7),
+          _SeededRefundReplacementController(const RefundReplacementState()),
+          session: _managerSession,
+        );
+        expect(find.widgetWithText(ChoiceChip, 'Cancelled (refunded)'), findsOneWidget);
+
+        await _pump(
+          tester,
+          const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
+          _SeededRefundReplacementController(
+            RefundReplacementState(
+              selectedStaffRequest: request(
+                status: RefundReplacementStatus.cancelled,
+                type: RefundReplacementType.replacement,
+                source: RefundReplacementSource.deliveryFailed,
+                includeDecision: true,
+                completedAtUtc: DateTime.utc(2026, 8, 26, 10),
+              ),
+            ),
+          ),
+          session: _managerSession,
+        );
+        expect(find.text('Cancelled (refunded)'), findsOneWidget);
+        expect(find.text('Closed'), findsOneWidget);
+        expect(find.text('Completed'), findsNothing);
+        expect(
+          find.textContaining('This is not a replacement failure.'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('This request is final and no further action is available.'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'refund-only remedy hides Reject and explains the constraint',
+      (tester) async {
+        await _pump(
+          tester,
+          const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
+          _SeededRefundReplacementController(
+            RefundReplacementState(
+              selectedStaffRequest: request(
+                status: RefundReplacementStatus.pending,
+                type: RefundReplacementType.refund,
+                source: RefundReplacementSource.deliveryFailed,
+                customerChoice: CustomerChoice.refund,
+                isRefundOnly: true,
+              ),
+            ),
+          ),
+          session: _managerSession,
+        );
+
+        expect(find.text('Reject'), findsNothing);
+        expect(find.widgetWithText(FilledButton, 'Approve'), findsOneWidget);
+        expect(
+          find.textContaining('Only the refund remedy is available'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'approved one-time order explains completion moves no money',
+      (tester) async {
+        // Order-backed tickets settle outside the app: the staff Complete
+        // action records the outcome only. The notice must be explicit so
+        // staff never promise an in-system wallet credit.
+        await _pump(
+          tester,
+          const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
+          _SeededRefundReplacementController(
+            RefundReplacementState(
+              selectedStaffRequest: request(
+                status: RefundReplacementStatus.approved,
+                includeDecision: true,
+              ),
+            ),
+          ),
+          session: _managerSession,
+        );
+
+        expect(find.text('Mark completed'), findsOneWidget);
+        expect(
+          find.textContaining('settled in Payments'),
+          findsOneWidget,
+        );
+
+        // Subscription tickets pay through the frozen share on completion,
+        // so they must not show the out-of-system notice.
+        await _pump(
+          tester,
+          const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
+          _SeededRefundReplacementController(
+            RefundReplacementState(
+              selectedStaffRequest: request(
+                status: RefundReplacementStatus.approved,
+                source: RefundReplacementSource.deliveryFailed,
+                customerChoice: CustomerChoice.refund,
+                includeDecision: true,
+              ),
+            ),
+          ),
+          session: _managerSession,
+        );
+
+        expect(find.text('Mark completed'), findsOneWidget);
+        expect(
+          find.textContaining('settled in Payments'),
+          findsNothing,
+        );
+      },
+    );
+  });
+
+  group('D1-D slice 7 customer re-delivery display', () {
+    RefundReplacementRequest redeliveryTicket({
+      String? replacementDeliveryNumber,
+      DateTime? completedAtUtc,
+    }) => request(
+      status: RefundReplacementStatus.approved,
+      type: RefundReplacementType.replacement,
+      source: RefundReplacementSource.deliveryFailed,
+      includeDecision: true,
+      customerChoice: CustomerChoice.reDelivery,
+      replacementDate: DateTime.utc(2026, 8, 25),
+      replacementDeliveryNumber: replacementDeliveryNumber,
+      completedAtUtc: completedAtUtc,
+    );
+
+    testWidgets(
+      'customer detail keeps the persisted replacement date after reload ',
+      (tester) async {
+        // The date comes from a fresh read (list/detail GET), never from
+        // the approval response: pumping the detail with read-shaped data
+        // must still render it.
+        await _pump(
+          tester,
+          const CustomerRefundReplacementDetailScreen(requestId: 'req-1'),
+          _SeededRefundReplacementController(
+            RefundReplacementState(
+              selectedCustomerRequest: redeliveryTicket(),
+            ),
+          ),
+        );
+        expect(find.text('Replacement date'), findsOneWidget);
+        expect(find.text('25/08/2026'), findsOneWidget);
+        expect(find.text('You chose Re-delivery.'), findsOneWidget);
+        // Unmaterialized: no delivery number, and no internal identifiers
+        // leak as business references.
+        expect(find.textContaining('Delivery DLV'), findsNothing);
+        expect(find.textContaining('sub-delivery-1'), findsNothing);
+        expect(find.textContaining('delivery-1'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'customer detail shows the real public delivery number once materialized',
+      (tester) async {
+        await _pump(
+          tester,
+          const CustomerRefundReplacementDetailScreen(requestId: 'req-1'),
+          _SeededRefundReplacementController(
+            RefundReplacementState(
+              selectedCustomerRequest: redeliveryTicket(
+                replacementDeliveryNumber: 'DLV/BR-07/000123',
+              ),
+            ),
+          ),
+        );
+        expect(find.text('Replacement date'), findsOneWidget);
+        expect(find.text('25/08/2026'), findsOneWidget);
+        expect(find.text('Replacement delivery'), findsOneWidget);
+        expect(find.text('DLV/BR-07/000123'), findsOneWidget);
+        expect(find.textContaining('sub-delivery-1'), findsNothing);
+      },
+    );
+
+    testWidgets('customer list cards surface the persisted replacement date', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        const CustomerRefundReplacementListScreen(),
+        _SeededRefundReplacementController(
+          RefundReplacementState(
+            customerRequests: [
+              redeliveryTicket(
+                replacementDeliveryNumber: 'DLV/BR-07/000123',
+              ),
+            ],
+          ),
+        ),
+      );
+      expect(find.text('Re-delivery on 25/08/2026'), findsOneWidget);
+      expect(find.text('Delivery DLV/BR-07/000123'), findsOneWidget);
+    });
+
+    testWidgets(
+      'cancelled tickets resolve distinctly from failures and never read as delivered',
+      (tester) async {
+        await _pump(
+          tester,
+          const CustomerRefundReplacementDetailScreen(requestId: 'req-1'),
+          _SeededRefundReplacementController(
+            RefundReplacementState(
+              selectedCustomerRequest: request(
+                status: RefundReplacementStatus.cancelled,
+                type: RefundReplacementType.replacement,
+                source: RefundReplacementSource.deliveryFailed,
+                includeDecision: true,
+                customerChoice: CustomerChoice.reDelivery,
+                completedAtUtc: DateTime.utc(2026, 8, 26, 10),
+                completionRemarks:
+                    'Subscription cancelled; pending replacement voided and '
+                    '72.00 refunded to wallet.',
+              ),
+            ),
+          ),
+        );
+        expect(find.text('Cancelled (refunded)'), findsOneWidget);
+        expect(find.text('Closed'), findsOneWidget);
+        expect(find.text('Completed'), findsNothing);
+        expect(find.text('Closed without delivery'), findsNothing);
+        expect(
+          find.textContaining('was cancelled while this replacement was'),
+          findsOneWidget,
+        );
+        expect(
+          find.textContaining(
+            'was cancelled while this replacement was still pending',
+          ),
+          findsOneWidget,
+        );
+        // The backend-authored money figures ride along untouched.
+        expect(find.textContaining('72.00 refunded to wallet'), findsOneWidget);
+        // Terminal: neither choice button is offered again.
+        expect(find.widgetWithText(OutlinedButton, 'Refund'), findsNothing);
+        expect(
+          find.widgetWithText(OutlinedButton, 'Re-Delivery'),
+          findsNothing,
+        );
+      },
+    );
+
+    testWidgets(
+      'failed tickets close without delivery and offer no re-delivery',
+      (tester) async {
+        await _pump(
+          tester,
+          const CustomerRefundReplacementDetailScreen(requestId: 'req-1'),
+          _SeededRefundReplacementController(
+            RefundReplacementState(
+              selectedCustomerRequest: request(
+                status: RefundReplacementStatus.failed,
+                type: RefundReplacementType.replacement,
+                source: RefundReplacementSource.deliveryFailed,
+                includeDecision: true,
+                customerChoice: CustomerChoice.reDelivery,
+                completedAtUtc: DateTime.utc(2026, 8, 26, 10),
+                completionRemarks: 'Replacement failed twice; refund issued.',
+              ),
+            ),
+          ),
+        );
+        expect(find.text('Closed without delivery'), findsOneWidget);
+        expect(find.text('Closed'), findsOneWidget);
+        expect(find.text('Completed'), findsNothing);
+        expect(
+          find.textContaining(
+            'closed without delivery and the refund-only remedy has been '
+            'resolved',
+          ),
+          findsOneWidget,
+        );
+        // Terminal: neither choice button is offered again.
+        expect(find.widgetWithText(OutlinedButton, 'Refund'), findsNothing);
+        expect(
+          find.widgetWithText(OutlinedButton, 'Re-Delivery'),
+          findsNothing,
+        );
+      },
+    );
   });
 }
 
@@ -419,7 +711,11 @@ class _SeededRefundReplacementController extends RefundReplacementController {
   }
 
   @override
-  Future<bool> approve(String requestId, {String? remarks}) async {
+  Future<bool> approve(
+    String requestId, {
+    String? remarks,
+    DateTime? replacementDate,
+  }) async {
     decidedAction = 'approve';
     return true;
   }
@@ -516,7 +812,13 @@ RefundReplacementRequest request({
   RefundReplacementType type = RefundReplacementType.refund,
   RefundReplacementSource source = RefundReplacementSource.customerPostDelivery,
   bool includeDecision = false,
+  bool isRefundOnly = false,
   List<RefundReplacementImage> images = const [],
+  CustomerChoice? customerChoice,
+  DateTime? replacementDate,
+  String? replacementDeliveryNumber,
+  DateTime? completedAtUtc,
+  String? completionRemarks,
 }) => RefundReplacementRequest(
   requestId: 'req-1',
   requestNumber: 'RR-2026-0001',
@@ -544,12 +846,22 @@ RefundReplacementRequest request({
   decidedByName: includeDecision ? 'Support Lead' : null,
   decidedAtUtc: includeDecision ? DateTime.utc(2026, 8, 17, 11) : null,
   decisionRemarks: includeDecision ? 'Reviewed by support' : null,
-  completedByUserId: null,
-  completedByName: null,
-  completedAtUtc: null,
-  completionRemarks: null,
+  completedByUserId: completedAtUtc == null ? null : 9,
+  completedByName: completedAtUtc == null ? null : 'Support Lead',
+  completedAtUtc: completedAtUtc,
+  completionRemarks: completionRemarks,
   proofImageRequired: true,
   images: images,
+  isRefundOnly: isRefundOnly,
+  subscriptionDeliveryPublicId: source == RefundReplacementSource.deliveryFailed
+      ? 'sub-delivery-1'
+      : null,
+  customerChoice: customerChoice,
+  customerChoiceAtUtc: customerChoice == null
+      ? null
+      : DateTime.utc(2026, 8, 17, 12),
+  replacementDate: replacementDate,
+  replacementDeliveryNumber: replacementDeliveryNumber,
 );
 
 RefundReplacementListItem listItem({

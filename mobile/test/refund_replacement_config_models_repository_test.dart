@@ -12,12 +12,120 @@ void main() {
     test('parses a configured result', () {
       final configuration = RefundReplacementConfiguration.fromJson({
         'windowHours': 48,
+        'deliveryFailWindowHours': 24,
+        'deliveryFailDeductionPercentage': 10,
         'status': 'Configured',
       });
 
       expect(configuration.windowHours, 48);
+      expect(configuration.deliveryFailWindowHours, 24);
+      expect(configuration.deliveryFailDeductionPercentage, 10);
       expect(configuration.status, 'Configured');
       expect(configuration.configured, isTrue);
+    });
+
+    test('parses delivery-fail values from numbers or strings', () {
+      final fromNumbers = RefundReplacementConfiguration.fromJson({
+        'windowHours': 48,
+        'deliveryFailWindowHours': 36.0,
+        'deliveryFailDeductionPercentage': 12.5,
+        'status': 'Configured',
+      });
+      final fromStrings = RefundReplacementConfiguration.fromJson({
+        'windowHours': 48,
+        'deliveryFailWindowHours': '36',
+        'deliveryFailDeductionPercentage': '12.5',
+        'status': 'Configured',
+      });
+
+      expect(fromNumbers.deliveryFailWindowHours, 36);
+      expect(fromNumbers.deliveryFailDeductionPercentage, 12.5);
+      expect(fromStrings.deliveryFailWindowHours, 36);
+      expect(fromStrings.deliveryFailDeductionPercentage, 12.5);
+    });
+
+    test('falls back to the delivery-fail defaults when absent', () {
+      final configuration = RefundReplacementConfiguration.fromJson({
+        'windowHours': 48,
+        'status': 'Configured',
+      });
+
+      expect(
+        configuration.deliveryFailWindowHours,
+        kDeliveryFailDefaultWindowHours,
+      );
+      expect(
+        configuration.deliveryFailDeductionPercentage,
+        kDeliveryFailDefaultDeductionPercentage,
+      );
+    });
+
+    test('validates the delivery-fail window range', () {
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailWindowHours(0),
+        isNotNull,
+      );
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailWindowHours(
+          kDeliveryFailMaximumWindowHours + 1,
+        ),
+        isNotNull,
+      );
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailWindowHours(
+          kDeliveryFailMinimumWindowHours,
+        ),
+        isNull,
+      );
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailWindowHours(24),
+        isNull,
+      );
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailWindowHours(
+          kDeliveryFailMaximumWindowHours,
+        ),
+        isNull,
+      );
+    });
+
+    test('validates the delivery-fail deduction range', () {
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailDeductionPercentage(
+          -0.5,
+        ),
+        isNotNull,
+      );
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailDeductionPercentage(
+          100.01,
+        ),
+        isNotNull,
+      );
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailDeductionPercentage(
+          double.nan,
+        ),
+        isNotNull,
+      );
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailDeductionPercentage(
+          0,
+        ),
+        isNull,
+      );
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailDeductionPercentage(
+          10,
+        ),
+        isNull,
+      );
+      expect(
+        RefundReplacementConfiguration.validateDeliveryFailDeductionPercentage(
+          100,
+        ),
+        isNull,
+      );
     });
 
     test('parses a not-configured result', () {
@@ -54,14 +162,8 @@ void main() {
     });
 
     test('validates the allowed hours range', () {
-      expect(
-        RefundReplacementConfiguration.validateWindowHours(0),
-        isNotNull,
-      );
-      expect(
-        RefundReplacementConfiguration.validateWindowHours(-5),
-        isNotNull,
-      );
+      expect(RefundReplacementConfiguration.validateWindowHours(0), isNotNull);
+      expect(RefundReplacementConfiguration.validateWindowHours(-5), isNotNull);
       expect(
         RefundReplacementConfiguration.validateWindowHours(
           kRefundReplacementMaximumWindowHours + 1,
@@ -75,10 +177,7 @@ void main() {
         ),
         isNull,
       );
-      expect(
-        RefundReplacementConfiguration.validateWindowHours(48),
-        isNull,
-      );
+      expect(RefundReplacementConfiguration.validateWindowHours(48), isNull);
       expect(
         RefundReplacementConfiguration.validateWindowHours(
           kRefundReplacementMaximumWindowHours,
@@ -97,6 +196,20 @@ void main() {
       expect(request.toJson(), {'windowHours': 5});
     });
 
+    test('serializes the delivery-fail settings', () {
+      const request = UpdateRefundReplacementConfigurationRequest(
+        windowHours: 48,
+        deliveryFailWindowHours: 36,
+        deliveryFailDeductionPercentage: 12.5,
+      );
+
+      expect(request.toJson(), {
+        'windowHours': 48,
+        'deliveryFailWindowHours': 36,
+        'deliveryFailDeductionPercentage': 12.5,
+      });
+    });
+
     test('omits null window hours so the backend leaves it unchanged', () {
       const request = UpdateRefundReplacementConfigurationRequest();
 
@@ -112,10 +225,7 @@ void main() {
           method: 'GET',
           path: '/api/v1/admin/setup/refund-replacement',
         );
-        return _response({
-          'windowHours': 48,
-          'status': 'Configured',
-        });
+        return _response({'windowHours': 48, 'status': 'Configured'});
       });
 
       final configuration = await repository.get('setup-token');
@@ -136,6 +246,8 @@ void main() {
         expect(body, containsPair('windowHours', 5));
         return _response({
           'windowHours': 5,
+          'deliveryFailWindowHours': 24,
+          'deliveryFailDeductionPercentage': 10,
           'status': 'Configured',
         });
       });
@@ -146,7 +258,39 @@ void main() {
       );
 
       expect(updated.windowHours, 5);
+      expect(updated.deliveryFailWindowHours, 24);
+      expect(updated.deliveryFailDeductionPercentage, 10);
       expect(updated.status, 'Configured');
+    });
+
+    test('sends the delivery-fail settings with a PUT', () async {
+      final repository = _repository((request) async {
+        _expectRequest(
+          request,
+          method: 'PUT',
+          path: '/api/v1/admin/setup/refund-replacement',
+        );
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body, containsPair('deliveryFailWindowHours', 36));
+        expect(body, containsPair('deliveryFailDeductionPercentage', 12.5));
+        return _response({
+          'windowHours': 48,
+          'deliveryFailWindowHours': 36,
+          'deliveryFailDeductionPercentage': 12.5,
+          'status': 'Configured',
+        });
+      });
+
+      final updated = await repository.update(
+        'setup-token',
+        const UpdateRefundReplacementConfigurationRequest(
+          deliveryFailWindowHours: 36,
+          deliveryFailDeductionPercentage: 12.5,
+        ),
+      );
+
+      expect(updated.deliveryFailWindowHours, 36);
+      expect(updated.deliveryFailDeductionPercentage, 12.5);
     });
 
     test('surfaces validation field errors from the error envelope', () async {

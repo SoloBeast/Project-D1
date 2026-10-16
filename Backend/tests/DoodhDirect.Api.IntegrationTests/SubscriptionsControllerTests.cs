@@ -421,6 +421,8 @@ public sealed class SubscriptionsControllerTests
             "BLR-01",
             "Bengaluru Central",
             "Home, Bengaluru",
-            null);
+            null,
+            SubscriptionDeliverySlot.Morning,
+            false);
     }
 }

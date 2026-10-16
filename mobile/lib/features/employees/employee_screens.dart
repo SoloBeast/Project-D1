@@ -16,6 +16,143 @@ import 'employee_models.dart';
 const String kEmployeesReadPermission = 'EMPLOYEES.READ';
 const String kEmployeesManagePermission = 'EMPLOYEES.MANAGE';
 
+/// Maximum height of the branch multi-select list. Keeps the form usable when
+/// an administrator can assign many branches without letting the checkbox
+/// list push the submit action out of reach.
+const double kBranchMultiSelectMaxHeight = 272;
+
+/// Human-readable branch list for an employee, using the authoritative
+/// assignment collection. Assignments that are no longer offered for new
+/// work (archived branches are absent from [options], inactive ones carry
+/// `isActive: false`) are labelled `(inactive)` instead of being dropped, so
+/// retained history stays visible.
+String describeEmployeeBranches(
+  Employee employee,
+  List<EmployeeBranchOption> options,
+) {
+  if (employee.branchAssignments.isEmpty) {
+    final legacy = employee.branchName;
+    return legacy == null || legacy.isEmpty ? '' : legacy;
+  }
+  final byId = {for (final option in options) option.id: option};
+  return employee.branchAssignments.map((assignment) {
+    final option = byId[assignment.branchId];
+    final name = (assignment.branchName?.isNotEmpty ?? false)
+        ? assignment.branchName!
+        : (option?.name ?? 'Branch ${assignment.branchId}');
+    final inactive = option == null || !option.isActive;
+    return inactive ? '$name (inactive)' : name;
+  }).join(', ');
+}
+
+/// Multi-select checkbox list for Dairy Manager branch assignments. Only
+/// [options] marked active are selectable — archived/inactive branches can
+/// never be newly assigned. Branches in [retainedInactiveIds] (assignments
+/// that still exist server-side but are no longer eligible) render as
+/// disabled, checked rows labelled `(inactive)`: they stay in the submitted
+/// set unless the administrator explicitly removes them elsewhere, so saving
+/// never silently drops them.
+class BranchMultiSelect extends StatelessWidget {
+  const BranchMultiSelect({
+    super.key,
+    required this.options,
+    required this.selectedIds,
+    required this.onChanged,
+    required this.enabled,
+    this.retainedInactiveIds = const <int>{},
+    this.validationError,
+  });
+
+  final List<EmployeeBranchOption> options;
+  final Set<int> selectedIds;
+  final ValueChanged<Set<int>> onChanged;
+  final bool enabled;
+  final Set<int> retainedInactiveIds;
+  final String? validationError;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final selectable = options.where((option) => option.isActive).toList();
+    final retained = options
+        .where(
+          (option) =>
+              !option.isActive && retainedInactiveIds.contains(option.id),
+        )
+        .toList();
+    final rows = [...selectable, ...retained];
+
+    return Semantics(
+      container: true,
+      label: 'Assigned branches, ${selectedIds.length} selected',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (rows.isEmpty)
+            Text(
+              'No active branches are available for assignment.',
+              style: TextStyle(color: scheme.onSurfaceVariant),
+            )
+          else
+            ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxHeight: kBranchMultiSelectMaxHeight,
+              ),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: rows.length,
+                itemBuilder: (context, index) {
+                  final option = rows[index];
+                  final retainedInactive =
+                      !option.isActive &&
+                      retainedInactiveIds.contains(option.id);
+                  final checked =
+                      retainedInactive || selectedIds.contains(option.id);
+                  return CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    dense: true,
+                    enabled: enabled && !retainedInactive,
+                    value: checked,
+                    onChanged: enabled && !retainedInactive
+                        ? (value) {
+                            final next = Set<int>.of(selectedIds);
+                            if (value ?? false) {
+                              next.add(option.id);
+                            } else {
+                              next.remove(option.id);
+                            }
+                            onChanged(next);
+                          }
+                        : null,
+                    title: Text(
+                      retainedInactive
+                          ? '${option.displayName} (inactive)'
+                          : option.displayName,
+                    ),
+                    subtitle: retainedInactive
+                        ? const Text(
+                            'Retained from an earlier assignment. Remove it '
+                            'by saving a new selection without it.',
+                          )
+                        : null,
+                  );
+                },
+              ),
+            ),
+          if (validationError != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              validationError!,
+              style: TextStyle(color: scheme.error, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 /// Invitation deep-link route. The token is the single-use value returned by
 /// the backend exactly once (on create/resend) and consumed by
 /// `/api/v1/employee-invitations/{token}/verify`.
@@ -34,9 +171,14 @@ class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(
-      () => ref.read(employeeControllerProvider.notifier).load(),
-    );
+    Future.microtask(() {
+      final controller = ref.read(employeeControllerProvider.notifier);
+      controller.load();
+      // Branch options resolve assignment names and mark retained
+      // inactive assignments; the list itself stays authoritative from
+      // the server-filtered employee rows.
+      controller.loadBranchOptions();
+    });
   }
 
   @override
@@ -103,11 +245,17 @@ class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
       );
     }
 
-    final items = [...state.employees]
-      ..sort(
-        (a, b) =>
-            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
-      );
+    // Defensive de-duplication by account: the backend returns one row per
+    // employee, but the visible list must never show the same employee
+    // twice even if rows ever repeat across branches.
+    final seenIds = <int>{};
+    final items = [
+      for (final employee in state.employees)
+        if (seenIds.add(employee.id)) employee,
+    ]..sort(
+      (a, b) =>
+          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+    );
 
     return ListView(
       padding: DoodhSpacing.pagePadding,
@@ -181,14 +329,27 @@ class _EmployeeCard extends ConsumerWidget {
               role?.label ?? employee.roleName ?? employee.roleCode,
               style: TextStyle(fontWeight: FontWeight.w600),
             ),
-            if (employee.branchName != null && employee.branchName!.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text(
-                  'Branch: ${employee.branchName}',
-                  style: TextStyle(color: scheme.onSurfaceVariant),
-                ),
-              ),
+            Builder(
+              builder: (context) {
+                final options = ref
+                    .watch(employeeControllerProvider)
+                    .branchOptions;
+                final branches = employee.branchAssignments.isEmpty
+                    ? (employee.branchName != null &&
+                            employee.branchName!.isNotEmpty
+                        ? 'Branch: ${employee.branchName}'
+                        : '')
+                    : 'Branches: ${describeEmployeeBranches(employee, options)}';
+                if (branches.isEmpty) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    branches,
+                    style: TextStyle(color: scheme.onSurfaceVariant),
+                  ),
+                );
+              },
+            ),
             const SizedBox(height: 8),
             if (employee.mobile != null && employee.mobile!.isNotEmpty)
               Text('Mobile: ${employee.mobile}'),
@@ -324,6 +485,10 @@ class _EmployeeCard extends ConsumerWidget {
     WidgetRef ref,
     bool active,
   ) async {
+    // Activation toggles must preserve the complete assignment set: sending
+    // only the legacy single branch would silently drop every other branch
+    // on multi-branch employees.
+    final assignmentIds = employee.allBranchIds;
     await ref
         .read(employeeControllerProvider.notifier)
         .update(
@@ -332,7 +497,13 @@ class _EmployeeCard extends ConsumerWidget {
             displayName: employee.displayName,
             email: employee.email,
             roleCode: employee.roleCode,
-            branchId: employee.branchId,
+            branchId: assignmentIds.length == 1 &&
+                    employee.branchAssignments.isEmpty
+                ? assignmentIds.single
+                : null,
+            branchIds: employee.branchAssignments.isEmpty
+                ? null
+                : assignmentIds,
             isActive: active,
           ),
         );
@@ -436,6 +607,11 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
   late final TextEditingController _email;
   EmployeeRole? _role;
   EmployeeBranchOption? _branch;
+
+  /// Dairy Manager multi-branch selection (branch ids). Only offered when
+  /// [_role] is Dairy Manager; submitted as the authoritative `branchIds` set.
+  Set<int> _selectedBranchIds = <int>{};
+  String? _branchSelectionError;
   bool _sendInvitation = true;
 
   @override
@@ -555,39 +731,78 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
                       .toList(),
                   onChanged: state.isSaving
                       ? null
-                      : (value) => setState(() => _role = value),
+                      : (value) => setState(() {
+                          _role = value;
+                          _branchSelectionError = null;
+                          // Preserve the expressed single-branch intent when
+                          // switching into the multi-select, so the choice
+                          // stays visible instead of being silently dropped.
+                          if (value == EmployeeRole.dairyManager &&
+                              _branch != null) {
+                            _selectedBranchIds = {_branch!.id};
+                          }
+                        }),
                   validator: (value) =>
                       value == null ? 'Select a role for this employee.' : null,
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<EmployeeBranchOption>(
-                  initialValue: _branch,
-                  decoration: InputDecoration(
-                    labelText: 'Branch',
-                    helperText: _role == EmployeeRole.systemAdmin
-                        ? 'System Administrators are not bound to a branch.'
-                        : 'Assign the branch this employee works in.',
-                    errorText: fieldErrors['branchId'],
+                if (_role == EmployeeRole.dairyManager) ...[
+                  Text(
+                    'Branches *',
+                    style: Theme.of(context).textTheme.titleSmall,
                   ),
-                  items:
-                      (state.branchOptions.isEmpty
-                              ? const <EmployeeBranchOption>[]
-                              : state.branchOptions)
-                          .map(
-                            (branch) => DropdownMenuItem(
-                              value: branch,
-                              child: Text(branch.displayName),
-                            ),
-                          )
-                          .toList(),
-                  onChanged: state.isSaving || _role == EmployeeRole.systemAdmin
-                      ? null
-                      : (value) => setState(() => _branch = value),
-                  validator: (value) =>
-                      _role != EmployeeRole.systemAdmin && value == null
-                      ? 'Select a branch.'
-                      : null,
-                ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'A Dairy Manager can work in several branches. Only '
+                    'active branches can be assigned.',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  BranchMultiSelect(
+                    options: state.branchOptions,
+                    selectedIds: _selectedBranchIds,
+                    enabled: !state.isSaving,
+                    validationError:
+                        _branchSelectionError ?? fieldErrors['branchIds'],
+                    onChanged: (next) => setState(() {
+                      _selectedBranchIds = next;
+                      _branchSelectionError = null;
+                    }),
+                  ),
+                ] else ...[
+                  DropdownButtonFormField<EmployeeBranchOption>(
+                    initialValue: _branch,
+                    decoration: InputDecoration(
+                      labelText: 'Branch',
+                      helperText: _role == EmployeeRole.systemAdmin
+                          ? 'System Administrators are not bound to a branch.'
+                          : 'Assign the branch this employee works in.',
+                      errorText: fieldErrors['branchId'],
+                    ),
+                    items:
+                        (state.branchOptions.isEmpty
+                                ? const <EmployeeBranchOption>[]
+                                : state.branchOptions)
+                            .map(
+                              (branch) => DropdownMenuItem(
+                                value: branch,
+                                child: Text(branch.displayName),
+                              ),
+                            )
+                            .toList(),
+                    onChanged:
+                        state.isSaving || _role == EmployeeRole.systemAdmin
+                        ? null
+                        : (value) => setState(() => _branch = value),
+                    validator: (value) =>
+                        _role != EmployeeRole.systemAdmin && value == null
+                        ? 'Select a branch.'
+                        : null,
+                  ),
+                ],
                 const SizedBox(height: 12),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
@@ -622,7 +837,23 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
     final role = _role;
     if (role == null) return;
 
-    final branchId = role == EmployeeRole.systemAdmin ? null : _branch?.id;
+    // Dairy Managers submit the complete selected set; every other role keeps
+    // the legacy single-branch field so their workflows are byte-identical.
+    List<int>? branchIds;
+    int? branchId;
+    if (role == EmployeeRole.systemAdmin) {
+      branchId = null;
+    } else if (role == EmployeeRole.dairyManager) {
+      if (_selectedBranchIds.isEmpty) {
+        setState(
+          () => _branchSelectionError = 'Select at least one branch.',
+        );
+        return;
+      }
+      branchIds = _selectedBranchIds.toList()..sort();
+    } else {
+      branchId = _branch?.id;
+    }
 
     final employee = await ref
         .read(employeeControllerProvider.notifier)
@@ -634,6 +865,7 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
             roleCode: role.apiCode,
             branchId: branchId,
             sendInvitation: _sendInvitation,
+            branchIds: branchIds,
           ),
         );
     if (!mounted) return;
@@ -643,10 +875,27 @@ class _CreateEmployeeScreenState extends ConsumerState<CreateEmployeeScreen> {
     // "Verify invitation is generated/sent") before returning to the list.
     final invitation = ref.read(employeeControllerProvider).lastInvitation;
     if (invitation != null) {
-      await _showInvitationLink(context, invitation);
+      await _showInvitationLink(
+        context,
+        invitation,
+        branchNames: role == EmployeeRole.dairyManager
+            ? _selectedBranchNames()
+            : null,
+      );
       if (!mounted) return;
     }
     context.pop();
+  }
+
+  /// Display names for the Dairy Manager branches selected on this form,
+  /// shown during invitation review.
+  List<String> _selectedBranchNames() {
+    final options = ref.read(employeeControllerProvider).branchOptions;
+    final byId = {for (final option in options) option.id: option};
+    return [
+      for (final id in _selectedBranchIds.toList()..sort())
+        byId[id]?.displayName ?? 'Branch $id',
+    ];
   }
 }
 
@@ -674,6 +923,12 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
   EmployeeRole? _role;
   EmployeeBranchOption? _branch;
 
+  /// Complete branch selection for Dairy Managers, initialized from the
+  /// employee's full assignment set so unrelated saves never drop branches.
+  Set<int> _selectedBranchIds = <int>{};
+  Set<int> _initialBranchIds = <int>{};
+  String? _branchSelectionError;
+
   @override
   void initState() {
     super.initState();
@@ -681,6 +936,8 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
     _displayName = TextEditingController(text: _employee?.displayName ?? '');
     _email = TextEditingController(text: _employee?.email ?? '');
     _role = _employee?.assignableRole;
+    _selectedBranchIds = Set<int>.of(_employee?.allBranchIds ?? const []);
+    _initialBranchIds = Set<int>.of(_selectedBranchIds);
     Future.microtask(() async {
       final controller = ref.read(employeeControllerProvider.notifier);
       if (ref.read(employeeControllerProvider).branchOptions.isEmpty) {
@@ -797,26 +1054,57 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
                       : (value) => setState(() => _role = value),
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<EmployeeBranchOption>(
-                  initialValue: _branch,
-                  decoration: const InputDecoration(
-                    labelText: 'Branch',
-                    helperText:
-                        'Changing the branch updates the employee’s working '
-                        'branch and is recorded in the audit trail.',
+                if (_role == EmployeeRole.dairyManager) ...[
+                  Text(
+                    'Branches',
+                    style: Theme.of(context).textTheme.titleSmall,
                   ),
-                  items: state.branchOptions
-                      .map(
-                        (branch) => DropdownMenuItem(
-                          value: branch,
-                          child: Text(branch.displayName),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: state.isSaving
-                      ? null
-                      : (value) => setState(() => _branch = value),
-                ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Add or remove branch assignments. The complete '
+                    'selection is saved and recorded in the audit trail.',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  BranchMultiSelect(
+                    options: state.branchOptions,
+                    selectedIds: _selectedBranchIds,
+                    enabled: !state.isSaving,
+                    retainedInactiveIds: _retainedInactiveIds(
+                      state.branchOptions,
+                    ),
+                    validationError:
+                        _branchSelectionError ?? fieldErrors['branchIds'],
+                    onChanged: (next) => setState(() {
+                      _selectedBranchIds = next;
+                      _branchSelectionError = null;
+                    }),
+                  ),
+                ] else ...[
+                  DropdownButtonFormField<EmployeeBranchOption>(
+                    initialValue: _branch,
+                    decoration: const InputDecoration(
+                      labelText: 'Branch',
+                      helperText:
+                          'Changing the branch updates the employee’s working '
+                          'branch and is recorded in the audit trail.',
+                    ),
+                    items: state.branchOptions
+                        .map(
+                          (branch) => DropdownMenuItem(
+                            value: branch,
+                            child: Text(branch.displayName),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: state.isSaving
+                        ? null
+                        : (value) => setState(() => _branch = value),
+                  ),
+                ],
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
@@ -834,12 +1122,46 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
     );
   }
 
+  /// Assigned branches that are no longer offered for new work, kept visible
+  /// so retained history is labelled instead of dropped.
+  Set<int> _retainedInactiveIds(List<EmployeeBranchOption> options) {
+    final activeIds = {
+      for (final option in options)
+        if (option.isActive) option.id,
+    };
+    return _selectedBranchIds.difference(activeIds);
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     final employee = _employee!;
     final role = _role;
     if (role == null) return;
-    final branchId = role == EmployeeRole.systemAdmin ? null : _branch?.id;
+
+    // Branch fields are sent only when the assignment actually changed:
+    // omitting them keeps the persisted set, so saving an unrelated field
+    // can never silently remove branches.
+    int? branchId;
+    List<int>? branchIds;
+    if (role == EmployeeRole.systemAdmin) {
+      branchId = null;
+    } else if (role == EmployeeRole.dairyManager) {
+      final changed =
+          _selectedBranchIds.length != _initialBranchIds.length ||
+          !_selectedBranchIds.containsAll(_initialBranchIds);
+      if (changed) {
+        if (_selectedBranchIds.isEmpty) {
+          setState(
+            () => _branchSelectionError = 'Select at least one branch.',
+          );
+          return;
+        }
+        branchIds = _selectedBranchIds.toList()..sort();
+      }
+    } else {
+      final selectedId = _branch?.id;
+      if (selectedId != employee.branchId) branchId = selectedId;
+    }
 
     final updated = await ref
         .read(employeeControllerProvider.notifier)
@@ -850,12 +1172,17 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
             email: _email.text.trim().isEmpty ? null : _email.text.trim(),
             roleCode: role.apiCode,
             branchId: branchId,
+            branchIds: branchIds,
             isActive: employee.isActive,
           ),
         );
     if (!mounted) return;
     if (updated != null) {
-      setState(() => _employee = updated);
+      setState(() {
+        _employee = updated;
+        _selectedBranchIds = Set<int>.of(updated.allBranchIds);
+        _initialBranchIds = Set<int>.of(_selectedBranchIds);
+      });
     }
   }
 }
@@ -975,14 +1302,18 @@ class _EmployeeInvitationScreenState
 
     final scheme = Theme.of(context).colorScheme;
     final role = EmployeeRole.fromApiCode(verification.roleCode);
-    // The branch shown to the invitee comes from the server, resolved from the
-    // invitation's persisted BranchId (branchName/branchCode). The invitee is
-    // anonymous so state.branchOptions is empty and cannot resolve the name;
+    // The branches shown to the invitee come from the server, resolved from
+    // the invitation's persisted branch set (branchAssignments). The invitee
+    // is anonymous so state.branchOptions is empty and cannot resolve names;
     // it is only used as a last-resort fallback for legacy verification
     // payloads that predate the enriched metadata.
-    final branchName = verification.branchName ??
-        verification.branchCode ??
-        _branchName(verification.branchId, state);
+    final invitedNames = verification.allBranchNames;
+    final branchName = invitedNames.isNotEmpty
+        ? invitedNames.join(', ')
+        : (verification.branchName ??
+              verification.branchCode ??
+              _branchName(verification.branchId, state));
+    final branchLabel = invitedNames.length > 1 ? 'Branches' : 'Branch';
     final fieldErrors = state.fieldErrors;
 
     // Prefill invitee details from the invitation (editable name/mobile; role
@@ -1044,13 +1375,16 @@ class _EmployeeInvitationScreenState
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Branch: ${branchName ?? '—'}',
+                  '$branchLabel: ${branchName ?? '—'}',
                   style: TextStyle(color: scheme.onSurfaceVariant),
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Your role and branch were assigned by your administrator. '
-                  'They cannot be changed here.',
+                  invitedNames.length > 1
+                      ? 'Your role and branches were assigned by your '
+                            'administrator. They cannot be changed here.'
+                      : 'Your role and branch were assigned by your '
+                            'administrator. They cannot be changed here.',
                   style: TextStyle(
                     color: scheme.onSurfaceVariant,
                     fontSize: 12,
@@ -1254,8 +1588,9 @@ class _EmployeeInvitationScreenState
 
 Future<void> _showInvitationLink(
   BuildContext context,
-  EmployeeInvitationResult invitation,
-) async {
+  EmployeeInvitationResult invitation, {
+  List<String>? branchNames,
+}) async {
   final link = '$kInvitationRoute/${Uri.encodeComponent(invitation.token)}';
   await showDialog<void>(
     context: context,
@@ -1269,6 +1604,16 @@ Future<void> _showInvitationLink(
             'Share this single-use link with the employee. It expires on '
             'the date shown. The previous link is no longer valid.',
           ),
+          if (branchNames != null && branchNames.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Invited branches: ${branchNames.join(', ')}',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 12,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           SelectableText(link),
           const SizedBox(height: 4),

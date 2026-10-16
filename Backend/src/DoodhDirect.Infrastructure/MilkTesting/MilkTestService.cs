@@ -4,10 +4,15 @@ using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.MilkTesting;
 using DoodhDirect.Application.Notifications;
+using DoodhDirect.Application.RefundReplacement;
+using DoodhDirect.Application.Setup;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.MilkTesting;
+using DoodhDirect.Domain.RefundReplacement;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.RefundReplacement;
+using DoodhDirect.Infrastructure.Setup;
 using Microsoft.EntityFrameworkCore;
 
 namespace DoodhDirect.Infrastructure.MilkTesting;
@@ -17,7 +22,10 @@ public sealed class MilkTestService(
     IIndiaTimeProvider timeProvider,
     IMediaStorage mediaStorage,
     IMilkTestImageValidator imageValidator,
-    INotificationEventWriter notificationEventWriter) : IMilkTestService
+    INotificationEventWriter notificationEventWriter,
+    IRefundReplacementConfigurationService? refundReplacementConfigurationService = null,
+    INumberSeriesService? numberSeriesService = null,
+    IDeliveryFailTicketCreator? deliveryFailTicketCreator = null) : IMilkTestService
 {
     private const decimal MaximumReadingMagnitude = 999999999999.999999m;
 
@@ -33,7 +41,9 @@ public sealed class MilkTestService(
                 x => x.PublicId == deliveryId && x.CustomerId == actor.UserId,
                 cancellationToken) ?? throw new NotFoundException("The delivery was not found.");
 
-            if (delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed)
+            // D1-D slice 5: a voided (Cancelled) replacement delivery accepts
+            // no further operational processing, including new doorstep tests.
+            if (delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.Cancelled)
             {
                 throw new BusinessRuleException("A doorstep test can only be requested for an active delivery.");
             }
@@ -128,7 +138,9 @@ public sealed class MilkTestService(
         {
             throw new ConflictException("Images cannot be added after the doorstep test is completed.");
         }
-        if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed)
+        // D1-D slice 5.1: a voided (Cancelled) replacement delivery is terminal.
+        // Its test is preserved evidence: no further image writes.
+        if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.Cancelled)
         {
             throw new BusinessRuleException("Images cannot be added to a terminal delivery.");
         }
@@ -187,7 +199,8 @@ public sealed class MilkTestService(
             {
                 throw new ConflictException("Images cannot be removed after the doorstep test is completed.");
             }
-            if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed)
+            // D1-D slice 5.1: a Cancelled delivery's test is preserved evidence.
+            if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.Cancelled)
             {
                 throw new BusinessRuleException("Images cannot be removed from a terminal delivery.");
             }
@@ -247,6 +260,14 @@ public sealed class MilkTestService(
                 {
                     throw new ConflictException("Images cannot be replaced after the customer decision is recorded.");
                 }
+                // D1-D slice 5.2: a Cancelled delivery's test is preserved
+                // evidence — the customer review-replace path must not mutate
+                // it either. Scoped to Cancelled only; Delivered/Failed review
+                // behavior is unchanged.
+                if (milkTest.Delivery.Status == DeliveryStatus.Cancelled)
+                {
+                    throw new BusinessRuleException("Images cannot be replaced on a cancelled delivery.");
+                }
             }
             else
             {
@@ -255,7 +276,8 @@ public sealed class MilkTestService(
                 {
                     throw new ConflictException("Images cannot be replaced after the doorstep test is completed.");
                 }
-                if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed)
+                // D1-D slice 5.1: a Cancelled delivery's test is preserved evidence.
+                if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.Cancelled)
                 {
                     throw new BusinessRuleException("Images cannot be replaced on a terminal delivery.");
                 }
@@ -372,6 +394,13 @@ public sealed class MilkTestService(
                 x => x.PublicId == milkTestId,
                 cancellationToken) ?? throw new NotFoundException("The doorstep test was not found.");
             EnsureStaffAccess(actor, milkTest);
+            // D1-D slice 5.1: a voided delivery can never arrive, so its test
+            // can never complete. Rejected explicitly (instead of via the
+            // arrival check below) so staff get the true reason.
+            if (milkTest.Delivery.Status == DeliveryStatus.Cancelled)
+            {
+                throw new BusinessRuleException("The doorstep test cannot be completed for a cancelled delivery.");
+            }
             if (milkTest.Delivery.Status != DeliveryStatus.Arrived)
             {
                 throw new BusinessRuleException("The doorstep test can only be completed after delivery arrival.");
@@ -432,7 +461,9 @@ public sealed class MilkTestService(
             var milkTest = await TestQuery().SingleOrDefaultAsync(
                 x => x.PublicId == milkTestId && x.CustomerId == actor.UserId,
                 cancellationToken) ?? throw new NotFoundException("The doorstep test was not found.");
-            if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed)
+            // D1-D slice 5.1: a Cancelled delivery is terminal; its test keeps
+            // whatever decision state it has as evidence.
+            if (milkTest.Delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.Cancelled)
             {
                 throw new BusinessRuleException("A doorstep test can only be cancelled for an active delivery.");
             }
@@ -480,6 +511,15 @@ public sealed class MilkTestService(
             var milkTest = await TestQuery().SingleOrDefaultAsync(
                 x => x.PublicId == milkTestId && x.CustomerId == actor.UserId,
                 cancellationToken) ?? throw new NotFoundException("The doorstep test was not found.");
+            // D1-D slice 5.1: no decision on a voided delivery's test — a
+            // confirm would silently succeed without effect, and a reject
+            // would otherwise degrade to a ConflictException only after a
+            // rolled-back in-memory mutation. The test row and its history
+            // stay untouched as evidence.
+            if (milkTest.Delivery.Status == DeliveryStatus.Cancelled)
+            {
+                throw new BusinessRuleException("A doorstep test decision cannot be recorded for a cancelled delivery.");
+            }
             var previousDecision = milkTest.CustomerDecision;
             var now = timeProvider.Now;
             Mutate(() =>
@@ -519,6 +559,24 @@ public sealed class MilkTestService(
                     Mutate(() => milkTest.Delivery.SubscriptionDelivery.Subscription.MarkFailed(
                         milkTest.Delivery.SubscriptionDelivery,
                         now));
+                    // D1-A: the failed subscription delivery gets (or reuses) its
+                    // remedy ticket in the same transaction. The rejected test is
+                    // the evidence, so no proof image is required. Subscription
+                    // financials are untouched: this is a fulfillment event only.
+                    var creator = deliveryFailTicketCreator ?? new DeliveryFailTicketCreator(
+                        dbContext,
+                        refundReplacementConfigurationService ?? new RefundReplacementConfigurationService(dbContext, timeProvider),
+                        numberSeriesService ?? new NumberSeriesService(dbContext, timeProvider),
+                        mediaStorage,
+                        notificationEventWriter);
+                    await creator.CreateOrReuseAsync(
+                        milkTest.Delivery,
+                        milkTest.Id,
+                        RefundReplacementSource.MilkTestRejected,
+                        null,
+                        actor.UserId,
+                        now,
+                        cancellationToken);
                 }
                 AddMilkTestEvent(
                     milkTest,

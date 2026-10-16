@@ -1513,6 +1513,30 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.ToTable("EmployeeInvitation", "dbo");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Identity.EmployeeInvitationBranch", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<long>("BranchId")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("InvitationId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BranchId");
+
+                    b.HasIndex("InvitationId", "BranchId")
+                        .IsUnique();
+
+                    b.ToTable("EmployeeInvitationBranch", "dbo");
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Identity.OtpChallenge", b =>
                 {
                     b.Property<long>("Id")
@@ -1749,6 +1773,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<DateTime?>("ArchivedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("ArchivedAtUtc");
+
+                    b.Property<long>("AuthorizationVersion")
+                        .HasColumnType("bigint");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2")
@@ -3197,6 +3224,14 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasColumnType("datetime2")
                         .HasColumnName("CreatedAtUtc");
 
+                    b.Property<string>("CustomerChoice")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<DateTime?>("CustomerChoiceAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("CustomerChoiceAtUtc");
+
                     b.Property<long>("CustomerId")
                         .HasColumnType("bigint");
 
@@ -3215,13 +3250,28 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
 
+                    b.Property<decimal?>("DeliveryFailDeductionPercentageSnapshot")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<int?>("DeliveryFailWindowHoursSnapshot")
+                        .HasColumnType("int");
+
                     b.Property<long>("DeliveryId")
                         .HasColumnType("bigint");
+
+                    b.Property<DateTime?>("FailedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("FailedAtUtc");
+
+                    b.Property<string>("FailureReasonSnapshot")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
 
                     b.Property<long?>("MilkTestId")
                         .HasColumnType("bigint");
 
-                    b.Property<long>("OrderId")
+                    b.Property<long?>("OrderId")
                         .HasColumnType("bigint");
 
                     b.Property<Guid>("PublicId")
@@ -3243,6 +3293,12 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(40)
                         .HasColumnType("nvarchar(40)");
 
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
+
                     b.Property<string>("Source")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -3256,6 +3312,9 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("SubmittedAt")
                         .HasColumnType("datetime2")
                         .HasColumnName("SubmittedAtUtc");
+
+                    b.Property<long?>("SubscriptionDeliveryId")
+                        .HasColumnType("bigint");
 
                     b.Property<string>("Type")
                         .IsRequired()
@@ -3274,7 +3333,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("DeliveryId")
                         .IsUnique()
-                        .HasFilter("[Status] IN ('Pending', 'Approved')");
+                        .HasFilter("[Status] IN ('Pending', 'Approved', 'AwaitingCustomerChoice')");
 
                     b.HasIndex("MilkTestId");
 
@@ -3286,13 +3345,21 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasIndex("RequestNumber")
                         .IsUnique();
 
+                    b.HasIndex("SubscriptionDeliveryId")
+                        .HasFilter("[SubscriptionDeliveryId] IS NOT NULL");
+
                     b.HasIndex("CustomerId", "SubmittedAt");
+
+                    b.HasIndex("Status", "Deadline")
+                        .HasFilter("[Status] = 'AwaitingCustomerChoice'");
 
                     b.HasIndex("BranchId", "Status", "SubmittedAt");
 
                     b.ToTable("RefundReplacementRequest", "dbo", t =>
                         {
-                            t.HasCheckConstraint("CK_RefundReplacementRequest_Lifecycle", "([Status] = 'Pending' AND [DecidedByUserId] IS NULL AND [DecidedAtUtc] IS NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR ([Status] = 'Approved' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR ([Status] = 'Rejected' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR ([Status] = 'Completed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL)");
+                            t.HasCheckConstraint("CK_RefundReplacementRequest_ExactlyOneSource", "(([OrderId] IS NULL AND [SubscriptionDeliveryId] IS NOT NULL) OR ([OrderId] IS NOT NULL AND [SubscriptionDeliveryId] IS NULL))");
+
+                            t.HasCheckConstraint("CK_RefundReplacementRequest_Lifecycle", "([Status] = 'Pending' AND [DecidedByUserId] IS NULL AND [DecidedAtUtc] IS NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR ([Status] = 'AwaitingCustomerChoice' AND [DecidedByUserId] IS NULL AND [DecidedAtUtc] IS NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR ([Status] = 'Approved' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR ([Status] = 'Rejected' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR ([Status] = 'Completed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL) OR ([Status] = 'Failed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL) OR ([Status] = 'Cancelled' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL)");
 
                             t.HasCheckConstraint("CK_RefundReplacementRequest_TimestampOrder", "([DeadlineUtc] IS NULL OR [DeadlineUtc] > [SubmittedAtUtc]) AND ([DecidedAtUtc] IS NULL OR [DecidedAtUtc] >= [SubmittedAtUtc]) AND ([CompletedAtUtc] IS NULL OR ([DecidedAtUtc] IS NOT NULL AND [CompletedAtUtc] >= [DecidedAtUtc]))");
                         });
@@ -3748,6 +3815,11 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
+                    b.Property<bool>("IsReplacement")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<Guid>("PublicId")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier")
@@ -3756,6 +3828,16 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("Quantity")
                         .HasPrecision(18, 3)
                         .HasColumnType("decimal(18,3)");
+
+                    b.Property<long?>("RefundReplacementRequestId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ReplacementReason")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<long?>("ReplacesSubscriptionDeliveryId")
+                        .HasColumnType("bigint");
 
                     b.Property<DateOnly>("ScheduledDate")
                         .HasColumnType("date");
@@ -3783,6 +3865,11 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PublicId")
                         .IsUnique();
+
+                    b.HasIndex("RefundReplacementRequestId")
+                        .HasFilter("[RefundReplacementRequestId] IS NOT NULL");
+
+                    b.HasIndex("ReplacesSubscriptionDeliveryId");
 
                     b.HasIndex("Status", "ScheduledDate");
 
@@ -4282,6 +4369,17 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Navigation("Delivery");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Identity.EmployeeInvitationBranch", b =>
+                {
+                    b.HasOne("DoodhDirect.Domain.Identity.EmployeeInvitation", "Invitation")
+                        .WithMany("BranchLinks")
+                        .HasForeignKey("InvitationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Invitation");
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Identity.RefreshToken", b =>
                 {
                     b.HasOne("DoodhDirect.Domain.Identity.UserSession", "Session")
@@ -4646,8 +4744,12 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.HasOne("DoodhDirect.Domain.Orders.Order", "Order")
                         .WithMany()
                         .HasForeignKey("OrderId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoodhDirect.Domain.Subscriptions.SubscriptionDelivery", "SubscriptionDelivery")
+                        .WithMany()
+                        .HasForeignKey("SubscriptionDeliveryId")
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Branch");
 
@@ -4662,6 +4764,8 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Navigation("MilkTest");
 
                     b.Navigation("Order");
+
+                    b.Navigation("SubscriptionDelivery");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Setup.OrderCharge", b =>
@@ -4748,6 +4852,16 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("DoodhDirect.Domain.RefundReplacement.RefundReplacementRequest", "RefundReplacementRequest")
+                        .WithMany("ReplacementDeliveries")
+                        .HasForeignKey("RefundReplacementRequestId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("DoodhDirect.Domain.Subscriptions.SubscriptionDelivery", "ReplacesSubscriptionDelivery")
+                        .WithMany("ReplacementDeliveries")
+                        .HasForeignKey("ReplacesSubscriptionDeliveryId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("DoodhDirect.Domain.Subscriptions.Subscription", "Subscription")
                         .WithMany("Deliveries")
                         .HasForeignKey("SubscriptionId")
@@ -4755,6 +4869,10 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Branch");
+
+                    b.Navigation("RefundReplacementRequest");
+
+                    b.Navigation("ReplacesSubscriptionDelivery");
 
                     b.Navigation("Subscription");
                 });
@@ -4868,6 +4986,11 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Navigation("Otps");
                 });
 
+            modelBuilder.Entity("DoodhDirect.Domain.Identity.EmployeeInvitation", b =>
+                {
+                    b.Navigation("BranchLinks");
+                });
+
             modelBuilder.Entity("DoodhDirect.Domain.Identity.Permission", b =>
                 {
                     b.Navigation("RolePermissions");
@@ -4936,6 +5059,8 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("DoodhDirect.Domain.RefundReplacement.RefundReplacementRequest", b =>
                 {
                     b.Navigation("Images");
+
+                    b.Navigation("ReplacementDeliveries");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Subscriptions.Subscription", b =>
@@ -4945,6 +5070,11 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
                     b.Navigation("Deliveries");
 
                     b.Navigation("Schedules");
+                });
+
+            modelBuilder.Entity("DoodhDirect.Domain.Subscriptions.SubscriptionDelivery", b =>
+                {
+                    b.Navigation("ReplacementDeliveries");
                 });
 
             modelBuilder.Entity("DoodhDirect.Domain.Wallets.Wallet", b =>

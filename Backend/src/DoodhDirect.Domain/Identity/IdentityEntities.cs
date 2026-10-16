@@ -31,6 +31,14 @@ public sealed class User : AuditableEntity
     public bool IsArchived { get; private set; }
     public DateTime? ArchivedAt { get; private set; }
     public DateTime? LastLoginAt { get; private set; }
+    /// <summary>
+    /// Monotonic authorization epoch. Bumped whenever the user's effective
+    /// authorization changes (role/branch assignment, activation state) so
+    /// previously issued access tokens fail per-request revalidation
+    /// immediately instead of remaining valid until expiry. Mirrored into
+    /// JWTs as the <c>scope_v</c> claim (see AuthorizationCodes).
+    /// </summary>
+    public long AuthorizationVersion { get; private set; }
 
     public ICollection<UserRole> UserRoles { get; } = new List<UserRole>();
     public ICollection<UserSession> Sessions { get; } = new List<UserSession>();
@@ -160,6 +168,13 @@ public sealed class User : AuditableEntity
         EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         LastLoginAt = indiaLocalNow;
     }
+
+    /// <summary>
+    /// Invalidates all previously issued access tokens at the next per-request
+    /// scope revalidation. Call after any role, branch-assignment, or
+    /// activation change while the account may hold live tokens.
+    /// </summary>
+    public void BumpAuthorizationVersion() => AuthorizationVersion++;
 
     private static void EnsureIndiaLocal(DateTime value, string parameterName)
     {
@@ -502,7 +517,17 @@ public sealed class EmployeeInvitation : AuditableEntity
     public string InviteeMobile { get; private set; } = string.Empty;
     public string? InviteeEmail { get; private set; }
     public string RoleCode { get; private set; } = string.Empty;
+    /// <summary>
+    /// Legacy single-branch compat: the first assigned branch (ordered by id), or
+    /// null when the invitation carries no branch. The authoritative assignment set
+    /// is <see cref="BranchLinks"/>; use <see cref="GetBranchIds"/> to read it.
+    /// </summary>
     public long? BranchId { get; private set; }
+    /// <summary>
+    /// Authoritative branch assignment set for this invitation (Stage 2
+    /// multi-branch). A single-branch invitation carries exactly one row.
+    /// </summary>
+    public ICollection<EmployeeInvitationBranch> BranchLinks { get; } = new List<EmployeeInvitationBranch>();
     public string TokenHash { get; private set; } = string.Empty;
     public EmployeeInvitationStatus Status { get; private set; }
     public new DateTime CreatedAt { get; private set; }
@@ -550,18 +575,54 @@ public sealed class EmployeeInvitation : AuditableEntity
         LastResentAt = indiaLocalNow;
     }
 
-    public void ChangeRoleAndBranch(string roleCode, long? branchId)
+    public void ChangeRoleAndBranch(string roleCode, long? branchId) =>
+        ChangeRoleAndBranches(roleCode, branchId.HasValue ? new[] { branchId.Value } : Array.Empty<long>());
+
+    /// <summary>
+    /// Replaces the invitation's role and full branch set (Stage 2 multi-branch).
+    /// The legacy <see cref="BranchId"/> scalar tracks the first ordered branch for
+    /// compat; <see cref="BranchLinks"/> synchronization is owned by the service so
+    /// orphaned rows are deleted explicitly rather than left to EF cascade semantics.
+    /// </summary>
+    public void ChangeRoleAndBranches(string roleCode, IReadOnlyList<long> branchIds)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(roleCode);
+        ArgumentNullException.ThrowIfNull(branchIds);
         RoleCode = roleCode;
-        BranchId = branchId;
+        BranchId = branchIds.Count == 0 ? null : branchIds.Min();
     }
+
+    /// <summary>
+    /// Authoritative branch set: child <see cref="BranchLinks"/> rows when present
+    /// (always written by the service for Stage 2 invitations), falling back to the
+    /// legacy <see cref="BranchId"/> scalar for invitations created before Stage 2 or
+    /// constructed without link rows.
+    /// </summary>
+    public IReadOnlyList<long> GetBranchIds() =>
+        BranchLinks.Count > 0
+            ? BranchLinks.Select(x => x.BranchId).Distinct().OrderBy(x => x).ToArray()
+            : BranchId.HasValue
+                ? new[] { BranchId.Value }
+                : Array.Empty<long>();
 
     public void MarkExpired(DateTime indiaLocalNow)
     {
         EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (Status == EmployeeInvitationStatus.Invited && ExpiresAt <= indiaLocalNow)
             Status = EmployeeInvitationStatus.Expired;
+    }
+
+    /// <summary>
+    /// <summary>
+    /// Attaches branch link rows for a newly created invitation. Only valid before
+    /// the invitation is persisted (ids are assigned by the database); existing
+    /// invitations are synchronized explicitly by the service.
+    /// </summary>
+    public void AttachBranchLinks(IReadOnlyList<long> branchIds)
+    {
+        ArgumentNullException.ThrowIfNull(branchIds);
+        foreach (var branchId in branchIds.Distinct().OrderBy(x => x))
+            BranchLinks.Add(new EmployeeInvitationBranch(this, branchId));
     }
 
     private static void EnsureIndiaLocal(DateTime value, string parameterName)
@@ -573,4 +634,31 @@ public sealed class EmployeeInvitation : AuditableEntity
                 parameterName);
         }
     }
+}
+
+/// <summary>
+/// Stage 2 multi-branch Dairy Manager: link row binding an employee invitation to
+/// one invited branch. Carries no payload beyond the branch reference; cascade
+/// delete follows the parent invitation, and a filtered unique index per
+/// invitation prevents duplicate branch rows.
+/// </summary>
+public sealed class EmployeeInvitationBranch : Entity
+{
+    private EmployeeInvitationBranch()
+    {
+        Invitation = null!;
+    }
+
+    public EmployeeInvitationBranch(EmployeeInvitation invitation, long branchId)
+    {
+        ArgumentNullException.ThrowIfNull(invitation);
+        Invitation = invitation;
+        BranchId = branchId;
+    }
+
+    public long InvitationId { get; private set; }
+
+    public EmployeeInvitation Invitation { get; private set; }
+
+    public long BranchId { get; private set; }
 }

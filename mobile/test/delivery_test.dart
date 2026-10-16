@@ -43,6 +43,15 @@ void main() {
       );
     });
 
+    test('D1-D slice 7: parses the voided operational Cancelled status', () {
+      // Backend D1-D slice 5 emits Cancelled for pre-pickup replacement
+      // deliveries voided with their subscription. It must label honestly
+      // instead of collapsing to Unknown.
+      expect(DeliveryStatus.fromApi('Cancelled'), DeliveryStatus.cancelled);
+      expect(DeliveryStatus.fromApi('cancelled'), DeliveryStatus.cancelled);
+      expect(DeliveryStatus.cancelled.label, 'Cancelled');
+    });
+
     test('formats display and API dates independently', () {
       final date = DateTime(2026, 8, 7, 18, 30);
 

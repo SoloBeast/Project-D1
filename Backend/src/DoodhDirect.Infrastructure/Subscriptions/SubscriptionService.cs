@@ -10,8 +10,11 @@ using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Configuration;
 using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Deliveries;
+using DoodhDirect.Domain.Payments;
+using DoodhDirect.Domain.RefundReplacement;
 using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Subscriptions;
+using DoodhDirect.Domain.Wallets;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -293,15 +296,163 @@ public sealed class SubscriptionService(
         return subscription.ToResult();
     }
 
+    /// <summary>
+    /// D1-D slice 5: cancellation with a pending re-delivery replacement.
+    ///
+    /// The whole cancellation — subscription + occurrence flips, operational
+    /// voids, wallet/refund ledger rows, ticket resolutions, audits and outbox
+    /// events — commits atomically inside one serializable transaction, so a
+    /// crash or race can only leave "nothing happened" (safe to retry) or
+    /// "everything happened" (idempotent skip on retry).
+    ///
+    /// State-by-state behavior for approved ReDelivery tickets linked to this
+    /// subscription:
+    /// <list type="bullet">
+    /// <item>Replacement <c>Scheduled</c> (or already <c>Cancelled</c> by a
+    /// prior cancel), operational delivery absent or pre-pickup
+    /// (<c>ReadyForAssignment</c>/<c>Assigned</c>): the operational row is
+    /// voided to the terminal <c>Cancelled</c> state (never via
+    /// <c>Delivery.Fail</c> — no failure ticket), OTPs die with it, the frozen
+    /// one-share entitlement (ticket deduction snapshot) is credited to the
+    /// wallet under a <c>cancel-redelivery:</c> idempotency namespace, and the
+    /// ticket is completed with an explicit cancellation outcome.</item>
+    /// <item>Operational delivery <c>PickedUp</c>/<c>OutForDelivery</c>/
+    /// <c>Arrived</c>: the cancellation is rejected with a <c>Conflict</c>
+    /// before any state or financial mutation; the in-flight delivery must be
+    /// operationally resolved first. Nothing is half-cancelled.</item>
+    /// <item>Replacement <c>Delivered</c>: owned by the Slice-3 completion
+    /// path (ticket already <c>Completed</c>) — untouched, no second refund.</item>
+    /// <item>Replacement <c>Failed</c>: owned by the Slice-4 refund-only remedy
+    /// path — untouched here so the same share can never refund twice.</item>
+    /// <item>Ticket still awaiting customer choice: not an approved
+    /// replacement — untouched; the D1-C timeout worker still refunds it at
+    /// its persisted deadline.</item>
+    /// </list>
+    /// Ordinary future occurrences keep the existing policy: no general
+    /// cancellation refund exists, and only safely-voided approved replacements
+    /// are refunded (each resolved separately under the payment cap).
+    /// </summary>
     public async Task<SubscriptionResult> CancelAsync(long customerId, Guid subscriptionId, CancellationToken cancellationToken)
     {
-        var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
-        var now = timeProvider.Now;
-        subscription.Cancel(now);
-        await InvalidateMaterializedOtpsAsync(subscription.Deliveries.Select(x => x.Id), now, cancellationToken);
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return subscription.ToResult();
+        try
+        {
+            return await ExecuteSerializableAsync(async () =>
+            {
+            // Fresh read inside the serializable transaction: candidate
+            // detection, the in-transit blocker, voids, refunds and ticket
+            // resolutions all contend on committed state only.
+            var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
+            var now = timeProvider.Now;
+
+            // Unchanged domain transition (same throw behavior for
+            // Completed/PaymentFailed): flips every Scheduled occurrence —
+            // including pending replacements — to Cancelled.
+            subscription.Cancel(now);
+
+            var candidates = await FindPendingRedeliveryCandidatesAsync(subscription.Id, cancellationToken);
+
+            // In-transit blocker before any refund or void work: an in-flight
+            // replacement stays deliverable, so the subscription must not be
+            // half-cancelled around it. Throwing before SaveChanges rolls back
+            // the in-memory cancel above as well.
+            foreach (var candidate in candidates)
+            {
+                var operational = candidate.Operational;
+                if (operational?.Status is DeliveryStatus.PickedUp or DeliveryStatus.OutForDelivery or DeliveryStatus.Arrived)
+                {
+                    var number = operational.DeliveryNumber ?? operational.ReferenceNumber;
+                    throw new ConflictException(
+                        $"The subscription cannot be cancelled while replacement delivery {number} is {operational.Status}. " +
+                        "The active replacement delivery must be operationally resolved first.");
+                }
+            }
+
+            foreach (var candidate in candidates)
+            {
+                await ResolvePendingReplacementAsync(customerId, subscription, candidate, now, cancellationToken);
+            }
+
+            await InvalidateMaterializedOtpsAsync(subscription.Deliveries.Select(x => x.Id), now, cancellationToken);
+
+            SubscriptionResult? result;
+            try
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+                result = subscription.ToResult();
+            }
+            catch (DbUpdateConcurrencyException exception)
+            {
+                throw new ConflictException(
+                    $"The subscription was changed by another operation. Refresh and try again. ({exception.GetType().Name})");
+            }
+            catch (DbUpdateException)
+            {
+                // A concurrent winner committed first (ticket row-version, or
+                // the wallet/refund/event idempotency keys, all namespaced to
+                // this path): re-read, and if no candidate is still pending
+                // the other instance won — adopt its outcome instead of failing.
+                // A retry is safe either way (completed tickets are skipped).
+                // A deadlock victim must NOT adopt: SQL Server aborts the
+                // whole transaction, so the adoption reads fail and the
+                // original error is rethrown for the execution strategy to
+                // retry cleanly (the retry then observes the resolved state).
+                dbContext.ChangeTracker.Clear();
+                IReadOnlyList<PendingRedeliveryCandidate>? stillPending = null;
+                var adoptionReadable = false;
+                try
+                {
+                    stillPending = await FindPendingRedeliveryCandidatesAsync(subscription.Id, cancellationToken);
+                    adoptionReadable = true;
+                }
+                catch (Exception)
+                {
+                    adoptionReadable = false;
+                }
+                if (!adoptionReadable)
+                {
+                    // Rethrows the original DbUpdateException: a deadlock
+                    // victim is transient, so the execution strategy retries
+                    // it in a fresh transaction.
+                    throw;
+                }
+                if (stillPending!.Count == 0)
+                {
+                    var current = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
+                    return current.ToResult();
+                }
+
+                throw;
+            }
+
+            return result;
+            }, cancellationToken);
+        }
+        catch (InvalidOperationException exception) when (IsCompletedTransactionError(exception))
+        {
+            // Commit-phase server abort (a serializable deadlock decided at
+            // commit surfaces as a bare completed-transaction error, hiding
+            // the transient cause from the execution strategy): this attempt
+            // committed nothing. Re-read authoritatively outside the dead
+            // transaction — if another attempt won, adopt its outcome so a
+            // concurrent double-cancel stays idempotent; otherwise surface a
+            // retryable conflict. Never masks domain errors: their messages
+            // never match the completed-transaction guard below.
+            dbContext.ChangeTracker.Clear();
+            var current = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
+            var stillPending = await FindPendingRedeliveryCandidatesAsync(current.Id, cancellationToken);
+            if (stillPending.Count == 0)
+            {
+                return current.ToResult();
+            }
+
+            throw new ConflictException(
+                "The subscription was changed by another operation. Refresh and try again.");
+        }
     }
+
+    private static bool IsCompletedTransactionError(InvalidOperationException exception) =>
+        exception.Message.Contains("has completed", StringComparison.OrdinalIgnoreCase)
+        && exception.Message.Contains("no longer usable", StringComparison.OrdinalIgnoreCase);
 
     public Task<SubscriptionDeliveryResult> SkipAsync(
         long customerId,
@@ -313,6 +464,15 @@ public sealed class SubscriptionService(
             var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
             var delivery = subscription.Deliveries.SingleOrDefault(x => x.PublicId == request.DeliveryId)
                 ?? throw new NotFoundException("The subscription delivery was not found.");
+            // D1-D slice 2.1 (Rule 7): a re-delivery replacement must never be
+            // silently consumed by an ordinary skip. The domain guard below is
+            // the backstop; this explicit check returns the clear business
+            // error before any materialization or cutoff evaluation.
+            if (delivery.IsReplacement)
+            {
+                throw new BusinessRuleException(
+                    "A re-delivery replacement cannot be skipped as vacation; it requires an explicit operational decision.");
+            }
             var now = timeProvider.Now;
             await EnsureNoMaterializedDeliveryAsync(delivery, cancellationToken);
             subscription.Skip(delivery, now, await GetCutoffAsync(cancellationToken));
@@ -382,6 +542,19 @@ public sealed class SubscriptionService(
                         subscription.PublicId,
                         subscription.ProductNameSnapshot,
                         IneligibleReason(occurrence.Status)));
+                    continue;
+                }
+                // D1-D slice 2.1 (Rule 7): a scheduled re-delivery replacement
+                // is never auto-skipped by vacation. It is reported as
+                // ineligible so staff can make the explicit operational
+                // decision; the remedy stays Scheduled and fulfillable.
+                if (occurrence.IsReplacement)
+                {
+                    ineligible.Add(new VacationIneligibleItem(
+                        occurrence.ScheduledDate,
+                        subscription.PublicId,
+                        subscription.ProductNameSnapshot,
+                        "replacementDelivery"));
                     continue;
                 }
                 if (materializedIds.Contains(occurrence.Id))
@@ -559,6 +732,365 @@ public sealed class SubscriptionService(
         {
             throw new ConflictException(
                 "The idempotency key is already associated with a different subscription request.");
+        }
+    }
+
+    /// <summary>
+    /// D1-D slice 5: an approved ReDelivery ticket linked to one of this
+    /// subscription's replacements that is still unfulfilled. Candidates are
+    /// identified strictly through persisted linkage (ticket → replacement
+    /// occurrence → operational delivery), never from client input.
+    /// </summary>
+    private sealed record PendingRedeliveryCandidate(
+        RefundReplacementRequest Ticket,
+        SubscriptionDelivery Replacement,
+        Delivery? Operational);
+
+    private async Task<IReadOnlyList<PendingRedeliveryCandidate>> FindPendingRedeliveryCandidatesAsync(
+        long subscriptionId,
+        CancellationToken cancellationToken)
+    {
+        var tickets = await dbContext.RefundReplacementRequests
+            .Include(x => x.SubscriptionDelivery)
+            .Include(x => x.Delivery)
+            .Where(x => x.Status == RefundReplacementStatus.Approved
+                && x.Source == RefundReplacementSource.DeliveryFailed
+                && x.CustomerChoice == CustomerChoice.ReDelivery
+                && x.SubscriptionDeliveryId != null)
+            .ToListAsync(cancellationToken);
+        tickets = tickets
+            .Where(x => x.SubscriptionDelivery is not null && x.SubscriptionDelivery.SubscriptionId == subscriptionId)
+            .ToList();
+        if (tickets.Count == 0)
+        {
+            return [];
+        }
+
+        var ticketIds = tickets.Select(x => x.Id).ToHashSet();
+        var replacements = await dbContext.SubscriptionDeliveries
+            .Where(x => x.IsReplacement
+                && x.SubscriptionId == subscriptionId
+                && x.RefundReplacementRequestId != null
+                && ticketIds.Contains(x.RefundReplacementRequestId.Value))
+            .ToListAsync(cancellationToken);
+        var byTicket = replacements.ToDictionary(x => x.RefundReplacementRequestId!.Value);
+
+        var candidates = new List<PendingRedeliveryCandidate>();
+        foreach (var ticket in tickets)
+        {
+            // No replacement row: a data anomaly (approval always creates
+            // one). Left for explicit staff resolution, never auto-refunded.
+            if (!byTicket.TryGetValue(ticket.Id, out var replacement))
+            {
+                continue;
+            }
+            // Delivered replacements are owned by the Slice-3 completion path
+            // (ticket already Completed); Failed replacements are owned by the
+            // Slice-4 refund-only remedy path. Resolving either here could
+            // refund the same entitlement twice.
+            if (replacement.Status is SubscriptionDeliveryStatus.Delivered or SubscriptionDeliveryStatus.Failed)
+            {
+                continue;
+            }
+            var operational = await dbContext.Deliveries
+                .SingleOrDefaultAsync(x => x.SubscriptionDeliveryId == replacement.Id, cancellationToken);
+            candidates.Add(new PendingRedeliveryCandidate(ticket, replacement, operational));
+        }
+
+        return candidates;
+    }
+
+    /// <summary>
+    /// D1-D slice 5: voids one safely-cancellable pending replacement and
+    /// resolves its ticket with the frozen entitlement refund. Payment
+    /// feasibility is validated before the replacement is voided; any failure
+    /// throws before SaveChanges, rolling back the whole cancellation.
+    /// </summary>
+    private async Task ResolvePendingReplacementAsync(
+        long customerId,
+        Subscription subscription,
+        PendingRedeliveryCandidate candidate,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var ticket = candidate.Ticket;
+        var operational = candidate.Operational;
+
+        // The ticket's frozen deduction snapshot is authoritative; current
+        // configuration is never consulted (same rule as D1-C).
+        var deductionPercentage = ticket.DeliveryFailDeductionPercentageSnapshot
+            ?? throw new ConflictException(
+                $"The subscription cannot be cancelled: replacement ticket {ticket.RequestNumber} has no frozen deduction. " +
+                "Resolve it with staff support first.");
+
+        // Success/PartiallyRefunded mirror the D1-C lookup; Refunded is also
+        // matched so an exhausted payment reports its exact state below
+        // instead of a misleading "no payment" error. Any other status (or
+        // no row) cannot back a safe refund.
+        var payment = await dbContext.Payments
+            .Include(x => x.Refunds)
+            .Where(x => x.SubscriptionId == subscription.Id
+                && x.CustomerId == ticket.CustomerId
+                && (x.Status == PaymentStatus.Success
+                    || x.Status == PaymentStatus.PartiallyRefunded
+                    || x.Status == PaymentStatus.Refunded))
+            .OrderByDescending(x => x.Id)
+            .FirstOrDefaultAsync(cancellationToken)
+            ?? throw new ConflictException(
+                $"The subscription cannot be cancelled: no successful payment covers replacement ticket {ticket.RequestNumber}. " +
+                "Resolve it with staff support first.");
+
+        // Frozen refund math, identical to D1-C: one charge-inclusive share of
+        // the frozen PayableAmount (never repriced), less the snapshotted
+        // deduction, capped by the payment's remaining refundable balance so
+        // cumulative credits never exceed the frozen payable. PayableAmount,
+        // ChargesTotal, prices and charge snapshots are only read, never
+        // recalculated.
+        var gross = decimal.Round(
+            subscription.PayableAmount / subscription.TotalEntitlement,
+            2,
+            MidpointRounding.AwayFromZero);
+        var deduction = decimal.Round(
+            gross * deductionPercentage / 100m,
+            2,
+            MidpointRounding.AwayFromZero);
+        var final = gross - deduction;
+        var remaining = payment.Amount - payment.RefundedAmount;
+        if (remaining <= 0)
+        {
+            throw new ConflictException(
+                $"The subscription cannot be cancelled: the payment covering replacement ticket {ticket.RequestNumber} " +
+                "is already fully refunded. Resolve it with staff support first.");
+        }
+        if (final > remaining)
+        {
+            final = remaining;
+        }
+
+        // Distinct deterministic namespace: a prior D1-C timeout credit (or a
+        // retry of this path) can never duplicate, and the payment cap stays
+        // exact across namespaces.
+        var idempotencyKey = $"cancel-redelivery:{ticket.PublicId:N}:refund";
+        var deliveryNumber = ticket.Delivery.DeliveryNumber ?? ticket.Delivery.ReferenceNumber;
+        var voidReason =
+            $"Subscription cancelled; pending re-delivery replacement voided (ticket {ticket.RequestNumber}).";
+
+        // Void the pre-pickup operational delivery through the terminal
+        // cancellation state — never via Delivery.Fail, which would mint
+        // another failure ticket and trigger the wrong refund lifecycle. The
+        // occurrence itself was already flipped to Cancelled by the domain
+        // subscription cancel above; both histories are preserved.
+        if (operational is not null && operational.Status != DeliveryStatus.Cancelled)
+        {
+            var previousOperationalStatus = operational.Status;
+            Mutate(() => operational.Cancel(now, voidReason));
+            dbContext.AddAuditLog(new AuditLog(
+                customerId,
+                "DELIVERY.CANCEL",
+                "Delivery",
+                operational.PublicId.ToString(),
+                JsonSerializer.Serialize(new { Status = previousOperationalStatus.ToString() }),
+                JsonSerializer.Serialize(new
+                {
+                    Status = operational.Status.ToString(),
+                    Ticket = ticket.RequestNumber
+                }),
+                null,
+                null,
+                voidReason,
+                now));
+        }
+
+        if (final > 0)
+        {
+            await CreditCancelWalletAsync(
+                ticket.CustomerId,
+                subscription.Id,
+                payment,
+                final,
+                idempotencyKey,
+                $"Subscription-cancellation re-delivery refund {ticket.RequestNumber} for delivery {deliveryNumber}",
+                now,
+                cancellationToken);
+            RecordCancelRefund(payment, final, idempotencyKey, ticket.CustomerId, now);
+        }
+
+        // D1-D slice 7.1: explicit cancellation/refund outcome — never a
+        // delivery completion. The replacement was voided, not delivered, so
+        // the ticket resolves to the distinct terminal Cancelled status
+        // (Completed keeps meaning successful re-delivery; Failed keeps
+        // meaning the replacement-failure refund-only path). The resolver is
+        // the cancelling customer (the real initiating actor), never an
+        // employee.
+        var remarks = final > 0
+            ? $"Subscription cancelled; pending replacement voided and " +
+              $"{final.ToString("0.00", CultureInfo.InvariantCulture)} refunded to wallet " +
+              $"(gross {gross.ToString("0.00", CultureInfo.InvariantCulture)}, " +
+              $"deduction {deduction.ToString("0.00", CultureInfo.InvariantCulture)})."
+            : "Subscription cancelled; pending replacement voided with no wallet credit (fully deducted).";
+        Mutate(() => ticket.MarkSubscriptionCancelled(customerId, now, remarks));
+
+        dbContext.AddAuditLog(new AuditLog(
+            customerId,
+            "REFUND_REPLACEMENT.CANCEL_REFUND",
+            "RefundReplacementRequest",
+            ticket.PublicId.ToString(),
+            JsonSerializer.Serialize(new
+            {
+                ticket.RequestNumber,
+                Status = RefundReplacementStatus.Approved.ToString()
+            }),
+            JsonSerializer.Serialize(new
+            {
+                ticket.RequestNumber,
+                Status = ticket.Status.ToString(),
+                Resolution = "SubscriptionCancelled",
+                DeliveryNumber = deliveryNumber,
+                GrossRefund = gross,
+                DeductionPercentage = deductionPercentage,
+                DeductionAmount = deduction,
+                WalletCredit = final,
+                SubscriptionPayable = subscription.PayableAmount,
+                subscription.TotalEntitlement
+            }),
+            null,
+            null,
+            remarks,
+            now));
+
+        // Buffered into the same transaction (outbox): the customer is
+        // notified only after the financial operation is durably committed,
+        // and the unique EventKey keeps redelivery exactly-once.
+        notificationEventWriter.Add(new NotificationEventRequest(
+            ticket.CustomerId,
+            NotificationEventTypes.RefundReplacementCancelRefunded,
+            $"refund-replacement:{ticket.PublicId:N}:cancel-refund",
+            new Dictionary<string, string>
+            {
+                ["requestId"] = ticket.PublicId.ToString(),
+                ["requestNumber"] = ticket.RequestNumber,
+                ["deliveryNumber"] = deliveryNumber,
+                ["grossRefund"] = gross.ToString("0.00", CultureInfo.InvariantCulture),
+                ["deductionPercentage"] = deductionPercentage.ToString("0.##", CultureInfo.InvariantCulture),
+                ["deductionAmount"] = deduction.ToString("0.00", CultureInfo.InvariantCulture),
+                ["walletCredit"] = final.ToString("0.00", CultureInfo.InvariantCulture),
+                ["message"] =
+                    $"Your subscription was cancelled while replacement delivery {deliveryNumber} was still pending. " +
+                    $"{final.ToString("0.00", CultureInfo.InvariantCulture)} was credited to your wallet after a deduction of " +
+                    $"{deduction.ToString("0.00", CultureInfo.InvariantCulture)} (ticket {ticket.RequestNumber})."
+            },
+            $"/refund-replacements/{ticket.PublicId}",
+            now));
+    }
+
+    private async Task CreditCancelWalletAsync(
+        long customerId,
+        long subscriptionId,
+        Payment payment,
+        decimal amount,
+        string idempotencyKey,
+        string description,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        // Same ledger mechanics as the D1-C timeout path: the wallet is
+        // created on demand in the payment's currency (wallet credit applies
+        // regardless of the original payment method; no gateway is called),
+        // and a committed credit with this key is reused, never duplicated.
+        // The tracker is checked first so multiple tickets resolved in one
+        // cancellation share a single created wallet instead of inserting
+        // duplicates (the database row does not exist until commit).
+        var wallet = dbContext.Wallets.Local.SingleOrDefault(x => x.CustomerId == customerId)
+            ?? await dbContext.Wallets
+                .SingleOrDefaultAsync(x => x.CustomerId == customerId, cancellationToken);
+        if (wallet is null)
+        {
+            wallet = new Wallet(customerId, payment.Currency);
+            dbContext.Wallets.Add(wallet);
+        }
+        else
+        {
+            var existing = await dbContext.WalletTransactions
+                .SingleOrDefaultAsync(
+                    x => x.WalletId == wallet.Id && x.IdempotencyKey == idempotencyKey,
+                    cancellationToken);
+            if (existing is not null)
+            {
+                return;
+            }
+        }
+
+        Mutate(() => wallet.Credit(
+            WalletTransactionType.RefundCredit,
+            amount,
+            idempotencyKey,
+            description,
+            now,
+            payment.Id,
+            subscriptionId: subscriptionId));
+    }
+
+    private static void RecordCancelRefund(
+        Payment payment,
+        decimal amount,
+        string idempotencyKey,
+        long customerId,
+        DateTime now)
+    {
+        // Same local refund recording as D1-C: no gateway call, the money is
+        // returned as wallet credit, and the payment cap
+        // (Amount - RefundedAmount) is enforced by the domain. A pre-existing
+        // refund row with this key is authoritative and never duplicated.
+        var existing = payment.Refunds.SingleOrDefault(x => x.IdempotencyKey == idempotencyKey);
+        if (existing is not null)
+        {
+            if (existing.Status != RefundStatus.Succeeded)
+            {
+                throw new ConflictException(
+                    "A refund with the same reference is already in progress.");
+            }
+
+            return;
+        }
+
+        Refund refund = Mutate(() => payment.StartRefund(
+            amount,
+            "Subscription-cancellation re-delivery refund to wallet.",
+            idempotencyKey,
+            customerId));
+        Mutate(() => refund.Succeed(now));
+        Mutate(() => payment.CompleteRefund(amount));
+    }
+
+    private static void Mutate(Action operation)
+    {
+        try
+        {
+            operation();
+        }
+        catch (ArgumentException exception)
+        {
+            throw new ValidationAppException(exception.Message, exception.ParamName);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new ConflictException(exception.Message);
+        }
+    }
+
+    private static T Mutate<T>(Func<T> operation)
+    {
+        try
+        {
+            return operation();
+        }
+        catch (ArgumentException exception)
+        {
+            throw new ValidationAppException(exception.Message, exception.ParamName);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new ConflictException(exception.Message);
         }
     }
 

@@ -82,7 +82,10 @@ void main() {
         tester.widget<TextField>(find.byType(TextField).at(0)).controller!.text,
         '5',
       );
-      expect(find.text('Refund/replacement window settings saved.'), findsOneWidget);
+      expect(
+        find.text('Refund/replacement window settings saved.'),
+        findsOneWidget,
+      );
       // The form now matches the server state, so Save disables again.
       expect(_saveButton(tester).onPressed, isNull);
     });
@@ -208,8 +211,215 @@ void main() {
         isFalse,
       );
     });
+
+    testWidgets('shows the delivery-fail fields alongside the legacy window', (
+      tester,
+    ) async {
+      final controller = _SeededRefundReplacementConfigController(
+        RefundReplacementConfigState(configuration: _configuration()),
+      );
+      await _pump(tester, controller);
+
+      // Legacy field stays first and distinct from the delivery-fail fields.
+      expect(
+        find.text('Refund/Replacement Request Window (Hours)'),
+        findsOneWidget,
+      );
+      expect(find.text('Delivery-fail settings'), findsOneWidget);
+      expect(find.text('Delivery Fail Window (Hours)'), findsOneWidget);
+      expect(find.text('Delivery Fail Deduction (%)'), findsOneWidget);
+      expect(
+        find.text(
+          'Time allowed for a customer to choose Refund or Re-Delivery '
+          'after a delivery is marked Failed.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'Percentage deducted from an automatic refund when the customer '
+          'does not choose a remedy before the Delivery Fail Window expires.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('loads the persisted delivery-fail values', (tester) async {
+      final controller = _SeededRefundReplacementConfigController(
+        RefundReplacementConfigState(
+          configuration: _configuration(
+            deliveryFailWindowHours: 36,
+            deliveryFailDeductionPercentage: 12.5,
+          ),
+        ),
+      );
+      await _pump(tester, controller);
+
+      expect(_fieldByLabel(tester, 'Delivery Fail Window (Hours)'), '36');
+      expect(_fieldByLabel(tester, 'Delivery Fail Deduction (%)'), '12.5');
+      expect(
+        _fieldByLabel(tester, 'Refund/Replacement Request Window (Hours)'),
+        '48',
+      );
+    });
+
+    testWidgets('edits the delivery-fail values and sends them on save', (
+      tester,
+    ) async {
+      final controller = _SeededRefundReplacementConfigController(
+        RefundReplacementConfigState(configuration: _configuration()),
+      );
+      await _pump(tester, controller);
+
+      await tester.enterText(
+        _field(tester, 'Delivery Fail Window (Hours)'),
+        '36',
+      );
+      await tester.enterText(
+        _field(tester, 'Delivery Fail Deduction (%)'),
+        '12.5',
+      );
+      await tester.pump();
+      expect(_saveButton(tester).onPressed, isNotNull);
+
+      await tester.tap(find.text('Save settings'));
+      await tester.pumpAndSettle();
+
+      expect(controller.saveCount, 1);
+      expect(controller.lastRequest!.windowHours, 48);
+      expect(controller.lastRequest!.deliveryFailWindowHours, 36);
+      expect(controller.lastRequest!.deliveryFailDeductionPercentage, 12.5);
+      expect(
+        find.text('Refund/replacement window settings saved.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('rejects an out-of-range delivery-fail window', (tester) async {
+      final controller = _SeededRefundReplacementConfigController(
+        RefundReplacementConfigState(configuration: _configuration()),
+      );
+      await _pump(tester, controller);
+
+      await tester.enterText(
+        _field(tester, 'Delivery Fail Window (Hours)'),
+        '0',
+      );
+      await tester.pump();
+      await tester.tap(find.text('Save settings'));
+      await tester.pump();
+
+      expect(controller.saveCount, 0);
+      expect(
+        find.text('Enter a window between 1 and 8760 hours.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('rejects an out-of-range deduction percentage', (tester) async {
+      final controller = _SeededRefundReplacementConfigController(
+        RefundReplacementConfigState(configuration: _configuration()),
+      );
+      await _pump(tester, controller);
+
+      await tester.enterText(
+        _field(tester, 'Delivery Fail Deduction (%)'),
+        '101',
+      );
+      await tester.pump();
+      await tester.tap(find.text('Save settings'));
+      await tester.pump();
+
+      expect(controller.saveCount, 0);
+      expect(
+        find.text('Enter a deduction between 0 and 100%.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('rejects a non-numeric deduction percentage', (tester) async {
+      final controller = _SeededRefundReplacementConfigController(
+        RefundReplacementConfigState(configuration: _configuration()),
+      );
+      await _pump(tester, controller);
+
+      await tester.enterText(
+        _field(tester, 'Delivery Fail Deduction (%)'),
+        '.',
+      );
+      await tester.pump();
+      await tester.tap(find.text('Save settings'));
+      await tester.pump();
+
+      expect(controller.saveCount, 0);
+      expect(find.text('Enter the deduction as a number.'), findsOneWidget);
+    });
+
+    testWidgets('shows a server deduction error and keeps the edits', (
+      tester,
+    ) async {
+      final controller = _SeededRefundReplacementConfigController(
+        RefundReplacementConfigState(configuration: _configuration()),
+        failSave: true,
+        failField: 'deliveryFailDeductionPercentage',
+        failMessage:
+            'The delivery fail deduction percentage must be between 0 and 100.',
+      );
+      await _pump(tester, controller);
+
+      await tester.enterText(
+        _field(tester, 'Delivery Fail Deduction (%)'),
+        '12.5',
+      );
+      await tester.pump();
+      await tester.tap(find.text('Save settings'));
+      await tester.pumpAndSettle();
+
+      expect(controller.saveCount, 1);
+      expect(
+        find.text(
+          'The delivery fail deduction percentage must be between 0 and 100.',
+        ),
+        findsWidgets,
+      );
+      expect(_fieldByLabel(tester, 'Delivery Fail Deduction (%)'), '12.5');
+    });
+
+    testWidgets('read-only users cannot edit the delivery-fail fields', (
+      tester,
+    ) async {
+      final controller = _SeededRefundReplacementConfigController(
+        RefundReplacementConfigState(configuration: _configuration()),
+      );
+      await _pump(
+        tester,
+        controller,
+        permissions: const [kRefundReplacementConfigReadPermission],
+      );
+
+      expect(find.text('Save settings'), findsNothing);
+      expect(
+        tester
+            .widget<TextField>(_field(tester, 'Delivery Fail Window (Hours)'))
+            .enabled,
+        isFalse,
+      );
+      expect(
+        tester
+            .widget<TextField>(_field(tester, 'Delivery Fail Deduction (%)'))
+            .enabled,
+        isFalse,
+      );
+    });
   });
 }
+
+/// Locates a [TextField] by its input-decoration label.
+Finder _field(WidgetTester tester, String label) =>
+    find.ancestor(of: find.text(label), matching: find.byType(TextField));
+
+String _fieldByLabel(WidgetTester tester, String label) =>
+    tester.widget<TextField>(_field(tester, label)).controller!.text;
 
 Future<void> _pump(
   WidgetTester tester,
@@ -226,9 +436,12 @@ Future<void> _pump(
     ProviderScope(
       key: UniqueKey(),
       overrides: [
-        refundReplacementConfigControllerProvider.overrideWith(() => controller),
+        refundReplacementConfigControllerProvider.overrideWith(
+          () => controller,
+        ),
         sessionControllerProvider.overrideWith(
-          () => _SeededSessionController(permissions: permissions, roles: roles),
+          () =>
+              _SeededSessionController(permissions: permissions, roles: roles),
         ),
       ],
       child: MaterialApp(
@@ -252,10 +465,17 @@ FilledButton _saveButton(WidgetTester tester) => tester.widget<FilledButton>(
 
 class _SeededRefundReplacementConfigController
     extends RefundReplacementConfigController {
-  _SeededRefundReplacementConfigController(this.initialState, {this.failSave = false});
+  _SeededRefundReplacementConfigController(
+    this.initialState, {
+    this.failSave = false,
+    this.failField = 'windowHours',
+    this.failMessage = 'WindowHours must be between 1 and 8760.',
+  });
 
   final RefundReplacementConfigState initialState;
   final bool failSave;
+  final String failField;
+  final String failMessage;
 
   int loadCount = 0;
   int saveCount = 0;
@@ -276,10 +496,8 @@ class _SeededRefundReplacementConfigController
     if (failSave) {
       state = state.copyWith(
         isSaving: false,
-        errorMessage: 'WindowHours must be between 1 and 8760.',
-        fieldErrors: const {
-          'windowHours': 'WindowHours must be between 1 and 8760.',
-        },
+        errorMessage: failMessage,
+        fieldErrors: {failField: failMessage},
       );
       return false;
     }
@@ -288,6 +506,11 @@ class _SeededRefundReplacementConfigController
     state = state.copyWith(
       configuration: RefundReplacementConfiguration(
         windowHours: request.windowHours ?? current.windowHours,
+        deliveryFailWindowHours:
+            request.deliveryFailWindowHours ?? current.deliveryFailWindowHours,
+        deliveryFailDeductionPercentage:
+            request.deliveryFailDeductionPercentage ??
+            current.deliveryFailDeductionPercentage,
         status: 'Configured',
       ),
       isSaving: false,
@@ -323,8 +546,13 @@ class _SeededSessionController extends SessionController {
   );
 }
 
-RefundReplacementConfiguration _configuration({int windowHours = 48}) =>
-    RefundReplacementConfiguration(
-      windowHours: windowHours,
-      status: 'Configured',
-    );
+RefundReplacementConfiguration _configuration({
+  int windowHours = 48,
+  int deliveryFailWindowHours = 24,
+  double deliveryFailDeductionPercentage = 10,
+}) => RefundReplacementConfiguration(
+  windowHours: windowHours,
+  deliveryFailWindowHours: deliveryFailWindowHours,
+  deliveryFailDeductionPercentage: deliveryFailDeductionPercentage,
+  status: 'Configured',
+);

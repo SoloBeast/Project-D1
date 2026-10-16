@@ -21,7 +21,15 @@ public enum DeliveryStatus
     OutForDelivery,
     Arrived,
     Delivered,
-    Failed
+    Failed,
+    /// <summary>
+    /// D1-D slice 5: terminal void for a pre-pickup operational delivery whose
+    /// approved re-delivery replacement is cancelled with its subscription.
+    /// Reachable only from <see cref="ReadyForAssignment"/> or
+    /// <see cref="Assigned"/> via <see cref="Delivery.Cancel"/>; never from
+    /// picked-up / in-transit states, and never a failure (no failure ticket).
+    /// </summary>
+    Cancelled
 }
 
 public static class DeliveryFailureReasons
@@ -271,6 +279,27 @@ public sealed class Delivery : AuditableEntity
         Remarks = Optional(remarks);
     }
 
+    /// <summary>
+    /// D1-D slice 5: voids a pre-pickup operational delivery whose approved
+    /// re-delivery replacement is cancelled with its subscription. Allowed only
+    /// from <see cref="DeliveryStatus.ReadyForAssignment"/> or
+    /// <see cref="DeliveryStatus.Assigned"/>; the row is preserved with its
+    /// history (assignments, OTPs, allocations) and becomes terminally
+    /// ineligible for every other transition. This is not a failure: it
+    /// creates no failure ticket and triggers no failure refund lifecycle.
+    /// </summary>
+    public void Cancel(DateTime cancelledAt, string? reason)
+    {
+        EnsureIndiaLocal(cancelledAt, nameof(cancelledAt));
+        if (Status is not (DeliveryStatus.ReadyForAssignment or DeliveryStatus.Assigned))
+        {
+            throw InvalidTransition("cancelled");
+        }
+
+        Status = DeliveryStatus.Cancelled;
+        Remarks = Optional(reason);
+    }
+
     public void Fail(
         long employeeId,
         DateTime failedAt,
@@ -281,7 +310,7 @@ public sealed class Delivery : AuditableEntity
     {
         EnsureAssignedEmployee(employeeId);
         EnsureIndiaLocal(failedAt, nameof(failedAt));
-        if (Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.ReadyForAssignment)
+        if (Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.Cancelled or DeliveryStatus.ReadyForAssignment)
         {
             throw InvalidTransition("failed");
         }
@@ -312,7 +341,7 @@ public sealed class Delivery : AuditableEntity
         string? remarks)
     {
         EnsureIndiaLocal(failedAt, nameof(failedAt));
-        if (Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.ReadyForAssignment)
+        if (Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.Cancelled or DeliveryStatus.ReadyForAssignment)
         {
             throw InvalidTransition("failed");
         }

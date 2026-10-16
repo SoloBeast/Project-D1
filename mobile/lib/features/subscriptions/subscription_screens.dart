@@ -1271,12 +1271,17 @@ class _SubscriptionCalendarScreenState
                     ),
                   ),
                   const SizedBox(height: DoodhSpacing.sm),
-                  _SubscriptionDeliveryStatus(status: delivery.status),
+                  _SubscriptionDeliveryStatus(
+                    status: delivery.status,
+                    isReplacement: delivery.isReplacement,
+                  ),
                 ],
               ),
             ),
             const SizedBox(width: DoodhSpacing.sm),
-            if (delivery.status.canSkip)
+            // D1-D slice 7.2: re-delivery replacements never offer
+            // individual Skip; the backend rejects it in all cases.
+            if (delivery.canSkip)
               IconButton(
                 tooltip: 'Skip delivery',
                 onPressed: state.isSaving ? null : () => _skip(delivery),
@@ -1306,13 +1311,19 @@ class _SubscriptionStatusPill extends StatelessWidget {
 }
 
 class _SubscriptionDeliveryStatus extends StatelessWidget {
-  const _SubscriptionDeliveryStatus({required this.status});
+  const _SubscriptionDeliveryStatus({
+    required this.status,
+    this.isReplacement = false,
+  });
 
   final SubscriptionDeliveryStatus status;
+  final bool isReplacement;
 
   @override
   Widget build(BuildContext context) => DoodhStatusPill(
-    label: status.label,
+    label: isReplacement && status == SubscriptionDeliveryStatus.scheduled
+        ? 'Replacement delivery'
+        : status.label,
     tone: switch (status) {
       SubscriptionDeliveryStatus.failed ||
       SubscriptionDeliveryStatus.cancelled => DoodhStatusTone.error,

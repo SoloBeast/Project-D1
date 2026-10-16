@@ -13,8 +13,9 @@ import 'package:image_picker/image_picker.dart';
 import 'refund_replacement_controller.dart';
 import 'refund_replacement_models.dart';
 
-typedef RefundReplacementImagePicker =
-    Future<XFile?> Function({required ImageSource source});
+typedef RefundReplacementImagePicker = Future<XFile?> Function({
+  required ImageSource source,
+});
 
 /// Raised when a protected proof image is requested without an authenticated
 /// session token. Distinct from an HTTP 403 so the UI can show a controlled
@@ -235,9 +236,7 @@ class _CustomerRefundReplacementScreenState
     if (!eligibility.isEligible) {
       return EmptyStatePanel(
         title: 'Request not available',
-        message:
-            eligibility.ineligibleReason ??
-            'This delivery is not eligible for a refund or replacement request.',
+        message: eligibility.ineligibleReason ?? 'This delivery is not eligible for a refund or replacement request.',
         action: FilledButton.icon(
           onPressed: _load,
           icon: const Icon(Icons.refresh),
@@ -254,8 +253,7 @@ class _CustomerRefundReplacementScreenState
           if (_isMilkTestFlow)
             const _Notice(
               icon: Icons.science_outlined,
-              text:
-                  'You rejected the doorstep milk test. You can raise a refund or replacement request for this delivery right away.',
+              text: 'You rejected the doorstep milk test. You can raise a refund or replacement request for this delivery right away.',
             ),
           if (eligibility.deadlineUtc != null)
             _InfoRow(
@@ -266,8 +264,7 @@ class _CustomerRefundReplacementScreenState
           if (eligibility.hasActiveRequest)
             const _Notice(
               icon: Icons.info_outline,
-              text:
-                  'There is already an open request for this delivery. Track it from your requests list.',
+              text: 'There is already an open request for this delivery. Track it from your requests list.',
             ),
           const SizedBox(height: 8),
           DoodhSectionHeader(title: 'Request type'),
@@ -495,8 +492,7 @@ class _CustomerRefundReplacementListScreenState
     if (state.customerRequests.isEmpty) {
       return const EmptyStatePanel(
         title: 'No requests yet',
-        message:
-            'Refund or replacement requests you raise for your deliveries will appear here.',
+        message: 'Refund or replacement requests you raise for your deliveries will appear here.',
       );
     }
     return RefreshIndicator(
@@ -509,9 +505,8 @@ class _CustomerRefundReplacementListScreenState
           final request = state.customerRequests[index];
           return _CustomerRequestCard(
             request: request,
-            onTap: () => context.push(
-              '/refund-replacements/${request.requestId}',
-            ),
+            onTap: () =>
+                context.push('/refund-replacements/${request.requestId}'),
           );
         },
       ),
@@ -575,13 +570,13 @@ class _CustomerRefundReplacementDetailScreenState
   }
 }
 
-class _RefundReplacementDetailBody extends StatelessWidget {
+class _RefundReplacementDetailBody extends ConsumerWidget {
   const _RefundReplacementDetailBody({required this.request});
 
   final RefundReplacementRequest request;
 
   @override
-  Widget build(BuildContext context) => ListView(
+  Widget build(BuildContext context, WidgetRef ref) => ListView(
     padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
     children: [
       Row(
@@ -607,12 +602,19 @@ class _RefundReplacementDetailBody extends StatelessWidget {
       _InfoRow(
         icon: Icons.receipt_long_outlined,
         label: 'Order',
-        value: request.orderNumber,
+        value: request.orderNumber ?? 'Subscription delivery',
       ),
       _InfoRow(
         icon: Icons.local_shipping_outlined,
         label: 'Delivery',
-        value: request.deliveryNumber ?? request.deliveryId,
+        // D1-D slice 7: internal GUIDs are never business references. A
+        // subscription ticket without a delivery number renders a generic
+        // label instead of the operational delivery's public identifier.
+        value:
+            request.deliveryNumber ??
+            (request.orderNumber == null
+                ? 'Subscription delivery'
+                : request.deliveryId),
       ),
       _InfoRow(
         icon: Icons.storefront_outlined,
@@ -637,9 +639,15 @@ class _RefundReplacementDetailBody extends StatelessWidget {
           value: request.milkTestPublicId!,
         ),
       const SizedBox(height: 16),
+      if (request.failureReasonSnapshot?.isNotEmpty ?? false)
+        _Remarks(
+          label: 'Delivery failure',
+          text: request.failureReasonSnapshot!,
+        ),
       _Remarks(label: 'Reason', text: request.reason),
       if (request.remarks?.isNotEmpty ?? false)
         _Remarks(label: 'Your remarks', text: request.remarks!),
+      _CustomerChoicePanel(request: request),
       const SizedBox(height: 8),
       Text('Decision', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 8),
@@ -662,17 +670,65 @@ class _RefundReplacementDetailBody extends StatelessWidget {
         ),
       if (request.decisionRemarks?.isNotEmpty ?? false)
         _Remarks(label: 'Decision remarks', text: request.decisionRemarks!),
+      // D1-D slice 7: the persisted replacement date survives reloads
+      // because it is read from the backend on every load, never from the
+      // approval response. The delivery number is the real public
+      // DELIVERY-series reference once materialized — internal GUIDs are
+      // never shown as business references.
+      if (request.replacementDate != null)
+        _InfoRow(
+          icon: Icons.event_repeat_outlined,
+          label: 'Replacement date',
+          value: formatRefundReplacementDate(request.replacementDate!),
+        ),
+      if (request.replacementDeliveryNumber != null)
+        _InfoRow(
+          icon: Icons.local_shipping_outlined,
+          label: 'Replacement delivery',
+          value: request.replacementDeliveryNumber!,
+        ),
+      if (request.status == RefundReplacementStatus.failed)
+        const _Notice(
+          icon: Icons.cancel_outlined,
+          text:
+              'This ticket was closed without delivery. The replacement '
+              'could not be delivered, so the refund-only remedy has been '
+              'resolved instead. No further re-delivery is available for '
+              'this failure.',
+        ),
+      // D1-D slice 7.1: subscription-cancellation resolution is distinct
+      // from replacement failure — voided, refunded, never delivered, and
+      // never presented as a successful fulfillment.
+      if (request.status == RefundReplacementStatus.cancelled)
+        const _Notice(
+          icon: Icons.cancel_outlined,
+          text:
+              'Your subscription was cancelled while this replacement was '
+              'still pending. The replacement was voided and the refund '
+              'has been resolved. No further action is needed.',
+        ),
       if (request.completedAtUtc != null) ...[
         const SizedBox(height: 8),
         _InfoRow(
-          icon: Icons.task_alt,
-          label: 'Completed',
+          icon:
+              request.status == RefundReplacementStatus.failed ||
+                  request.status == RefundReplacementStatus.cancelled
+              ? Icons.cancel_outlined
+              : Icons.task_alt,
+          label:
+              request.status == RefundReplacementStatus.failed ||
+                  request.status == RefundReplacementStatus.cancelled
+              ? 'Closed'
+              : 'Completed',
           value:
               '${request.completedByName ?? 'Support'} · '
               '${formatRefundReplacementDateTime(request.completedAtUtc!)}',
         ),
         if (request.completionRemarks?.isNotEmpty ?? false)
-          _Remarks(label: 'Completion remarks', text: request.completionRemarks!),
+          _Remarks(
+            label: 'Completion remarks',
+            text: request.completionRemarks!,
+          ),
       ],
       if (request.images.isNotEmpty) ...[
         const SizedBox(height: 20),
@@ -721,9 +777,43 @@ class _CustomerRequestCard extends StatelessWidget {
             Text('${request.type.label} · ${request.source.label}'),
             const SizedBox(height: 4),
             Text(
-              'Order ${request.orderNumber}',
+              request.orderNumber == null
+                  ? 'Subscription delivery ${request.deliveryNumber ?? ''}'
+                        .trim()
+                  : 'Order ${request.orderNumber}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
+            if (request.status.isAwaitingChoice)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  request.customerChoice == null
+                      ? 'Awaiting your choice'
+                      : 'You chose ${request.customerChoice!.label} · Waiting for approval',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            // D1-D slice 7: the persisted replacement date on approved
+            // re-delivery tickets, read from the backend list (not the
+            // approval response), plus the real delivery number once the
+            // replacement materializes.
+            if (request.replacementDate != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Re-delivery on '
+                  '${formatRefundReplacementDate(request.replacementDate!)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            if (request.replacementDeliveryNumber != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Delivery ${request.replacementDeliveryNumber}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
             const SizedBox(height: 4),
             Text(
               formatRefundReplacementDateTime(request.submittedAtUtc),
@@ -881,10 +971,7 @@ class _InfoRow extends StatelessWidget {
         const SizedBox(width: 8),
         SizedBox(
           width: 110,
-          child: Text(
-            label,
-            style: const TextStyle(color: DoodhColors.muted),
-          ),
+          child: Text(label, style: const TextStyle(color: DoodhColors.muted)),
         ),
         Expanded(child: Text(value)),
       ],
@@ -941,11 +1028,218 @@ class _ButtonProgress extends StatelessWidget {
   );
 }
 
+/// D1-B: customer choice panel for a delivery-fail ticket awaiting choice.
+/// Recording a choice only stores the selection and routes the ticket into
+/// the normal approval workflow. This panel never calculates refund amounts,
+/// applies deductions, credits wallets, or creates replacement deliveries.
+class _CustomerChoicePanel extends ConsumerWidget {
+  const _CustomerChoicePanel({required this.request});
+
+  final RefundReplacementRequest request;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final choice = request.customerChoice;
+    final awaiting = request.status.isAwaitingChoice;
+    // Legacy tickets that already resolved show the recorded choice (if any)
+    // as context above the staff decision outcome.
+    if (!awaiting) {
+      if (choice == null) return const SizedBox.shrink();
+      // D1-D slice 7: a failed replacement is terminal — closed without
+      // delivery with the refund-only remedy resolved. No further
+      // re-delivery is offered here (the choice buttons below only render
+      // while awaiting), and the backend stays authoritative. A
+      // subscription-cancellation resolution (slice 7.1) is terminal too
+      // and gets its own copy below.
+      if (request.status == RefundReplacementStatus.cancelled) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: _Notice(
+            icon: Icons.cancel_outlined,
+            text:
+                'You chose ${choice.label}. Your subscription was cancelled '
+                'while the replacement was still pending, so it was voided '
+                'and the refund has been resolved. No further action is '
+                'needed.',
+          ),
+        );
+      }
+      if (request.status == RefundReplacementStatus.failed) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: _Notice(
+            icon: Icons.cancel_outlined,
+            text:
+                'You chose ${choice.label}. The replacement could not be '
+                'delivered, so this ticket was closed without delivery and '
+                'the refund-only remedy has been resolved. No further '
+                're-delivery is available for this failure.',
+          ),
+        );
+      }
+      return Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: _Notice(
+          icon: choice == CustomerChoice.refund
+              ? Icons.currency_rupee
+              : Icons.autorenew,
+          text: 'You chose ${choice.label}.',
+        ),
+      );
+    }
+    final state = ref.watch(refundReplacementControllerProvider);
+    final expired = request.isChoiceExpired;
+    final locked = choice != null;
+    return Card(
+      margin: const EdgeInsets.only(top: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Choose how to resolve this delivery failure',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 4),
+            if (request.deadlineUtc != null)
+              Text(
+                'Choose before '
+                '${formatRefundReplacementDateTime(request.deadlineUtc!)}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            const SizedBox(height: 12),
+            if (locked) ...[
+              _Notice(
+                icon: choice == CustomerChoice.refund
+                    ? Icons.currency_rupee
+                    : Icons.autorenew,
+                text: 'You chose ${choice.label}.',
+              ),
+              const _Notice(
+                icon: Icons.hourglass_top,
+                text: 'Waiting for approval',
+              ),
+            ] else if (expired) ...[
+              const _Notice(
+                icon: Icons.timer_off_outlined,
+                text:
+                    'The selection window has expired. Your ticket is waiting '
+                    'to be resolved and no further choice can be made here.',
+              ),
+            ],
+            if (state.errorMessage != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  state.errorMessage!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            Row(
+              children: [
+                Expanded(
+                  child: _ChoiceButton(
+                    label: 'Refund',
+                    icon: Icons.currency_rupee,
+                    selected: choice == CustomerChoice.refund,
+                    enabled: !locked && !expired && !state.isSaving,
+                    saving: state.isSaving,
+                    onPressed: () =>
+                        _choose(ref, context, CustomerChoice.refund),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _ChoiceButton(
+                    label: 'Re-Delivery',
+                    icon: Icons.autorenew,
+                    selected: choice == CustomerChoice.reDelivery,
+                    enabled: !locked && !expired && !state.isSaving,
+                    saving: state.isSaving,
+                    onPressed: () =>
+                        _choose(ref, context, CustomerChoice.reDelivery),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _choose(
+    WidgetRef ref,
+    BuildContext context,
+    CustomerChoice choice,
+  ) async {
+    final ok = await ref
+        .read(refundReplacementControllerProvider.notifier)
+        .chooseCustomerChoice(request.requestId, choice);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'Your choice has been recorded. Waiting for approval.'
+              : ref.read(refundReplacementControllerProvider).errorMessage ??
+                    'Your choice could not be recorded.',
+        ),
+      ),
+    );
+  }
+}
+
+class _ChoiceButton extends StatelessWidget {
+  const _ChoiceButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.enabled,
+    required this.saving,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final bool enabled;
+  final bool saving;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = saving
+        ? const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Icon(icon);
+    if (selected) {
+      return FilledButton.icon(
+        onPressed: null,
+        icon: child,
+        label: Text(label),
+      );
+    }
+    return OutlinedButton.icon(
+      onPressed: enabled ? onPressed : null,
+      icon: child,
+      label: Text(label),
+    );
+  }
+}
+
 DoodhStatusTone _statusTone(RefundReplacementStatus status) => switch (status) {
   RefundReplacementStatus.pending => DoodhStatusTone.warning,
+  RefundReplacementStatus.awaitingCustomerChoice => DoodhStatusTone.warning,
   RefundReplacementStatus.approved => DoodhStatusTone.success,
   RefundReplacementStatus.rejected => DoodhStatusTone.error,
   RefundReplacementStatus.completed => DoodhStatusTone.success,
+  RefundReplacementStatus.failed => DoodhStatusTone.error,
+  RefundReplacementStatus.cancelled => DoodhStatusTone.neutral,
   RefundReplacementStatus.unknown => DoodhStatusTone.neutral,
 };
 
@@ -955,6 +1249,14 @@ String formatRefundReplacementDateTime(DateTime value) {
   return '${two(local.day)}/${two(local.month)}/${local.year} '
       '${two(local.hour)}:${two(local.minute)}';
 }
+
+/// Formats a date-only value (replacement proposal/approval) as DD/MM/YYYY
+/// without timezone conversion, so the server-sent calendar day is shown
+/// exactly.
+String formatRefundReplacementDate(DateTime value) =>
+    '${value.day.toString().padLeft(2, '0')}/'
+    '${value.month.toString().padLeft(2, '0')}/'
+    '${value.year.toString().padLeft(4, '0')}';
 
 /// Resolves the content type for a picked proof image, accepting only JPEG and
 /// PNG. Returns null when the file type is unsupported.
@@ -1049,9 +1351,8 @@ class _StaffRefundReplacementListScreenState
           final item = items[index];
           return _StaffRequestCard(
             item: item,
-            onTap: () => context.push(
-              '/staff/refund-replacements/${item.requestId}',
-            ),
+            onTap: () =>
+                context.push('/staff/refund-replacements/${item.requestId}'),
           );
         },
       ),
@@ -1068,9 +1369,12 @@ class _StaffStatusFilter extends StatelessWidget {
   static const _options = <RefundReplacementStatus?>[
     null,
     RefundReplacementStatus.pending,
+    RefundReplacementStatus.awaitingCustomerChoice,
     RefundReplacementStatus.approved,
     RefundReplacementStatus.rejected,
     RefundReplacementStatus.completed,
+    RefundReplacementStatus.failed,
+    RefundReplacementStatus.cancelled,
   ];
 
   @override
@@ -1126,9 +1430,19 @@ class _StaffRequestCard extends StatelessWidget {
             Text('${item.type.label} · ${item.source.label}'),
             const SizedBox(height: 4),
             Text(
-              'Order ${item.orderNumber} · ${item.customerName}',
+              item.orderNumber == null
+                  ? 'Subscription delivery · ${item.customerName}'
+                  : 'Order ${item.orderNumber} · ${item.customerName}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
+            if (item.customerChoice != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Customer chose ${item.customerChoice!.label}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
             const SizedBox(height: 4),
             Text(
               '${item.branchName} (${item.branchCode})',
@@ -1202,9 +1516,8 @@ class _StaffRefundReplacementDetailScreenState
       'reject' => 'Request rejected.',
       _ => 'Request marked completed.',
     };
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -1227,9 +1540,8 @@ class _StaffRefundReplacementDetailScreenState
                         : () => context.push(
                             '/staff/orders/${request.orderPublicId}',
                           ),
-                    onDeliveryTap: () => context.push(
-                      '/staff/delivery/${request.deliveryId}',
-                    ),
+                    onDeliveryTap: () =>
+                        context.push('/staff/delivery/${request.deliveryId}'),
                     onMilkTestTap: request.milkTestPublicId == null
                         ? null
                         : () => context.push(
@@ -1329,9 +1641,42 @@ class _StaffRequestDetailBody extends StatelessWidget {
       _StaffLinkedRow(
         icon: Icons.receipt_long_outlined,
         label: 'Order',
-        value: request.orderNumber,
+        value: request.orderNumber ?? 'Subscription delivery',
         onTap: onOrderTap,
       ),
+      if (request.customerChoice != null)
+        _InfoRow(
+          icon: request.customerChoice == CustomerChoice.refund
+              ? Icons.currency_rupee
+              : Icons.autorenew,
+          label: 'Customer choice',
+          value: request.customerChoiceAtUtc == null
+              ? request.customerChoice!.label
+              : '${request.customerChoice!.label} · '
+                    '${formatRefundReplacementDateTime(request.customerChoiceAtUtc!)}',
+        )
+      else if (request.status.isAwaitingChoice)
+        const _Notice(
+          icon: Icons.hourglass_top,
+          text: 'Waiting for the customer to choose Refund or Re-Delivery.',
+        ),
+      if (request.status == RefundReplacementStatus.failed)
+        const _Notice(
+          icon: Icons.cancel_outlined,
+          text:
+              'The replacement delivery failed, so this ticket was closed '
+              'without delivery. The refund-only remedy was resolved instead. '
+              'No further re-delivery is available for this failure.',
+        ),
+      if (request.status == RefundReplacementStatus.cancelled)
+        const _Notice(
+          icon: Icons.cancel_outlined,
+          text:
+              'The subscription was cancelled while the replacement was '
+              'still pending, so the replacement was voided and the frozen '
+              'entitlement refund was resolved instead. This is not a '
+              'replacement failure.',
+        ),
       _StaffLinkedRow(
         icon: Icons.local_shipping_outlined,
         label: 'Delivery',
@@ -1372,10 +1717,24 @@ class _StaffRequestDetailBody extends StatelessWidget {
       ],
       if (request.decisionRemarks?.isNotEmpty ?? false)
         _Remarks(label: 'Decision remarks', text: request.decisionRemarks!),
+      if (request.replacementDate != null)
+        _InfoRow(
+          icon: Icons.event_repeat_outlined,
+          label: 'Replacement date',
+          value: formatRefundReplacementDate(request.replacementDate!),
+        ),
       if (request.completedAtUtc != null) ...[
         _InfoRow(
-          icon: Icons.task_alt,
-          label: 'Completed',
+          icon:
+              request.status == RefundReplacementStatus.failed ||
+              request.status == RefundReplacementStatus.cancelled
+              ? Icons.cancel_outlined
+              : Icons.task_alt,
+          label:
+              request.status == RefundReplacementStatus.failed ||
+              request.status == RefundReplacementStatus.cancelled
+              ? 'Closed'
+              : 'Completed',
           value:
               '${request.completedByName ?? 'Support'} · '
               '${formatRefundReplacementDateTime(request.completedAtUtc!)}',
@@ -1461,8 +1820,17 @@ class _StaffDecisionActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isPending = request.status == RefundReplacementStatus.pending;
+    // Pending normal requests plus delivery-fail tickets whose customer
+    // choice is recorded are both awaiting the staff decision. Terminal
+    // tickets (rejected, completed, failed) and choice-pending tickets with
+    // no choice yet offer no actions — and a failed replacement is never
+    // offered another re-delivery.
+    final canDecide = request.isStaffDecidable;
     final isApproved = request.status == RefundReplacementStatus.approved;
+    // Audit remediation B: a failed replacement is refund-only — rejecting
+    // it would strand the original ticket, and the backend refuses the
+    // rejection. Only Approve stays available, with an explicit explanation.
+    final isRefundOnly = request.isRefundOnly;
     return Material(
       elevation: 8,
       child: SafeArea(
@@ -1480,39 +1848,76 @@ class _StaffDecisionActions extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
               ],
-              if (isPending)
+              if (canDecide && isRefundOnly) ...[
+                const _Notice(
+                  icon: Icons.info_outline,
+                  text:
+                      'Only the refund remedy is available for this failed '
+                      'replacement. Reject is disabled — approve the refund '
+                      'to resolve it.',
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (canDecide)
                 Row(
                   children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: isSaving
-                            ? null
-                            : () async {
-                                final remarks = await _promptStaffDecision(
-                                  context,
-                                  title: 'Reject request',
-                                  confirmLabel: 'Reject',
-                                );
-                                if (remarks == null) return;
-                                await onDecide('reject');
-                              },
-                        icon: const Icon(Icons.close),
-                        label: const Text('Reject'),
+                    if (!isRefundOnly)
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: isSaving
+                              ? null
+                              : () async {
+                                  final remarks = await _promptStaffDecision(
+                                    context,
+                                    title: 'Reject request',
+                                    confirmLabel: 'Reject',
+                                  );
+                                  if (remarks == null) return;
+                                  await onDecide('reject');
+                                },
+                          icon: const Icon(Icons.close),
+                          label: const Text('Reject'),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
+                    if (!isRefundOnly) const SizedBox(width: 12),
                     Expanded(
                       child: FilledButton.icon(
                         onPressed: isSaving
                             ? null
                             : () async {
-                                final remarks = await _promptStaffDecision(
-                                  context,
-                                  title: 'Approve request',
-                                  confirmLabel: 'Approve',
-                                );
-                                if (remarks == null) return;
-                                await onDecide('approve');
+                                // The re-delivery dialog submits the approval
+                                // itself (single flight, guarded against
+                                // duplicates) through the shared controller, so
+                                // the detail state refreshes and the approved
+                                // date shows inline. Here only the confirmation
+                                // is announced; nothing is submitted twice.
+                                if (request.isRedeliveryApproval) {
+                                  final result =
+                                      await _promptRedeliveryApproval(
+                                        context,
+                                        request: request,
+                                      );
+                                  if (result == null || !context.mounted) {
+                                    return;
+                                  }
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        'Re-delivery approved for '
+                                        '${formatRefundReplacementDate(result.replacementDate)}.',
+                                      ),
+                                    ),
+                                  );
+                                } else {
+                                  final remarks =
+                                      await _promptStaffDecision(
+                                        context,
+                                        title: 'Approve request',
+                                        confirmLabel: 'Approve',
+                                      );
+                                  if (remarks == null) return;
+                                  await onDecide('approve');
+                                }
                               },
                         icon: const Icon(Icons.check),
                         label: const Text('Approve'),
@@ -1520,7 +1925,23 @@ class _StaffDecisionActions extends StatelessWidget {
                     ),
                   ],
                 )
-              else if (isApproved)
+              else if (isApproved) ...[
+                // One-time order tickets settle in Payments, outside this
+                // ticket: the backend blocks completion until a verified
+                // refund exists for the order. The action stays available
+                // for the settle-then-complete flow, but the copy must not
+                // imply the settlement is already verified.
+                if (request.isOneTimeOrderTicket) ...[
+                  const _Notice(
+                    icon: Icons.info_outline,
+                    text:
+                        'One-time order refunds are settled in Payments, '
+                        'outside this ticket. If the refund has not been '
+                        'settled there yet, completing is blocked — settle '
+                        'it first, then mark completed.',
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 FilledButton.icon(
                   onPressed: isSaving
                       ? null
@@ -1535,7 +1956,8 @@ class _StaffDecisionActions extends StatelessWidget {
                         },
                   icon: const Icon(Icons.task_alt),
                   label: const Text('Mark completed'),
-                )
+                ),
+              ]
               else
                 const Text(
                   'This request is final and no further action is available.',
@@ -1548,6 +1970,280 @@ class _StaffDecisionActions extends StatelessWidget {
     );
   }
 }
+
+/// Result of the re-delivery approval dialog: optional remarks plus the
+/// staff-confirmed replacement date. Null means the manager cancelled.
+class _RedeliveryApprovalResult {
+  const _RedeliveryApprovalResult({this.remarks, required this.replacementDate});
+
+  final String? remarks;
+  final DateTime replacementDate;
+}
+
+/// Opens the re-delivery approval dialog for an eligible ticket: loads the
+/// server-proposed replacement date (with loading/error/retry), lets staff
+/// confirm it or pick another day, and returns the confirmed date. The
+/// backend stays authoritative for every date rule — the dialog only
+/// displays the proposal and forwards the choice, surfacing API validation
+/// errors verbatim.
+Future<_RedeliveryApprovalResult?> _promptRedeliveryApproval(
+  BuildContext context, {
+  required RefundReplacementRequest request,
+}) => showDialog<_RedeliveryApprovalResult>(
+  context: context,
+  barrierDismissible: false,
+  builder: (dialogContext) => _RedeliveryApprovalDialog(request: request),
+);
+
+class _RedeliveryApprovalDialog extends ConsumerStatefulWidget {
+  const _RedeliveryApprovalDialog({required this.request});
+
+  final RefundReplacementRequest request;
+
+  @override
+  ConsumerState<_RedeliveryApprovalDialog> createState() =>
+      _RedeliveryApprovalDialogState();
+}
+
+class _RedeliveryApprovalDialogState
+    extends ConsumerState<_RedeliveryApprovalDialog> {
+  static const _offlineMessage =
+      'Unable to reach DoodhDirect. Check your connection and try again.';
+  static const _processingMessage =
+      'The replacement date could not be loaded. Please try again.';
+
+  final _remarksController = TextEditingController();
+  bool _loadingProposal = true;
+  String? _proposalError;
+  DateTime? _proposed;
+  DateTime? _selected;
+  bool _submitting = false;
+  String? _submitError;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(_fetchProposal);
+  }
+
+  @override
+  void dispose() {
+    _remarksController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _fetchProposal() async {
+    setState(() {
+      _loadingProposal = true;
+      _proposalError = null;
+    });
+    try {
+      final token = ref.read(sessionControllerProvider).session?.accessToken;
+      if (token == null) {
+        throw const ApiException(401, 'UNAUTHORIZED', 'Your session has expired.');
+      }
+      final proposal = await ref
+          .read(refundReplacementRepositoryProvider)
+          .getReplacementDateProposal(token, widget.request.requestId);
+      if (!mounted) return;
+      setState(() {
+        _proposed = proposal.proposedDate;
+        // Keep the selection date-only in local terms; only the calendar day
+        // is ever sent on the wire, so the instant/timezone is irrelevant.
+        _selected ??= _dateOnly(proposal.proposedDate);
+        _loadingProposal = false;
+      });
+    } on ApiNetworkException {
+      if (!mounted) return;
+      setState(() {
+        _proposalError = _offlineMessage;
+        _loadingProposal = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _proposalError = error.message;
+        _loadingProposal = false;
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _proposalError = _processingMessage;
+        _loadingProposal = false;
+      });
+    }
+  }
+
+  Future<void> _pickDate() async {
+    final today = _dateOnly(indiaNow());
+    // Never constrain below a loaded proposal: a stale proposal stays
+    // selectable and the backend re-validates authoritatively on approval.
+    final earliest = _proposed != null && _proposed!.isBefore(today)
+        ? _dateOnly(_proposed!)
+        : today;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selected ?? _proposed ?? today,
+      firstDate: earliest,
+      lastDate: today.add(const Duration(days: 366)),
+    );
+    if (picked != null && mounted) {
+      setState(
+        () => _selected = DateTime(picked.year, picked.month, picked.day),
+      );
+    }
+  }
+
+  Future<void> _submit() async {
+    final selected = _selected;
+    if (selected == null || _submitting) return;
+    setState(() {
+      _submitting = true;
+      _submitError = null;
+    });
+    final remarks = _remarksController.text.trim();
+    final controller = ref.read(refundReplacementControllerProvider.notifier);
+    final succeeded = await controller.approve(
+      widget.request.requestId,
+      remarks: remarks.isEmpty ? null : remarks,
+      replacementDate: selected,
+    );
+    if (!mounted) return;
+    if (succeeded) {
+      Navigator.of(context).pop(
+        _RedeliveryApprovalResult(
+          remarks: remarks.isEmpty ? null : remarks,
+          replacementDate: selected,
+        ),
+      );
+      return;
+    }
+    setState(() {
+      _submitting = false;
+      _submitError =
+          ref.read(refundReplacementControllerProvider).errorMessage ??
+          _processingMessage;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isSaving = ref.watch(refundReplacementControllerProvider).isSaving;
+    final busy = _submitting || isSaving;
+    final ready = !_loadingProposal && _selected != null && !busy;
+    return AlertDialog(
+      title: const Text('Approve re-delivery'),
+      content: SizedBox(
+        width: 400,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_loadingProposal) ...[
+                const Row(
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Text('Loading proposed replacement date...'),
+                    ),
+                  ],
+                ),
+              ] else if (_proposalError != null) ...[
+                Text(
+                  _proposalError!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: busy ? null : _fetchProposal,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                  ),
+                ),
+              ] else ...[
+                const Text(
+                  'Proposed replacement date',
+                  style: TextStyle(color: DoodhColors.muted, fontSize: 12),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  formatRefundReplacementDate(_selected!),
+                  style: Theme.of(context).textTheme.titleLarge,
+                  semanticsLabel:
+                      'Replacement date ${formatRefundReplacementDate(_selected!)}',
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'The backend validates the weekday, cutoff, branch, and '
+                  'conflicts. Confirm this date or choose another day.',
+                  style: TextStyle(color: DoodhColors.muted, fontSize: 12),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: busy ? null : _pickDate,
+                    icon: const Icon(Icons.calendar_month_outlined),
+                    label: const Text('Change date'),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: _remarksController,
+                enabled: !busy,
+                maxLines: 2,
+                maxLength: 500,
+                decoration: const InputDecoration(
+                  labelText: 'Remarks (optional)',
+                  alignLabelWithHint: true,
+                ),
+              ),
+              if (_submitError != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _submitError!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: ready ? _submit : null,
+          child: busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Approve re-delivery'),
+        ),
+      ],
+    );
+  }
+}
+
+DateTime _dateOnly(DateTime value) =>
+    DateTime(value.year, value.month, value.day);
 
 /// Prompts for optional decision remarks. Returns null when the manager
 /// cancels, or the (possibly empty) remarks string when confirmed.

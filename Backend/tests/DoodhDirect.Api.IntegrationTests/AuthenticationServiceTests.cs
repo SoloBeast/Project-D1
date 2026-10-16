@@ -1676,7 +1676,9 @@ internal sealed class TestTokenService : ITokenService
         IReadOnlyCollection<string> roles,
         IReadOnlyCollection<string> permissions,
         IReadOnlyCollection<long> branchIds,
-        DateTime now)
+        DateTime now,
+        long authorizationVersion,
+        IReadOnlyCollection<long>? branchHistoryIds = null)
     {
         var sequence = Interlocked.Increment(ref _sequence);
         return new TokenPair(

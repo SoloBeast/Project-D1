@@ -614,6 +614,214 @@ void main() {
       },
     );
   });
+
+  group('employee multi-branch assignments', () {
+    test('parses the complete branch assignment collection', () {
+      final json = _employeeJson(roleCode: 'DAIRY_MANAGER')
+        ..['branchAssignments'] = [
+          {'branchId': 7, 'branchName': 'Main Branch'},
+          {'branchId': 9, 'branchName': 'North Branch'},
+        ];
+      final employee = Employee.fromJson(json);
+
+      expect(employee.allBranchIds, [7, 9]);
+      expect(employee.allBranchNames, ['Main Branch', 'North Branch']);
+      // Legacy scalars keep carrying the first assignment for compatibility.
+      expect(employee.branchId, 7);
+      expect(employee.branchName, 'Main Branch');
+    });
+
+    test('falls back to the legacy single branch without the collection', () {
+      final employee = Employee.fromJson(_employeeJson());
+
+      expect(employee.branchAssignments, isEmpty);
+      expect(employee.allBranchIds, [7]);
+      expect(employee.allBranchNames, ['Main Branch']);
+    });
+
+    test('falls back to a placeholder name for unnamed assignments', () {
+      final json = _employeeJson(roleCode: 'DAIRY_MANAGER')
+        ..['branchAssignments'] = [
+          {'branchId': 7, 'branchName': null},
+        ];
+      final employee = Employee.fromJson(json);
+
+      expect(employee.allBranchNames, ['Branch 7']);
+    });
+
+    test('system administrator has no assignments', () {
+      final employee = Employee.fromJson(
+        _employeeJson(roleCode: 'SYSTEM_ADMIN', roleName: null)
+          ..['branchId'] = null
+          ..['branchName'] = null,
+      );
+
+      expect(employee.allBranchIds, isEmpty);
+      expect(employee.allBranchNames, isEmpty);
+    });
+
+    test('create sends the authoritative branchIds set for dairy managers', () async {
+      final repository = _repository((request) async {
+        _expectRequest(
+          request,
+          method: 'POST',
+          path: '/api/v1/admin/employees',
+        );
+        // branchIds is authoritative: no ambiguous legacy branchId alongside.
+        expect(jsonDecode(request.body), {
+          'displayName': 'Meera Nair',
+          'mobile': '+919876543210',
+          'email': 'meera@example.com',
+          'roleCode': 'DAIRY_MANAGER',
+          'branchIds': [7, 9],
+          'sendInvitation': true,
+        });
+        return _response({
+          'employee': _employeeJson(roleCode: 'DAIRY_MANAGER'),
+          'invitation': _invitationJson(),
+        });
+      });
+
+      await repository.create(
+        'employee-token',
+        const CreateEmployeeRequest(
+          displayName: 'Meera Nair',
+          mobile: '+919876543210',
+          email: 'meera@example.com',
+          roleCode: 'DAIRY_MANAGER',
+          branchId: null,
+          branchIds: [7, 9],
+        ),
+      );
+    });
+
+    test('create keeps the legacy single branchId for other roles', () async {
+      final repository = _repository((request) async {
+        expect(jsonDecode(request.body), {
+          'displayName': 'Ramesh Kumar',
+          'mobile': '9876543210',
+          'email': 'ramesh@example.com',
+          'roleCode': 'DELIVERY_STAFF',
+          'branchId': 7,
+          'sendInvitation': true,
+        });
+        return _response({
+          'employee': _employeeJson(),
+          'invitation': _invitationJson(),
+        });
+      });
+
+      await repository.create(
+        'employee-token',
+        const CreateEmployeeRequest(
+          displayName: 'Ramesh Kumar',
+          mobile: '9876543210',
+          email: 'ramesh@example.com',
+          roleCode: 'DELIVERY_STAFF',
+          branchId: 7,
+        ),
+      );
+    });
+
+    test('update sends the full replacement set and omits branchId', () async {
+      final repository = _repository((request) async {
+        _expectRequest(
+          request,
+          method: 'PUT',
+          path: '/api/v1/admin/employees/42',
+        );
+        expect(jsonDecode(request.body), {
+          'displayName': 'Meera Nair',
+          'roleCode': 'DAIRY_MANAGER',
+          'branchIds': [9],
+          'isActive': true,
+        });
+        return _response(_employeeJson(roleCode: 'DAIRY_MANAGER'));
+      });
+
+      await repository.update(
+        'employee-token',
+        42,
+        const UpdateEmployeeRequest(
+          displayName: 'Meera Nair',
+          isActive: true,
+          roleCode: 'DAIRY_MANAGER',
+          branchIds: [9],
+        ),
+      );
+    });
+
+    test('update omits branch fields when assignments are unchanged', () async {
+      final repository = _repository((request) async {
+        // Saving an unrelated field must not touch assignments server-side.
+        expect(jsonDecode(request.body), {
+          'displayName': 'Meera Nair',
+          'roleCode': 'DAIRY_MANAGER',
+          'isActive': true,
+        });
+        return _response(_employeeJson(roleCode: 'DAIRY_MANAGER'));
+      });
+
+      await repository.update(
+        'employee-token',
+        42,
+        const UpdateEmployeeRequest(
+          displayName: 'Meera Nair',
+          isActive: true,
+          roleCode: 'DAIRY_MANAGER',
+        ),
+      );
+    });
+
+    test('a stale-token 401 surfaces without replaying the same token', () async {
+      var requestCount = 0;
+      final repository = _repository((request) async {
+        requestCount++;
+        expect(request.headers['Authorization'], 'Bearer stale-token');
+        return http.Response('', 401);
+      });
+
+      // The repository never retries a stale token in a loop: recovery
+      // (single refresh + replay, then sign-out) belongs to the shared
+      // ApiClient wiring proven in api_client_test.dart.
+      await expectLater(
+        repository.list('stale-token'),
+        throwsA(
+          isA<ApiException>().having(
+            (error) => error.statusCode,
+            'statusCode',
+            401,
+          ),
+        ),
+      );
+      expect(requestCount, 1);
+    });
+
+    test('parses invitation verification with every invited branch', () {
+      final verification = EmployeeInvitationVerification.fromJson({
+        'isValid': true,
+        'displayName': 'Meera Nair',
+        'mobile': '+919876543210',
+        'email': 'meera@example.com',
+        'roleCode': 'DAIRY_MANAGER',
+        'branchId': 7,
+        'reason': null,
+        'branchCode': 'MAIN',
+        'branchName': 'Main Branch',
+        'branchAssignments': [
+          {'branchId': 7, 'branchName': 'Main Branch'},
+          {'branchId': 9, 'branchName': 'North Branch'},
+        ],
+      });
+
+      expect(verification.isValid, isTrue);
+      expect(
+        verification.allBranchNames,
+        ['Main Branch', 'North Branch'],
+      );
+      expect(verification.branchId, 7);
+    });
+  });
 }
 
 EmployeeRepository _repository(

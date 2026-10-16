@@ -141,11 +141,30 @@ class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
       appBar: AppBar(
         title: const Text('My Calendar'),
         actions: [
+          IconButton(
+            key: const ValueKey('my-calendar-vacations-action'),
+            tooltip: 'My vacations',
+            onPressed: () async {
+              await context.push('/subscriptions/vacations');
+              if (!mounted) return;
+              await _refresh();
+            },
+            icon: const Icon(Icons.event_busy_outlined),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: DoodhSpacing.md),
             child: FilledButton.tonalIcon(
               key: const ValueKey('my-calendar-set-vacation-action'),
-              onPressed: () => context.push('/subscriptions/vacation'),
+              // The vacation screen saves server-side skips and reloads the
+              // controller calendars, but this screen composes from its own
+              // locally-loaded occurrence maps — so refresh on return, or a
+              // newly-saved range (e.g. 16–18) would keep showing stale
+              // Upcoming dots until the next manual pull-to-refresh.
+              onPressed: () async {
+                await context.push('/subscriptions/vacation');
+                if (!mounted) return;
+                await _refresh();
+              },
               icon: const Icon(Icons.beach_access_outlined, size: 18),
               label: const Text('Set Vacation'),
             ),
@@ -176,6 +195,7 @@ class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
                       color: DoodhColors.upcomingBlue,
                       label: 'Upcoming',
                     ),
+                    _LegendDot(color: DoodhColors.coral, label: 'Failed'),
                     _LegendDot(color: DoodhColors.muted, label: 'No Delivery'),
                   ],
                 ),
@@ -214,7 +234,11 @@ class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
 // Composition layer — view models over existing domain models only
 // ---------------------------------------------------------------------------
 
-enum _CalendarState { vacationSkipped, delivered, upcoming }
+/// Composed grid state. D1-D slice 7 adds [failed] (the original failed
+/// occurrence stays visible on its date with an accurate status) and
+/// [cancelled] (a voided pre-pickup operational delivery renders honestly
+/// instead of as Upcoming or Unknown).
+enum _CalendarState { vacationSkipped, delivered, upcoming, failed, cancelled }
 
 /// One composed entry for a date. Holds references to the REAL underlying
 /// records — the screen never fabricates delivery data.
@@ -229,29 +253,42 @@ class _CalendarEntry {
 
   /// A real Delivery record (authoritative for status). [order] carries the
   /// order enrichment (items) when the reference matches a loaded order.
+  /// Delivered shows only on backend-confirmed delivery; failed and
+  /// cancelled operational deliveries keep their own terminal states.
   factory _CalendarEntry.fromDelivery(
     CustomerDelivery delivery,
     OrderSummary? order,
   ) => _CalendarEntry._(
-    state: delivery.status == DeliveryStatus.delivered
-        ? _CalendarState.delivered
-        : _CalendarState.upcoming,
+    state: switch (delivery.status) {
+      DeliveryStatus.delivered => _CalendarState.delivered,
+      DeliveryStatus.failed => _CalendarState.failed,
+      DeliveryStatus.cancelled => _CalendarState.cancelled,
+      _ => _CalendarState.upcoming,
+    },
     delivery: delivery,
     order: order,
   );
 
-  /// A subscription occurrence with no Delivery: scheduled → Upcoming,
+  /// A subscription occurrence with no Delivery: scheduled → Upcoming (this
+  /// is how an approved replacement renders on its date until the backend
+  /// advances it), failed → Failed (the original failure stays visible even
+  /// when no operational Delivery row exists, e.g. milk-test rejections),
   /// skipped/cancelled → Vacation/Skipped. [owner] is the subscription the
   /// calendar was loaded for (provenance), used for product identity.
+  /// Delivered occurrences are intentionally not composed here: their
+  /// materialized Delivery row is authoritative, and rendering both would
+  /// duplicate the date.
   factory _CalendarEntry.fromOccurrence(
     SubscriptionDelivery occurrence,
     SubscriptionDetails? owner,
   ) => _CalendarEntry._(
-    state:
-        occurrence.status == SubscriptionDeliveryStatus.skipped ||
-            occurrence.status == SubscriptionDeliveryStatus.cancelled
-        ? _CalendarState.vacationSkipped
-        : _CalendarState.upcoming,
+    state: switch (occurrence.status) {
+      SubscriptionDeliveryStatus.skipped ||
+      SubscriptionDeliveryStatus.cancelled =>
+        _CalendarState.vacationSkipped,
+      SubscriptionDeliveryStatus.failed => _CalendarState.failed,
+      _ => _CalendarState.upcoming,
+    },
     occurrence: occurrence,
     owner: owner,
   );
@@ -311,7 +348,13 @@ Map<DateTime, List<_CalendarEntry>> _composeCalendar({
           occurrence.status == SubscriptionDeliveryStatus.cancelled;
       final isScheduled =
           occurrence.status == SubscriptionDeliveryStatus.scheduled;
-      if (!isSkipped && !isScheduled) continue;
+      // D1-D slice 7: failed occurrences stay visible (the original
+      // failure's date keeps its Failed status). Delivered occurrences are
+      // skipped — their materialized Delivery row (source 1) is
+      // authoritative and rendering both would duplicate the date.
+      final isFailed =
+          occurrence.status == SubscriptionDeliveryStatus.failed;
+      if (!isSkipped && !isScheduled && !isFailed) continue;
 
       final date = day(occurrence.scheduledDate);
       final dateEntries = byDate[date] ?? const <_CalendarEntry>[];
@@ -330,7 +373,12 @@ Map<DateTime, List<_CalendarEntry>> _composeCalendar({
           '${occurrence.scheduledDate.day.toString().padLeft(2, '0')}';
       final ownDeliveryReference =
           'sub-${entry.key.replaceAll('-', '')}-$stamp';
-      if (isScheduled && materializedRefs.contains(ownDeliveryReference)) {
+      // A scheduled OR failed occurrence is suppressed ONLY by ITS OWN
+      // materialized Delivery — the Delivery row then carries the date's
+      // status (Upcoming in-flight, Failed after staff confirm the
+      // failure). Skipped occurrences never have a Delivery.
+      if ((isScheduled || isFailed) &&
+          materializedRefs.contains(ownDeliveryReference)) {
         continue;
       }
 
@@ -354,6 +402,8 @@ Color _stateDotColor(_CalendarState? state, {required bool selected}) {
     _CalendarState.vacationSkipped => DoodhColors.coral,
     _CalendarState.delivered => DoodhColors.deliveredGreen,
     _CalendarState.upcoming => DoodhColors.upcomingBlue,
+    _CalendarState.failed => DoodhColors.coral,
+    _CalendarState.cancelled => DoodhColors.muted,
     _ => DoodhColors.muted,
   };
 }
@@ -362,6 +412,8 @@ String _stateLegend(_CalendarState? state) => switch (state) {
   _CalendarState.vacationSkipped => 'Vacation',
   _CalendarState.delivered => 'Delivered',
   _CalendarState.upcoming => 'Upcoming',
+  _CalendarState.failed => 'Failed',
+  _CalendarState.cancelled => 'Cancelled',
   _ => 'No Delivery',
 };
 
@@ -569,13 +621,18 @@ class _MonthCard extends StatelessWidget {
     }
     final date = DateTime(visibleMonth.year, visibleMonth.month, dayNumber);
     final dayEntries = entries[date] ?? const <_CalendarEntry>[];
-    // Grid state: real Delivery wins over Upcoming occurrences, but a
-    // Vacation/Skipped occurrence is never hidden by anything.
+    // Grid state: a Vacation/Skipped occurrence is never hidden by
+    // anything; then Failed (an original failure keeps its date's status),
+    // then backend-confirmed Delivered, then Upcoming, then Cancelled.
     _CalendarState? state;
     if (dayEntries.any(
       (item) => item.state == _CalendarState.vacationSkipped,
     )) {
       state = _CalendarState.vacationSkipped;
+    } else if (dayEntries.any(
+      (item) => item.state == _CalendarState.failed,
+    )) {
+      state = _CalendarState.failed;
     } else if (dayEntries.any(
       (item) => item.state == _CalendarState.delivered,
     )) {
@@ -584,6 +641,10 @@ class _MonthCard extends StatelessWidget {
       (item) => item.state == _CalendarState.upcoming,
     )) {
       state = _CalendarState.upcoming;
+    } else if (dayEntries.any(
+      (item) => item.state == _CalendarState.cancelled,
+    )) {
+      state = _CalendarState.cancelled;
     }
     final isSelected = _sameDay(date, selectedDate);
     return _CalendarDayCell(
@@ -882,10 +943,21 @@ class _OccurrenceRow extends StatelessWidget {
     final isSkipped =
         occurrence.status == SubscriptionDeliveryStatus.skipped ||
         occurrence.status == SubscriptionDeliveryStatus.cancelled;
+    final isFailed = occurrence.status == SubscriptionDeliveryStatus.failed;
+    // D1-D slice 7.2: replacement occurrences render on their own scheduled
+    // date with an explicit Replacement delivery label. The original failed
+    // occurrence stays visible as its own Failed row on its own date.
+    final isReplacement = occurrence.isReplacement;
     return DoodhCard(
       color: DoodhColors.mint,
       semanticLabel:
-          'Subscription ${isSkipped ? 'vacation or skipped' : 'upcoming'} '
+          'Subscription ${isSkipped
+              ? 'vacation or skipped'
+              : isFailed
+              ? 'failed'
+              : isReplacement
+              ? 'replacement'
+              : 'upcoming'} '
           'delivery, ${occurrence.slot.apiValue}, '
           '${formatQuantity(occurrence.quantity)}',
       child: Row(
@@ -896,6 +968,8 @@ class _OccurrenceRow extends StatelessWidget {
             child: Icon(
               isSkipped
                   ? Icons.event_busy_outlined
+                  : isFailed
+                  ? Icons.error_outline
                   : Icons.event_repeat_outlined,
               color: DoodhColors.tealDark,
             ),
@@ -925,11 +999,24 @@ class _OccurrenceRow extends StatelessWidget {
                 const SizedBox(height: DoodhSpacing.xs),
                 DoodhStatusPill(
                   // Legend language: a scheduled occurrence without a Delivery
-                  // is 'Upcoming'; skipped/cancelled is 'Vacation / Skipped'.
-                  // Real Delivery rows keep their actual status labels.
-                  label: isSkipped ? 'Vacation / Skipped' : 'Upcoming',
+                  // is 'Upcoming' — or 'Replacement delivery' when the backend
+                  // flags it as a re-delivery replacement; skipped/cancelled
+                  // is 'Vacation / Skipped'; a failed occurrence without a
+                  // Delivery keeps 'Failed'. Real Delivery rows keep their
+                  // actual status labels.
+                  label: isSkipped
+                      ? 'Vacation / Skipped'
+                      : isFailed
+                      ? 'Failed'
+                      : isReplacement
+                      ? 'Replacement delivery'
+                      : 'Upcoming',
                   tone: isSkipped
                       ? DoodhStatusTone.warning
+                      : isFailed
+                      ? DoodhStatusTone.error
+                      : isReplacement
+                      ? DoodhStatusTone.success
                       : DoodhStatusTone.neutral,
                 ),
               ],

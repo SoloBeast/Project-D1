@@ -9,7 +9,8 @@ import 'refund_replacement_config_repository.dart';
 
 final refundReplacementConfigRepositoryProvider =
     Provider<RefundReplacementConfigRepository>(
-      (ref) => RefundReplacementConfigRepository(api: authenticatedApiClient(ref)),
+      (ref) =>
+          RefundReplacementConfigRepository(api: authenticatedApiClient(ref)),
     );
 
 final refundReplacementConfigControllerProvider =

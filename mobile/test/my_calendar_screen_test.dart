@@ -56,6 +56,7 @@ SubscriptionDelivery _occurrence(
   DateTime date, {
   SubscriptionDeliveryStatus status = SubscriptionDeliveryStatus.scheduled,
   SubscriptionDeliverySlot slot = SubscriptionDeliverySlot.morning,
+  bool isReplacement = false,
 }) => SubscriptionDelivery(
   publicId: id,
   scheduledDate: date,
@@ -67,6 +68,7 @@ SubscriptionDelivery _occurrence(
   branchName: 'Main Branch',
   address: '1 Main Road, Bengaluru',
   statusChangedAt: null,
+  isReplacement: isReplacement,
 );
 
 CustomerDelivery _delivery(
@@ -735,6 +737,239 @@ void main() {
     expect(find.text('Add Vacation'), findsOneWidget);
   });
 
+  testWidgets(
+    'D1-D slice 7: failed occurrence without a Delivery stays visible as Failed',
+    (tester) async {
+      // Milk-test rejections can fail an occurrence with no operational
+      // Delivery row; the original failure must still show on its date.
+      final subscriptions = _CalendarSubscriptionRepository()
+        ..subscriptions = [_subscription('sub-a', 'Cow Milk')]
+        ..calendars = {
+          'sub-a': [
+            _occurrence(
+              'occ-f',
+              _inMonth(2),
+              status: SubscriptionDeliveryStatus.failed,
+            ),
+          ],
+        };
+      await _pumpCalendar(
+        tester,
+        deliveryRepository: _CalendarDeliveryRepository(),
+        subscriptionRepository: subscriptions,
+      );
+
+      await _selectDay(tester, _inMonth(2));
+      final section = find.byKey(const ValueKey('my-calendar-day-section'));
+      expect(find.text(_heading(_inMonth(2))), findsOneWidget);
+      expect(find.text('Cow Milk'), findsOneWidget);
+      expect(
+        find.descendant(of: section, matching: find.text('Failed')),
+        findsOneWidget,
+      );
+      expect(find.text('No deliveries for this date'), findsNothing);
+
+      // Selecting another date filters the failure out.
+      await _selectDay(tester, _inMonth(3));
+      expect(find.text(_heading(_inMonth(3))), findsOneWidget);
+      expect(
+        find.descendant(of: section, matching: find.text('Failed')),
+        findsNothing,
+      );
+      expect(find.text('No deliveries for this date'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'D1-D slice 7: failed Delivery carries the date once; own failed occurrence does not duplicate',
+    (tester) async {
+      final ownReference =
+          'SUB-${'sub-a'.replaceAll('-', '')}-'
+          '${_inMonth(2).year.toString().padLeft(4, '0')}'
+          '${_inMonth(2).month.toString().padLeft(2, '0')}'
+          '${_inMonth(2).day.toString().padLeft(2, '0')}';
+      final deliveries = _CalendarDeliveryRepository()
+        ..deliveries = [
+          _delivery(
+            'd-f',
+            _inMonth(2),
+            status: DeliveryStatus.failed,
+            reference: ownReference,
+            source: DeliverySourceType.subscriptionOccurrence,
+          ),
+        ];
+      final subscriptions = _CalendarSubscriptionRepository()
+        ..subscriptions = [_subscription('sub-a', 'Cow Milk')]
+        ..calendars = {
+          'sub-a': [
+            _occurrence(
+              'occ-f',
+              _inMonth(2),
+              status: SubscriptionDeliveryStatus.failed,
+            ),
+          ],
+        };
+      await _pumpCalendar(
+        tester,
+        deliveryRepository: deliveries,
+        subscriptionRepository: subscriptions,
+      );
+
+      await _selectDay(tester, _inMonth(2));
+      final section = find.byKey(const ValueKey('my-calendar-day-section'));
+      // The authoritative Failed Delivery row, exactly once.
+      expect(find.textContaining(ownReference), findsOneWidget);
+      expect(
+        find.descendant(of: section, matching: find.text('Failed')),
+        findsOneWidget,
+      );
+      // The suppressed occurrence leaves no second row behind.
+      expect(find.text('Cow Milk'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'D1-D slice 7: replacement scheduled beyond EndDate still shows Upcoming',
+    (tester) async {
+      // An approved replacement may land after the subscription term; the
+      // client never filters occurrences by EndDate (no term extension, no
+      // synthesized rows — the server row renders as-is).
+      final beyondTerm = SubscriptionDetails(
+        publicId: 'sub-a',
+        status: SubscriptionStatus.active,
+        productId: 'product-sub-a',
+        productSku: 'SKU-sub-a',
+        productName: 'Cow Milk',
+        unitOfMeasure: 'litre',
+        quantity: 2,
+        unitPrice: 60,
+        payableAmount: 480,
+        startDate: _today.subtract(const Duration(days: 90)),
+        endDate: _today.subtract(const Duration(days: 30)),
+        totalEntitlement: 8,
+        usedEntitlement: 7,
+        remainingEntitlement: 1,
+        addressId: 'address-1',
+        address: '1 Main Road, Bengaluru',
+        branchId: 'branch-1',
+        branchCode: 'MAIN',
+        branchName: 'Main Branch',
+        schedules: const [
+          SubscriptionSchedule(
+            dayOfWeek: DeliveryWeekday.monday,
+            slot: SubscriptionDeliverySlot.morning,
+          ),
+        ],
+        activatedAt: _today.subtract(const Duration(days: 90)),
+        pausedAt: null,
+        cancelledAt: null,
+        completedAt: null,
+        createdAt: _today.subtract(const Duration(days: 90)),
+      );
+      final subscriptions = _CalendarSubscriptionRepository()
+        ..subscriptions = [beyondTerm]
+        ..calendars = {
+          'sub-a': [_occurrence('occ-r', _inMonth(6))],
+        };
+      await _pumpCalendar(
+        tester,
+        deliveryRepository: _CalendarDeliveryRepository(),
+        subscriptionRepository: subscriptions,
+      );
+
+      await _selectDay(tester, _inMonth(6));
+      final section = find.byKey(const ValueKey('my-calendar-day-section'));
+      expect(find.text('Cow Milk'), findsOneWidget);
+      expect(
+        find.descendant(of: section, matching: find.text('Upcoming')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: section, matching: find.text('Delivered')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'D1-D slice 7: in-flight replacement is Upcoming until the backend confirms Delivered',
+    (tester) async {
+      final ownReference =
+          'SUB-${'sub-a'.replaceAll('-', '')}-'
+          '${_inMonth(2).year.toString().padLeft(4, '0')}'
+          '${_inMonth(2).month.toString().padLeft(2, '0')}'
+          '${_inMonth(2).day.toString().padLeft(2, '0')}';
+      final deliveries = _CalendarDeliveryRepository()
+        ..deliveries = [
+          _delivery(
+            'd-r',
+            _inMonth(2),
+            status: DeliveryStatus.outForDelivery,
+            reference: ownReference,
+            source: DeliverySourceType.subscriptionOccurrence,
+          ),
+        ];
+      final subscriptions = _CalendarSubscriptionRepository()
+        ..subscriptions = [_subscription('sub-a', 'Cow Milk')]
+        ..calendars = {
+          'sub-a': [_occurrence('occ-r', _inMonth(2))],
+        };
+      await _pumpCalendar(
+        tester,
+        deliveryRepository: deliveries,
+        subscriptionRepository: subscriptions,
+      );
+
+      await _selectDay(tester, _inMonth(2));
+      final section = find.byKey(const ValueKey('my-calendar-day-section'));
+      expect(
+        find.descendant(of: section, matching: find.text('Out for delivery')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: section, matching: find.text('Delivered')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'D1-D slice 7: voided operational delivery renders Cancelled, never Upcoming or Unknown',
+    (tester) async {
+      final deliveries = _CalendarDeliveryRepository()
+        ..deliveries = [
+          _delivery(
+            'd-c',
+            _inMonth(2),
+            status: DeliveryStatus.cancelled,
+            reference: 'REF-C',
+          ),
+        ];
+      await _pumpCalendar(
+        tester,
+        deliveryRepository: deliveries,
+        subscriptionRepository: _CalendarSubscriptionRepository(),
+      );
+
+      await _selectDay(tester, _inMonth(2));
+      final section = find.byKey(const ValueKey('my-calendar-day-section'));
+      expect(
+        find.descendant(of: section, matching: find.text('Cancelled')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: section, matching: find.text('Unknown')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: section, matching: find.text('Upcoming')),
+        findsNothing,
+      );
+      // Legend still carries the Failed state alongside the others.
+      expect(find.text('Failed'), findsOneWidget);
+    },
+  );
+
   testWidgets('loading, error, and empty are distinct states', (tester) async {
     final deliveries = _CalendarDeliveryRepository();
     final subscriptions = _CalendarSubscriptionRepository();
@@ -758,4 +993,77 @@ void main() {
     expect(find.byKey(const ValueKey('my-calendar-day-error')), findsOneWidget);
     expect(find.text('No deliveries for this date'), findsNothing);
   });
+
+  testWidgets(
+    'D1-D slice 7.2: replacement is labelled Replacement delivery; original failure stays Failed on its own date',
+    (tester) async {
+      final subscriptions = _CalendarSubscriptionRepository()
+        ..subscriptions = [_subscription('sub-a', 'Cow Milk')]
+        ..calendars = {
+          'sub-a': [
+            _occurrence(
+              'occ-f',
+              _inMonth(2),
+              status: SubscriptionDeliveryStatus.failed,
+            ),
+            _occurrence('occ-r', _inMonth(6), isReplacement: true),
+            _occurrence('occ-o', _inMonth(7)),
+          ],
+        };
+      await _pumpCalendar(
+        tester,
+        deliveryRepository: _CalendarDeliveryRepository(),
+        subscriptionRepository: subscriptions,
+      );
+
+      final section = find.byKey(const ValueKey('my-calendar-day-section'));
+
+      // The replacement renders on its own scheduled date with the explicit
+      // label — never as a plain Upcoming row.
+      await _selectDay(tester, _inMonth(6));
+      expect(find.text(_heading(_inMonth(6))), findsOneWidget);
+      expect(find.text('Cow Milk'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: section,
+          matching: find.text('Replacement delivery'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: section, matching: find.text('Upcoming')),
+        findsNothing,
+      );
+      expect(find.text('No deliveries for this date'), findsNothing);
+
+      // The ordinary control on its own date is still plain Upcoming.
+      await _selectDay(tester, _inMonth(7));
+      expect(
+        find.descendant(of: section, matching: find.text('Upcoming')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: section,
+          matching: find.text('Replacement delivery'),
+        ),
+        findsNothing,
+      );
+
+      // The original failure keeps its own date and Failed status.
+      await _selectDay(tester, _inMonth(2));
+      expect(find.text(_heading(_inMonth(2))), findsOneWidget);
+      expect(
+        find.descendant(of: section, matching: find.text('Failed')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: section,
+          matching: find.text('Replacement delivery'),
+        ),
+        findsNothing,
+      );
+    },
+  );
 }

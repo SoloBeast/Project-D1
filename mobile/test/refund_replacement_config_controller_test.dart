@@ -28,61 +28,91 @@ void main() {
       expect(repository.lastToken, 'refund-replacement-token');
     });
 
-    test('save succeeds, stores the response and shows a saved message', () async {
-      final repository = _FakeRefundReplacementConfigRepository();
-      final container = await _authenticatedContainer(repository);
-      addTearDown(container.dispose);
-      final controller = container.read(
-        refundReplacementConfigControllerProvider.notifier,
-      );
+    test(
+      'save succeeds, stores the response and shows a saved message',
+      () async {
+        final repository = _FakeRefundReplacementConfigRepository();
+        final container = await _authenticatedContainer(repository);
+        addTearDown(container.dispose);
+        final controller = container.read(
+          refundReplacementConfigControllerProvider.notifier,
+        );
 
-      final saved = await controller.save(
-        const UpdateRefundReplacementConfigurationRequest(windowHours: 5),
-      );
-      final state = container.read(refundReplacementConfigControllerProvider);
+        final saved = await controller.save(
+          const UpdateRefundReplacementConfigurationRequest(windowHours: 5),
+        );
+        final state = container.read(refundReplacementConfigControllerProvider);
 
-      expect(saved, isTrue);
-      expect(state.configuration?.windowHours, 5);
-      expect(state.savedMessage, 'Refund/replacement window settings saved.');
-      expect(state.isSaving, isFalse);
-      expect(repository.lastRequest?.windowHours, 5);
-    });
+        expect(saved, isTrue);
+        expect(state.configuration?.windowHours, 5);
+        expect(state.savedMessage, 'Refund/replacement window settings saved.');
+        expect(state.isSaving, isFalse);
+        expect(repository.lastRequest?.windowHours, 5);
+      },
+    );
 
-    test('save failure surfaces the error message and maps field errors', () async {
-      final container = await _authenticatedContainer(
-        _FailingRefundReplacementConfigRepository(
-          const ApiException(
-            400,
-            'VALIDATION_ERROR',
-            'WindowHours must be between 1 and 8760.',
-            field: 'windowHours',
+    test(
+      'save passes the delivery-fail settings through to the backend',
+      () async {
+        final repository = _FakeRefundReplacementConfigRepository();
+        final container = await _authenticatedContainer(repository);
+        addTearDown(container.dispose);
+        final controller = container.read(
+          refundReplacementConfigControllerProvider.notifier,
+        );
+
+        final saved = await controller.save(
+          const UpdateRefundReplacementConfigurationRequest(
+            windowHours: 48,
+            deliveryFailWindowHours: 36,
+            deliveryFailDeductionPercentage: 12.5,
           ),
-        ),
-      );
-      addTearDown(container.dispose);
-      final controller = container.read(
-        refundReplacementConfigControllerProvider.notifier,
-      );
+        );
+        final state = container.read(refundReplacementConfigControllerProvider);
 
-      final saved = await controller.save(
-        const UpdateRefundReplacementConfigurationRequest(windowHours: 99999),
-      );
-      final state = container.read(refundReplacementConfigControllerProvider);
+        expect(saved, isTrue);
+        expect(state.configuration?.deliveryFailWindowHours, 36);
+        expect(state.configuration?.deliveryFailDeductionPercentage, 12.5);
+        expect(repository.lastRequest?.deliveryFailWindowHours, 36);
+        expect(repository.lastRequest?.deliveryFailDeductionPercentage, 12.5);
+      },
+    );
 
-      expect(saved, isFalse);
-      expect(state.errorMessage, 'WindowHours must be between 1 and 8760.');
-      expect(
-        state.fieldErrors,
-        {'windowHours': 'WindowHours must be between 1 and 8760.'},
-      );
-      expect(state.isSaving, isFalse);
-    });
+    test(
+      'save failure surfaces the error message and maps field errors',
+      () async {
+        final container = await _authenticatedContainer(
+          _FailingRefundReplacementConfigRepository(
+            const ApiException(
+              400,
+              'VALIDATION_ERROR',
+              'WindowHours must be between 1 and 8760.',
+              field: 'windowHours',
+            ),
+          ),
+        );
+        addTearDown(container.dispose);
+        final controller = container.read(
+          refundReplacementConfigControllerProvider.notifier,
+        );
+
+        final saved = await controller.save(
+          const UpdateRefundReplacementConfigurationRequest(windowHours: 99999),
+        );
+        final state = container.read(refundReplacementConfigControllerProvider);
+
+        expect(saved, isFalse);
+        expect(state.errorMessage, 'WindowHours must be between 1 and 8760.');
+        expect(state.fieldErrors, {
+          'windowHours': 'WindowHours must be between 1 and 8760.',
+        });
+        expect(state.isSaving, isFalse);
+      },
+    );
 
     test('load failure surfaces a friendly error message', () async {
       final container = await _authenticatedContainer(
-        _FailingRefundReplacementConfigRepository(
-          StateError('network down'),
-        ),
+        _FailingRefundReplacementConfigRepository(StateError('network down')),
       );
       addTearDown(container.dispose);
       final controller = container.read(
@@ -101,29 +131,36 @@ void main() {
       expect(state.isLoading, isFalse);
     });
 
-    test('does not call the repository without an authenticated session', () async {
-      final repository = _FakeRefundReplacementConfigRepository();
-      final container = ProviderContainer(
-        overrides: [
-          authRepositoryProvider.overrideWithValue(_UnauthenticatedRepository()),
-          refundReplacementConfigRepositoryProvider.overrideWithValue(repository),
-        ],
-      );
-      addTearDown(container.dispose);
-      container.read(refundReplacementConfigControllerProvider);
+    test(
+      'does not call the repository without an authenticated session',
+      () async {
+        final repository = _FakeRefundReplacementConfigRepository();
+        final container = ProviderContainer(
+          overrides: [
+            authRepositoryProvider.overrideWithValue(
+              _UnauthenticatedRepository(),
+            ),
+            refundReplacementConfigRepositoryProvider.overrideWithValue(
+              repository,
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+        container.read(refundReplacementConfigControllerProvider);
 
-      await container
-          .read(refundReplacementConfigControllerProvider.notifier)
-          .load();
-      final saved = await container
-          .read(refundReplacementConfigControllerProvider.notifier)
-          .save(
-            const UpdateRefundReplacementConfigurationRequest(windowHours: 5),
-          );
+        await container
+            .read(refundReplacementConfigControllerProvider.notifier)
+            .load();
+        final saved = await container
+            .read(refundReplacementConfigControllerProvider.notifier)
+            .save(
+              const UpdateRefundReplacementConfigurationRequest(windowHours: 5),
+            );
 
-      expect(saved, isFalse);
-      expect(repository.callCount, 0);
-    });
+        expect(saved, isFalse);
+        expect(repository.callCount, 0);
+      },
+    );
   });
 }
 
@@ -166,6 +203,8 @@ class _FakeRefundReplacementConfigRepository
     lastToken = accessToken;
     return const RefundReplacementConfiguration(
       windowHours: 48,
+      deliveryFailWindowHours: 24,
+      deliveryFailDeductionPercentage: 10,
       status: 'Configured',
     );
   }
@@ -180,6 +219,9 @@ class _FakeRefundReplacementConfigRepository
     lastRequest = request;
     return RefundReplacementConfiguration(
       windowHours: request.windowHours ?? 48,
+      deliveryFailWindowHours: request.deliveryFailWindowHours ?? 24,
+      deliveryFailDeductionPercentage:
+          request.deliveryFailDeductionPercentage ?? 10,
       status: 'Configured',
     );
   }

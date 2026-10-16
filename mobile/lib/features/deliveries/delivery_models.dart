@@ -66,6 +66,10 @@ enum DeliveryStatus {
   arrived,
   delivered,
   failed,
+  // D1-D slice 5/7: terminal void for a pre-pickup operational delivery
+  // whose approved re-delivery replacement was cancelled with its
+  // subscription. Never a failure (no failure ticket is raised).
+  cancelled,
   unknown;
 
   factory DeliveryStatus.fromApi(String value) => switch (value.toLowerCase()) {
@@ -76,6 +80,7 @@ enum DeliveryStatus {
     'arrived' => DeliveryStatus.arrived,
     'delivered' => DeliveryStatus.delivered,
     'failed' => DeliveryStatus.failed,
+    'cancelled' => DeliveryStatus.cancelled,
     _ => DeliveryStatus.unknown,
   };
 
@@ -87,6 +92,7 @@ enum DeliveryStatus {
     DeliveryStatus.arrived => 'Arrived',
     DeliveryStatus.delivered => 'Delivered',
     DeliveryStatus.failed => 'Failed',
+    DeliveryStatus.cancelled => 'Cancelled',
     DeliveryStatus.unknown => 'Unknown',
   };
 }

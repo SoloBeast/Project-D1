@@ -24,6 +24,13 @@ public sealed record DeliveryOrderSummary(
     IReadOnlyCollection<string> Items);
 public sealed record DeliveryNotesRequest(string? Remarks);
 public sealed record FailDeliveryRequest(string Reason, string? Remarks, decimal? Latitude, decimal? Longitude);
+
+/// <summary>
+/// D1-A: staff proof for failing a subscription delivery (customer fault).
+/// Required for subscription-delivery failures; not supported for one-time
+/// order deliveries (their refund/replacement proof flow is unchanged).
+/// </summary>
+public sealed record FailDeliveryProof(Stream Content, string FileName, string ContentType, long FileSize);
 public sealed record VerifyDeliveryOtpRequest(string Code);
 public sealed record DeliveryLocationRequest(decimal Latitude, decimal Longitude, decimal? AccuracyMetres, DateTime RecordedAt);
 
@@ -237,7 +244,8 @@ public interface IDeliveryService : IOneTimeDeliveryCreator
         DeliveryActor actor,
         Guid deliveryId,
         FailDeliveryRequest request,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        FailDeliveryProof? proof = null);
 
     Task<DeliveryLocationResult> RecordLocationAsync(
         DeliveryActor actor,

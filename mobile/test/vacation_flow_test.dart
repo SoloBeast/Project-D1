@@ -340,7 +340,7 @@ void main() {
 
       expect(find.text('Add Vacation'), findsOneWidget);
       expect(
-        find.text('No delivery would be made in your vacation period.'),
+        find.textContaining('Only dates with a scheduled delivery are skipped'),
         findsOneWidget,
       );
 

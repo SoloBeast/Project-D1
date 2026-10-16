@@ -1121,6 +1121,8 @@ class _TrackingHero extends StatelessWidget {
       DeliveryStatus.delivered => 'Your delivery has been completed.',
       DeliveryStatus.failed =>
         'This delivery attempt could not be completed.',
+      DeliveryStatus.cancelled =>
+        'This delivery was cancelled before pickup and will not be attempted.',
       DeliveryStatus.unknown =>
         'The current delivery status is being updated by the branch.',
     };

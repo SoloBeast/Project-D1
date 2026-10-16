@@ -43,11 +43,11 @@ class RefundReplacementRepository {
 
   Future<List<RefundReplacementRequest>> listForCustomer(String token) async =>
       ((await api.get(
-                '/api/v1/customer/refund-replacements',
-                accessToken: token,
-              ))['data']
-              as List<dynamic>? ??
-          const [])
+                    '/api/v1/customer/refund-replacements',
+                    accessToken: token,
+                  ))['data']
+                  as List<dynamic>? ??
+              const [])
           .cast<Map<String, dynamic>>()
           .map(RefundReplacementRequest.fromJson)
           .toList(growable: false);
@@ -129,11 +129,62 @@ class RefundReplacementRepository {
         as Map<String, dynamic>,
   );
 
+  /// D1-B: records the owning customer's explicit Refund / Re-Delivery choice
+  /// on a delivery-fail ticket awaiting choice. The UI never computes money,
+  /// deductions, wallet credit, or replacement deliveries from this call.
+  Future<RefundReplacementRequest> choose(
+    String token,
+    String requestId,
+    CustomerChoice choice,
+  ) async => RefundReplacementRequest.fromJson(
+    (await api.post(
+          '/api/v1/customer/refund-replacements/$requestId/choose',
+          body: {'choice': choice.wireValue},
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+
+  /// D1-D: approves a request. For re-delivery tickets [replacementDate] (a
+  /// calendar day, no time) carries the staff-confirmed date and is sent as
+  /// the approval request's `replacementDate` (`yyyy-MM-dd`); the backend
+  /// remains authoritative for weekday, cutoff, branch, uniqueness,
+  /// vacation/skip, and concurrency validation. Null preserves the existing
+  /// refund/one-time approval behavior, letting the server propose the date.
   Future<RefundReplacementRequest> approve(
     String token,
     String requestId, {
     String? remarks,
-  }) => _decide(token, requestId, 'approve', remarks);
+    DateTime? replacementDate,
+  }) async => RefundReplacementRequest.fromJson(
+    (await api.post(
+          '/api/v1/refund-replacements/$requestId/approve',
+          body: {
+            'remarks': remarks,
+            if (replacementDate != null)
+              'replacementDate': _wireDateOnly(replacementDate),
+          },
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+
+  /// D1-D: fetches the server-proposed next eligible replacement date for a
+  /// re-delivery ticket awaiting staff approval. Confirmed route + staff-only
+  /// authorization: `GET /api/v1/refund-replacements/{id}/replacement-date-proposal`
+  /// (requires `REFUND_REPLACEMENT.MANAGE_BRANCH`; there is no
+  /// `/api/v1/customer/...` proposal route). Surfaces backend validation
+  /// failures to the caller for display; never computed locally.
+  Future<ReplacementDateProposal> getReplacementDateProposal(
+    String token,
+    String requestId,
+  ) async => ReplacementDateProposal.fromJson(
+    (await api.get(
+          '/api/v1/refund-replacements/$requestId/replacement-date-proposal',
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
 
   Future<RefundReplacementRequest> reject(
     String token,
@@ -168,10 +219,18 @@ String _wireType(RefundReplacementType type) => switch (type) {
   RefundReplacementType.unknown => 'Refund',
 };
 
+String _wireDateOnly(DateTime value) =>
+    '${value.year.toString().padLeft(4, '0')}-'
+    '${value.month.toString().padLeft(2, '0')}-'
+    '${value.day.toString().padLeft(2, '0')}';
+
 String _wireStatus(RefundReplacementStatus status) => switch (status) {
   RefundReplacementStatus.pending => 'Pending',
+  RefundReplacementStatus.awaitingCustomerChoice => 'AwaitingCustomerChoice',
   RefundReplacementStatus.approved => 'Approved',
   RefundReplacementStatus.rejected => 'Rejected',
   RefundReplacementStatus.completed => 'Completed',
+  RefundReplacementStatus.failed => 'Failed',
+  RefundReplacementStatus.cancelled => 'Cancelled',
   RefundReplacementStatus.unknown => 'Pending',
 };

@@ -70,11 +70,23 @@ public sealed class EmployeeService(
         AuthorizationCodes.SystemAdmin
     };
 
-    public async Task<IReadOnlyList<EmployeeResult>> ListAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<EmployeeResult>> ListAsync(long actorUserId, CancellationToken cancellationToken)
     {
-        var users = await dbContext.Users
+        // Stage 2 visibility: employee-view permission itself is enforced by the
+        // controller policy; the service additionally restricts rows to employees
+        // sharing at least one assigned branch with the caller's operational
+        // scope. One row per account keeps multi-branch employees deduplicated.
+        // No branchId filter parameter exists on this endpoint by design — such a
+        // parameter could only narrow, never expand, the caller's scope, and no
+        // caller needs it while assignment is managed through update flows.
+        var scope = await ResolveEmployeeVisibilityScopeAsync(actorUserId, cancellationToken);
+        var query = dbContext.Users
             .Include(x => x.UserRoles).ThenInclude(x => x.Role)
-            .Where(x => (x.UserType == UserType.Employee || x.UserType == UserType.SystemAdministrator) && !x.IsArchived)
+            .Where(x => (x.UserType == UserType.Employee || x.UserType == UserType.SystemAdministrator) && !x.IsArchived);
+        if (scope is not null)
+            query = query.Where(x => x.UserRoles.Any(r => r.BranchId.HasValue && scope.Contains(r.BranchId.Value)));
+
+        var users = await query
             .OrderBy(x => x.DisplayName)
             .ToListAsync(cancellationToken);
 
@@ -106,13 +118,15 @@ public sealed class EmployeeService(
             .ToList();
     }
 
-    public async Task<EmployeeResult> GetAsync(long employeeId, CancellationToken cancellationToken)
+    public async Task<EmployeeResult> GetAsync(long actorUserId, long employeeId, CancellationToken cancellationToken)
     {
         var user = await dbContext.Users
             .Include(x => x.UserRoles).ThenInclude(x => x.Role)
             .SingleOrDefaultAsync(x => x.Id == employeeId, cancellationToken)
             ?? throw new NotFoundException("The employee was not found.");
         EnsureEmployeeUser(user);
+        if (!await IsEmployeeVisibleToAsync(actorUserId, user, cancellationToken))
+            throw new NotFoundException("The employee was not found.");
 
         var invitation = await dbContext.EmployeeInvitations
             .Where(x => x.InviteeMobile == user.Mobile)
@@ -130,6 +144,48 @@ public sealed class EmployeeService(
         return ToEmployeeResult(user, invitation, branchNames);
     }
 
+    /// <summary>
+    /// Resolves the caller's employee-visibility scope: null for globally authorized
+    /// callers (Owner / System Administrator via <see cref="AuthorizationCodes.GlobalAccess"/>),
+    /// otherwise the caller's currently operational (active, non-archived) branch ids.
+    /// Archived, inactive, or dangling assignments grant no visibility.
+    /// </summary>
+    private async Task<HashSet<long>?> ResolveEmployeeVisibilityScopeAsync(long actorUserId, CancellationToken cancellationToken)
+    {
+        var actor = await dbContext.Users
+            .Include(x => x.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x.RolePermissions).ThenInclude(x => x.Permission)
+            .SingleOrDefaultAsync(x => x.Id == actorUserId, cancellationToken)
+            ?? throw new UnauthorizedAppException();
+        if (ActorHasGlobalAccess(actor))
+            return null;
+        var assigned = actor.UserRoles
+            .Where(x => x.BranchId.HasValue)
+            .Select(x => x.BranchId!.Value)
+            .Distinct()
+            .ToArray();
+        if (assigned.Length == 0)
+            return new HashSet<long>();
+        var operational = await dbContext.Branches
+            .Where(x => assigned.Contains(x.Id) && x.IsActive && !x.IsArchived)
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+        return operational.ToHashSet();
+    }
+
+    private async Task<bool> IsEmployeeVisibleToAsync(long actorUserId, User user, CancellationToken cancellationToken)
+    {
+        var scope = await ResolveEmployeeVisibilityScopeAsync(actorUserId, cancellationToken);
+        return scope is null
+            || user.UserRoles.Any(x => x.BranchId.HasValue && scope.Contains(x.BranchId.Value));
+    }
+
+    private static bool ActorHasGlobalAccess(User actor) =>
+        actor.UserRoles
+            .Where(x => x.Role is not null && x.Role.IsActive)
+            .SelectMany(x => x.Role.RolePermissions)
+            .Select(x => x.Permission.Code)
+            .Contains(AuthorizationCodes.GlobalAccess, StringComparer.Ordinal);
+
     public async Task<CreateEmployeeResult> CreateAsync(
         CreateEmployeeRequest request,
         long actorUserId,
@@ -145,23 +201,28 @@ public sealed class EmployeeService(
         await EnsureContactIsAvailableAsync(email, mobile, null, cancellationToken);
 
         var role = await GetRoleAsync(roleCode, cancellationToken);
-        long? branchId = request.BranchId;
-        if (roleCode == AuthorizationCodes.SystemAdmin)
-        {
-            branchId = null;
-        }
-        else
-        {
-            if (branchId is null)
-                throw new ValidationAppException("A branch is required for this role.", nameof(request.BranchId));
-            await EnsureBranchAsync(branchId.Value, cancellationToken);
-        }
+        // Stage 2: the full submitted set is validated atomically before any row is
+        // written — a single invalid, duplicate, inactive, archived, missing, or
+        // out-of-authority branch rejects the entire request.
+        var branchIds = await ResolveBranchSetAsync(
+            roleCode,
+            request.BranchId,
+            request.BranchIds,
+            actorUserId,
+            requireEligible: true,
+            cancellationToken);
 
         var now = timeProvider.Now;
         var user = new User(roleCode == AuthorizationCodes.SystemAdmin ? UserType.SystemAdministrator : UserType.Employee);
         user.SetProfile(displayName);
         user.SetContact(mobile, email);
-        user.AssignRole(role, branchId);
+        if (branchIds.Count == 0)
+            user.AssignRole(role);
+        else
+            foreach (var id in branchIds)
+                user.AssignRole(role, id);
+        BranchScopeGuard.EnsureSingleBranchedRole(
+            user.UserRoles.Select(x => (x.Role.Code, x.BranchId)));
         dbContext.Users.Add(user);
         await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -170,7 +231,7 @@ public sealed class EmployeeService(
         InvitationEmailDelivery? emailDelivery = null;
         if (request.SendInvitation)
         {
-            (invitation, token, emailDelivery) = await CreateInvitationAsync(user, roleCode, branchId, request.InvitationExpiresAt, actorUserId, now, cancellationToken);
+            (invitation, token, emailDelivery) = await CreateInvitationAsync(user, roleCode, branchIds, request.InvitationExpiresAt, actorUserId, now, cancellationToken);
         }
 
         dbContext.AddAuditLog(new AuditLog(
@@ -182,11 +243,12 @@ public sealed class EmployeeService(
             EmployeeSnapshot(user),
             null,
             null,
-            $"Created employee with role {roleCode}." + (invitation is null ? string.Empty : " A secure invitation was issued."),
+            $"Created employee with role {roleCode}." + (invitation is null ? string.Empty : " A secure invitation was issued.")
+                + (branchIds.Count > 1 ? $" Assigned branches: {string.Join(", ", branchIds)}." : string.Empty),
             now));
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        var branchNames = await LoadBranchNamesAsync(branchId is null ? Array.Empty<long>() : new[] { branchId.Value }, cancellationToken);
+        var branchNames = await LoadBranchNamesAsync(branchIds.ToArray(), cancellationToken);
         var employee = ToEmployeeResult(user, invitation, branchNames);
         var invitationResult = invitation is null || token is null || emailDelivery is null
             ? null
@@ -210,87 +272,164 @@ public sealed class EmployeeService(
 
         var displayName = Require(request.DisplayName, "Display name is required.", nameof(request.DisplayName));
         var email = NormalizeEmail(request.Email);
-        var currentAssignment = user.UserRoles.FirstOrDefault(x => x.Role is not null);
-        var currentRoleCode = currentAssignment?.Role.Code ?? string.Empty;
-        var currentBranchId = currentAssignment?.BranchId;
+        var currentRoleCode = user.UserRoles
+            .Where(x => x.Role is not null)
+            .Select(x => x.Role.Code)
+            .Distinct(StringComparer.Ordinal)
+            .SingleOrDefault() ?? string.Empty;
+        var currentBranchIds = user.UserRoles
+            .Where(x => x.BranchId.HasValue)
+            .Select(x => x.BranchId!.Value)
+            .Distinct()
+            .OrderBy(x => x)
+            .ToList();
         var newRoleCode = string.IsNullOrWhiteSpace(request.RoleCode) ? currentRoleCode : request.RoleCode.Trim();
-        var newBranchId = request.BranchId ?? currentBranchId;
         var wasActive = user.IsActive;
 
         EnsureEmployeeRole(newRoleCode);
         await EnsureRoleAssignableAsync(newRoleCode, actorUserId, cancellationToken);
+        var roleChanged = !string.Equals(currentRoleCode, newRoleCode, StringComparison.Ordinal);
+
+        // Branch-set resolution preserves single-branch caller semantics: an explicit
+        // BranchIds list replaces the whole set; otherwise a supplied BranchId narrows
+        // to that single branch; otherwise the set is kept (or cleared on promotion to
+        // SYSTEM_ADMIN, which holds no branch assignment).
+        IReadOnlyList<long> newBranchIds;
         if (newRoleCode == AuthorizationCodes.SystemAdmin)
         {
-            newBranchId = null;
+            if (request.BranchIds is not null && request.BranchIds.Count > 0)
+                throw new ValidationAppException("The selected role does not accept a branch assignment.", nameof(request.BranchIds));
+            newBranchIds = Array.Empty<long>();
+        }
+        else if (request.BranchIds is not null)
+        {
+            if (request.BranchId.HasValue && !request.BranchIds.Contains(request.BranchId.Value))
+                throw new ValidationAppException("BranchId must be contained in BranchIds when both are supplied.", nameof(request.BranchId));
+            // Deactivating an employee must remain possible after their branch has
+            // been deactivated. Branches are still valid historical assignments.
+            // Eligibility is required when the employee is being activated or when
+            // the administrator explicitly changes the assignment/role.
+            var assignmentChanged = !currentBranchIds.SequenceEqual(request.BranchIds.Distinct().OrderBy(x => x));
+            newBranchIds = await ResolveBranchSetAsync(
+                newRoleCode,
+                null,
+                request.BranchIds,
+                actorUserId,
+                requireEligible: assignmentChanged || roleChanged || request.IsActive,
+                cancellationToken);
+        }
+        else if (request.BranchId.HasValue || roleChanged)
+        {
+            var singleBranchId = request.BranchId ?? currentBranchIds.FirstOrDefault();
+            var assignmentChanged = currentBranchIds.Count != 1 || currentBranchIds[0] != singleBranchId;
+            newBranchIds = await ResolveBranchSetAsync(
+                newRoleCode,
+                singleBranchId == 0 ? null : singleBranchId,
+                null,
+                actorUserId,
+                requireEligible: assignmentChanged || roleChanged || request.IsActive,
+                cancellationToken);
         }
         else
         {
-            if (newBranchId is null)
-                throw new ValidationAppException("A branch is required for this role.", nameof(request.BranchId));
-
-            // Deactivating an employee must remain possible after their branch has
-            // been deactivated. The branch is still a valid historical assignment.
-            // A branch must be active when the employee is being activated or when
-            // the administrator explicitly changes the assignment/role.
-            var assignmentChanged = currentBranchId != newBranchId;
-            var assignmentRoleChanged = !string.Equals(currentRoleCode, newRoleCode, StringComparison.Ordinal);
-            var assignedBranch = await GetBranchAsync(newBranchId.Value, cancellationToken);
-            if (!assignedBranch.IsActive &&
-                (assignmentChanged || assignmentRoleChanged || request.IsActive))
-                throw new ValidationAppException("The selected branch is inactive.", nameof(request.BranchId));
+            // Profile/activation-only edit: keep the persisted set. Existence was
+            // validated when the set was assigned; eligibility is rechecked below
+            // only when the account is being (re)activated.
+            newBranchIds = currentBranchIds;
+            if (request.IsActive && !wasActive && newRoleCode != AuthorizationCodes.SystemAdmin)
+                await EnsureBranchesEligibleAsync(newBranchIds, cancellationToken);
         }
+
+        var branchChanged = !currentBranchIds.SequenceEqual(newBranchIds);
+        var addedBranches = newBranchIds.Except(currentBranchIds).OrderBy(x => x).ToArray();
+        var removedBranches = currentBranchIds.Except(newBranchIds).OrderBy(x => x).ToArray();
 
         var now = timeProvider.Now;
         var oldSnapshot = EmployeeSnapshot(user);
-        var roleChanged = !string.Equals(currentRoleCode, newRoleCode, StringComparison.Ordinal);
-        var branchChanged = currentBranchId != newBranchId;
-
-        if (roleChanged || branchChanged)
+        // Serializable scope: concurrent editors serialize on the assignment rows,
+        // so the loser re-validates against the winner's committed set instead of
+        // silently overwriting (dropping) or duplicating assignments.
+        await ExecuteAtomicAsync(async () =>
         {
-            var role = await GetRoleAsync(newRoleCode, cancellationToken);
-            var existing = user.UserRoles.ToList();
-            dbContext.UserRoles.RemoveRange(existing);
-            user.UserRoles.Clear();
-            user.AssignRole(role, newBranchId);
+            // Re-read under the serializable transaction so a concurrent editor's
+            // commit is visible: the epoch bump builds on it (instead of blindly
+            // overwriting it) and the assignment delete below targets current rows.
+            // Deletes go through ExecuteDeleteAsync (no per-row count expectation)
+            // so a concurrent winner's commit cannot turn the loser into a
+            // phantom-row concurrency failure; full-set replacement then converges
+            // on exactly one writer's complete intent.
+            await dbContext.Entry(user).ReloadAsync(cancellationToken);
+            if (roleChanged || branchChanged)
+            {
+                var role = await GetRoleAsync(newRoleCode, cancellationToken);
+                // Detach rows tracked from the pre-transaction snapshot: the
+                // set-based delete below removes the current rows regardless of
+                // what this context previously loaded, and detached instances
+                // must not linger to trip required-relationship fixup on Clear.
+                foreach (var stale in dbContext.ChangeTracker.Entries<UserRole>()
+                    .Where(x => x.Entity.UserId == user.Id)
+                    .ToList())
+                    stale.State = EntityState.Detached;
+                await dbContext.UserRoles
+                    .Where(x => x.UserId == user.Id)
+                    .ExecuteDeleteAsync(cancellationToken);
+                user.UserRoles.Clear();
+                if (newBranchIds.Count == 0)
+                    user.AssignRole(role);
+                else
+                    foreach (var id in newBranchIds)
+                        user.AssignRole(role, id);
+                BranchScopeGuard.EnsureSingleBranchedRole(
+                    user.UserRoles.Select(x => (x.Role.Code, x.BranchId)));
 
-            var pendingInvitation = await dbContext.EmployeeInvitations
-                .Where(x => x.InviteeMobile == user.Mobile && x.Status == EmployeeInvitationStatus.Invited)
-                .OrderByDescending(x => x.CreatedAt)
-                .FirstOrDefaultAsync(cancellationToken);
-            pendingInvitation?.ChangeRoleAndBranch(newRoleCode, newBranchId);
-        }
+                var pendingInvitation = await dbContext.EmployeeInvitations
+                    .Where(x => x.InviteeMobile == user.Mobile && x.Status == EmployeeInvitationStatus.Invited)
+                    .OrderByDescending(x => x.CreatedAt)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (pendingInvitation is not null)
+                {
+                    pendingInvitation.ChangeRoleAndBranches(newRoleCode, newBranchIds);
+                    await SyncInvitationBranchLinksAsync(pendingInvitation, newBranchIds, cancellationToken);
+                }
+            }
 
-        user.SetProfile(displayName);
-        user.SetContact(user.Mobile, email);
-        if (request.IsActive && !wasActive && newRoleCode != AuthorizationCodes.SystemAdmin)
-            await EnsureBranchAsync(newBranchId!.Value, cancellationToken);
-        if (wasActive && !request.IsActive)
-            user.Deactivate();
-        if (!wasActive && request.IsActive)
-            user.Activate();
+            user.SetProfile(displayName);
+            user.SetContact(user.Mobile, email);
+            if (wasActive && !request.IsActive)
+                user.Deactivate();
+            if (!wasActive && request.IsActive)
+                user.Activate();
+            // Any role, branch, or activation change alters the effective
+            // authorization: invalidate previously issued access tokens so the
+            // per-request scope revalidation rejects them immediately.
+            if (roleChanged || branchChanged || wasActive != request.IsActive)
+                user.BumpAuthorizationVersion();
 
-        if (roleChanged)
-        {
-            dbContext.AddAuditLog(new AuditLog(actorUserId, ActionRoleChanged, "Employee", user.PublicId.ToString(), oldSnapshot, EmployeeSnapshot(user), null, null, $"Role changed from {currentRoleCode} to {newRoleCode}.", now));
-        }
+            if (roleChanged)
+            {
+                dbContext.AddAuditLog(new AuditLog(actorUserId, ActionRoleChanged, "Employee", user.PublicId.ToString(), oldSnapshot, EmployeeSnapshot(user), null, null, $"Role changed from {currentRoleCode} to {newRoleCode}.", now));
+            }
 
-        if (branchChanged)
-        {
-            dbContext.AddAuditLog(new AuditLog(actorUserId, ActionBranchChanged, "Employee", user.PublicId.ToString(), oldSnapshot, EmployeeSnapshot(user), null, null, "Assigned branch changed.", now));
-        }
+            if (branchChanged)
+            {
+                dbContext.AddAuditLog(new AuditLog(actorUserId, ActionBranchChanged, "Employee", user.PublicId.ToString(), oldSnapshot, EmployeeSnapshot(user), null, null,
+                    $"Assigned branches changed. Added: [{string.Join(", ", addedBranches)}]. Removed: [{string.Join(", ", removedBranches)}].", now));
+            }
 
-        if (wasActive && !request.IsActive)
-        {
-            dbContext.AddAuditLog(new AuditLog(actorUserId, ActionDeactivated, "Employee", user.PublicId.ToString(), oldSnapshot, EmployeeSnapshot(user), null, null, "Employee deactivated.", now));
-        }
+            if (wasActive && !request.IsActive)
+            {
+                dbContext.AddAuditLog(new AuditLog(actorUserId, ActionDeactivated, "Employee", user.PublicId.ToString(), oldSnapshot, EmployeeSnapshot(user), null, null, "Employee deactivated.", now));
+            }
 
-        if (!wasActive && request.IsActive)
-        {
-            dbContext.AddAuditLog(new AuditLog(actorUserId, ActionReactivated, "Employee", user.PublicId.ToString(), oldSnapshot, EmployeeSnapshot(user), null, null, "Employee reactivated.", now));
-        }
+            if (!wasActive && request.IsActive)
+            {
+                dbContext.AddAuditLog(new AuditLog(actorUserId, ActionReactivated, "Employee", user.PublicId.ToString(), oldSnapshot, EmployeeSnapshot(user), null, null, "Employee reactivated.", now));
+            }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
-        return ToEmployeeResult(user, null, await LoadBranchNamesAsync(newBranchId is null ? Array.Empty<long>() : new[] { newBranchId.Value }, cancellationToken));
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
+
+        return ToEmployeeResult(user, null, await LoadBranchNamesAsync(newBranchIds.ToArray(), cancellationToken));
     }
 
     public async Task<EmployeeInvitationResult> ResendInvitationAsync(
@@ -312,10 +451,12 @@ public sealed class EmployeeService(
             throw new BusinessRuleException("Only an active invitation can be resent.");
 
         invitation.Cancel(actorUserId, now);
+        // Stage 2: a resend preserves the invitation's full branch set — never a
+        // truncated single branch and never branches outside the invitation.
         var (fresh, token, emailDelivery) = await CreateInvitationAsync(
             user,
             invitation.RoleCode,
-            invitation.BranchId,
+            invitation.GetBranchIds(),
             invitationExpiresAt,
             actorUserId,
             now,
@@ -503,6 +644,7 @@ public sealed class EmployeeService(
                 var archived = await GetEmployeeUserAsync(employeeId, cancellationToken);
                 var archivedAt = timeProvider.Now;
                 archived.Archive(archivedAt);
+                archived.BumpAuthorizationVersion();
                 dbContext.AddAuditLog(new AuditLog(
                     actorUserId,
                     ActionArchived,
@@ -558,30 +700,49 @@ public sealed class EmployeeService(
                 invitation.RoleCode, invitation.BranchId, reason);
         }
 
-        if (invitation.BranchId.HasValue)
+        // Stage 2: every invited branch must still exist and be eligible at verify
+        // time. The complete set is returned; legacy scalar fields carry the first
+        // branch (ordered by id) for backward compatibility.
+        var invitedBranchIds = invitation.GetBranchIds();
+        if (invitedBranchIds.Count > 0)
         {
-            var branch = await dbContext.Branches
+            var branches = await dbContext.Branches
                 .AsNoTracking()
-                .SingleOrDefaultAsync(x => x.Id == invitation.BranchId.Value, cancellationToken);
-            if (branch is null)
+                .Where(x => invitedBranchIds.Contains(x.Id))
+                .OrderBy(x => x.Id)
+                .Select(x => new { x.Id, x.Code, x.Name, x.IsActive, x.IsArchived })
+                .ToListAsync(cancellationToken);
+            // Single-branch wording is preserved verbatim for backward compatibility;
+            // multi-branch invitations name the set explicitly.
+            var missingMessage = invitedBranchIds.Count == 1
+                ? "The branch for this invitation is no longer available. Ask your administrator to create a new invitation."
+                : "One or more branches for this invitation are no longer available. Ask your administrator to create a new invitation.";
+            var inactiveMessage = invitedBranchIds.Count == 1
+                ? "The branch for this invitation is inactive. Ask your administrator to create a new invitation."
+                : "One or more branches for this invitation are inactive. Ask your administrator to create a new invitation.";
+            if (branches.Count != invitedBranchIds.Count)
             {
                 return new EmployeeInvitationVerificationResult(
                     false, invitation.InviteeName, invitation.InviteeMobile, invitation.InviteeEmail,
                     invitation.RoleCode, invitation.BranchId,
-                    "The branch for this invitation is no longer available. Ask your administrator to create a new invitation.");
+                    missingMessage);
             }
 
-            if (!branch.IsActive)
+            if (branches.Any(x => !x.IsActive || x.IsArchived))
             {
                 return new EmployeeInvitationVerificationResult(
                     false, invitation.InviteeName, invitation.InviteeMobile, invitation.InviteeEmail,
                     invitation.RoleCode, invitation.BranchId,
-                    "The branch for this invitation is inactive. Ask your administrator to create a new invitation.");
+                    inactiveMessage);
             }
 
+            var assignments = branches
+                .Select(x => new EmployeeBranchAssignment(x.Id, x.Name))
+                .ToArray();
+            var first = branches[0];
             return new EmployeeInvitationVerificationResult(
                 true, invitation.InviteeName, invitation.InviteeMobile, invitation.InviteeEmail,
-                invitation.RoleCode, invitation.BranchId, null, branch.Code, branch.Name);
+                invitation.RoleCode, first.Id, null, first.Code, first.Name, assignments);
         }
 
         // Invitations without a branch (e.g. SYSTEM_ADMIN) remain valid with no branch metadata.
@@ -614,12 +775,14 @@ public sealed class EmployeeService(
             if (!invitation.IsUsable(now))
                 throw new BusinessRuleException("This invitation is no longer valid. Ask your administrator to resend it.");
 
-            // The invitation's branch is authoritative: it must still exist and be active at
-            // registration time. Assigning an orphaned or inactive branch would silently
-            // mis-route the employee, so the registration stops here (inside the atomic
-            // operation) with a clear business error and the OTP challenge is never consumed.
-            if (invitation.BranchId.HasValue)
-                await EnsureBranchAsync(invitation.BranchId.Value, cancellationToken);
+            // The invitation's branch set is authoritative: every branch must still exist
+            // and be eligible at registration time. Assigning an orphaned or inactive
+            // branch would silently mis-route the employee, so the registration stops
+            // here (inside the atomic operation) with a clear business error and the
+            // OTP challenge is never consumed. Branches persist only on successful
+            // acceptance — a retry after success finds no usable invitation.
+            var invitedBranchIds = invitation.GetBranchIds();
+            await EnsureBranchesEligibleAsync(invitedBranchIds, cancellationToken);
 
             // The invitation is the authoritative identity. The form mobile is accepted only
             // as a representation of that identity and can never replace it.
@@ -675,11 +838,19 @@ public sealed class EmployeeService(
 
             var role = await GetRoleAsync(invitation.RoleCode, cancellationToken);
 
-            // Rebuild the assignment so the account activates with exactly the invitation's role and branch.
+            // Rebuild the assignment so the account activates with exactly the
+            // invitation's role and full branch set — never a truncated sample and
+            // never branches outside the invitation.
             var existing = user.UserRoles.ToList();
             dbContext.UserRoles.RemoveRange(existing);
             user.UserRoles.Clear();
-            user.AssignRole(role, invitation.BranchId);
+            if (invitedBranchIds.Count == 0)
+                user.AssignRole(role);
+            else
+                foreach (var id in invitedBranchIds)
+                    user.AssignRole(role, id);
+            BranchScopeGuard.EnsureSingleBranchedRole(
+                user.UserRoles.Select(x => (x.Role.Code, x.BranchId)));
             user.SetProfile(displayName);
             user.SetContact(invitationMobile, email);
             user.SetPasswordHash(passwordHasher.Hash(password));
@@ -706,7 +877,9 @@ public sealed class EmployeeService(
                 authUser.Roles,
                 authUser.Permissions,
                 authUser.BranchIds,
-                now);
+                now,
+                user.AuthorizationVersion,
+                authUser.BranchHistoryIds);
             dbContext.RefreshTokens.Add(new RefreshToken(
                 user.Id,
                 tokenService.HashRefreshToken(tokens.RefreshToken),
@@ -818,7 +991,7 @@ public sealed class EmployeeService(
     private async Task<(EmployeeInvitation Invitation, string Token, InvitationEmailDelivery EmailDelivery)> CreateInvitationAsync(
         User user,
         string roleCode,
-        long? branchId,
+        IReadOnlyList<long> branchIds,
         DateTime? invitationExpiresAt,
         long actorUserId,
         DateTime now,
@@ -836,11 +1009,16 @@ public sealed class EmployeeService(
             user.Mobile ?? string.Empty,
             user.Email,
             roleCode,
-            branchId,
+            branchIds.Count == 0 ? null : branchIds.Min(),
             tokenGenerator.Hash(token),
             now,
             expiresAt,
             actorUserId);
+        // The full branch set travels in link rows persisted in the same
+        // SaveChanges as the invitation: a retry mints a fresh token/invitation
+        // rather than appending to this one, so assignments can neither
+        // duplicate nor leak unselected branches.
+        invitation.AttachBranchLinks(branchIds);
         dbContext.EmployeeInvitations.Add(invitation);
         await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -995,18 +1173,6 @@ public sealed class EmployeeService(
             .SingleOrDefaultAsync(x => x.Code == roleCode && x.IsActive, cancellationToken)
         ?? throw new ValidationAppException("The selected role is not available.", nameof(roleCode));
 
-    private async Task<Branch> GetBranchAsync(long branchId, CancellationToken cancellationToken) =>
-        await dbContext.Branches
-            .SingleOrDefaultAsync(x => x.Id == branchId, cancellationToken)
-            ?? throw new ValidationAppException("The selected branch was not found.", nameof(branchId));
-
-    private async Task EnsureBranchAsync(long branchId, CancellationToken cancellationToken)
-    {
-        var branch = await GetBranchAsync(branchId, cancellationToken);
-        if (!branch.IsActive)
-            throw new ValidationAppException("The selected branch is inactive.", nameof(branchId));
-    }
-
     private async Task EnsureContactIsAvailableAsync(
         string? email,
         string? mobile,
@@ -1062,10 +1228,12 @@ public sealed class EmployeeService(
 
     private async Task<EmployeeResult> ToEmployeeResultAsync(User user, CancellationToken cancellationToken)
     {
-        var assignment = user.UserRoles.FirstOrDefault(x => x.Role is not null);
-        var branchId = assignment?.BranchId;
         var branchNames = await LoadBranchNamesAsync(
-            branchId is null ? Array.Empty<long>() : new[] { branchId.Value },
+            user.UserRoles
+                .Where(x => x.BranchId.HasValue)
+                .Select(x => x.BranchId!.Value)
+                .Distinct()
+                .ToArray(),
             cancellationToken);
         return ToEmployeeResult(user, null, branchNames);
     }
@@ -1075,9 +1243,24 @@ public sealed class EmployeeService(
         EmployeeInvitation? invitation,
         IReadOnlyDictionary<long, string> branchNames)
     {
-        var assignment = user.UserRoles.FirstOrDefault(x => x.Role is not null);
-        var roleCode = assignment?.Role.Code ?? string.Empty;
-        var branchId = assignment?.BranchId;
+        // The complete assignment collection is always returned: role from the
+        // single assigned role, branches from every assignment row ordered by id.
+        // Legacy BranchId/BranchName carry the first assignment for compatibility.
+        var roleCode = user.UserRoles
+            .Where(x => x.Role is not null)
+            .Select(x => x.Role.Code)
+            .Distinct(StringComparer.Ordinal)
+            .SingleOrDefault() ?? string.Empty;
+        var assignments = user.UserRoles
+            .Where(x => x.BranchId.HasValue)
+            .Select(x => x.BranchId!.Value)
+            .Distinct()
+            .OrderBy(x => x)
+            .Select(x => new EmployeeBranchAssignment(
+                x,
+                branchNames.TryGetValue(x, out var name) ? name : null))
+            .ToArray();
+        var first = assignments.FirstOrDefault();
         return new EmployeeResult(
             user.Id,
             user.PublicId,
@@ -1087,15 +1270,150 @@ public sealed class EmployeeService(
             user.Email,
             roleCode,
             AuthorizationCodes.Roles.TryGetValue(roleCode, out var roleName) ? roleName : null,
-            branchId,
-            branchId.HasValue && branchNames.TryGetValue(branchId.Value, out var branchName) ? branchName : null,
+            first?.BranchId,
+            first?.BranchName,
             user.IsActive,
             user.IsArchived,
             user.ArchivedAt,
             invitation?.Status,
             invitation?.ExpiresAt,
             invitation?.RegisteredAt,
-            user.CreatedAt);
+            user.CreatedAt,
+            assignments);
+    }
+
+    /// <summary>
+    /// Validates a submitted branch set atomically and returns the ordered,
+    /// de-duplicated assignment set. Every branch must exist; eligibility (active,
+    /// non-archived) applies when <paramref name="requireEligible"/>; duplicates and
+    /// cross-role multi-branch submissions are rejected; and every branch must lie
+    /// within the acting administrator's authority. Any failure rejects the entire set.
+    /// </summary>
+    private async Task<IReadOnlyList<long>> ResolveBranchSetAsync(
+        string roleCode,
+        long? legacyBranchId,
+        IReadOnlyList<long>? branchIds,
+        long actorUserId,
+        bool requireEligible,
+        CancellationToken cancellationToken)
+    {
+        if (roleCode == AuthorizationCodes.SystemAdmin)
+        {
+            if (legacyBranchId.HasValue || (branchIds is not null && branchIds.Count > 0))
+                throw new ValidationAppException("The selected role does not accept a branch assignment.", nameof(branchIds));
+            return Array.Empty<long>();
+        }
+
+        IReadOnlyList<long> raw;
+        if (branchIds is not null)
+        {
+            if (legacyBranchId.HasValue && !branchIds.Contains(legacyBranchId.Value))
+                throw new ValidationAppException("BranchId must be contained in BranchIds when both are supplied.", nameof(legacyBranchId));
+            raw = branchIds;
+        }
+        else if (legacyBranchId.HasValue)
+        {
+            raw = new[] { legacyBranchId.Value };
+        }
+        else
+        {
+            throw new ValidationAppException("A branch is required for this role.", nameof(legacyBranchId));
+        }
+
+        if (raw.Count != raw.Distinct().Count())
+            throw new ValidationAppException("Duplicate branches are not allowed.", nameof(branchIds));
+        if (raw.Count > 1 && roleCode != AuthorizationCodes.DairyManager)
+            throw new ValidationAppException("Only the Dairy Manager role supports multiple branch assignments.", nameof(branchIds));
+
+        var branches = await dbContext.Branches
+            .Where(x => raw.Contains(x.Id))
+            .Select(x => new { x.Id, x.IsActive, x.IsArchived })
+            .ToListAsync(cancellationToken);
+        if (branches.Count != raw.Count)
+            throw new ValidationAppException("The selected branch was not found.", nameof(branchIds));
+        if (requireEligible)
+        {
+            if (branches.Any(x => x.IsArchived))
+                throw new ValidationAppException("The selected branch is archived.", nameof(branchIds));
+            if (branches.Any(x => !x.IsActive))
+                throw new ValidationAppException("The selected branch is inactive.", nameof(branchIds));
+        }
+
+        await EnsureBranchesWithinAuthorityAsync(actorUserId, raw, cancellationToken);
+        return raw.Distinct().OrderBy(x => x).ToArray();
+    }
+
+    private async Task EnsureBranchesEligibleAsync(
+        IReadOnlyList<long> branchIds,
+        CancellationToken cancellationToken)
+    {
+        if (branchIds.Count == 0)
+            return;
+        var branches = await dbContext.Branches
+            .Where(x => branchIds.Contains(x.Id))
+            .Select(x => new { x.Id, x.IsActive, x.IsArchived })
+            .ToListAsync(cancellationToken);
+        if (branches.Count != branchIds.Count)
+            throw new ValidationAppException("The selected branch was not found.", "branchId");
+        if (branches.Any(x => x.IsArchived))
+            throw new ValidationAppException("The selected branch is archived.", "branchId");
+        if (branches.Any(x => !x.IsActive))
+            throw new ValidationAppException("The selected branch is inactive.", "branchId");
+    }
+
+    /// <summary>
+    /// Branch authority: globally authorized administrators (Owner / System
+    /// Administrator) may assign any branch; any other actor may only assign
+    /// branches inside their own operational scope.
+    /// </summary>
+    private async Task EnsureBranchesWithinAuthorityAsync(
+        long actorUserId,
+        IReadOnlyList<long> branchIds,
+        CancellationToken cancellationToken)
+    {
+        if (branchIds.Count == 0)
+            return;
+        var actor = await dbContext.Users
+            .Include(x => x.UserRoles).ThenInclude(x => x.Role).ThenInclude(x => x.RolePermissions).ThenInclude(x => x.Permission)
+            .SingleOrDefaultAsync(x => x.Id == actorUserId, cancellationToken)
+            ?? throw new UnauthorizedAppException();
+        if (ActorHasGlobalAccess(actor))
+            return;
+        var assigned = actor.UserRoles
+            .Where(x => x.BranchId.HasValue)
+            .Select(x => x.BranchId!.Value)
+            .Distinct()
+            .ToArray();
+        var operational = assigned.Length == 0
+            ? new HashSet<long>()
+            : (await dbContext.Branches
+                .Where(x => assigned.Contains(x.Id) && x.IsActive && !x.IsArchived)
+                .Select(x => x.Id)
+                .ToListAsync(cancellationToken))
+                .ToHashSet();
+        if (!branchIds.All(operational.Contains))
+            throw new ForbiddenAppException("One or more branches are outside your authorized branch scope.");
+    }
+
+    /// <summary>
+    /// Synchronizes an existing invitation's branch link rows to exactly
+    /// <paramref name="branchIds"/>: removes deselected rows, adds new ones. Orphaned
+    /// rows are deleted explicitly so no stale branch survives acceptance.
+    /// </summary>
+    private async Task SyncInvitationBranchLinksAsync(
+        EmployeeInvitation invitation,
+        IReadOnlyList<long> branchIds,
+        CancellationToken cancellationToken)
+    {
+        var desired = branchIds.Distinct().ToHashSet();
+        var existing = await dbContext.EmployeeInvitationBranches
+            .Where(x => x.InvitationId == invitation.Id)
+            .ToListAsync(cancellationToken);
+        foreach (var stale in existing.Where(x => !desired.Contains(x.BranchId)))
+            dbContext.EmployeeInvitationBranches.Remove(stale);
+        var present = existing.Select(x => x.BranchId).ToHashSet();
+        foreach (var id in desired.Where(x => !present.Contains(x)).OrderBy(x => x))
+            dbContext.EmployeeInvitationBranches.Add(new EmployeeInvitationBranch(invitation, id));
     }
 
     private static string EmployeeSnapshot(User user) => JsonSerializer.Serialize(new
@@ -1122,6 +1440,7 @@ public sealed class EmployeeService(
         invitation.InviteeEmail,
         invitation.RoleCode,
         invitation.BranchId,
+        BranchIds = invitation.GetBranchIds(),
         invitation.Status,
         invitation.ExpiresAt,
         invitation.RegisteredAt,

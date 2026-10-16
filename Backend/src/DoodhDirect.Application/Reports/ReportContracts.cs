@@ -64,7 +64,8 @@ public sealed record ReportPage<T>(
 public sealed record ReportActor(
     long UserId,
     IReadOnlyCollection<long> BranchIds,
-    bool HasGlobalAccess);
+    bool HasGlobalAccess,
+    IReadOnlyCollection<long>? BranchHistoryIds = null);
 
 public sealed record DashboardRequest(
     ReportDateRange? DateRange = null,

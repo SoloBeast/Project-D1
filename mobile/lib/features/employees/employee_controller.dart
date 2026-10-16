@@ -112,7 +112,10 @@ class EmployeeController extends Notifier<EmployeeState> {
     try {
       final employees = await _repository.list(token);
       if (token != _token) return;
-      state = state.copyWith(employees: employees, isLoading: false);
+      state = state.copyWith(
+        employees: _deduplicate(employees),
+        isLoading: false,
+      );
     } on ApiException catch (error) {
       state = state.copyWith(isLoading: false, errorMessage: error.message);
     } on Object {
@@ -157,11 +160,15 @@ class EmployeeController extends Notifier<EmployeeState> {
       final employees = await _repository.list(token);
       if (token != _token) return null;
       state = state.copyWith(
-        employees: employees,
+        employees: _deduplicate(employees),
         isSaving: false,
         savedMessage: 'Employee ${result.employee.displayName} created.',
         lastInvitation: result.invitation,
       );
+      // Assignment changes alter authorization: re-resolve the session user so
+      // branch claims and permissions reflect the current server state. A
+      // failure here never masks the successful save.
+      await _refreshSessionUser();
       return result.employee;
     } on ApiException catch (error) {
       state = state.copyWith(
@@ -194,10 +201,11 @@ class EmployeeController extends Notifier<EmployeeState> {
       final employees = await _repository.list(token);
       if (token != _token) return null;
       state = state.copyWith(
-        employees: employees,
+        employees: _deduplicate(employees),
         isSaving: false,
         savedMessage: 'Employee ${updated.displayName} updated.',
       );
+      await _refreshSessionUser();
       return updated;
     } on ApiException catch (error) {
       state = state.copyWith(
@@ -246,7 +254,7 @@ class EmployeeController extends Notifier<EmployeeState> {
               '${invitation.emailDeliveryReason ?? 'Unknown SMTP error.'}',
       };
       state = state.copyWith(
-        employees: employees,
+        employees: _deduplicate(employees),
         isSaving: false,
         savedMessage: savedMessage,
         lastInvitation: invitation,
@@ -280,7 +288,7 @@ class EmployeeController extends Notifier<EmployeeState> {
       final employees = await _repository.list(token);
       if (token != _token) return false;
       state = state.copyWith(
-        employees: employees,
+        employees: _deduplicate(employees),
         isSaving: false,
         savedMessage: 'Invitation cancelled.',
       );
@@ -317,7 +325,7 @@ class EmployeeController extends Notifier<EmployeeState> {
       final employees = await _repository.list(token);
       if (token != _token) return false;
       state = state.copyWith(
-        employees: employees,
+        employees: _deduplicate(employees),
         isSaving: false,
         savedMessage: result.isArchived
             ? 'Employee archived.'
@@ -447,6 +455,33 @@ class EmployeeController extends Notifier<EmployeeState> {
       );
       return false;
     }
+  }
+
+  /// Re-resolves the session user through the existing refresh flow so
+  /// authorization-dependent UI (branch claims, permissions) reflects the
+  /// assignments just saved. Uses the standard token-refresh mechanism:
+  /// a stale access token is refreshed once and retried by the API client,
+  /// and a dead session expires through the normal path. Never throws — a
+  /// successful save must not be masked by a session-sync failure.
+  Future<void> _refreshSessionUser() async {
+    try {
+      await ref.read(sessionControllerProvider.notifier).refresh();
+    } on Object {
+      // Intentionally ignored: the employee data above is already refreshed
+      // from the server and the save succeeded.
+    }
+  }
+
+  /// Defensive de-duplication by account: the backend returns one row per
+  /// employee, but state must never hold the same employee twice even if
+  /// rows ever repeat across branches. The first occurrence wins so the
+  /// complete assignment collection on the canonical row is preserved.
+  static List<Employee> _deduplicate(List<Employee> employees) {
+    final seenIds = <int>{};
+    return [
+      for (final employee in employees)
+        if (seenIds.add(employee.id)) employee,
+    ];
   }
 
   Map<String, String> _fieldErrors(ApiException error) {

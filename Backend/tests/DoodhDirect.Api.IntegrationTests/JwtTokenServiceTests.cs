@@ -47,7 +47,9 @@ public sealed class JwtTokenServiceTests
             ["CUSTOMER"],
             ["profile.read.own"],
             [7],
-            now);
+            now,
+            3,
+            [9]);
 
         var expectedAccessExpiry = now.AddMinutes(15);
         var expectedRefreshExpiry = now.AddDays(30);
@@ -57,6 +59,9 @@ public sealed class JwtTokenServiceTests
         Assert.Equal(DateTimeKind.Unspecified, result.RefreshTokenExpiresAt.Kind);
 
         var jwt = new JwtSecurityTokenHandler().ReadJwtToken(result.AccessToken);
+        Assert.Equal("3", jwt.Claims.Single(x => x.Type == "scope_v").Value);
+        Assert.Equal("7", jwt.Claims.Single(x => x.Type == "branch_id").Value);
+        Assert.Equal("9", jwt.Claims.Single(x => x.Type == "branch_history").Value);
         Assert.Equal(timeProvider.ToUtc(now), jwt.ValidFrom);
         Assert.Equal(timeProvider.ToUtc(expectedAccessExpiry), jwt.ValidTo);
         Assert.Equal(DateTimeKind.Utc, jwt.ValidFrom.Kind);

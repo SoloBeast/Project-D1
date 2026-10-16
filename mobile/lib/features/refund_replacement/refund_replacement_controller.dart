@@ -8,9 +8,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'refund_replacement_models.dart';
 import 'refund_replacement_repository.dart';
 
-final refundReplacementRepositoryProvider = Provider<RefundReplacementRepository>(
-  (ref) => RefundReplacementRepository(api: authenticatedApiClient(ref)),
-);
+final refundReplacementRepositoryProvider =
+    Provider<RefundReplacementRepository>(
+      (ref) => RefundReplacementRepository(api: authenticatedApiClient(ref)),
+    );
 
 final refundReplacementControllerProvider =
     NotifierProvider<RefundReplacementController, RefundReplacementState>(
@@ -109,10 +110,7 @@ class RefundReplacementController extends Notifier<RefundReplacementState> {
       remarks: remarks,
       milkTestId: milkTestId,
     );
-    state = state.copyWith(
-      eligibility: null,
-      selectedCustomerRequest: request,
-    );
+    state = state.copyWith(eligibility: null, selectedCustomerRequest: request);
   });
 
   Future<void> loadCustomerRequests() => _load(() async {
@@ -132,6 +130,16 @@ class RefundReplacementController extends Notifier<RefundReplacementState> {
       clearSelectedCustomerRequest: request == null,
     );
   });
+
+  /// D1-B: records the customer's Refund / Re-Delivery choice and refreshes
+  /// both the detail selection and the matching list row. Returns false and
+  /// surfaces the server message when the window expired, the ticket is
+  /// already resolved, or a different choice was attempted after selection.
+  Future<bool> chooseCustomerChoice(String requestId, CustomerChoice choice) =>
+      _save(() async {
+        final request = await _repository.choose(_token!, requestId, choice);
+        _replaceCustomerRequest(request);
+      });
 
   Future<bool> uploadImage(
     String requestId, {
@@ -182,6 +190,14 @@ class RefundReplacementController extends Notifier<RefundReplacementState> {
           completionRemarks: request.completionRemarks,
           proofImageRequired: request.proofImageRequired,
           images: [...request.images, image],
+          subscriptionDeliveryPublicId: request.subscriptionDeliveryPublicId,
+          failedAtUtc: request.failedAtUtc,
+          failureReasonSnapshot: request.failureReasonSnapshot,
+          customerChoice: request.customerChoice,
+          customerChoiceAtUtc: request.customerChoiceAtUtc,
+          replacementDate: request.replacementDate,
+          replacementDeliveryNumber: request.replacementDeliveryNumber,
+          isRefundOnly: request.isRefundOnly,
         ),
       );
     }
@@ -212,8 +228,22 @@ class RefundReplacementController extends Notifier<RefundReplacementState> {
     state = state.copyWith(selectedStaffRequest: request);
   });
 
-  Future<bool> approve(String requestId, {String? remarks}) =>
-      _decide(requestId, 'approve', remarks);
+  /// D1-D: approves a request, forwarding an optional staff-confirmed
+  /// replacement date for re-delivery tickets. Null preserves the existing
+  /// refund/one-time approval behavior.
+  Future<bool> approve(
+    String requestId, {
+    String? remarks,
+    DateTime? replacementDate,
+  }) => _save(() async {
+    final request = await _repository.approve(
+      _token!,
+      requestId,
+      remarks: remarks,
+      replacementDate: replacementDate,
+    );
+    state = state.copyWith(selectedStaffRequest: request);
+  });
 
   Future<bool> reject(String requestId, {String? remarks}) =>
       _decide(requestId, 'reject', remarks);
@@ -221,30 +251,34 @@ class RefundReplacementController extends Notifier<RefundReplacementState> {
   Future<bool> complete(String requestId, {String? remarks}) =>
       _decide(requestId, 'complete', remarks);
 
-  Future<bool> _decide(
-    String requestId,
-    String decision,
-    String? remarks,
-  ) => _save(() async {
-    final request = switch (decision) {
-      'approve' => await _repository.approve(
-          _token!,
-          requestId,
-          remarks: remarks,
-        ),
-      'reject' => await _repository.reject(
-          _token!,
-          requestId,
-          remarks: remarks,
-        ),
-      _ => await _repository.complete(
-          _token!,
-          requestId,
-          remarks: remarks,
-        ),
-    };
-    state = state.copyWith(selectedStaffRequest: request);
-  });
+  Future<bool> _decide(String requestId, String decision, String? remarks) =>
+      _save(() async {
+        final request = switch (decision) {
+          'approve' => await _repository.approve(
+            _token!,
+            requestId,
+            remarks: remarks,
+          ),
+          'reject' => await _repository.reject(
+            _token!,
+            requestId,
+            remarks: remarks,
+          ),
+          _ => await _repository.complete(_token!, requestId, remarks: remarks),
+        };
+        state = state.copyWith(selectedStaffRequest: request);
+      });
+
+  void _replaceCustomerRequest(RefundReplacementRequest request) {
+    final updated = [
+      for (final item in state.customerRequests)
+        item.requestId == request.requestId ? request : item,
+    ];
+    state = state.copyWith(
+      selectedCustomerRequest: request,
+      customerRequests: updated,
+    );
+  }
 
   Future<void> _load(Future<void> Function() operation) async {
     if (_token == null) return;

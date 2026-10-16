@@ -32,8 +32,10 @@ void main() {
       );
       expect(find.text('Welcome to DoodhDirect'), findsOneWidget);
       expect(find.text('Sign in for orders, payments and more'), findsOneWidget);
-      expect(find.text('Shop'), findsOneWidget);
-      expect(find.text('My cart'), findsOneWidget);
+      // Guest home shows the catalogue directly instead of Explore tiles.
+      expect(find.text('Explore'), findsNothing);
+      expect(find.text('My cart'), findsNothing);
+      expect(find.text('Whole Milk'), findsOneWidget);
       expect(find.text('Sign in to your account'), findsNothing);
       expect(tester.takeException(), isNull);
     });

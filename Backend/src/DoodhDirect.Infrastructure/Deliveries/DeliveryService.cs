@@ -6,7 +6,10 @@ using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Deliveries;
 using DoodhDirect.Application.Identity;
+using DoodhDirect.Application.MilkTesting;
+using DoodhDirect.Application.RefundReplacement;
 using DoodhDirect.Application.Setup;
+using DoodhDirect.Domain.RefundReplacement;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Dairy;
@@ -17,6 +20,7 @@ using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Infrastructure.Notifications;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.RefundReplacement;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -33,7 +37,10 @@ public sealed class DeliveryService(
     INumberSeriesService numberSeriesService,
     DeliveryOtpHandoffProtector deliveryOtpHandoffProtector,
     DeliveryOtpSendGate? deliveryOtpSendGate = null,
-    ILogger<DeliveryService>? logger = null) : IDeliveryService
+    ILogger<DeliveryService>? logger = null,
+    IRefundReplacementConfigurationService? refundReplacementConfigurationService = null,
+    IMediaStorage? refundReplacementMediaStorage = null,
+    IDeliveryFailTicketCreator? deliveryFailTicketCreator = null) : IDeliveryService
 {
     private static readonly DeliveryOtpSendGate DefaultDeliveryOtpSendGate = new();
     private readonly DeliveryOtpSendGate _deliveryOtpSendGate = deliveryOtpSendGate ?? DefaultDeliveryOtpSendGate;
@@ -759,6 +766,7 @@ public sealed class DeliveryService(
         {
             var occurrence = delivery.SubscriptionDelivery!;
             Mutate(() => occurrence.Subscription.MarkDelivered(occurrence, completedAt));
+            await CompleteLinkedRedeliveryTicketAsync(actor, delivery, occurrence, completedAt, cancellationToken);
         }
 
         AddTransitionAudit(actor.UserId, "DELIVERY.COMPLETE", delivery, completedAt);
@@ -770,6 +778,77 @@ public sealed class DeliveryService(
             completedAt);
         await CreateAutomaticConsumptionAsync(delivery, actor.UserId, completedAt, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// D1-D slice 3 (Rule 8): completing the operational delivery of an
+    /// approved re-delivery replacement completes the linked ticket in the
+    /// SAME serializable transaction as the delivery completion (this method
+    /// runs inside <c>CompleteAsync</c> / <c>VerifyOtpAsync</c>'s transaction
+    /// with a single commit), covering both normal and OTP-verified
+    /// completion through the one shared mutation. The ticket is identified
+    /// strictly through the persisted replacement linkage
+    /// (<c>RefundReplacementRequestId</c>) — never from client input.
+    /// The transition reuses the ticket's own <c>Complete</c> guard
+    /// (Approved-only), so repeats and concurrent completions cannot
+    /// duplicate it: only the delivery-completion winner ever reaches this
+    /// point, and any later attempt fails earlier on the already-delivered
+    /// delivery. Non-approved or non-re-delivery states are ignored without
+    /// failing the delivery completion itself.
+    /// </summary>
+    private async Task CompleteLinkedRedeliveryTicketAsync(
+        DeliveryActor actor,
+        Delivery delivery,
+        SubscriptionDelivery occurrence,
+        DateTime completedAt,
+        CancellationToken cancellationToken)
+    {
+        if (!occurrence.IsReplacement || occurrence.RefundReplacementRequestId is null)
+        {
+            return;
+        }
+
+        var ticket = await dbContext.RefundReplacementRequests
+            .SingleOrDefaultAsync(
+                x => x.Id == occurrence.RefundReplacementRequestId.Value,
+                cancellationToken);
+        if (ticket is null
+            || ticket.Status != RefundReplacementStatus.Approved
+            || ticket.Source != RefundReplacementSource.DeliveryFailed
+            || ticket.CustomerChoice != CustomerChoice.ReDelivery)
+        {
+            return;
+        }
+
+        var previousStatus = ticket.Status;
+        var deliveryNumber = delivery.DeliveryNumber ?? delivery.ReferenceNumber;
+        var reason = $"Replacement delivery {deliveryNumber} delivered.";
+        Mutate(() => ticket.Complete(actor.UserId, completedAt, reason));
+
+        AddAudit(
+            actor.UserId,
+            "REFUND_REPLACEMENT.COMPLETE",
+            "RefundReplacementRequest",
+            ticket.PublicId.ToString(),
+            new { Status = previousStatus.ToString() },
+            new { Status = ticket.Status.ToString(), ticket.CompletedAt },
+            reason,
+            completedAt);
+
+        notificationEventWriter.Add(new NotificationEventRequest(
+            ticket.CustomerId,
+            NotificationEventTypes.RefundReplacementCompleted,
+            $"refund-replacement:{ticket.PublicId:N}:redelivery-delivered",
+            new Dictionary<string, string>
+            {
+                ["requestId"] = ticket.PublicId.ToString(),
+                ["requestNumber"] = ticket.RequestNumber,
+                ["type"] = ticket.Type.ToString(),
+                ["status"] = ticket.Status.ToString(),
+                ["message"] = $"Your replacement delivery {deliveryNumber} has been delivered."
+            },
+            $"/refund-replacements/{ticket.PublicId}",
+            completedAt));
     }
 
     /// <summary>
@@ -991,7 +1070,9 @@ public sealed class DeliveryService(
 
     private static void EnsureAllocatable(Delivery delivery)
     {
-        if (delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed)
+        // D1-D slice 5: a voided (Cancelled) pre-pickup replacement delivery
+        // accepts no further operational processing, including allocation edits.
+        if (delivery.Status is DeliveryStatus.Delivered or DeliveryStatus.Failed or DeliveryStatus.Cancelled)
         {
             throw new BusinessRuleException(
                 "Batch allocations cannot be changed after a delivery has been completed or failed.");
@@ -1047,41 +1128,96 @@ public sealed class DeliveryService(
         DeliveryActor actor,
         Guid deliveryId,
         FailDeliveryRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        FailDeliveryProof? proof = null)
     {
-        await ExecuteSerializableAsync(async () =>
+        // Compensating cleanup for the proof blob stored inside the transaction:
+        // the key never leaves this boundary (never in API/audit payloads).
+        string? storedProofKey = null;
+        IMediaStorage? proofMediaStorage = null;
+        try
         {
-            var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
-            var now = timeProvider.Now;
-            Mutate(() => delivery.Fail(actor.UserId, now, request.Reason, request.Remarks, request.Latitude, request.Longitude));
-            foreach (var otp in delivery.Otps)
+            await ExecuteSerializableAsync(async () =>
             {
-                Mutate(() => otp.Invalidate(now));
-            }
-            if (delivery.Order is not null)
-            {
-                Mutate(delivery.Order.MarkDeliveryFailed);
-            }
-            else
-            {
-                var occurrence = delivery.SubscriptionDelivery!;
-                Mutate(() => occurrence.Subscription.MarkFailed(occurrence, now));
-            }
-            AddAudit(actor.UserId, "DELIVERY.FAIL", "Delivery", delivery.PublicId.ToString(), null,
-                new { delivery.Status, delivery.FailureReason, delivery.FailureLatitude, delivery.FailureLongitude }, request.Remarks, now);
-            AddDeliveryEvent(
-                delivery,
-                NotificationEventTypes.DeliveryFailed,
-                $"delivery:{delivery.PublicId:N}:failed:{now.Ticks}",
-                "Your delivery could not be completed.",
-                now,
-                new Dictionary<string, string>
+                var delivery = await FindAssignedAsync(actor, deliveryId, cancellationToken);
+                var now = timeProvider.Now;
+                Mutate(() => delivery.Fail(actor.UserId, now, request.Reason, request.Remarks, request.Latitude, request.Longitude));
+                foreach (var otp in delivery.Otps)
                 {
-                    ["reason"] = request.Reason
-                });
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }, cancellationToken);
+                    Mutate(() => otp.Invalidate(now));
+                }
+                if (delivery.Order is not null)
+                {
+                    if (proof is not null)
+                    {
+                        throw new ValidationAppException(
+                            "A proof image is only supported for subscription delivery failures.",
+                            "proof");
+                    }
+
+                    Mutate(delivery.Order.MarkDeliveryFailed);
+                }
+                else
+                {
+                    var occurrence = delivery.SubscriptionDelivery!;
+                    Mutate(() => occurrence.Subscription.MarkFailed(occurrence, now));
+                    var creator = ResolveTicketCreator(ref proofMediaStorage);
+                    var ticket = await creator.CreateOrReuseAsync(
+                        delivery,
+                        null,
+                        RefundReplacementSource.DeliveryFailed,
+                        proof,
+                        actor.UserId,
+                        now,
+                        cancellationToken);
+                    storedProofKey = ticket.StoredStorageKey;
+                }
+                AddAudit(actor.UserId, "DELIVERY.FAIL", "Delivery", delivery.PublicId.ToString(), null,
+                    new { delivery.Status, delivery.FailureReason, delivery.FailureLatitude, delivery.FailureLongitude }, request.Remarks, now);
+                AddDeliveryEvent(
+                    delivery,
+                    NotificationEventTypes.DeliveryFailed,
+                    $"delivery:{delivery.PublicId:N}:failed:{now.Ticks}",
+                    "Your delivery could not be completed.",
+                    now,
+                    new Dictionary<string, string>
+                    {
+                        ["reason"] = request.Reason
+                    });
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }, cancellationToken);
+        }
+        catch
+        {
+            // The database write failed — remove the orphaned proof blob.
+            if (storedProofKey is not null && proofMediaStorage is not null)
+            {
+                await proofMediaStorage.DeleteIfExistsAsync(storedProofKey, CancellationToken.None);
+            }
+
+            throw;
+        }
         return await PublishChangedAsync(deliveryId, cancellationToken);
+    }
+
+    private IDeliveryFailTicketCreator ResolveTicketCreator(ref IMediaStorage? mediaStorage)
+    {
+        if (deliveryFailTicketCreator is not null)
+        {
+            mediaStorage = refundReplacementMediaStorage;
+            return deliveryFailTicketCreator;
+        }
+
+        var configuration = refundReplacementConfigurationService
+            ?? new RefundReplacementConfigurationService(dbContext, timeProvider);
+        mediaStorage = refundReplacementMediaStorage
+            ?? throw new InvalidOperationException("Delivery-fail media storage is not configured.");
+        return new DeliveryFailTicketCreator(
+            dbContext,
+            configuration,
+            numberSeriesService,
+            mediaStorage,
+            notificationEventWriter);
     }
 
     public async Task<DeliveryLocationResult> RecordLocationAsync(

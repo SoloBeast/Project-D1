@@ -60,6 +60,42 @@ builder.Services
             NameClaimType = "name",
             RoleClaimType = "role"
         };
+        // Stage 1 multi-branch foundation: access tokens are stateless, so a
+        // token issued before a branch/role/activation change would otherwise
+        // keep authorizing the old scope until expiry. Revalidate the scope
+        // version against the account on every authenticated request; any
+        // mismatch (or a missing/inactive account) fails authentication and
+        // forces a fresh login, which re-resolves the current scope.
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var principal = context.Principal;
+                var userIdValue = principal?.FindFirst("user_id")?.Value;
+                var scopeVersionValue = principal?.FindFirst(DoodhDirect.Application.Identity.AuthorizationCodes.ScopeVersionClaim)?.Value;
+                if (!long.TryParse(
+                        userIdValue,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var userId) ||
+                    !long.TryParse(
+                        scopeVersionValue,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var scopeVersion))
+                {
+                    context.Fail("The access token carries no verifiable authorization scope.");
+                    return;
+                }
+
+                var validator = context.HttpContext.RequestServices
+                    .GetRequiredService<DoodhDirect.Application.Identity.IAuthorizationScopeValidator>();
+                if (!await validator.IsTokenScopeCurrentAsync(userId, scopeVersion, context.HttpContext.RequestAborted))
+                {
+                    context.Fail("The authorization scope changed. Sign in again.");
+                }
+            }
+        };
     });
 
 builder.Services.AddAuthorizationBuilder()

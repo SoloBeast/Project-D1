@@ -245,7 +245,9 @@ public sealed class OtpService(
             authUser.Roles,
             authUser.Permissions,
             authUser.BranchIds,
-            now);
+            now,
+            user.AuthorizationVersion,
+            authUser.BranchHistoryIds);
         dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAt, session.Id, now));
         dbContext.AddAuditLog(new AuditLog(user.Id, "AUTH_OTP_LOGIN", "UserSession", session.PublicId.ToString(), null, null, request.Device.IpAddress, request.Device.UserAgent, request.Purpose.ToString(), now));
 
@@ -510,6 +512,16 @@ internal static class IdentityMappings
         DoodhDirectDbContext dbContext,
         CancellationToken cancellationToken)
     {
+        // Stage 1 multi-branch guardrail: fail closed at issuance when an
+        // account combines branch-scoped assignments under more than one
+        // role code. Permissions union across roles while branch ids union
+        // across assignments, so such a state would let each role's
+        // permissions run on the other role's branches. EmployeeService
+        // prevents new states; this prevents minting scope for legacy ones.
+        BranchScopeGuard.EnsureSingleBranchedRole(
+            user.UserRoles
+                .Where(x => x.Role is not null && x.Role.IsActive)
+                .Select(x => (x.Role.Code, x.BranchId)));
         var result = user.ToAuthUserResult();
         return await result.ResolveBranchDetailsAsync(dbContext, cancellationToken);
     }
@@ -521,14 +533,38 @@ internal static class IdentityMappings
     {
         var branchIds = result.BranchIds;
         if (branchIds.Count == 0)
-            return result with { BranchDetails = Array.Empty<AuthUserBranchResult>() };
+            return result with
+            {
+                BranchDetails = Array.Empty<AuthUserBranchResult>(),
+                BranchIds = Array.Empty<long>(),
+                BranchHistoryIds = Array.Empty<long>()
+            };
 
         var ids = branchIds.ToArray();
         var branches = await dbContext.Branches
             .Where(x => ids.Contains(x.Id))
             .OrderBy(x => x.Id)
-            .Select(x => new AuthUserBranchResult(x.Id, x.Code, x.Name))
+            .Select(x => new { x.Id, x.Code, x.Name, x.IsActive, x.IsArchived })
             .ToListAsync(cancellationToken);
-        return result with { BranchDetails = branches };
+        // Operational scope admits only currently eligible branches. Archived
+        // or inactive assignments retain history (reporting visibility) but
+        // grant no operational access; dangling ids of hard-deleted branches
+        // are dropped from both sets.
+        var operational = branches
+            .Where(x => x.IsActive && !x.IsArchived)
+            .Select(x => x.Id)
+            .ToArray();
+        var history = branches
+            .Where(x => !x.IsActive || x.IsArchived)
+            .Select(x => x.Id)
+            .ToArray();
+        return result with
+        {
+            BranchDetails = branches
+                .Select(x => new AuthUserBranchResult(x.Id, x.Code, x.Name))
+                .ToArray(),
+            BranchIds = operational,
+            BranchHistoryIds = history
+        };
     }
 }

@@ -615,14 +615,14 @@ public sealed class EmployeeServiceTests
         await using var harness = await EmployeeHarness.CreateAsync();
         var created = await CreateDeliveryStaffAsync(harness, "Ravi Kumar", "+919876543210", "ravi@example.com");
 
-        var list = await harness.Employees.ListAsync(CancellationToken.None);
+        var list = await harness.Employees.ListAsync(harness.SystemAdmin.Id, CancellationToken.None);
         var listed = Assert.Single(list, x => x.Id == created.Employee.Id);
         Assert.Equal(EmployeeInvitationStatus.Invited, listed.InvitationStatus);
         Assert.Equal(created.Invitation!.InvitationId, listed.InvitationId);
         Assert.Equal(AuthorizationCodes.DeliveryStaff, listed.RoleCode);
         Assert.Equal("Main Branch", listed.BranchName);
 
-        var got = await harness.Employees.GetAsync(created.Employee.Id, CancellationToken.None);
+        var got = await harness.Employees.GetAsync(harness.SystemAdmin.Id, created.Employee.Id, CancellationToken.None);
         Assert.Equal(created.Invitation.InvitationId, got.InvitationId);
         Assert.Equal(EmployeeInvitationStatus.Invited, got.InvitationStatus);
     }
@@ -1075,7 +1075,7 @@ public sealed class EmployeeServiceTests
         harness.Db.ChangeTracker.Clear();
         await harness.Employees.DeleteAsync(doomed.Employee.Id, harness.SystemAdmin.Id, CancellationToken.None);
 
-        var list = await harness.Employees.ListAsync(CancellationToken.None);
+        var list = await harness.Employees.ListAsync(harness.SystemAdmin.Id, CancellationToken.None);
 
         Assert.DoesNotContain(list, x => x.Id == doomed.Employee.Id);
         Assert.Contains(list, x => x.Id == active.Employee.Id);
@@ -1099,7 +1099,7 @@ public sealed class EmployeeServiceTests
         await harness.Employees.DeleteAsync(created.Employee.Id, harness.SystemAdmin.Id, CancellationToken.None);
 
         // Archived employees remain retrievable (read-only view) and stay in the database.
-        var result = await harness.Employees.GetAsync(created.Employee.Id, CancellationToken.None);
+        var result = await harness.Employees.GetAsync(harness.SystemAdmin.Id, created.Employee.Id, CancellationToken.None);
 
         Assert.Equal(created.Employee.Id, result.Id);
         Assert.True(result.IsArchived);
