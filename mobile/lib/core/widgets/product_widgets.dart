@@ -324,21 +324,19 @@ class DoodhProductCard extends StatelessWidget {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 10),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: isAvailable
-                                ? const DoodhChip(
-                                    label: 'Available now',
-                                    tone: DoodhTone.success,
-                                    icon: Icons.check_circle_outline,
-                                  )
-                                : const DoodhChip(
-                                    label: 'Out of stock',
-                                    tone: DoodhTone.warning,
-                                    icon: Icons.error_outline,
-                                  ),
-                          ),
+                          // Available products carry no availability badge;
+                          // only the out-of-stock state is surfaced.
+                          if (!isAvailable) ...[
+                            const SizedBox(height: 10),
+                            const Align(
+                              alignment: Alignment.centerLeft,
+                              child: DoodhChip(
+                                label: 'Out of stock',
+                                tone: DoodhTone.warning,
+                                icon: Icons.error_outline,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),

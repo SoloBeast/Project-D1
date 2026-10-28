@@ -221,6 +221,11 @@ void main() {
       }
       expect(request.method, 'POST');
       expect(request.url.path, '/api/v1/orders/order-1/cancel');
+      expect(jsonDecode(request.body), {
+        'reasonCode': 'ChangedMind',
+        'comment': 'Evening works better',
+        'confirmed': false,
+      });
       return http.Response(
         jsonEncode({'success': true, 'data': orderJson(), 'errors': []}),
         200,
@@ -239,9 +244,87 @@ void main() {
       'order-1',
     );
     expect(
-      (await repository.cancel('customer-token', 'order-1')).publicId,
+      (await repository.cancel(
+        'customer-token',
+        'order-1',
+        reasonCode: 'ChangedMind',
+        comment: 'Evening works better',
+      )).publicId,
       'order-1',
     );
+  });
+
+  test('cancel preview posts to the preview route and parses terms', () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'POST');
+      expect(
+        request.url.toString(),
+        'https://api.example.test/api/v1/orders/order-1/cancel-preview',
+      );
+      return http.Response(
+        jsonEncode({
+          'success': true,
+          'data': {
+            'canCancel': true,
+            'blockReason': null,
+            'deliveryStatus': 'PickedUp',
+            'pickupOccurred': true,
+            'deductionPercentage': 25,
+            'grossBasis': 200,
+            'deductionAmount': 50,
+            'estimatedRefund': 150,
+            'eligiblePaidAmount': 200,
+            'requiresConfirmation': true,
+          },
+          'errors': [],
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final repository = OrderRepository(
+      api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
+    );
+
+    final preview = await repository.previewCancel(
+      'customer-token',
+      'order-1',
+    );
+
+    expect(preview.pickupOccurred, isTrue);
+    expect(preview.deductionPercentage, 25);
+    expect(preview.estimatedRefund, 150);
+    expect(preview.requiresConfirmation, isTrue);
+  });
+
+  test('post-pickup cancel sends frozen confirmation terms', () async {
+    final client = MockClient((request) async {
+      expect(request.url.path, '/api/v1/orders/order-1/cancel');
+      expect(jsonDecode(request.body), {
+        'reasonCode': 'ChangedMind',
+        'comment': null,
+        'confirmed': true,
+        'confirmedDeductionPercentage': 25,
+        'confirmedRefundAmount': 150,
+      });
+      return http.Response(
+        jsonEncode({'success': true, 'data': orderJson(), 'errors': []}),
+        200,
+      );
+    });
+    final repository = OrderRepository(
+      api: ApiClient(client: client, baseUrl: 'https://api.example.test'),
+    );
+
+    final order = await repository.cancel(
+      'customer-token',
+      'order-1',
+      reasonCode: 'ChangedMind',
+      confirmed: true,
+      confirmedDeductionPercentage: 25,
+      confirmedRefundAmount: 150,
+    );
+    expect(order.publicId, 'order-1');
   });
 
   test('staff inspection reads the branch-scoped staff order route', () async {

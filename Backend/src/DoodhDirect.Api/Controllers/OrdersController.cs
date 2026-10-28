@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Security.Claims;
+using DoodhDirect.Api.Authorization;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Identity;
 using DoodhDirect.Application.Orders;
@@ -51,12 +52,24 @@ public sealed class OrdersController(IOrderService orderService) : ControllerBas
         Ok(ApiResponse<OrderResult>.Ok(await orderService.GetAsync(
             RequireUserId(), orderId, bypassOwnership: false, cancellationToken)));
 
+    [HttpPost("{orderId:guid}/cancel-preview")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.OrdersCancelOwn)]
+    [ProducesResponseType(typeof(ApiResponse<CancelOrderPreviewResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<CancelOrderPreviewResult>>> PreviewCancel(
+        Guid orderId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<CancelOrderPreviewResult>.Ok(await orderService.PreviewCancelAsync(
+            RequireUserId(), orderId, cancellationToken)));
+
     [HttpPost("{orderId:guid}/cancel")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.OrdersCancelOwn)]
     [ProducesResponseType(typeof(ApiResponse<OrderResult>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<ApiResponse<OrderResult>>> Cancel(Guid orderId, CancellationToken cancellationToken) =>
+    public async Task<ActionResult<ApiResponse<OrderResult>>> Cancel(
+        Guid orderId,
+        [FromBody] CancelOrderApiRequest? request,
+        CancellationToken cancellationToken) =>
         Ok(ApiResponse<OrderResult>.Ok(await orderService.CancelAsync(
-            RequireUserId(), orderId, cancellationToken)));
+            RequireUserId(), orderId, request?.ToApplicationRequest() ?? new CancelOrderRequest(null, null), cancellationToken)));
 
     private long RequireUserId()
     {
@@ -71,7 +84,7 @@ public sealed class OrdersController(IOrderService orderService) : ControllerBas
 [Route("api/v1/staff/orders")]
 [Tags("Staff order inspection")]
 [Produces("application/json")]
-[Authorize(Policy = "permission:" + AuthorizationCodes.OrdersReadBranch)]
+[Authorize(Policy = AuthorizationPolicyNames.AnyStaffOrderRead)]
 public sealed class StaffOrdersController(IOrderService orderService) : ControllerBase
 {
     [HttpGet("{orderId:guid}")]
@@ -174,3 +187,14 @@ public sealed record CheckoutAddressApiRequest(
 }
 
 public sealed record OrderItemApiRequest(Guid ProductId, decimal Quantity);
+
+public sealed record CancelOrderApiRequest(
+    string? ReasonCode,
+    [MaxLength(500)] string? Comment,
+    bool Confirmed = false,
+    decimal? ConfirmedDeductionPercentage = null,
+    decimal? ConfirmedRefundAmount = null)
+{
+    public CancelOrderRequest ToApplicationRequest() =>
+        new(ReasonCode, Comment, Confirmed, ConfirmedDeductionPercentage, ConfirmedRefundAmount);
+}

@@ -262,9 +262,10 @@ public sealed class OtpScopeSeparationTests
             new BranchAllocationService(harness.Db),
             new TestNotificationEventWriter(harness.Db, harness.TimeProvider),
             new NumberSeriesService(harness.Db, harness.TimeProvider),
-            harness.TimeProvider);
+            harness.TimeProvider,
+            new DoodhDirect.Infrastructure.RefundReplacement.RefundReplacementConfigurationService(harness.Db, harness.TimeProvider));
         var cancelled = await orderService.CancelAsync(
-            harness.Customer.Id, harness.Order.PublicId, CancellationToken.None);
+            harness.Customer.Id, harness.Order.PublicId, new CancelOrderRequest("ChangedMind", null), CancellationToken.None);
         Assert.Equal(OrderStatus.Cancelled, cancelled.Status);
 
         harness.Db.ChangeTracker.Clear();

@@ -22,14 +22,43 @@ class PaymentRepository {
     required String orderId,
     required PaymentMethod method,
     required String idempotencyKey,
+    bool useWalletBalance = false,
+    double? expectedPayableAmount,
   }) async {
+    final body = <String, dynamic>{
+      'orderId': orderId,
+      'method': method.apiValue,
+      'useWalletBalance': useWalletBalance,
+    };
+    if (expectedPayableAmount != null) {
+      body['expectedPayableAmount'] = expectedPayableAmount;
+    }
     final response = await api.post(
       '/api/v1/payments/create',
-      body: {'orderId': orderId, 'method': method.apiValue},
+      body: body,
       accessToken: token,
       extraHeaders: {'Idempotency-Key': idempotencyKey},
     );
     return PaymentDetails.fromJson(response['data'] as Map<String, dynamic>);
+  }
+
+  /// Starts a wallet-first split plan for an order. The client states only
+  /// whether to apply the wallet; every amount in the returned plan is
+  /// server-computed. The same [idempotencyKey] must be reused across
+  /// network retries for the same attempt.
+  Future<PaymentPlan> createPlan({
+    required String token,
+    required String orderId,
+    required bool useWalletBalance,
+    required String idempotencyKey,
+  }) async {
+    final response = await api.post(
+      '/api/v1/payments/create-plan',
+      body: {'orderId': orderId, 'useWalletBalance': useWalletBalance},
+      accessToken: token,
+      extraHeaders: {'Idempotency-Key': idempotencyKey},
+    );
+    return PaymentPlan.fromJson(response['data'] as Map<String, dynamic>);
   }
 
   Future<PaymentDetails> verify({

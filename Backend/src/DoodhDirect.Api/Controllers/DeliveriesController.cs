@@ -261,6 +261,38 @@ public sealed class DeliveryManagementController(IDeliveryService deliveryServic
         Ok(ApiResponse<IReadOnlyList<DeliveryResult>>.Ok(await deliveryService.GetForBranchAsync(
             RequireActor(), branchId, date, status, sourceType, slot, cancellationToken)));
 
+    /// Lists past-due scheduled subscription occurrences of a branch that were
+    /// never operationalized (no delivery row): the visits were never
+    /// attempted, so a branch manager can confirm each miss here. Skipped
+    /// (vacation/manual), replacement, failed, delivered and cancelled
+    /// occurrences are never listed.
+    /// </summary>
+    [HttpGet("branches/{branchId:long}/missed-occurrences")]
+    [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<MissedOccurrenceResult>>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<MissedOccurrenceResult>>>> GetMissedOccurrences(
+        long branchId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<IReadOnlyList<MissedOccurrenceResult>>.Ok(await deliveryService.GetMissedOccurrencesAsync(
+            RequireActor(), branchId, cancellationToken)));
+
+    /// <summary>
+    /// Records a manager-confirmed miss for a past-due scheduled subscription
+    /// occurrence with no operational delivery. A failed operational record
+    /// plus the remedy ticket (frozen zero deduction: no service was provided)
+    /// are created through the existing delivery-fail workflow; the customer
+    /// still chooses the remedy and nothing is marked delivered here.
+    /// </summary>
+    [HttpPost("branches/{branchId:long}/missed-occurrences/{occurrenceId:guid}/fail")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.DeliveriesAssignBranch)]
+    [ProducesResponseType(typeof(ApiResponse<DeliveryResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<DeliveryResult>>> FailMissedOccurrence(
+        long branchId,
+        Guid occurrenceId,
+        [FromBody] FailMissedOccurrenceRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<DeliveryResult>.Ok(await deliveryService.FailMissedOccurrenceAsync(
+            RequireActor(), branchId, occurrenceId, request, cancellationToken)));
+
     [HttpGet("branches/{branchId:long}/employees")]
     [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<DeliveryEmployeeResult>>), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<DeliveryEmployeeResult>>>> GetEmployees(

@@ -13,7 +13,9 @@ public enum WalletTransactionType
     RefundCredit,
     PromotionalCredit,
     AdminAdjustment,
-    SubscriptionDebit
+    SubscriptionDebit,
+    WithdrawalDebit,
+    WithdrawalReversal
 }
 
 public sealed class WalletBalanceInsufficientException(
@@ -47,6 +49,31 @@ public sealed class Wallet : AuditableEntity
     public User Customer { get; private set; } = null!;
     public ICollection<WalletTransaction> Transactions { get; private set; } = [];
 
+    /// <summary>
+    /// Reserves a customer wallet withdrawal: a plain balance debit with no
+    /// payment/order reference. The available-balance guard in
+    /// <see cref="Apply"/> rejects overdrafts, so concurrent withdrawals
+    /// cannot spend more than the balance under serializable isolation plus
+    /// the <c>RowVersion</c> concurrency token.
+    /// </summary>
+    public WalletTransaction DebitWithdrawal(
+        decimal amount,
+        string idempotencyKey,
+        string description,
+        DateTime occurredAt)
+    {
+        return Apply(
+            WalletTransactionType.WithdrawalDebit,
+            -NormalizePositiveAmount(amount),
+            idempotencyKey,
+            description,
+            occurredAt,
+            null,
+            null,
+            null,
+            null);
+    }
+
     public WalletTransaction Credit(
         WalletTransactionType type,
         decimal amount,
@@ -58,7 +85,8 @@ public sealed class Wallet : AuditableEntity
         long? performedByUserId = null,
         long? subscriptionId = null)
     {
-        if (type is WalletTransactionType.OrderDebit or WalletTransactionType.SubscriptionDebit)
+        if (type is WalletTransactionType.OrderDebit or WalletTransactionType.SubscriptionDebit
+            or WalletTransactionType.WithdrawalDebit)
         {
             throw new ArgumentException("A debit transaction type cannot be credited.", nameof(type));
         }

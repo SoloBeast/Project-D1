@@ -11,6 +11,8 @@ import 'package:doodh_direct_mobile/features/refund_replacement/refund_replaceme
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 
 void main() {
   group('customer refund/replacement screens', () {
@@ -128,6 +130,240 @@ void main() {
       expect(controller.loadedEligibilityFor, 'delivery-1');
     });
 
+    group('stage 2 conditional photo evidence', () {
+      testWidgets(
+        'failed-delivery case explains no photo is needed and submits without one',
+        (tester) async {
+          final controller = _SeededRefundReplacementController(
+            RefundReplacementState(
+              eligibility: eligibility(
+                proofImageRequired: false,
+                isFailedDeliveryWithoutProduct: true,
+              ),
+            ),
+          );
+          await _pumpWithRouter(
+            tester,
+            const CustomerRefundReplacementScreen(deliveryId: 'delivery-1'),
+            controller,
+          );
+
+          expect(
+            find.textContaining(
+              'Our records confirm this delivery failed',
+              findRichText: true,
+            ),
+            findsOneWidget,
+          );
+          expect(find.text('Attach proof image'), findsNothing);
+
+          await tester.enterText(
+            find.byType(TextField).first,
+            'Never received the milk',
+          );
+          await tester.pump();
+          await tester.tap(find.text('Submit request'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(controller.submittedReason, 'Never received the milk');
+          expect(find.text('Request submitted.'), findsOneWidget);
+        },
+      );
+
+      testWidgets(
+        'photo-required submit sends the image with the single submit call',
+        (tester) async {
+          final controller = _SeededRefundReplacementController(
+            RefundReplacementState(eligibility: eligibility()),
+          );
+          await _pumpWithRouter(
+            tester,
+            CustomerRefundReplacementScreen(
+              deliveryId: 'delivery-1',
+              pickImage: ({required source}) async => XFile.fromData(
+                Uint8List.fromList(const [0xff, 0xd8, 0xff]),
+                name: 'proof.jpg',
+                mimeType: 'image/jpeg',
+              ),
+            ),
+            controller,
+          );
+
+          await tester.tap(find.text('Attach proof image'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Choose from gallery'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Use Photo'));
+          await tester.pumpAndSettle();
+
+          await tester.enterText(
+            find.byType(TextField).first,
+            'Milk was sour',
+          );
+          await tester.pump();
+          await tester.tap(find.text('Submit request'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+
+          // Stage 2.1: evidence rides with the submission in one atomic call —
+          // the bytes are attached to the submit itself, with no separate
+          // post-submit upload.
+          expect(controller.submittedReason, 'Milk was sour');
+          expect(controller.submittedImageBytes, isNotNull);
+          expect(controller.submittedImageFileName, endsWith('.jpg'));
+          expect(controller.submittedImageContentType, 'image/jpeg');
+          expect(find.text('Request submitted.'), findsOneWidget);
+        },
+      );
+
+      testWidgets('a failed submit keeps user input for retry', (tester) async {
+        final controller = _SeededRefundReplacementController(
+          RefundReplacementState(
+            eligibility: eligibility(
+              proofImageRequired: false,
+              isFailedDeliveryWithoutProduct: true,
+            ),
+          ),
+        )..submitResult = false;
+        await _pumpWithRouter(
+          tester,
+          const CustomerRefundReplacementScreen(deliveryId: 'delivery-1'),
+          controller,
+        );
+
+        await tester.enterText(find.byType(TextField).first, 'Milk was sour');
+        await tester.pump();
+        await tester.tap(find.text('Submit request'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        // Still on the form with the reason intact: nothing was lost.
+        expect(find.text('Submit request'), findsOneWidget);
+        expect(
+          tester.widget<TextField>(find.byType(TextField).first).controller?.text,
+          'Milk was sour',
+        );
+
+        controller.submitResult = true;
+        await tester.tap(find.text('Submit request'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(controller.submittedReason, 'Milk was sour');
+        expect(find.text('Request submitted.'), findsOneWidget);
+      });
+
+      testWidgets(
+        'delivered-product issue marks the photo mandatory and blocks submit without one',
+        (tester) async {
+          final controller = _SeededRefundReplacementController(
+            RefundReplacementState(eligibility: eligibility()),
+          );
+          await _pump(
+            tester,
+            const CustomerRefundReplacementScreen(deliveryId: 'delivery-1'),
+            controller,
+          );
+
+          expect(find.text('Proof image (required)'), findsOneWidget);
+          expect(
+            find.textContaining(
+              'A proof image is required for this request',
+              findRichText: true,
+            ),
+            findsOneWidget,
+          );
+          expect(find.text('Attach proof image'), findsOneWidget);
+
+          await tester.enterText(
+            find.byType(TextField).first,
+            'Milk was sour',
+          );
+          await tester.pump();
+          await tester.tap(find.text('Submit request'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(
+            find.text('Attach a proof image before submitting.'),
+            findsOneWidget,
+          );
+          expect(controller.submittedReason, isNull);
+        },
+      );
+
+      testWidgets('the displayed requirement follows the current delivery', (
+        tester,
+      ) async {
+        final failedController = _SeededRefundReplacementController(
+          RefundReplacementState(
+            eligibility: eligibility(
+              proofImageRequired: false,
+              isFailedDeliveryWithoutProduct: true,
+            ),
+          ),
+        );
+        await _pump(
+          tester,
+          const CustomerRefundReplacementScreen(deliveryId: 'delivery-failed'),
+          failedController,
+        );
+        expect(failedController.loadedEligibilityFor, 'delivery-failed');
+        expect(find.text('Attach proof image'), findsNothing);
+        expect(
+          find.textContaining(
+            'Our records confirm this delivery failed',
+            findRichText: true,
+          ),
+          findsOneWidget,
+        );
+
+        final deliveredController = _SeededRefundReplacementController(
+          RefundReplacementState(eligibility: eligibility()),
+        );
+        await _pump(
+          tester,
+          const CustomerRefundReplacementScreen(deliveryId: 'delivery-ok'),
+          deliveredController,
+        );
+        expect(deliveredController.loadedEligibilityFor, 'delivery-ok');
+        expect(find.text('Attach proof image'), findsOneWidget);
+        expect(
+          find.textContaining(
+            'Our records confirm this delivery failed',
+            findRichText: true,
+          ),
+          findsNothing,
+        );
+      });
+
+      testWidgets(
+        'backend validation errors are shown without losing user input',
+        (tester) async {
+          const serverError =
+              'A proof image is required for this delivered-product issue.';
+          final controller = _SeededRefundReplacementController(
+            RefundReplacementState(
+              eligibility: eligibility(),
+              errorMessage: serverError,
+            ),
+          );
+          await _pump(
+            tester,
+            const CustomerRefundReplacementScreen(deliveryId: 'delivery-1'),
+            controller,
+          );
+
+          await tester.enterText(
+            find.byType(TextField).first,
+            'Milk was sour',
+          );
+          await tester.pump();
+          expect(find.text(serverError), findsOneWidget);
+          final reasonField =
+              tester.widget<TextField>(find.byType(TextField).first);
+          expect(reasonField.controller?.text, 'Milk was sour');
+        },
+      );
+    });
+
     testWidgets('renders the customer request list and detail', (
       tester,
     ) async {
@@ -229,6 +465,10 @@ void main() {
       expect(find.text('Order ORD-1001 · Asha Rao'), findsOneWidget);
       expect(find.text('Proof image missing'), findsOneWidget);
 
+      // Status and date filters live behind the AppBar filter icon.
+      expect(find.widgetWithText(ChoiceChip, 'Pending'), findsNothing);
+      await tester.tap(find.byTooltip('Filters'));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(ChoiceChip, 'Pending'));
       await tester.pumpAndSettle();
       expect(listController.staffBranchId, 7);
@@ -253,23 +493,68 @@ void main() {
         find.text('A proof image is required for this request.'),
         findsOneWidget,
       );
-      expect(find.widgetWithText(FilledButton, 'Approve'), findsOneWidget);
+      // One-time order tickets are refund-only with an explicit deduction
+      // decision — no Replacement action is offered.
+      expect(
+        find.widgetWithText(FilledButton, 'Approve refund decision'),
+        findsOneWidget,
+      );
       expect(find.text('Reject'), findsOneWidget);
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Approve refund decision'),
+      );
       await tester.pumpAndSettle();
-      expect(find.text('Approve request'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.widgetWithText(
+            FilledButton,
+            'Approve refund decision',
+          ),
+        ),
+        findsOneWidget,
+      );
+      // No decision is preselected: support must consciously choose.
+      expect(
+        find.text(
+          'Select a decision above to load the authoritative refund preview.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('Apply deduction'));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.textContaining('180.00 INR'),
+        ),
+        findsOneWidget,
+      );
+      // No settlement method is preselected: support must consciously
+      // choose one before the approval can be submitted.
+      await tester.tap(find.text('Wallet refund'));
+      await tester.pumpAndSettle();
 
       await tester.tap(
         find.descendant(
           of: find.byType(AlertDialog),
-          matching: find.widgetWithText(FilledButton, 'Approve'),
+          matching: find.widgetWithText(
+            FilledButton,
+            'Approve refund decision',
+          ),
         ),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
       expect(detailController.decidedAction, 'approve');
-      expect(find.text('Request approved.'), findsOneWidget);
+      expect(detailController.decidedApplyDeduction, isTrue);
+      expect(detailController.decidedSettlementMethod, 'Wallet');
+      expect(
+        find.textContaining('Refund decision approved.'),
+        findsOneWidget,
+      );
 
       // Let the snackbar expire before pumping the next screen so no timers
       // leak across the test's widget tree replacements.
@@ -289,7 +574,7 @@ void main() {
         ),
         session: _managerSession,
       );
-      expect(find.text('Mark completed'), findsOneWidget);
+      expect(find.text('Complete and credit wallet'), findsOneWidget);
 
       await _pump(
         tester,
@@ -319,6 +604,9 @@ void main() {
           _SeededRefundReplacementController(const RefundReplacementState()),
           session: _managerSession,
         );
+        // Status chips live in the filter sheet behind the AppBar icon.
+        await tester.tap(find.byTooltip('Filters'));
+        await tester.pumpAndSettle();
         expect(find.widgetWithText(ChoiceChip, 'Cancelled (refunded)'), findsOneWidget);
 
         await _pump(
@@ -380,12 +668,119 @@ void main() {
       },
     );
 
+    testWidgets('staff reject forwards the dialog remarks to the backend', (
+      tester,
+    ) async {
+      // Regression: the confirm dialog collected remarks but the decision
+      // handler dropped them, so support's explanation never reached the
+      // customer ticket.
+      final controller = _SeededRefundReplacementController(
+        RefundReplacementState(
+          selectedStaffRequest: request(
+            status: RefundReplacementStatus.pending,
+            source: RefundReplacementSource.deliveryFailed,
+            customerChoice: CustomerChoice.refund,
+          ),
+        ),
+      );
+      await _pump(
+        tester,
+        const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
+        controller,
+        session: _managerSession,
+      );
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Reject'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.byType(TextField),
+        ),
+        'Customer already refunded for this delivery',
+      );
+      await tester.tap(
+        find.descendant(
+          of: find.byType(AlertDialog),
+          matching: find.widgetWithText(FilledButton, 'Reject'),
+        ),
+      );
+      await tester.pump();
+
+      expect(controller.decidedAction, 'reject');
+      expect(
+        controller.decidedRemarks,
+        'Customer already refunded for this delivery',
+      );
+    });
+
+    testWidgets('subscription ticket order row opens the linked delivery', (
+      tester,
+    ) async {
+      // Subscription tickets have no order: the Order row must still open
+      // the authoritative fulfillment record instead of a dead link.
+      final controller = _SeededRefundReplacementController(
+        RefundReplacementState(
+          selectedStaffRequest: request(
+            status: RefundReplacementStatus.pending,
+            source: RefundReplacementSource.deliveryFailed,
+            customerChoice: CustomerChoice.refund,
+            orderPublicId: null,
+            orderNumber: null,
+          ),
+        ),
+      );
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, state) =>
+                const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
+          ),
+          GoRoute(
+            path: '/staff/delivery/:deliveryId',
+            builder: (context, state) => Text(
+              'delivery-stub ${state.pathParameters['deliveryId']}',
+            ),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+      await tester.binding.setSurfaceSize(const Size(800, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        ProviderScope(
+          key: UniqueKey(),
+          overrides: [
+            refundReplacementControllerProvider.overrideWith(() => controller),
+            sessionControllerProvider.overrideWith(
+              () => _SeededSessionController(session: _managerSession),
+            ),
+            refundReplacementRepositoryProvider.overrideWithValue(
+              _FakeRefundReplacementRepository(),
+            ),
+          ],
+          child: MaterialApp.router(
+            theme: ThemeData(useMaterial3: true),
+            routerConfig: router,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Subscription delivery'), findsOneWidget);
+      await tester.tap(find.text('Subscription delivery'));
+      await tester.pumpAndSettle();
+      expect(find.text('delivery-stub delivery-1'), findsOneWidget);
+    });
+
     testWidgets(
-      'approved one-time order explains completion moves no money',
+      'approved one-time order distinguishes settlement from approval',
       (tester) async {
-        // Order-backed tickets settle outside the app: the staff Complete
-        // action records the outcome only. The notice must be explicit so
-        // staff never promise an in-system wallet credit.
+        // Stage 2: completing an approved order Refund credits the wallet —
+        // approval alone moved nothing. The action and copy must name the
+        // settlement explicitly so staff know when money actually moves.
         await _pump(
           tester,
           const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
@@ -400,14 +795,14 @@ void main() {
           session: _managerSession,
         );
 
-        expect(find.text('Mark completed'), findsOneWidget);
+        expect(find.text('Complete and credit wallet'), findsOneWidget);
         expect(
-          find.textContaining('settled in Payments'),
+          find.textContaining('moved no money'),
           findsOneWidget,
         );
 
-        // Subscription tickets pay through the frozen share on completion,
-        // so they must not show the out-of-system notice.
+        // Subscription tickets keep their existing completion copy without
+        // the wallet-settlement notice.
         await _pump(
           tester,
           const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
@@ -637,6 +1032,54 @@ Future<_FakeRefundReplacementRepository> _pump(
   return fakeRepository;
 }
 
+/// Variant of [_pump] hosted inside a [GoRouter] so the customer screen's
+/// `context.pop()` after a successful submit resolves instead of throwing.
+/// Popping the single root route is a no-op, leaving the success snackbar
+/// visible for assertions.
+Future<void> _pumpWithRouter(
+  WidgetTester tester,
+  Widget screen,
+  _SeededRefundReplacementController controller, {
+  AuthSession? session,
+}) async {
+  await tester.binding.setSurfaceSize(const Size(800, 1200));
+  addTearDown(() => tester.binding.setSurfaceSize(null));
+  final router = GoRouter(
+    initialLocation: '/',
+    routes: [
+      GoRoute(
+        path: '/',
+        builder: (context, state) => const Scaffold(body: Text('Home')),
+      ),
+      GoRoute(path: '/request', builder: (context, state) => screen),
+    ],
+  );
+  addTearDown(router.dispose);
+  await tester.pumpWidget(
+    ProviderScope(
+      key: UniqueKey(),
+      overrides: [
+        refundReplacementControllerProvider.overrideWith(() => controller),
+        sessionControllerProvider.overrideWith(
+          () => _SeededSessionController(session: session),
+        ),
+        refundReplacementRepositoryProvider.overrideWithValue(
+          _FakeRefundReplacementRepository(),
+        ),
+      ],
+      child: MaterialApp.router(
+        theme: ThemeData(useMaterial3: true),
+        routerConfig: router,
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  // Push the screen over Home so the post-submit pop() lands back on Home
+  // instead of throwing on an empty stack (go() would replace the stack).
+  router.push('/request');
+  await tester.pumpAndSettle();
+}
+
 class _SeededSessionController extends SessionController {
   _SeededSessionController({this.session});
 
@@ -661,7 +1104,15 @@ class _SeededRefundReplacementController extends RefundReplacementController {
   String? loadedStaffRequestId;
   RefundReplacementType? submittedType;
   String? submittedReason;
+  Uint8List? submittedImageBytes;
+  String? submittedImageFileName;
+  String? submittedImageContentType;
+  bool submitResult = true;
   String? decidedAction;
+  String? decidedRemarks;
+  bool? decidedApplyDeduction;
+  String? decidedWaiverReason;
+  String? decidedSettlementMethod;
 
   @override
   RefundReplacementState build() => seed;
@@ -678,10 +1129,16 @@ class _SeededRefundReplacementController extends RefundReplacementController {
     required String reason,
     String? remarks,
     String? milkTestId,
+    Uint8List? imageBytes,
+    String? imageFileName,
+    String? imageContentType,
   }) async {
     submittedType = type;
     submittedReason = reason;
-    return true;
+    submittedImageBytes = imageBytes;
+    submittedImageFileName = imageFileName;
+    submittedImageContentType = imageContentType;
+    return submitResult;
   }
 
   @override
@@ -715,20 +1172,29 @@ class _SeededRefundReplacementController extends RefundReplacementController {
     String requestId, {
     String? remarks,
     DateTime? replacementDate,
+    bool? applyDeduction,
+    String? waiverReason,
+    String? settlementMethod,
   }) async {
     decidedAction = 'approve';
+    decidedRemarks = remarks;
+    decidedApplyDeduction = applyDeduction;
+    decidedWaiverReason = waiverReason;
+    decidedSettlementMethod = settlementMethod;
     return true;
   }
 
   @override
   Future<bool> reject(String requestId, {String? remarks}) async {
     decidedAction = 'reject';
+    decidedRemarks = remarks;
     return true;
   }
 
   @override
   Future<bool> complete(String requestId, {String? remarks}) async {
     decidedAction = 'complete';
+    decidedRemarks = remarks;
     return true;
   }
 }
@@ -736,6 +1202,36 @@ class _SeededRefundReplacementController extends RefundReplacementController {
 class _FakeRefundReplacementRepository extends RefundReplacementRepository {
   _FakeRefundReplacementRepository()
     : super(api: ApiClient(baseUrl: 'https://api.example.test'));
+
+  OrderRefundPreview? preview;
+  Object? previewFailure;
+  int previewCalls = 0;
+  final List<bool> previewDecisions = [];
+
+  @override
+  Future<OrderRefundPreview> getOrderRefundPreview(
+    String token,
+    String requestId, {
+    required bool applyDeduction,
+  }) async {
+    previewCalls++;
+    previewDecisions.add(applyDeduction);
+    final failure = previewFailure;
+    if (failure != null) throw failure;
+    return preview ??
+        OrderRefundPreview(
+          requestId: requestId,
+          requestNumber: 'RR-2026-0001',
+          orderPublicId: 'order-pub-1',
+          orderNumber: 'ORD-1001',
+          grossBasis: 200,
+          appliedPercentage: applyDeduction ? 10 : 0,
+          deductionAmount: applyDeduction ? 20 : 0,
+          eligiblePaid: 200,
+          proposedRefund: applyDeduction ? 180 : 200,
+          currency: 'INR',
+        );
+  }
 
   ApiByteResponse Function(String token, String requestId, String imageId)?
   imageContent;
@@ -789,6 +1285,7 @@ RefundReplacementEligibility eligibility({
   bool proofImageRequired = true,
   bool hasActiveRequest = false,
   bool isMilkTestRejectedFlow = false,
+  bool isFailedDeliveryWithoutProduct = false,
 }) => RefundReplacementEligibility(
   isEligible: isEligible,
   ineligibleReason: ineligibleReason,
@@ -797,6 +1294,7 @@ RefundReplacementEligibility eligibility({
   hasActiveRequest: hasActiveRequest,
   proofImageRequired: proofImageRequired,
   isMilkTestRejectedFlow: isMilkTestRejectedFlow,
+  isFailedDeliveryWithoutProduct: isFailedDeliveryWithoutProduct,
 );
 
 RefundReplacementImage image() => RefundReplacementImage(
@@ -811,6 +1309,8 @@ RefundReplacementRequest request({
   RefundReplacementStatus status = RefundReplacementStatus.pending,
   RefundReplacementType type = RefundReplacementType.refund,
   RefundReplacementSource source = RefundReplacementSource.customerPostDelivery,
+  String? orderPublicId = 'order-pub-1',
+  String? orderNumber = 'ORD-1001',
   bool includeDecision = false,
   bool isRefundOnly = false,
   List<RefundReplacementImage> images = const [],
@@ -823,8 +1323,8 @@ RefundReplacementRequest request({
   requestId: 'req-1',
   requestNumber: 'RR-2026-0001',
   orderId: 101,
-  orderPublicId: 'order-pub-1',
-  orderNumber: 'ORD-1001',
+  orderPublicId: orderPublicId,
+  orderNumber: orderNumber,
   deliveryId: 'delivery-1',
   deliveryNumber: 'DEL-2001',
   customerId: 55,

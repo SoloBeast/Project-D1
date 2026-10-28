@@ -72,15 +72,11 @@ void main() {
       await tester.pumpAndSettle();
 
       // A fresh browser restores as a guest on the guest home; the login form
-      // is only reached after the visitor explicitly asks to sign in.
+      // is only reached after the visitor explicitly asks to sign in via the
+      // app-bar action (the guest home carries no sign-in prompt card).
       expect(find.text('Welcome to DoodhDirect'), findsOneWidget);
       expect(find.text('Sign in to your account'), findsNothing);
-      final signInButton = find.widgetWithText(FilledButton, 'Sign in');
-      // The prompt card sits at the bottom of the guest home list, so bring
-      // it into the viewport before tapping.
-      await tester.ensureVisible(signInButton);
-      await tester.pumpAndSettle();
-      await tester.tap(signInButton);
+      await tester.tap(find.widgetWithText(TextButton, 'Sign in'));
       await tester.pumpAndSettle();
 
       expect(find.text('Sign in to your account'), findsOneWidget);
@@ -488,18 +484,20 @@ void main() {
         harness.router.go('/home');
         await tester.pumpAndSettle();
 
-        // The More menu still exposes the Notifications destination.
+        // The More menu exposes Support tickets instead of Notifications
+        // (the header bell remains the notification entry point).
         await tester.tap(
           find.byKey(const ValueKey('customer-more-navigation')),
         );
         await tester.pumpAndSettle();
-        final notificationsEntry = find.text('Notifications');
+        final ticketsEntry = find.text('Support tickets');
         await tester.scrollUntilVisible(
-          notificationsEntry,
+          ticketsEntry,
           120,
           scrollable: find.byType(Scrollable).last,
         );
-        expect(notificationsEntry, findsOneWidget);
+        expect(ticketsEntry, findsOneWidget);
+        expect(find.text('Notifications'), findsNothing);
       },
     );
 
@@ -747,11 +745,10 @@ void main() {
         );
         await tester.pumpAndSettle();
         final signOut = find.byKey(const ValueKey('customer-more-sign-out'));
-        await tester.scrollUntilVisible(
-          signOut,
-          120,
-          scrollable: find.byType(Scrollable).last,
-        );
+        // ensureVisible scrolls every ancestor (the sheet list and the page)
+        // so the tap lands inside the viewport however tall the sheet is.
+        await tester.ensureVisible(signOut);
+        await tester.pumpAndSettle();
         await tester.tap(signOut);
         await tester.pumpAndSettle();
 
@@ -1956,6 +1953,10 @@ class _CustomerHomeWalletRepository extends WalletRepository {
 
   @override
   Future<List<WalletTransaction>> getTransactions(String token) async =>
+      const [];
+
+  @override
+  Future<List<WithdrawalRequest>> getWithdrawals(String token) async =>
       const [];
 }
 

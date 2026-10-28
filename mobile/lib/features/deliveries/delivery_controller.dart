@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
@@ -19,6 +21,7 @@ class DeliveryState {
     this.customerDeliveries = const [],
     this.staffDeliveries = const [],
     this.managedDeliveries = const [],
+    this.missedOccurrences = const [],
     this.employees = const [],
     this.staffStatus = DeliveryStatus.assigned,
     this.selectedCustomerDelivery,
@@ -34,6 +37,7 @@ class DeliveryState {
   final List<CustomerDelivery> customerDeliveries;
   final List<DeliveryDetails> staffDeliveries;
   final List<DeliveryDetails> managedDeliveries;
+  final List<MissedOccurrence> missedOccurrences;
   final List<DeliveryEmployee> employees;
   final DeliveryStatus? staffStatus;
   final CustomerDelivery? selectedCustomerDelivery;
@@ -49,6 +53,7 @@ class DeliveryState {
     List<CustomerDelivery>? customerDeliveries,
     List<DeliveryDetails>? staffDeliveries,
     List<DeliveryDetails>? managedDeliveries,
+    List<MissedOccurrence>? missedOccurrences,
     List<DeliveryEmployee>? employees,
     DeliveryStatus? staffStatus,
     bool clearStaffStatus = false,
@@ -68,6 +73,7 @@ class DeliveryState {
     customerDeliveries: customerDeliveries ?? this.customerDeliveries,
     staffDeliveries: staffDeliveries ?? this.staffDeliveries,
     managedDeliveries: managedDeliveries ?? this.managedDeliveries,
+    missedOccurrences: missedOccurrences ?? this.missedOccurrences,
     employees: employees ?? this.employees,
     staffStatus: clearStaffStatus ? null : staffStatus ?? this.staffStatus,
     selectedCustomerDelivery: clearSelectedCustomerDelivery
@@ -162,6 +168,49 @@ class DeliveryController extends Notifier<DeliveryState> {
       ),
     );
   });
+
+  /// Loads past-due unmaterialized subscription occurrences for manager
+  /// confirmation. Kept separate from [loadBranch]: the operational
+  /// delivery list and the missed-occurrence queue have different shapes
+  /// and refresh triggers.
+  Future<void> loadMissedOccurrences(int branchId) async => _load(() async {
+    final missed = await _repository.getMissedOccurrences(_token!, branchId);
+    state = state.copyWith(missedOccurrences: missed);
+  });
+
+  /// Records a manager-confirmed miss, then drops the occurrence from the
+  /// queue and upserts the resulting failed delivery. Returns false when
+  /// offline or unauthorized; the queue is left untouched on failure.
+  Future<bool> failMissedOccurrence(
+    int branchId,
+    String occurrenceId, {
+    required String reason,
+    String? remarks,
+  }) async {
+    if (_token == null) return false;
+    state = state.copyWith(isSaving: true, isOffline: false, clearError: true);
+    try {
+      final delivery = await _repository.failMissedOccurrence(
+        token: _token!,
+        branchId: branchId,
+        occurrenceId: occurrenceId,
+        reason: reason,
+        remarks: remarks,
+      );
+      state = state.copyWith(
+        managedDeliveries: _upsertDetails(state.managedDeliveries, delivery),
+        missedOccurrences: state.missedOccurrences
+            .where((item) => item.occurrenceId != occurrenceId)
+            .toList(growable: false),
+        selectedDelivery: delivery,
+        isSaving: false,
+      );
+      return true;
+    } on Object catch (error) {
+      _setFailure(error, saving: true);
+      return false;
+    }
+  }
 
   Future<void> loadManagedDelivery(String id) async => _load(() async {
     final delivery = await _repository.getManaged(_token!, id);
@@ -292,6 +341,24 @@ class DeliveryController extends Notifier<DeliveryState> {
       _save(
         () => _repository.fail(_token!, id, reason: reason, remarks: remarks),
       );
+  Future<bool> failWithProof(
+    String id, {
+    required String reason,
+    String? remarks,
+    required Uint8List imageBytes,
+    required String fileName,
+    required String contentType,
+  }) => _save(
+    () => _repository.failWithProof(
+      _token!,
+      id,
+      reason: reason,
+      remarks: remarks,
+      imageBytes: imageBytes,
+      fileName: fileName,
+      contentType: contentType,
+    ),
+  );
 
   Future<bool> _save(Future<DeliveryDetails> Function() operation) async {
     if (_token == null) return false;

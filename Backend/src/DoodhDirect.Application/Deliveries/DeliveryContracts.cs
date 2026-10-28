@@ -26,6 +26,34 @@ public sealed record DeliveryNotesRequest(string? Remarks);
 public sealed record FailDeliveryRequest(string Reason, string? Remarks, decimal? Latitude, decimal? Longitude);
 
 /// <summary>
+/// Manager-confirmed miss for a past-due subscription occurrence that was
+/// never operationalized. No proof image is taken: the visit was never
+/// attempted, so there is no doorstep to photograph. The recorded reason
+/// uses the existing failure-reason vocabulary with truthful remarks.
+/// </summary>
+public sealed record FailMissedOccurrenceRequest(string Reason, string? Remarks);
+
+/// <summary>
+/// A past-due scheduled subscription occurrence with no operational delivery
+/// row: the visit was never materialized, assigned or attempted, so the
+/// customer never received the delivery and no failure ticket exists yet.
+/// <see cref="EstimatedRefundAmount"/> is the live per-delivery gross share
+/// (the frozen payable share including incorporated charges); the ticket
+/// freezes it at confirmation time subject to payment-refundable limits.
+/// </summary>
+public sealed record MissedOccurrenceResult(
+    Guid OccurrenceId,
+    Guid SubscriptionId,
+    string SubscriptionNumber,
+    DateOnly ScheduledDate,
+    int DaysOverdue,
+    long BranchId,
+    string BranchName,
+    Guid CustomerId,
+    string CustomerName,
+    decimal EstimatedRefundAmount);
+
+/// <summary>
 /// D1-A: staff proof for failing a subscription delivery (customer fault).
 /// Required for subscription-delivery failures; not supported for one-time
 /// order deliveries (their refund/replacement proof flow is unchanged).
@@ -112,7 +140,24 @@ public sealed record DeliveryResult(
     IReadOnlyCollection<DeliveryBatchAllocationResult> BatchAllocations,
     SubscriptionDeliverySlot? SubscriptionSlot = null,
     decimal? Quantity = null,
-    DeliveryOrderSummary? OrderSummary = null);
+    DeliveryOrderSummary? OrderSummary = null,
+    /// <summary>
+    /// Canonical subscription linkage for subscription-occurrence deliveries:
+    /// the owning subscription, its persisted SUB-series document number, and
+    /// the scheduled occurrence this delivery fulfills. Null for one-time
+    /// order deliveries. Lets employee screens show the same canonical
+    /// subscription reference customers see, accurately labelled.
+    /// </summary>
+    Guid? SubscriptionId = null,
+    string? SubscriptionNumber = null,
+    Guid? SubscriptionDeliveryId = null,
+    /// <summary>
+    /// Authoritative item identity for subscription occurrences, from the
+    /// subscription's frozen product snapshots. Null for one-time orders
+    /// (their items come from <see cref="OrderSummary"/>).
+    /// </summary>
+    string? SubscriptionProductName = null,
+    string? SubscriptionUnitOfMeasure = null);
 
 public sealed record CustomerDeliveryResult(
     Guid DeliveryId,
@@ -128,7 +173,20 @@ public sealed record CustomerDeliveryResult(
     DateTime? CompletedAt,
     DateTime? FailedAt,
     string? FailureReason,
-    string? ActiveOtp = null);
+    string? ActiveOtp = null,
+    /// <summary>
+    /// Explicit subscription linkage for subscription occurrences, replacing
+    /// client-side parsing of the <c>SUB-{guid}-{date}</c> reference text.
+    /// Null for one-time order deliveries.
+    /// </summary>
+    Guid? SubscriptionDeliveryId = null,
+    Guid? SubscriptionId = null,
+    string? SubscriptionNumber = null,
+    SubscriptionDeliverySlot? SubscriptionSlot = null,
+    decimal? Quantity = null,
+    DeliveryOrderSummary? OrderSummary = null,
+    string? SubscriptionProductName = null,
+    string? SubscriptionUnitOfMeasure = null);
 
 public sealed record DeliveryEmployeeResult(
     Guid EmployeeId,
@@ -246,6 +304,18 @@ public interface IDeliveryService : IOneTimeDeliveryCreator
         FailDeliveryRequest request,
         CancellationToken cancellationToken,
         FailDeliveryProof? proof = null);
+
+    Task<IReadOnlyList<MissedOccurrenceResult>> GetMissedOccurrencesAsync(
+        DeliveryActor actor,
+        long branchId,
+        CancellationToken cancellationToken);
+
+    Task<DeliveryResult> FailMissedOccurrenceAsync(
+        DeliveryActor actor,
+        long branchId,
+        Guid occurrenceId,
+        FailMissedOccurrenceRequest request,
+        CancellationToken cancellationToken);
 
     Task<DeliveryLocationResult> RecordLocationAsync(
         DeliveryActor actor,

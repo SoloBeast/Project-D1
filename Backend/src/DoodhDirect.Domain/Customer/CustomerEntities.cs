@@ -50,6 +50,58 @@ public sealed class CustomerProfile : AuditableEntity
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }
 
+/// <summary>
+/// A customer's bank account for wallet withdrawals. One row per customer
+/// (<c>UserId</c> unique). The account number is stored only in
+/// DataProtection-encrypted form (<c>ProtectedAccountNumber</c>); the last
+/// four digits (<c>AccountLast4</c>) are stored in plain text solely for
+/// masked display. Full details are never returned by general profile reads.
+/// </summary>
+public sealed class CustomerBankDetail : AuditableEntity
+{
+    private CustomerBankDetail() { }
+
+    public CustomerBankDetail(
+        long userId,
+        string accountHolderName,
+        string bankName,
+        string protectedAccountNumber,
+        string accountLast4,
+        string ifsc)
+    {
+        UserId = userId;
+        Update(accountHolderName, bankName, protectedAccountNumber, accountLast4, ifsc);
+    }
+
+    public long UserId { get; private set; }
+    public string AccountHolderName { get; private set; } = string.Empty;
+    public string BankName { get; private set; } = string.Empty;
+    public string ProtectedAccountNumber { get; private set; } = string.Empty;
+    public string AccountLast4 { get; private set; } = string.Empty;
+    public string Ifsc { get; private set; } = string.Empty;
+
+    public User User { get; private set; } = null!;
+
+    public void Update(
+        string accountHolderName,
+        string bankName,
+        string protectedAccountNumber,
+        string accountLast4,
+        string ifsc)
+    {
+        AccountHolderName = Required(accountHolderName, nameof(accountHolderName));
+        BankName = Required(bankName, nameof(bankName));
+        ProtectedAccountNumber = Required(protectedAccountNumber, nameof(protectedAccountNumber));
+        AccountLast4 = Required(accountLast4, nameof(accountLast4));
+        Ifsc = Required(ifsc, nameof(ifsc));
+    }
+
+    private static string Required(string value, string parameterName) =>
+        string.IsNullOrWhiteSpace(value)
+            ? throw new ArgumentException("A value is required.", parameterName)
+            : value.Trim();
+}
+
 public sealed class CustomerAddress : AuditableEntity
 {
     private CustomerAddress() { }

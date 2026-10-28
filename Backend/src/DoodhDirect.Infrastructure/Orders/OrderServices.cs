@@ -1,8 +1,10 @@
 using System.Data;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Common;
+using DoodhDirect.Application.Identity;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
+using DoodhDirect.Application.RefundReplacement;
 using DoodhDirect.Application.Setup;
 using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Catalogue;
@@ -10,7 +12,10 @@ using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Payments;
+using DoodhDirect.Domain.RefundReplacement;
+using DoodhDirect.Domain.Wallets;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.RefundReplacement;
 using Microsoft.EntityFrameworkCore;
 
 namespace DoodhDirect.Infrastructure.Orders;
@@ -36,13 +41,40 @@ public sealed class BranchAllocationService(DoodhDirectDbContext dbContext) : IB
                 link.Product.IsActive) == productIds.Length)
             .ToListAsync(cancellationToken);
 
+        // Geographic coverage is determined independently of cart fulfillment:
+        // inside means at least one active branch has an unlimited (NULL)
+        // radius or a configured radius containing the delivery coordinates.
+        // A NULL radius keeps its existing unlimited-radius semantics.
+        var coverage = await dbContext.Branches
+            .AsNoTracking()
+            .Where(branch => branch.IsActive)
+            .Select(branch => new
+            {
+                branch.Latitude,
+                branch.Longitude,
+                branch.ServiceRadiusKm
+            })
+            .ToListAsync(cancellationToken);
+        var isInsideAnyBranchRadius = coverage.Any(branch =>
+            !branch.ServiceRadiusKm.HasValue ||
+            DistanceKm(latitude, longitude, branch.Latitude, branch.Longitude) <= branch.ServiceRadiusKm.Value);
+
+        if (!isInsideAnyBranchRadius)
+        {
+            await RejectOutsideRadiusIneligibleItemsAsync(productIds, cancellationToken);
+        }
+
         var eligible = candidates
             .Select(branch => new
             {
                 Branch = branch,
                 DistanceKm = DistanceKm(latitude, longitude, branch.Latitude, branch.Longitude)
             })
-            .Where(candidate => !candidate.Branch.ServiceRadiusKm.HasValue ||
+            // Inside a radius, only in-radius branches may fulfil the cart: a
+            // nearby branch that cannot fulfil the whole cart never falls back
+            // to an outside-radius branch for non-opted-in products.
+            .Where(candidate => !isInsideAnyBranchRadius ||
+                               !candidate.Branch.ServiceRadiusKm.HasValue ||
                                candidate.DistanceKm <= candidate.Branch.ServiceRadiusKm.Value)
             .Where(candidate => candidate.Branch.ProductBranches
                 .Where(link => productIds.Contains(link.ProductId))
@@ -63,6 +95,35 @@ public sealed class BranchAllocationService(DoodhDirectDbContext dbContext) : IB
             eligible.Branch.Code,
             eligible.Branch.Name,
             decimal.Round(eligible.DistanceKm, 3));
+    }
+
+    /// <summary>
+    /// Outside every branch radius, every cart product must explicitly allow
+    /// outside-radius ordering. Rejects the whole cart naming each offending
+    /// SKU; lines are never silently dropped and quantities never changed.
+    /// </summary>
+    private async Task RejectOutsideRadiusIneligibleItemsAsync(
+        long[] productIds,
+        CancellationToken cancellationToken)
+    {
+        var products = await dbContext.Products
+            .AsNoTracking()
+            .Where(product => productIds.Contains(product.Id))
+            .Select(product => new { product.Sku, product.AllowOrderOutsideBranchRadius })
+            .ToListAsync(cancellationToken);
+        var ineligible = products
+            .Where(product => !product.AllowOrderOutsideBranchRadius)
+            .Select(product => product.Sku)
+            .OrderBy(sku => sku, StringComparer.Ordinal)
+            .ToArray();
+        if (ineligible.Length > 0)
+        {
+            throw new ValidationAppException(
+                "The delivery address is outside every branch service radius, so the following products cannot be ordered: " +
+                string.Join(", ", ineligible) +
+                ". Remove them from the cart or choose a different delivery address.",
+                "items");
+        }
     }
 
     private static void ValidateCoordinates(decimal latitude, decimal longitude)
@@ -92,7 +153,8 @@ public sealed class OrderService(
     IBranchAllocationService branchAllocationService,
     INotificationEventWriter notificationEventWriter,
     INumberSeriesService numberSeriesService,
-    IIndiaTimeProvider timeProvider) : IOrderService
+    IIndiaTimeProvider timeProvider,
+    IRefundReplacementConfigurationService refundConfigurationService) : IOrderService
 {
     public async Task<CheckoutResult> PreviewAsync(long customerId, CheckoutRequest request, CancellationToken cancellationToken)
     {
@@ -126,6 +188,7 @@ public sealed class OrderService(
         var calculation = await CalculateAsync(customerId, request, cancellationToken);
         string? orderNumber = null;
         string? notificationEventKey = null;
+        List<string>? managerNotificationEventKeys = null;
         Order? order = null;
         try
         {
@@ -207,6 +270,10 @@ public sealed class OrderService(
                         ["message"] = $"Order {order.OrderNumber} has been created."
                     },
                     $"/orders/{order.PublicId}"));
+                managerNotificationEventKeys = await AddManagerOrderPlacedEventsAsync(
+                    calculation.Allocation.BranchId,
+                    order,
+                    cancellationToken);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
         }
@@ -236,6 +303,19 @@ public sealed class OrderService(
                 }
             }
 
+            if (managerNotificationEventKeys is not null)
+            {
+                foreach (var managerKey in managerNotificationEventKeys)
+                {
+                    var managerEvent = dbContext.NotificationEvents.Local
+                        .SingleOrDefault(item => item.EventKey == managerKey);
+                    if (managerEvent is not null)
+                    {
+                        dbContext.Entry(managerEvent).State = EntityState.Detached;
+                    }
+                }
+            }
+
             var duplicate = await LoadOrderAsync(customerId, idempotencyKey.Trim(), cancellationToken);
             if (duplicate is not null) return await ToResultAsync(duplicate, cancellationToken);
             throw;
@@ -243,6 +323,60 @@ public sealed class OrderService(
 
         await LoadNavigationAsync(order!, cancellationToken);
         return await ToResultAsync(order!, cancellationToken);
+    }
+
+    /// <summary>
+    /// Notifies the active Dairy Manager and Delivery Manager recipients for the
+    /// allocated branch when a one-time order is successfully placed. Recipients
+    /// are resolved from persisted roles, active users/roles, and branch
+    /// assignments — never from client input — and scoped to the authoritative
+    /// allocated branch (branch-specific or global assignments only). One
+    /// deterministic event per recipient keeps retried order creation free of
+    /// duplicate notifications; a single employee holding both roles receives
+    /// only one copy.
+    /// </summary>
+    private async Task<List<string>> AddManagerOrderPlacedEventsAsync(
+        long branchId,
+        Order order,
+        CancellationToken cancellationToken)
+    {
+        var staffRoleCodes = new[]
+        {
+            AuthorizationCodes.DairyManager,
+            AuthorizationCodes.DeliveryManager
+        };
+        var recipientIds = await dbContext.UserRoles
+            .AsNoTracking()
+            .Where(x => (x.BranchId == branchId || x.BranchId == null)
+                && staffRoleCodes.Contains(x.Role.Code)
+                && x.Role.IsActive
+                && x.User.IsActive)
+            .Select(x => x.UserId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        var keys = new List<string>(recipientIds.Count);
+        foreach (var userId in recipientIds)
+        {
+            var eventKey = $"order:{order.PublicId:N}:placed:staff:{userId}";
+            keys.Add(eventKey);
+            notificationEventWriter.Add(new NotificationEventRequest(
+                userId,
+                NotificationEventTypes.OrderCreated,
+                eventKey,
+                new Dictionary<string, string>
+                {
+                    ["orderId"] = order.PublicId.ToString(),
+                    ["orderNumber"] = order.OrderNumber,
+                    ["branchCode"] = order.BranchCodeSnapshot,
+                    ["branchName"] = order.BranchNameSnapshot,
+                    ["message"] = $"New order {order.OrderNumber} for {order.BranchNameSnapshot}."
+                },
+                $"/staff/orders/{order.PublicId}",
+                timeProvider.Now));
+        }
+
+        return keys;
     }
 
     public async Task<IReadOnlyList<OrderResult>> GetForCustomerAsync(long customerId, CancellationToken cancellationToken) =>
@@ -285,12 +419,172 @@ public sealed class OrderService(
             : await ToResultAsync(order, cancellationToken);
     }
 
-    public async Task<OrderResult> CancelAsync(long customerId, Guid orderId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Server-backed cancellation preview: authoritative pickup state, the
+    /// live Admin Centre deduction percentage, and the exact refund estimate
+    /// the final endpoint would settle. Read-only: never mutates, never
+    /// moves money, never requires a reason. The confirm endpoint
+    /// recalculates everything; the preview is a reference only.
+    /// </summary>
+    public async Task<CancelOrderPreviewResult> PreviewCancelAsync(long customerId, Guid orderId, CancellationToken cancellationToken)
+    {
+        var order = await QueryOrders()
+            .SingleOrDefaultAsync(order => order.PublicId == orderId && order.CustomerId == customerId, cancellationToken)
+            ?? throw new NotFoundException("Order was not found.");
+        var existingCancellation = await dbContext.OrderCancellations
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.OrderId == order.Id, cancellationToken);
+        if (existingCancellation is not null)
+        {
+            return new CancelOrderPreviewResult(false, "The order is already cancelled.", null, false, 0m, order.PayableAmount, 0m, 0m, 0m, false);
+        }
+
+        var deliveries = await dbContext.Deliveries
+            .AsNoTracking()
+            .Where(delivery => delivery.OrderId == order.Id)
+            .ToListAsync(cancellationToken);
+        var pickup = ClassifyPickup(order, deliveries);
+        if (pickup.BlockReason is not null)
+        {
+            return new CancelOrderPreviewResult(false, pickup.BlockReason, pickup.DeliveryStatus, pickup.PickupOccurred, 0m, order.PayableAmount, 0m, 0m, 0m, false);
+        }
+
+        var payments = await dbContext.Payments
+            .AsNoTracking()
+            .Where(payment => payment.OrderId == order.Id && payment.CustomerId == customerId)
+            .OrderBy(payment => payment.Id)
+            .ToListAsync(cancellationToken);
+        var paymentBlock = ClassifyPayments(payments);
+        if (paymentBlock is not null)
+        {
+            return new CancelOrderPreviewResult(false, paymentBlock, pickup.DeliveryStatus, pickup.PickupOccurred, 0m, order.PayableAmount, 0m, 0m, 0m, false);
+        }
+
+        var deductionPercentage = pickup.PickupOccurred
+            ? (await refundConfigurationService.GetAsync(cancellationToken)).DeliveryFailDeductionPercentage
+            : 0m;
+        var settlement = SettleAmounts(order.PayableAmount, deductionPercentage, payments);
+        return new CancelOrderPreviewResult(
+            true, null, pickup.DeliveryStatus, pickup.PickupOccurred,
+            deductionPercentage, settlement.GrossBasis, settlement.DeductionAmount,
+            settlement.RefundTotal, settlement.EligiblePaid, pickup.PickupOccurred);
+    }
+
+    public async Task<OrderResult> CancelAsync(long customerId, Guid orderId, CancelOrderRequest request, CancellationToken cancellationToken)
+    {
+        var (reasonCode, comment) = ValidateCancelRequest(request);
+        try
+        {
+            OrderResult? result = null;
+            await ExecuteSerializableAsync(async () =>
+            {
+                result = await CancelCoreAsync(customerId, orderId, request, reasonCode, comment, cancellationToken);
+            }, cancellationToken);
+            return result!;
+        }
+        catch (DbUpdateException)
+        {
+            // A concurrent winner committed first (unique OrderCancellation
+            // row, wallet/refund idempotency keys): adopt its persisted
+            // outcome instead of duplicating money movement.
+            dbContext.ChangeTracker.Clear();
+            var current = await QueryOrders()
+                .SingleOrDefaultAsync(x => x.PublicId == orderId && x.CustomerId == customerId, cancellationToken)
+                ?? throw new NotFoundException("Order was not found.");
+            return await ToResultAsync(current, cancellationToken);
+        }
+    }
+
+    private async Task<OrderResult> CancelCoreAsync(
+        long customerId,
+        Guid orderId,
+        CancelOrderRequest request,
+        string reasonCode,
+        string? comment,
+        CancellationToken cancellationToken)
     {
         var order = await QueryOrders()
             .SingleOrDefaultAsync(order => order.PublicId == orderId && order.CustomerId == customerId, cancellationToken)
             ?? throw new NotFoundException("Order was not found.");
         var now = timeProvider.Now;
+
+        var existingCancellation = await dbContext.OrderCancellations
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.OrderId == order.Id, cancellationToken);
+        if (existingCancellation is not null)
+        {
+            return await ToResultAsync(order, cancellationToken);
+        }
+
+        var deliveries = await dbContext.Deliveries
+            .Include(delivery => delivery.Otps)
+            .Where(delivery => delivery.OrderId == order.Id)
+            .ToListAsync(cancellationToken);
+        var pickup = ClassifyPickup(order, deliveries);
+        if (pickup.BlockReason is not null)
+        {
+            throw new BusinessRuleException(pickup.BlockReason);
+        }
+
+        var payments = await dbContext.Payments
+            .Include(payment => payment.Refunds)
+            .Where(payment => payment.OrderId == order.Id && payment.CustomerId == customerId)
+            .OrderBy(payment => payment.Id)
+            .ToListAsync(cancellationToken);
+        var paymentBlock = ClassifyPayments(payments);
+        if (paymentBlock is not null)
+        {
+            throw new ConflictException(paymentBlock);
+        }
+
+        // Overlapping refund/replacement claims: an unresolved ticket owns
+        // the delivery's financial outcome, and an already-settled portion
+        // must never be refunded again. Cancellation creates no extra
+        // failed-delivery ticket to implement itself.
+        if (deliveries.Count > 0)
+        {
+            var deliveryIds = deliveries.Select(delivery => delivery.Id).ToList();
+            var overlapping = await dbContext.RefundReplacementRequests
+                .AsNoTracking()
+                .Where(ticket => deliveryIds.Contains(ticket.DeliveryId))
+                .ToListAsync(cancellationToken);
+            if (overlapping.Any(ticket => ticket.Status is RefundReplacementStatus.Pending
+                or RefundReplacementStatus.Approved
+                or RefundReplacementStatus.AwaitingCustomerChoice))
+            {
+                throw new ConflictException(
+                    "The order cannot be cancelled yet: an unresolved refund claim exists for its delivery. Resolve it with support first.");
+            }
+        }
+        if (await OneTimeOrderRefund.HasVerifiedSettlementAsync(dbContext, order.Id, customerId, cancellationToken))
+        {
+            throw new ConflictException(
+                "The order cannot be cancelled with a refund: a part of its paid amount was already refunded. Contact support.");
+        }
+
+        var deductionPercentage = pickup.PickupOccurred
+            ? (await refundConfigurationService.GetAsync(cancellationToken)).DeliveryFailDeductionPercentage
+            : 0m;
+        var settlement = SettleAmounts(order.PayableAmount, deductionPercentage, payments);
+
+        if (pickup.PickupOccurred)
+        {
+            // O3: client confirmation is UX only — the server revalidates the
+            // live terms and rejects a stale or forged confirmation instead
+            // of repricing silently.
+            if (!request.Confirmed)
+            {
+                throw new BusinessRuleException(
+                    "Cancelling after pickup requires explicit confirmation of the shown deduction and refund.");
+            }
+            if (request.ConfirmedDeductionPercentage != deductionPercentage
+                || request.ConfirmedRefundAmount != settlement.RefundTotal)
+            {
+                throw new ConflictException(
+                    "The cancellation terms changed since the preview. Refresh the preview and confirm again.");
+            }
+        }
+
         try
         {
             order.Cancel(now);
@@ -300,20 +594,306 @@ public sealed class OrderService(
             throw new BusinessRuleException(exception.Message);
         }
 
-        var deliveries = await dbContext.Deliveries
-            .Include(delivery => delivery.Otps)
-            .Where(delivery => delivery.OrderId == order.Id)
-            .ToListAsync(cancellationToken);
+        var cancelReason = $"Order cancelled by customer ({reasonCode}).";
         foreach (var delivery in deliveries)
         {
+            try
+            {
+                if (delivery.Status is DeliveryStatus.PickedUp or DeliveryStatus.OutForDelivery or DeliveryStatus.Arrived)
+                {
+                    delivery.CancelAfterPickup(now, cancelReason);
+                }
+                else if (delivery.Status is DeliveryStatus.ReadyForAssignment or DeliveryStatus.Assigned)
+                {
+                    delivery.Cancel(now, cancelReason);
+                }
+            }
+            catch (InvalidOperationException exception)
+            {
+                throw new BusinessRuleException(exception.Message);
+            }
             foreach (var otp in delivery.Otps)
             {
                 otp.Invalidate(now);
             }
         }
 
+        var cancellation = new OrderCancellation(
+            order.Id,
+            reasonCode,
+            comment,
+            customerId,
+            now);
+        cancellation.RecordRefundSnapshot(
+            deductionPercentage, settlement.DeductionAmount, settlement.RefundTotal, settlement.GrossBasis);
+        dbContext.OrderCancellations.Add(cancellation);
+
+        if (settlement.RefundTotal > 0)
+        {
+            var allocations = OneTimeOrderRefund.Allocate(settlement.RefundTotal, payments);
+            var walletKey = CancelWalletKey(order.PublicId);
+            var currency = payments.Count > 0 ? payments[0].Currency : "INR";
+            var firstPaymentId = allocations.Count > 0 ? allocations[0].Payment.Id : (long?)null;
+            await OneTimeOrderRefund.CreditWalletAsync(
+                dbContext, customerId, order.Id, firstPaymentId, currency,
+                settlement.RefundTotal, walletKey,
+                pickup.PickupOccurred
+                    ? $"Order-cancellation refund for {order.OrderNumber} after pickup (deduction {deductionPercentage:0.##}% retained)."
+                    : $"Order-cancellation full refund for {order.OrderNumber} before pickup.",
+                now, cancellationToken);
+            foreach (var allocation in allocations)
+            {
+                RecordCancelRefund(
+                    allocation.Payment, allocation.Amount,
+                    CancelPaymentKey(order.PublicId, allocation.Payment.Id),
+                    customerId, now);
+            }
+
+            dbContext.AddAuditLog(new Domain.Auditing.AuditLog(
+                customerId,
+                "ORDER.CANCEL_REFUND",
+                "Order",
+                order.PublicId.ToString(),
+                System.Text.Json.JsonSerializer.Serialize(new { Status = order.Status.ToString() }),
+                System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Status = order.Status.ToString(),
+                    ReasonCode = reasonCode,
+                    HasComment = comment is not null,
+                    PickupOccurred = pickup.PickupOccurred,
+                    GrossBasis = settlement.GrossBasis,
+                    DeductionPercentage = deductionPercentage,
+                    DeductionAmount = settlement.DeductionAmount,
+                    RefundTotal = settlement.RefundTotal,
+                    EligiblePaid = settlement.EligiblePaid
+                }),
+                null,
+                null,
+                comment ?? reasonCode,
+                now));
+            notificationEventWriter.Add(new NotificationEventRequest(
+                customerId,
+                NotificationEventTypes.OrderCancelRefunded,
+                CancelEventKey(order.PublicId),
+                new Dictionary<string, string>
+                {
+                    ["orderId"] = order.PublicId.ToString(),
+                    ["orderNumber"] = order.OrderNumber,
+                    ["grossBasis"] = settlement.GrossBasis.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+                    ["deductionPercentage"] = deductionPercentage.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture),
+                    ["deductionAmount"] = settlement.DeductionAmount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+                    ["amount"] = settlement.RefundTotal.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+                    ["message"] = pickup.PickupOccurred
+                        ? $"Your order {order.OrderNumber} was cancelled after pickup. {settlement.RefundTotal:0.00} was credited to your wallet."
+                        : $"Your order {order.OrderNumber} was cancelled before pickup. {settlement.RefundTotal:0.00} was credited to your wallet."
+                },
+                $"/orders/{order.PublicId}",
+                now));
+        }
+        else
+        {
+            dbContext.AddAuditLog(new Domain.Auditing.AuditLog(
+                customerId,
+                "ORDER.CANCEL",
+                "Order",
+                order.PublicId.ToString(),
+                System.Text.Json.JsonSerializer.Serialize(new { Status = "Confirmed" }),
+                System.Text.Json.JsonSerializer.Serialize(new { Status = order.Status.ToString(), ReasonCode = reasonCode, HasComment = comment is not null, RefundTotal = 0m }),
+                null,
+                null,
+                comment ?? reasonCode,
+                now));
+        }
+
         await dbContext.SaveChangesAsync(cancellationToken);
         return await ToResultAsync(order, cancellationToken);
+    }
+
+    private sealed record PickupClassification(bool PickupOccurred, string? DeliveryStatus, string? BlockReason);
+
+    private static PickupClassification ClassifyPickup(Order order, IReadOnlyCollection<Delivery> deliveries)
+    {
+        if (deliveries.Count == 0)
+        {
+            return new PickupClassification(false, null, null);
+        }
+
+        var pickupOccurred = false;
+        string? status = null;
+        foreach (var delivery in deliveries)
+        {
+            status ??= delivery.Status.ToString();
+            switch (delivery.Status)
+            {
+                case DeliveryStatus.Delivered:
+                    return new PickupClassification(false, delivery.Status.ToString(),
+                        $"Order {order.OrderNumber} has already been delivered and cannot be cancelled. Contact support for help.");
+                case DeliveryStatus.Failed:
+                    return new PickupClassification(false, delivery.Status.ToString(),
+                        $"Order {order.OrderNumber} already has a failed delivery. Raise a refund request instead of cancelling.");
+                case DeliveryStatus.PickedUp:
+                case DeliveryStatus.OutForDelivery:
+                case DeliveryStatus.Arrived:
+                    pickupOccurred = true;
+                    break;
+            }
+        }
+
+        return new PickupClassification(pickupOccurred, status, null);
+    }
+
+    private static string? ClassifyPayments(IReadOnlyList<Payment> payments)
+    {
+        if (payments.Any(payment => payment.Status is PaymentStatus.Initiated or PaymentStatus.Pending))
+        {
+            return "The order cannot be cancelled yet: a payment attempt is still awaiting gateway confirmation. Wait for it to succeed, expire, or resolve it before cancelling.";
+        }
+        if (payments.Any(payment => payment.Status == PaymentStatus.RefundPending))
+        {
+            return "The order cannot be cancelled yet: another refund is already in progress. Wait for it to settle before cancelling.";
+        }
+
+        return null;
+    }
+
+    private sealed record CancelSettlement(decimal GrossBasis, decimal DeductionAmount, decimal RefundTotal, decimal EligiblePaid);
+
+    private static CancelSettlement SettleAmounts(decimal payableAmount, decimal deductionPercentage, IReadOnlyList<Payment> payments)
+    {
+        var gross = decimal.Round(payableAmount, 2, MidpointRounding.AwayFromZero);
+        var deduction = decimal.Round(gross * deductionPercentage / 100m, 2, MidpointRounding.AwayFromZero);
+        var net = gross - deduction;
+        if (net < 0) net = 0;
+        var eligiblePaid = payments
+            .Where(payment => payment.Status is PaymentStatus.Success or PaymentStatus.PartiallyRefunded)
+            .Sum(payment => payment.Amount - payment.RefundedAmount);
+        var refund = net > eligiblePaid ? eligiblePaid : net;
+        return new CancelSettlement(gross, deduction, refund, eligiblePaid);
+    }
+
+    internal static string CancelWalletKey(Guid orderPublicId) =>
+        $"order-cancel:{orderPublicId:N}:wallet";
+
+    internal static string CancelPaymentKey(Guid orderPublicId, long paymentId) =>
+        $"order-cancel:{orderPublicId:N}:payment:{paymentId}";
+
+    internal static string CancelEventKey(Guid orderPublicId) =>
+        $"order-cancel:{orderPublicId:N}:refunded";
+
+    private static void RecordCancelRefund(
+        Payment payment,
+        decimal amount,
+        string idempotencyKey,
+        long customerId,
+        DateTime now)
+    {
+        // Same local refund recording as the one-time failed-delivery path:
+        // no gateway call, the money returns as wallet credit, and the
+        // domain (Amount - RefundedAmount) cap is authoritative. Committed
+        // rows with these keys are reused, never duplicated.
+        var existing = payment.Refunds.SingleOrDefault(x => x.IdempotencyKey == idempotencyKey);
+        if (existing is not null)
+        {
+            if (existing.Status != RefundStatus.Succeeded)
+            {
+                throw new ConflictException(
+                    "A refund with the same reference is already in progress.");
+            }
+
+            return;
+        }
+
+        Refund refund;
+        try
+        {
+            refund = payment.StartRefund(amount, "Order-cancellation refund to wallet.", idempotencyKey, customerId);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new ValidationAppException(exception.Message, exception.ParamName);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new ConflictException(exception.Message);
+        }
+        try
+        {
+            refund.Succeed(now);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new ConflictException(exception.Message);
+        }
+        try
+        {
+            payment.CompleteRefund(amount);
+        }
+        catch (ArgumentException exception)
+        {
+            throw new ValidationAppException(exception.Message, exception.ParamName);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new ConflictException(exception.Message);
+        }
+    }
+
+    private static (string ReasonCode, string? Comment) ValidateCancelRequest(CancelOrderRequest? request)
+    {
+        if (request is null)
+        {
+            throw new ValidationAppException("A cancellation reason or comment is required.", "reasonCode");
+        }
+
+        var reason = string.IsNullOrWhiteSpace(request.ReasonCode) ? null : request.ReasonCode.Trim();
+        var comment = string.IsNullOrWhiteSpace(request.Comment) ? null : request.Comment.Trim();
+        if (comment is not null && comment.Length > OrderCancellation.MaxCommentLength)
+        {
+            throw new ValidationAppException($"Cancellation comment cannot exceed {OrderCancellation.MaxCommentLength} characters.", "comment");
+        }
+
+        if (reason is null && comment is null)
+        {
+            throw new ValidationAppException("A cancellation reason or comment is required.", "reasonCode");
+        }
+
+        if (reason is not null)
+        {
+            try
+            {
+                reason = OrderCancellation.NormalizeReason(reason);
+            }
+            catch (ArgumentException exception)
+            {
+                throw new ValidationAppException(exception.Message, exception.ParamName ?? "reasonCode");
+            }
+        }
+
+        try
+        {
+            if (reason is null)
+            {
+                if (comment is null)
+                {
+                    throw new ValidationAppException("A cancellation reason or comment is required.", "reasonCode");
+                }
+            }
+            else
+            {
+                comment = OrderCancellation.NormalizeComment(comment, reason);
+            }
+        }
+        catch (ArgumentException exception)
+        {
+            throw new ValidationAppException(exception.Message, exception.ParamName ?? "comment");
+        }
+
+        if (reason is null)
+        {
+            reason = nameof(OrderCancellationReason.Other);
+        }
+
+        return (reason, comment);
     }
 
     private async Task<Calculation> CalculateAsync(long customerId, CheckoutRequest request, CancellationToken cancellationToken)
@@ -537,12 +1117,28 @@ public sealed class OrderService(
         var deliveries = await dbContext.Deliveries
             .Where(delivery => delivery.OrderId.HasValue && orderIds.Contains(delivery.OrderId.Value))
             .ToDictionaryAsync(delivery => delivery.OrderId!.Value, cancellationToken);
+        var cancellations = await dbContext.OrderCancellations
+            .AsNoTracking()
+            .Where(x => orderIds.Contains(x.OrderId))
+            .ToDictionaryAsync(x => x.OrderId, cancellationToken);
 
         return orders
             .Select(order => order.ToResult(
                 payments.GetValueOrDefault(order.Id),
                 deliveries.GetValueOrDefault(order.Id),
-                chargesByOrder.GetValueOrDefault(order.Id, [])))
+                chargesByOrder.GetValueOrDefault(order.Id, []),
+                cancellations.TryGetValue(order.Id, out var cancellation)
+                    ? new OrderCancellationResult(
+                        cancellation.ReasonCode, cancellation.Comment, cancellation.CancelledByUserId, cancellation.CancelledAt,
+                        cancellation.RefundAmount.HasValue
+                            ? new OrderCancellationRefundResult(
+                                cancellation.GrossBasis ?? 0m,
+                                cancellation.AppliedDeductionPercentage ?? 0m,
+                                cancellation.DeductionAmount ?? 0m,
+                                cancellation.RefundAmount.Value,
+                                cancellation.RefundAmount.Value > 0 ? "Completed" : "None")
+                            : null)
+                    : null))
             .ToArray();
     }
 

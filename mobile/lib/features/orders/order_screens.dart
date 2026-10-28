@@ -6,10 +6,13 @@ import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_controller.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'cancel_order_dialog.dart';
 import 'order_controller.dart';
 import 'order_models.dart';
 
@@ -341,7 +344,15 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                       ],
                     ),
             ),
-      bottomNavigationBar: isEmpty ? null : stickyBar(),
+      bottomNavigationBar: isEmpty
+          ? const CustomerBottomNavigation(currentPath: '/checkout')
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                stickyBar(),
+                const CustomerBottomNavigation(currentPath: '/checkout'),
+              ],
+            ),
     );
   }
 
@@ -1322,54 +1333,175 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(
-      () => ref.read(orderControllerProvider.notifier).loadOrders(),
-    );
+    Future.microtask(_load);
+  }
+
+  Future<void> _load() async {
+    await ref.read(orderControllerProvider.notifier).loadOrders();
+    if (mounted) {
+      await ref
+          .read(deliveryControllerProvider.notifier)
+          .loadCustomerDeliveries();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(orderControllerProvider);
+    final deliveryState = ref.watch(deliveryControllerProvider);
+    // Subscription occurrences arrive as deliveries, not orders: surface
+    // them here so subscription customers see their deliveries on this
+    // screen too, with tracking one tap away.
+    final subscriptionDeliveries = deliveryState.customerDeliveries
+        .where(
+          (delivery) =>
+              delivery.sourceType == DeliverySourceType.subscriptionOccurrence,
+        )
+        .toList(growable: false);
+    final hasOrders = state.orders.isNotEmpty;
+    final showDeliveries =
+        subscriptionDeliveries.isNotEmpty ||
+        (deliveryState.isLoading && !hasOrders) ||
+        (deliveryState.errorMessage != null && !hasOrders);
     return CustomerShell(
       currentPath: '/orders',
       title: 'My orders',
-      child: state.isLoading && state.orders.isEmpty
+      child: state.isLoading && !hasOrders && !showDeliveries
           ? const LoadingStatePanel(message: 'Loading your orders...')
-          : state.errorMessage != null && state.orders.isEmpty
+          : state.errorMessage != null && !hasOrders && !showDeliveries
           ? ErrorStatePanel(
               message: state.errorMessage!,
-              onRetry: () =>
-                  ref.read(orderControllerProvider.notifier).loadOrders(),
+              onRetry: _load,
             )
-          : state.orders.isEmpty
+          : !hasOrders && !showDeliveries
           ? EmptyStatePanel(
               title: 'No orders yet',
-              message: 'Your confirmed one-time orders will appear here.',
+              message:
+                  'Your confirmed one-time orders and subscription deliveries will appear here.',
               action: FilledButton(
                 onPressed: () => context.push('/catalogue'),
                 child: const Text('Browse products'),
               ),
             )
           : RefreshIndicator(
-              onRefresh: () =>
-                  ref.read(orderControllerProvider.notifier).loadOrders(),
+              onRefresh: _load,
               child: DoodhPage(
-                child: ListView.separated(
+                child: ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.only(bottom: DoodhSpacing.xl),
-                  itemCount: state.orders.length,
-                  separatorBuilder: (_, _) =>
+                  children: [
+                    for (final order in state.orders) ...[
+                      _CustomerOrderCard(
+                        order: order,
+                        onTap: () => context.push('/orders/${order.publicId}'),
+                      ),
                       const SizedBox(height: DoodhSpacing.md),
-                  itemBuilder: (context, index) {
-                    final order = state.orders[index];
-                    return _CustomerOrderCard(
-                      order: order,
-                      onTap: () => context.push('/orders/${order.publicId}'),
-                    );
-                  },
+                    ],
+                    if (showDeliveries) ...[
+                      _SubscriptionDeliveriesSection(
+                        deliveries: subscriptionDeliveries,
+                        isLoading: deliveryState.isLoading,
+                        errorMessage: deliveryState.errorMessage,
+                        onRetry: () => ref
+                            .read(deliveryControllerProvider.notifier)
+                            .loadCustomerDeliveries(),
+                        onOpen: (delivery) => context.push(
+                          '/deliveries/${delivery.deliveryId}',
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ),
+    );
+  }
+}
+
+/// Subscription occurrences listed on the Orders screen. One-time orders
+/// stay above; each row opens delivery tracking for that occurrence.
+class _SubscriptionDeliveriesSection extends StatelessWidget {
+  const _SubscriptionDeliveriesSection({
+    required this.deliveries,
+    required this.isLoading,
+    required this.errorMessage,
+    required this.onRetry,
+    required this.onOpen,
+  });
+
+  final List<CustomerDelivery> deliveries;
+  final bool isLoading;
+  final String? errorMessage;
+  final VoidCallback onRetry;
+  final ValueChanged<CustomerDelivery> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Subscription deliveries',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: DoodhSpacing.xs),
+        Text(
+          'Your recurring plan deliveries and their live status.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: DoodhColors.muted,
+          ),
+        ),
+        const SizedBox(height: DoodhSpacing.sm),
+        if (isLoading && deliveries.isEmpty)
+          const LoadingStatePanel(message: 'Loading deliveries...')
+        else if (errorMessage != null && deliveries.isEmpty)
+          ErrorStatePanel(message: errorMessage!, onRetry: onRetry)
+        else ...[
+          for (final delivery in deliveries) ...[
+            DoodhCard(
+              semanticLabel:
+                  '${delivery.trackingReference}, subscription delivery '
+                  '${delivery.status.label}, '
+                  '${formatOrderDate(delivery.scheduledDate)}',
+              onTap: () => onOpen(delivery),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          delivery.trackingReference,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      _LabeledStatusPill(
+                        label: 'Delivery',
+                        value: delivery.status.label,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: DoodhSpacing.xs),
+                  Text(
+                    formatOrderDate(delivery.scheduledDate),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: DoodhColors.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: DoodhSpacing.md),
+          ],
+        ],
+      ],
     );
   }
 }
@@ -1562,27 +1694,114 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   }
 
   Future<void> _cancel(OrderSummary order) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cancel order?'),
-        content: const Text(
-          'This confirmed order will be cancelled and cannot be restored.',
+    final controller = ref.read(orderControllerProvider.notifier);
+    var preview = await controller.previewCancel(order.publicId);
+    if (!mounted) return;
+    if (preview == null) {
+      _showCancelError(
+        ref.read(orderControllerProvider).errorMessage ??
+            'Could not load cancellation details. Try again.',
+      );
+      return;
+    }
+    String? reasonCode;
+    String? comment;
+    bool confirmed = false;
+    String? serverError;
+    // Null-promoted once into a non-nullable working copy; later preview
+    // refreshes reassign the copy so promotion is never invalidated.
+    var current = preview;
+    if (!current.canCancel) {
+      // Ineligible (delivered / blocked): show the authoritative reason and
+      // route to the status/help path instead of bypassing restrictions.
+      await showCancelOrderDialog(
+        context,
+        preview: current,
+        serverError: current.blockReason,
+      );
+      return;
+    }
+    while (mounted) {
+      final input = await showCancelOrderDialog(
+        context,
+        initialReasonCode: reasonCode,
+        initialComment: comment,
+        initialConfirmed: confirmed,
+        preview: current,
+        serverError: serverError,
+      );
+      if (input == null || !mounted) return;
+      reasonCode = input.reasonCode;
+      comment = input.comment;
+      confirmed = input.confirmed;
+      final ok = await controller.cancel(
+        order.publicId,
+        reasonCode: reasonCode,
+        comment: comment,
+        confirmed: current.pickupOccurred ? confirmed : false,
+        confirmedDeductionPercentage: current.pickupOccurred
+            ? current.deductionPercentage
+            : null,
+        confirmedRefundAmount:
+            current.pickupOccurred ? current.estimatedRefund : null,
+      );
+      if (!mounted) return;
+      if (ok) {
+        final refund = ref.read(orderControllerProvider).selectedOrder?.cancellation?.refund;
+        _showCancelSuccess(refund?.refundedAmount);
+        return;
+      }
+      final message = ref.read(orderControllerProvider).errorMessage ??
+          'Cancellation failed. Try again.';
+      if (_isStalePreview(message)) {
+        // Authoritative terms changed: refresh and require reconfirmation
+        // without losing the typed reason/comment.
+        final refreshed = await controller.previewCancel(order.publicId);
+        if (!mounted) return;
+        if (refreshed == null) {
+          _showCancelError(message);
+          return;
+        }
+        current = refreshed;
+        confirmed = false;
+        serverError =
+            'The cancellation terms changed. Review the updated deduction and confirm again.';
+        if (!current.canCancel) {
+          await showCancelOrderDialog(
+            context,
+            preview: current,
+            serverError: current.blockReason ?? serverError,
+          );
+          return;
+        }
+        continue;
+      }
+      serverError = message;
+    }
+  }
+
+  bool _isStalePreview(String message) {
+    final normalized = message.toLowerCase();
+    return normalized.contains('changed since the preview') ||
+        normalized.contains('refresh the preview');
+  }
+
+  void _showCancelError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showCancelSuccess(double? refundedAmount) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          refundedAmount != null && refundedAmount > 0
+              ? 'Order cancelled. ₹${refundedAmount.toStringAsFixed(2)} credited to your wallet.'
+              : 'Order cancelled.',
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep order'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Cancel order'),
-          ),
-        ],
       ),
     );
-    if (confirmed != true || !mounted) return;
-    await ref.read(orderControllerProvider.notifier).cancel(order.publicId);
   }
 
   @override
@@ -1591,6 +1810,9 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     final order = state.selectedOrder;
     return Scaffold(
       appBar: AppBar(title: const Text('Order details')),
+      bottomNavigationBar: CustomerBottomNavigation(
+        currentPath: '/orders/${widget.orderId}',
+      ),
       body: state.isLoading && order == null
           ? const LoadingStatePanel(message: 'Loading order...')
           : order == null
@@ -1870,8 +2092,12 @@ class _OrderSupportSection extends StatelessWidget {
           icon: Icons.assignment_return_outlined,
           title: 'Check refund or replacement availability',
           subtitle: 'Open this delivery’s request workflow',
+          // Orders are always one-time order deliveries, which support Refund
+          // only; the authoritative source travels as the `source` query
+          // parameter so the request screen hides Replacement up front.
           onTap: () => context.push(
-            '/deliveries/${order.deliveryPublicId}/refund-replacement',
+            '/deliveries/${order.deliveryPublicId}/refund-replacement'
+            '?source=${DeliverySourceType.oneTimeOrder.name}',
           ),
         ),
       DoodhActionTile(
@@ -1880,6 +2106,12 @@ class _OrderSupportSection extends StatelessWidget {
         subtitle: 'View request status and history',
         onTap: () => context.push('/refund-replacements'),
       ),
+      if (order.cancellation != null)
+        DoodhInfoBanner(
+          message:
+              'Cancelled: ${order.cancellation!.reasonCode}${order.cancellation!.comment == null ? '' : ' — ${order.cancellation!.comment}'}',
+          icon: Icons.cancel_outlined,
+        ),
     ],
   );
 }

@@ -13,6 +13,7 @@ using DoodhDirect.Domain.Orders;
 using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.RefundReplacement;
 using DoodhDirect.Domain.Setup;
+using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Infrastructure.Persistence;
 using DoodhDirect.Infrastructure.RefundReplacement;
 using DoodhDirect.Infrastructure.Setup;
@@ -189,6 +190,70 @@ public sealed class RefundReplacementServiceTests
     }
 
     [Fact]
+    public async Task Eligibility_is_eligible_for_failed_delivery_within_window()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        await harness.FailAsync();
+
+        var result = await harness.EligibilityAsync();
+
+        Assert.True(result.IsEligible);
+        Assert.Null(result.IneligibleReason);
+        Assert.False(result.IsMilkTestRejectedFlow);
+        // Stage 2 conditional evidence: no product was received.
+        Assert.False(result.ProofImageRequired);
+        Assert.Equal(
+            harness.Delivery.FailedAt!.Value.AddHours(48),
+            result.Deadline);
+    }
+
+    [Fact]
+    public async Task Eligibility_expires_for_failed_delivery_after_window()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        await harness.FailAsync();
+        harness.Clock.Advance(TimeSpan.FromHours(48));
+
+        var result = await harness.EligibilityAsync();
+
+        Assert.False(result.IsEligible);
+        Assert.Equal(
+            "The refund or replacement request window of 48 hours has closed.",
+            result.IneligibleReason);
+    }
+
+    [Fact]
+    public async Task Submit_creates_pending_request_for_failed_delivery()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        await harness.FailAsync();
+
+        var result = await harness.SubmitAsync(reason: "The delivery boy marked it failed but I was home");
+
+        Assert.Equal(
+            harness.Delivery.FailedAt!.Value.AddHours(48),
+            result.Deadline);
+        // Stage 2 conditional evidence: a confirmed failed delivery with no
+        // product received is exempt from the proof image requirement.
+        Assert.False(result.ProofImageRequired);
+    }
+
+    [Fact]
+    public async Task Submit_rejects_failed_delivery_after_window_closes()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        await harness.FailAsync();
+        harness.Clock.Advance(TimeSpan.FromHours(48));
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
+            () => harness.SubmitAsync());
+
+        Assert.Equal(
+            "The refund or replacement request window of 48 hours has closed.",
+            exception.Message);
+    }
+
+    [Fact]
     public async Task Eligibility_reports_active_request()
     {
         await using var harness = await RefundReplacementHarness.CreateAsync();
@@ -234,6 +299,151 @@ public sealed class RefundReplacementServiceTests
         Assert.NotNull(result.Deadline);
     }
 
+    // ------------------------------------------ subscription post-delivery
+
+    [Fact]
+    public async Task SubscriptionPostDelivery_Eligibility_is_eligible_within_window()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        var delivery = await harness.SeedSubscriptionDeliveryAsync();
+        await harness.DeliverDeliveryAsync(delivery);
+
+        var result = await harness.EligibilityForAsync(delivery);
+
+        Assert.True(result.IsEligible);
+        Assert.Null(result.IneligibleReason);
+        Assert.Equal(48, result.WindowHours);
+        Assert.False(result.HasActiveRequest);
+        Assert.True(result.ProofImageRequired);
+        Assert.False(result.IsMilkTestRejectedFlow);
+        Assert.Equal(delivery.CompletedAt!.Value.AddHours(48), result.Deadline);
+    }
+
+    [Fact]
+    public async Task SubscriptionPostDelivery_Eligibility_requires_completion()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        var delivery = await harness.SeedSubscriptionDeliveryAsync();
+
+        var result = await harness.EligibilityForAsync(delivery);
+
+        Assert.False(result.IsEligible);
+        Assert.Equal(
+            "Refund or replacement requests are only available after the delivery is completed.",
+            result.IneligibleReason);
+    }
+
+    [Fact]
+    public async Task SubscriptionPostDelivery_Submit_refund_creates_pending_ticket()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        var delivery = await harness.SeedSubscriptionDeliveryAsync();
+        await harness.DeliverDeliveryAsync(delivery);
+
+        var result = await harness.SubmitForAsync(delivery, remarks: "Please review");
+
+        Assert.Equal("RR/000001", result.RequestNumber);
+        Assert.Equal(RefundReplacementStatus.Pending, result.Status);
+        Assert.Equal(RefundReplacementSource.CustomerPostDelivery, result.Source);
+        Assert.Equal(RefundReplacementType.Refund, result.Type);
+        Assert.Null(result.OrderId);
+        Assert.Null(result.OrderPublicId);
+        Assert.NotNull(result.SubscriptionDeliveryPublicId);
+        Assert.Equal(delivery.PublicId, result.DeliveryId);
+        Assert.Equal(48, result.DeliveryFailWindowHoursSnapshot);
+        Assert.NotNull(result.DeliveryFailDeductionPercentageSnapshot);
+        Assert.Equal(delivery.CompletedAt!.Value.AddHours(48), result.Deadline);
+        Assert.True(result.ProofImageRequired);
+        Assert.False(result.IsRefundOnly);
+        var image = Assert.Single(result.Images);
+        Assert.Equal("proof.jpg", image.FileName);
+
+        var actions = await AuditActionsAsync(harness, result.RequestId);
+        Assert.Equal(["REFUND_REPLACEMENT.IMAGE_UPLOAD", "REFUND_REPLACEMENT.SUBMIT"], actions);
+
+        var notificationEvent = await harness.Db.NotificationEvents.SingleAsync();
+        Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
+        Assert.Equal(NotificationEventTypes.RefundReplacementSubmitted, notificationEvent.EventType);
+    }
+
+    [Fact]
+    public async Task SubscriptionPostDelivery_Submit_replacement_is_allowed()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        var delivery = await harness.SeedSubscriptionDeliveryAsync();
+        await harness.DeliverDeliveryAsync(delivery);
+
+        var result = await harness.SubmitForAsync(delivery, type: RefundReplacementType.Replacement);
+
+        Assert.Equal(RefundReplacementType.Replacement, result.Type);
+        Assert.Equal(RefundReplacementStatus.Pending, result.Status);
+        Assert.NotNull(result.SubscriptionDeliveryPublicId);
+    }
+
+    [Fact]
+    public async Task SubscriptionPostDelivery_Submit_rejects_replacement_for_replacement_occurrence()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        var (subscription, occurrence) = await harness.SeedSubscriptionAsync();
+        var first = await harness.MaterializeSubscriptionDeliveryAsync(
+            occurrence.Id, occurrence.ScheduledDate);
+        await harness.DeliverDeliveryAsync(first);
+        var ticket = await harness.SubmitForAsync(first);
+        var ticketId = await harness.Db.RefundReplacementRequests
+            .Where(x => x.PublicId == ticket.RequestId)
+            .Select(x => x.Id)
+            .SingleAsync();
+
+        var today = DateOnly.FromDateTime(harness.Clock.Now);
+        subscription.AddDelivery(today.AddDays(1));
+        await harness.Db.SaveChangesAsync();
+        var failed = subscription.Deliveries.Single(x => x.ScheduledDate == today.AddDays(1));
+        subscription.MarkFailed(failed, harness.Clock.Now);
+        var replacement = subscription.AddReplacementDelivery(
+            failed, today.AddDays(2), ticketId, "replacement seed");
+        await harness.Db.SaveChangesAsync();
+
+        var delivery = await harness.MaterializeSubscriptionDeliveryAsync(
+            replacement.Id, replacement.ScheduledDate, "SUB-TEST-REPLACEMENT");
+        await harness.DeliverDeliveryAsync(delivery);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
+            () => harness.SubmitForAsync(delivery, type: RefundReplacementType.Replacement));
+
+        Assert.Equal(
+            "Only a refund is available for a re-delivery replacement; it cannot be replaced again.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task SubscriptionPostDelivery_Submit_rejects_before_completion()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        var delivery = await harness.SeedSubscriptionDeliveryAsync();
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
+            () => harness.SubmitForAsync(delivery));
+
+        Assert.Equal(
+            "Refund or replacement requests are only available after the delivery is completed.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task SubscriptionPostDelivery_Submit_rejects_milk_test_link()
+    {
+        await using var harness = await RefundReplacementHarness.CreateAsync();
+        var delivery = await harness.SeedSubscriptionDeliveryAsync();
+        await harness.DeliverDeliveryAsync(delivery);
+
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(
+            () => harness.SubmitForAsync(delivery, milkTestId: Guid.NewGuid()));
+
+        Assert.Equal(
+            "The milk-test rejection flow requires a failed delivery.",
+            exception.Message);
+    }
+
     // --------------------------------------------------------------------- submit
 
     [Fact]
@@ -255,7 +465,7 @@ public sealed class RefundReplacementServiceTests
         Assert.Equal(harness.Branch.Id, result.BranchId);
 
         var actions = await AuditActionsAsync(harness, result.RequestId);
-        Assert.Equal(["REFUND_REPLACEMENT.SUBMIT"], actions);
+        Assert.Equal(["REFUND_REPLACEMENT.IMAGE_UPLOAD", "REFUND_REPLACEMENT.SUBMIT"], actions);
 
         var notificationEvent = await harness.Db.NotificationEvents.SingleAsync();
         Assert.Equal(harness.Customer.Id, notificationEvent.UserId);
@@ -348,7 +558,8 @@ public sealed class RefundReplacementServiceTests
         await using var harness = await RefundReplacementHarness.CreateAsync();
         var milkTest = await harness.CreateRejectedMilkTestOnFailedDeliveryAsync();
 
-        var result = await harness.SubmitAsync();
+        // The auto-linked milk-test flow is upload-closed: no photo rides along.
+        var result = await harness.SubmitAsync(withPhoto: false);
 
         Assert.Equal(RefundReplacementSource.MilkTestRejected, result.Source);
         Assert.Equal(milkTest.Id, result.MilkTestId);
@@ -588,20 +799,34 @@ public sealed class RefundReplacementServiceTests
         await using var harness = await RefundReplacementHarness.CreateAsync();
         await harness.DeliverAsync();
         var request = await harness.SubmitAsync();
+        // Stage 2 conditional evidence: delivered-product claims require a
+        // photo before approval.
+        await harness.UploadAsync(request.RequestId);
 
         var approved = await harness.Service.ApproveAsync(
             harness.StaffActor(harness.Staff),
             request.RequestId,
-            new ApproveRefundReplacementRequest("Approved by support"),
+            new ApproveRefundReplacementRequest("Approved by support", ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
         Assert.Equal(harness.Staff.Id, approved.DecidedByUserId);
         Assert.Equal("Approved by support", approved.DecisionRemarks);
         Assert.NotNull(approved.DecidedAt);
+        // Stage 1: the shared configured deduction is snapshotted at approval.
+        Assert.Equal(10m, approved.AppliedDeductionPercentage);
+        Assert.False(approved.DeductionWaived);
+        Assert.Null(approved.DeductionWaiverReason);
 
         var actions = await AuditActionsAsync(harness, request.RequestId);
-        Assert.Equal(["REFUND_REPLACEMENT.APPROVE", "REFUND_REPLACEMENT.SUBMIT"], actions);
+        Assert.Equal(
+            [
+                "REFUND_REPLACEMENT.APPROVE",
+                "REFUND_REPLACEMENT.IMAGE_UPLOAD",
+                "REFUND_REPLACEMENT.IMAGE_UPLOAD",
+                "REFUND_REPLACEMENT.SUBMIT"
+            ],
+            actions);
 
         var notificationEvent = await harness.Db.NotificationEvents
             .OrderByDescending(x => x.Id)
@@ -614,27 +839,26 @@ public sealed class RefundReplacementServiceTests
         var variables = Variables(notificationEvent);
         Assert.Equal("Approved", variables.GetProperty("status").GetString());
         Assert.Equal(
-            "Your refund/replacement request has been approved.",
+            "Your refund request has been approved with a customer-fault deduction of 10.00% applied.",
             variables.GetProperty("message").GetString());
     }
 
     [Fact]
     public async Task Decision_requires_pending_request()
-    {
-        await using var harness = await RefundReplacementHarness.CreateAsync();
+    {        await using var harness = await RefundReplacementHarness.CreateAsync();
         await harness.DeliverAsync();
         var request = await harness.SubmitAsync();
+        await harness.UploadAsync(request.RequestId);
         await harness.Service.ApproveAsync(
             harness.StaffActor(harness.Staff),
             request.RequestId,
-            new ApproveRefundReplacementRequest(null),
+            new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
-        var approveAgain = await Assert.ThrowsAsync<ConflictException>(
-            () => harness.Service.ApproveAsync(
+        var approveAgain = await Assert.ThrowsAsync<ConflictException>(() => harness.Service.ApproveAsync(
                 harness.StaffActor(harness.Staff),
                 request.RequestId,
-                new ApproveRefundReplacementRequest(null),
+                new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet),
                 CancellationToken.None));
         var rejectAfter = await Assert.ThrowsAsync<ConflictException>(
             () => harness.Service.RejectAsync(
@@ -670,10 +894,11 @@ public sealed class RefundReplacementServiceTests
         await using var harness = await RefundReplacementHarness.CreateAsync();
         await harness.DeliverAsync();
         var request = await harness.SubmitAsync();
+        await harness.UploadAsync(request.RequestId);
         await harness.Service.ApproveAsync(
             harness.StaffActor(harness.Staff),
             request.RequestId,
-            new ApproveRefundReplacementRequest(null),
+            new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
         // D1-D order-refund safety: this order-backed Refund completes only
@@ -713,6 +938,8 @@ public sealed class RefundReplacementServiceTests
             [
                 "REFUND_REPLACEMENT.APPROVE",
                 "REFUND_REPLACEMENT.COMPLETE",
+                "REFUND_REPLACEMENT.IMAGE_UPLOAD",
+                "REFUND_REPLACEMENT.IMAGE_UPLOAD",
                 "REFUND_REPLACEMENT.SUBMIT"
             ],
             actions);
@@ -741,21 +968,34 @@ public sealed class RefundReplacementServiceTests
         Assert.Equal(harness.ImageBytes.Length, image.FileSize);
         Assert.NotEqual(Guid.Empty, image.ImageId);
 
-        var stored = await harness.Db.RefundReplacementImages.SingleAsync();
+        // Stage 2.1: the submission already bound one photo; the upload appends
+        // a second. Both blobs are stored privately under the ticket's prefix.
+        var storedImages = await harness.Db.RefundReplacementImages
+            .OrderBy(x => x.Id)
+            .ToArrayAsync();
+        Assert.Equal(2, storedImages.Length);
+        var stored = storedImages[1];
         Assert.Equal(harness.Customer.Id, stored.UploadedByUserId);
         Assert.Contains($"/{harness.Branch.Id}/{request.RequestId:N}/", stored.StorageKey);
         Assert.EndsWith(".jpg", stored.StorageKey);
         Assert.Equal(harness.ImageBytes, harness.Storage.Files[stored.StorageKey]);
+        Assert.Equal(2, harness.Storage.Files.Count);
 
         var actions = await AuditActionsAsync(harness, request.RequestId);
-        Assert.Equal(["REFUND_REPLACEMENT.IMAGE_UPLOAD", "REFUND_REPLACEMENT.SUBMIT"], actions);
+        Assert.Equal(
+            [
+                "REFUND_REPLACEMENT.IMAGE_UPLOAD",
+                "REFUND_REPLACEMENT.IMAGE_UPLOAD",
+                "REFUND_REPLACEMENT.SUBMIT"
+            ],
+            actions);
 
         var detail = await harness.Service.GetForCustomerAsync(
             harness.CustomerActor(harness.Customer),
             request.RequestId,
             CancellationToken.None);
         Assert.NotNull(detail);
-        Assert.Single(detail.Images);
+        Assert.Equal(2, detail.Images.Count);
     }
 
     [Theory]
@@ -782,26 +1022,29 @@ public sealed class RefundReplacementServiceTests
                 CancellationToken.None));
 
         Assert.Equal(expectedMessage, exception.Message);
-        Assert.Empty(harness.Storage.Files);
+        // Stage 2.1: only the submission-bound photo is stored; the rejected
+        // upload stored nothing new.
+        Assert.Single(harness.Storage.Files);
     }
 
     [Fact]
     public async Task Upload_requires_pending_request()
-    {
-        await using var harness = await RefundReplacementHarness.CreateAsync();
+    {        await using var harness = await RefundReplacementHarness.CreateAsync();
         await harness.DeliverAsync();
         var request = await harness.SubmitAsync();
+        await harness.UploadAsync(request.RequestId);
         await harness.Service.ApproveAsync(
             harness.StaffActor(harness.Staff),
             request.RequestId,
-            new ApproveRefundReplacementRequest(null),
+            new ApproveRefundReplacementRequest(null, ApplyDeduction: false, WaiverReason: "Goodwill gesture", SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
-        var exception = await Assert.ThrowsAsync<ConflictException>(
-            () => harness.UploadAsync(request.RequestId));
+        var exception = await Assert.ThrowsAsync<ConflictException>(() => harness.UploadAsync(request.RequestId));
 
         Assert.Equal("A proof image can only be added while the request is pending.", exception.Message);
-        Assert.Empty(harness.Storage.Files);
+        // The submission-bound photo and the pre-approval upload remain; the
+        // rejected post-approval upload stored nothing new.
+        Assert.Equal(2, harness.Storage.Files.Count);
     }
 
     [Fact]
@@ -809,10 +1052,11 @@ public sealed class RefundReplacementServiceTests
     {
         await using var harness = await RefundReplacementHarness.CreateAsync();
         await harness.CreateRejectedMilkTestOnFailedDeliveryAsync();
-        var request = await harness.SubmitAsync();
+        var request = await harness.SubmitAsync(withPhoto: false);
 
         var exception = await Assert.ThrowsAsync<BusinessRuleException>(
             () => harness.UploadAsync(request.RequestId));
+
 
         Assert.Equal(
             "A proof image is not required for a request opened from a rejected doorstep milk test.",
@@ -830,9 +1074,12 @@ public sealed class RefundReplacementServiceTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => harness.UploadAsync(request.RequestId));
 
-        Assert.Empty(harness.Storage.Files);
+        // Stage 2.1: the submission-bound photo and its blob survive; only the
+        // orphaned upload blob was compensating-deleted and no second image row
+        // was persisted.
+        Assert.Single(harness.Storage.Files);
         Assert.Single(harness.Storage.DeletedKeys);
-        Assert.Empty(await harness.Db.RefundReplacementImages.ToArrayAsync());
+        Assert.Single(await harness.Db.RefundReplacementImages.ToArrayAsync());
     }
 
     [Fact]
@@ -990,15 +1237,131 @@ public sealed class RefundReplacementServiceTests
         public Task<RefundReplacementEligibilityResult> EligibilityAsync() =>
             Service.GetEligibilityAsync(CustomerActor(Customer), Delivery.PublicId, CancellationToken.None);
 
+        public Task<RefundReplacementEligibilityResult> EligibilityForAsync(Delivery delivery) =>
+            Service.GetEligibilityAsync(CustomerActor(Customer), delivery.PublicId, CancellationToken.None);
+
+        public Task<RefundReplacementRequestResult> SubmitForAsync(
+            Delivery delivery,
+            RefundReplacementType type = RefundReplacementType.Refund,
+            string reason = "The delivered milk was sour",
+            string? remarks = null,
+            Guid? milkTestId = null,
+            bool withPhoto = true) =>
+            Service.SubmitAsync(
+                CustomerActor(Customer),
+                new SubmitRefundReplacementRequest(delivery.PublicId, type, reason, remarks, milkTestId),
+                CancellationToken.None,
+                withPhoto ? ProofImage() : null);
+
+        /// <summary>
+        /// Seeds a subscription stack (category, product, subscription with one
+        /// scheduled occurrence) for the harness customer.
+        /// </summary>
+        public async Task<(Subscription Subscription, SubscriptionDelivery Occurrence)> SeedSubscriptionAsync(
+            string referenceNumber = "SUB-TEST-001")
+        {
+            var category = new ProductCategory("MILK", "Milk");
+            Db.ProductCategories.Add(category);
+            await Db.SaveChangesAsync();
+            var product = new Product(
+                category.Id, $"MILK-{referenceNumber}", "Fresh Milk", null, "litre", 80m);
+            Db.Add(product);
+            await Db.SaveChangesAsync();
+
+            var address = await Db.CustomerAddresses
+                .SingleAsync(x => x.UserId == Customer.Id);
+            var today = DateOnly.FromDateTime(Clock.Now);
+            var subscription = new Subscription(
+                Customer.Id,
+                product.Id,
+                address.Id,
+                Branch.Id,
+                $"subscription-{referenceNumber}",
+                today,
+                today.AddDays(7),
+                1m,
+                80m,
+                8,
+                product.Sku,
+                product.Name,
+                product.UnitOfMeasure,
+                Branch.Code,
+                Branch.Name,
+                "1 Main Road, Central, Bengaluru, Karnataka 560001");
+            subscription.AddDelivery(today);
+            subscription.Activate(Clock.Now);
+            Db.Subscriptions.Add(subscription);
+            await Db.SaveChangesAsync();
+            return (subscription, subscription.Deliveries.Single());
+        }
+
+        /// <summary>
+        /// Materializes the operational delivery row for a subscription
+        /// occurrence (the staff pipeline step the refund flow reads).
+        /// </summary>
+        public async Task<Delivery> MaterializeSubscriptionDeliveryAsync(
+            long occurrenceId,
+            DateOnly scheduledDate,
+            string referenceNumber = "SUB-TEST-001")
+        {
+            var delivery = Delivery.ForSubscriptionOccurrence(
+                occurrenceId,
+                Customer.Id,
+                Branch.Id,
+                scheduledDate,
+                referenceNumber,
+                "Customer",
+                Customer.Mobile!,
+                "1 Main Road, Central, Bengaluru, Karnataka 560001",
+                null,
+                12.9716m,
+                77.5946m);
+            delivery.Assign(Staff.Id, Staff.Id, Clock.Now, null);
+            Db.Deliveries.Add(delivery);
+            await Db.SaveChangesAsync();
+            return delivery;
+        }
+
+        public async Task<Delivery> SeedSubscriptionDeliveryAsync(
+            string referenceNumber = "SUB-TEST-001")
+        {
+            var (_, occurrence) = await SeedSubscriptionAsync(referenceNumber);
+            return await MaterializeSubscriptionDeliveryAsync(
+                occurrence.Id, occurrence.ScheduledDate, referenceNumber);
+        }
+
+        public async Task DeliverDeliveryAsync(Delivery delivery)
+        {
+            delivery.PickUp(Staff.Id, Clock.Now, null);
+            Clock.Advance(TimeSpan.FromMinutes(1));
+            delivery.Start(Staff.Id, Clock.Now);
+            Clock.Advance(TimeSpan.FromMinutes(1));
+            delivery.Arrive(Staff.Id, Clock.Now);
+            Clock.Advance(TimeSpan.FromMinutes(1));
+            delivery.RecordOtpVerified(Staff.Id, Clock.Now);
+            Clock.Advance(TimeSpan.FromMinutes(1));
+            delivery.Complete(Staff.Id, Clock.Now, null);
+            await Db.SaveChangesAsync();
+        }
+
+        // Stage 2.1: the harness submits valid tickets — a photo rides with
+        // the submission for photo-required flows (milk-test-rejection tickets
+        // stay upload-closed, so they never carry one). Tests asserting the
+        // missing-evidence rejection pass withPhoto: false explicitly.
         public Task<RefundReplacementRequestResult> SubmitAsync(
             RefundReplacementType type = RefundReplacementType.Refund,
             string reason = "The delivered item was not satisfactory",
             string? remarks = null,
-            Guid? milkTestId = null) =>
+            Guid? milkTestId = null,
+            bool withPhoto = true) =>
             Service.SubmitAsync(
                 CustomerActor(Customer),
                 new SubmitRefundReplacementRequest(Delivery.PublicId, type, reason, remarks, milkTestId),
-                CancellationToken.None);
+                CancellationToken.None,
+                withPhoto && milkTestId is null ? ProofImage() : null);
+
+        public SubmitRefundReplacementImage ProofImage() =>
+            new(new MemoryStream(ImageBytes, writable: false), "proof.jpg", "image/jpeg", ImageBytes.Length);
 
         public Task<RefundReplacementImageResult> UploadAsync(Guid requestId) =>
             Service.UploadImageAsync(
@@ -1027,6 +1390,14 @@ public sealed class RefundReplacementServiceTests
             Delivery.RecordOtpVerified(Staff.Id, Clock.Now);
             Clock.Advance(TimeSpan.FromMinutes(1));
             Delivery.Complete(Staff.Id, Clock.Now, null);
+            await Db.SaveChangesAsync();
+        }
+
+        public async Task FailAsync(string reason = "Customer not available")
+        {
+            await AdvanceToArrivedAsync();
+            Clock.Advance(TimeSpan.FromMinutes(1));
+            Delivery.Fail(Staff.Id, Clock.Now, reason, null, null, null);
             await Db.SaveChangesAsync();
         }
 

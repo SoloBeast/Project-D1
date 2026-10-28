@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Security.Claims;
+using DoodhDirect.Api.Authorization;
 using DoodhDirect.Api.Controllers;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Identity;
@@ -40,27 +41,26 @@ public sealed class OrdersControllerTests
     }
 
     [Fact]
-    public void StaffController_RequiresBranchReadPermission()
+    public void StaffController_RequiresBranchOrAdminReadPermission()
     {
         var authorize = Assert.Single(
             typeof(StaffOrdersController).GetCustomAttributes<AuthorizeAttribute>(inherit: false));
 
-        Assert.Equal($"permission:{AuthorizationCodes.OrdersReadBranch}", authorize.Policy);
+        Assert.Equal(AuthorizationPolicyNames.AnyStaffOrderRead, authorize.Policy);
     }
 
     [Fact]
-    public void StaffController_DoesNotGrantGlobalOrOwnershipReadPermission()
+    public void StaffController_DoesNotGrantOwnershipReadPermission()
     {
         var authorize = Assert.Single(
             typeof(StaffOrdersController).GetCustomAttributes<AuthorizeAttribute>(inherit: false));
 
-        var permission = Assert.IsType<string>(authorize.Policy).Split(':', 2)[1];
-
-        Assert.Equal(AuthorizationCodes.OrdersReadBranch, permission);
-        Assert.NotEqual(AuthorizationCodes.OrdersRead, permission);
-        Assert.NotEqual(AuthorizationCodes.OrdersReadOwn, permission);
-        Assert.NotEqual(AuthorizationCodes.OrdersCancelOwn, permission);
-        Assert.DoesNotContain(AuthorizationCodes.OrdersCreateOwn, permission, StringComparison.Ordinal);
+        Assert.StartsWith("AnyPermission:", authorize.Policy, StringComparison.Ordinal);
+        Assert.Contains(AuthorizationCodes.OrdersReadBranch, authorize.Policy, StringComparison.Ordinal);
+        Assert.Contains(AuthorizationCodes.OrdersRead, authorize.Policy, StringComparison.Ordinal);
+        Assert.DoesNotContain(AuthorizationCodes.OrdersReadOwn, authorize.Policy, StringComparison.Ordinal);
+        Assert.DoesNotContain(AuthorizationCodes.OrdersCancelOwn, authorize.Policy, StringComparison.Ordinal);
+        Assert.DoesNotContain(AuthorizationCodes.OrdersCreateOwn, authorize.Policy, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -200,6 +200,12 @@ public sealed class OrdersControllerTests
             CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<OrderResult> CancelAsync(
+            long customerId,
+            Guid orderId,
+            CancelOrderRequest request,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<CancelOrderPreviewResult> PreviewCancelAsync(
             long customerId,
             Guid orderId,
             CancellationToken cancellationToken) => throw new NotSupportedException();

@@ -108,6 +108,13 @@ public sealed class Payment : AuditableEntity
 
     public long? OrderId { get; private set; }
     public long? SubscriptionId { get; private set; }
+    /// <summary>
+    /// Split-payment plan grouping. Null for standalone payments; when set,
+    /// this row is one component (wallet or gateway) of a wallet-first plan
+    /// whose components share the same group id and target. At most one
+    /// positive Wallet row and one positive Razorpay row exist per group.
+    /// </summary>
+    public Guid? PaymentGroupId { get; private set; }
     public long CustomerId { get; private set; }
     public PaymentMethod Method { get; private set; }
     public PaymentStatus Status { get; private set; }
@@ -144,6 +151,20 @@ public sealed class Payment : AuditableEntity
         GatewayOrderId = Required(gatewayOrderId, nameof(gatewayOrderId));
         GatewayStatus = Required(gatewayStatus, nameof(gatewayStatus));
         Status = PaymentStatus.Pending;
+    }
+
+    public void AssignGroup(Guid paymentGroupId)
+    {
+        if (paymentGroupId == Guid.Empty)
+        {
+            throw new ArgumentException("A payment group id is required.", nameof(paymentGroupId));
+        }
+        if (PaymentGroupId.HasValue && PaymentGroupId.Value != paymentGroupId)
+        {
+            throw new InvalidOperationException("The payment is already assigned to a different payment group.");
+        }
+
+        PaymentGroupId = paymentGroupId;
     }
 
     public void MarkWalletPending()

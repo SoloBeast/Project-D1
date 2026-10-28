@@ -77,7 +77,11 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: DoodhSpacing.pagePadding,
           children: [
-            if (branches.length > 1)
+            // The branch picker only appears on the generic dashboard
+            // entry. Managers arriving from a per-dairy home-screen card
+            // land directly on that dairy's dashboard (widget.branchId),
+            // so no selection step is needed.
+            if (branches.length > 1 && widget.branchId == null)
               DropdownButtonFormField<int>(
                 initialValue: branch,
                 decoration: const InputDecoration(labelText: 'Branch'),
@@ -91,7 +95,8 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
                     .toList(growable: false),
                 onChanged: (value) => setState(() => _branchId = value),
               ),
-            if (branches.length > 1) const SizedBox(height: 16),
+            if (branches.length > 1 && widget.branchId == null)
+              const SizedBox(height: 16),
             if (state.isLoading && state.dashboard == null)
               const SizedBox(height: 240, child: LoadingStatePanel())
             else if (state.isUnauthorized)
@@ -113,6 +118,21 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
                 children: [
                   DoodhMetricTile(
                     height: double.infinity,
+                    icon: Icons.inventory_outlined,
+                    label: 'Available batches',
+                    value: '${state.dashboard?.availableBatchCount ?? 0}',
+                    onTap: () => context.push('/dairy/branch/$branch/batches'),
+                  ),
+                  DoodhMetricTile(
+                    height: double.infinity,
+                    icon: Icons.fact_check_outlined,
+                    label: 'Production entries',
+                    value: '${state.dashboard?.productionEntryCount ?? 0}',
+                    onTap: () =>
+                        context.push('/dairy/branch/$branch/production'),
+                  ),
+                  DoodhMetricTile(
+                    height: double.infinity,
                     icon: Icons.water_drop_outlined,
                     label: 'Produced',
                     value: state.dashboard == null
@@ -121,6 +141,8 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
                             state.dashboard!.quantityProduced,
                             state.dashboard!.unit,
                           ),
+                    onTap: () =>
+                        context.push('/dairy/branch/$branch/production'),
                   ),
                   DoodhMetricTile(
                     height: double.infinity,
@@ -132,18 +154,8 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
                             state.dashboard!.availableQuantity,
                             state.dashboard!.unit,
                           ),
-                  ),
-                  DoodhMetricTile(
-                    height: double.infinity,
-                    icon: Icons.fact_check_outlined,
-                    label: 'Production entries',
-                    value: '${state.dashboard?.productionEntryCount ?? 0}',
-                  ),
-                  DoodhMetricTile(
-                    height: double.infinity,
-                    icon: Icons.inventory_outlined,
-                    label: 'Available batches',
-                    value: '${state.dashboard?.availableBatchCount ?? 0}',
+                    onTap: () =>
+                        context.push('/dairy/branch/$branch/availability'),
                   ),
                 ],
               ),
@@ -248,10 +260,7 @@ class _DairyProductionEntryScreenState
         child: ListView(
           padding: DoodhSpacing.pagePadding,
           children: [
-            Text(
-              branchTitle,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            Text(branchTitle, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
             TextFormField(
               controller: _quantityController,
@@ -352,6 +361,11 @@ class DairyBatchListScreen extends ConsumerStatefulWidget {
 }
 
 class _DairyBatchListScreenState extends ConsumerState<DairyBatchListScreen> {
+  DateTime? _fromDate;
+  DateTime? _toDate;
+
+  bool get _hasDateFilter => _fromDate != null || _toDate != null;
+
   @override
   void initState() {
     super.initState();
@@ -361,47 +375,118 @@ class _DairyBatchListScreenState extends ConsumerState<DairyBatchListScreen> {
   Future<void> _load() =>
       ref.read(dairyControllerProvider.notifier).loadBatches(widget.branchId);
 
+  // The batches endpoint only supports a status query, so the date range
+  // filters the loaded batches locally by production day.
+  List<MilkBatch> _filteredBatches(List<MilkBatch> batches) {
+    if (!_hasDateFilter) return batches;
+    return batches
+        .where(
+          (batch) =>
+              _withinDairyDateRange(batch.productionAt, _fromDate, _toDate),
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> _pickFromDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _fromDate ?? _toDate ?? indiaNow(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (selected == null) return;
+    setState(() {
+      _fromDate = selected;
+      if (_toDate != null && _toDate!.isBefore(selected)) {
+        _toDate = selected;
+      }
+    });
+  }
+
+  Future<void> _pickToDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _toDate ?? _fromDate ?? indiaNow(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (selected == null) return;
+    setState(() {
+      _toDate = selected;
+      if (_fromDate != null && _fromDate!.isAfter(selected)) {
+        _fromDate = selected;
+      }
+    });
+  }
+
+  void _clearDates() {
+    setState(() {
+      _fromDate = null;
+      _toDate = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(dairyControllerProvider);
+    final batches = _filteredBatches(state.batches);
     return Scaffold(
       appBar: const _DairyAppBar(title: 'Milk batches'),
-      body: _DairyListState(
-        isLoading: state.isLoading,
-        isOffline: state.isOffline,
-        isUnauthorized: state.isUnauthorized,
-        errorMessage: state.errorMessage,
-        isEmpty: state.batches.isEmpty,
-        emptyTitle: 'No batches recorded',
-        emptyMessage: 'Production entries will appear here as batches.',
-        onRetry: _load,
-        child: RefreshIndicator(
-          onRefresh: _load,
-          child: ListView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: state.batches.length,
-            itemBuilder: (context, index) {
-              final batch = state.batches[index];
-              return Card(
-                child: ListTile(
-                  leading: Icon(
-                    batch.status == MilkBatchStatus.available
-                        ? Icons.inventory_2_outlined
-                        : Icons.inventory_outlined,
-                  ),
-                  title: Text(batch.batchNumber),
-                  subtitle: Text(
-                    '${formatMilkQuantity(batch.availableQuantity, batch.unit)} available\n'
-                    '${formatDairyDateTime(batch.productionAt)}',
-                  ),
-                  isThreeLine: true,
-                  trailing: Text(batch.status.label),
-                  onTap: () => context.push('/dairy/batches/${batch.publicId}'),
-                ),
-              );
-            },
+      body: Column(
+        children: [
+          _DairyDateRangeFilter(
+            fromDate: _fromDate,
+            toDate: _toDate,
+            enabled: !state.isLoading,
+            onPickFrom: _pickFromDate,
+            onPickTo: _pickToDate,
+            onClear: _clearDates,
           ),
-        ),
+          Expanded(
+            child: _DairyListState(
+              isLoading: state.isLoading,
+              isOffline: state.isOffline,
+              isUnauthorized: state.isUnauthorized,
+              errorMessage: state.errorMessage,
+              isEmpty: batches.isEmpty,
+              emptyTitle: _hasDateFilter
+                  ? 'No batches on selected dates'
+                  : 'No batches recorded',
+              emptyMessage: _hasDateFilter
+                  ? 'Try a different date range.'
+                  : 'Production entries will appear here as batches.',
+              onRetry: _load,
+              child: RefreshIndicator(
+                onRefresh: _load,
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: batches.length,
+                  itemBuilder: (context, index) {
+                    final batch = batches[index];
+                    return Card(
+                      child: ListTile(
+                        leading: Icon(
+                          batch.status == MilkBatchStatus.available
+                              ? Icons.inventory_2_outlined
+                              : Icons.inventory_outlined,
+                        ),
+                        title: Text(batch.batchNumber),
+                        subtitle: Text(
+                          '${formatMilkQuantity(batch.availableQuantity, batch.unit)} available\n'
+                          '${formatDairyDateTime(batch.productionAt)}',
+                        ),
+                        isThreeLine: true,
+                        trailing: Text(batch.status.label),
+                        onTap: () =>
+                            context.push('/dairy/batches/${batch.publicId}'),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -585,6 +670,11 @@ class DairyProductionHistoryScreen extends ConsumerStatefulWidget {
 
 class _DairyProductionHistoryScreenState
     extends ConsumerState<DairyProductionHistoryScreen> {
+  DateTime? _fromDate;
+  DateTime? _toDate;
+
+  bool get _hasDateFilter => _fromDate != null || _toDate != null;
+
   @override
   void initState() {
     super.initState();
@@ -593,48 +683,108 @@ class _DairyProductionHistoryScreenState
 
   Future<void> _load() => ref
       .read(dairyControllerProvider.notifier)
-      .loadProduction(widget.branchId);
+      .loadProduction(widget.branchId, fromDate: _fromDate, toDate: _toDate);
+
+  Future<void> _pickFromDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _fromDate ?? _toDate ?? indiaNow(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (selected == null) return;
+    setState(() {
+      _fromDate = selected;
+      if (_toDate != null && _toDate!.isBefore(selected)) {
+        _toDate = selected;
+      }
+    });
+    await _load();
+  }
+
+  Future<void> _pickToDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _toDate ?? _fromDate ?? indiaNow(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (selected == null) return;
+    setState(() {
+      _toDate = selected;
+      if (_fromDate != null && _fromDate!.isAfter(selected)) {
+        _fromDate = selected;
+      }
+    });
+    await _load();
+  }
+
+  Future<void> _clearDates() async {
+    setState(() {
+      _fromDate = null;
+      _toDate = null;
+    });
+    await _load();
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(dairyControllerProvider);
     return Scaffold(
       appBar: const _DairyAppBar(title: 'Production history'),
-      body: _DairyListState(
-        isLoading: state.isLoading,
-        isOffline: state.isOffline,
-        isUnauthorized: state.isUnauthorized,
-        errorMessage: state.errorMessage,
-        isEmpty: state.production.isEmpty,
-        emptyTitle: 'No production history',
-        emptyMessage: 'Recorded production entries will appear here.',
-        onRetry: _load,
-        child: RefreshIndicator(
-          onRefresh: _load,
-          child: ListView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: state.production.length,
-            itemBuilder: (context, index) {
-              final production = state.production[index];
-              return Card(
-                child: ListTile(
-                  leading: const Icon(Icons.water_drop_outlined),
-                  title: Text(
-                    formatMilkQuantity(
-                      production.quantityProduced,
-                      production.unit,
-                    ),
-                  ),
-                  subtitle: Text(
-                    '${formatDairyDateTime(production.productionAt)}\n${production.batch.batchNumber}',
-                  ),
-                  isThreeLine: true,
-                  trailing: Text('${production.buffaloCount} buffaloes'),
-                ),
-              );
-            },
+      body: Column(
+        children: [
+          _DairyDateRangeFilter(
+            fromDate: _fromDate,
+            toDate: _toDate,
+            enabled: !state.isLoading,
+            onPickFrom: _pickFromDate,
+            onPickTo: _pickToDate,
+            onClear: _clearDates,
           ),
-        ),
+          Expanded(
+            child: _DairyListState(
+              isLoading: state.isLoading,
+              isOffline: state.isOffline,
+              isUnauthorized: state.isUnauthorized,
+              errorMessage: state.errorMessage,
+              isEmpty: state.production.isEmpty,
+              emptyTitle: _hasDateFilter
+                  ? 'No production on selected dates'
+                  : 'No production history',
+              emptyMessage: _hasDateFilter
+                  ? 'Try a different date range.'
+                  : 'Recorded production entries will appear here.',
+              onRetry: _load,
+              child: RefreshIndicator(
+                onRefresh: _load,
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: state.production.length,
+                  itemBuilder: (context, index) {
+                    final production = state.production[index];
+                    return Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.water_drop_outlined),
+                        title: Text(
+                          formatMilkQuantity(
+                            production.quantityProduced,
+                            production.unit,
+                          ),
+                        ),
+                        subtitle: Text(
+                          '${formatDairyDateTime(production.productionAt)}\n${production.batch.batchNumber}',
+                        ),
+                        isThreeLine: true,
+                        trailing: Text('${production.buffaloCount} buffaloes'),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -650,14 +800,62 @@ class DairyUsageScreen extends ConsumerStatefulWidget {
 }
 
 class _DairyUsageScreenState extends ConsumerState<DairyUsageScreen> {
+  DateTime? _fromDate;
+  DateTime? _toDate;
+
+  bool get _hasDateFilter => _fromDate != null || _toDate != null;
+
   @override
   void initState() {
     super.initState();
     Future.microtask(_load);
   }
 
-  Future<void> _load() =>
-      ref.read(dairyControllerProvider.notifier).loadUsage(widget.branchId);
+  Future<void> _load() => ref
+      .read(dairyControllerProvider.notifier)
+      .loadUsage(widget.branchId, fromDate: _fromDate, toDate: _toDate);
+
+  Future<void> _pickFromDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _fromDate ?? _toDate ?? indiaNow(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (selected == null) return;
+    setState(() {
+      _fromDate = selected;
+      if (_toDate != null && _toDate!.isBefore(selected)) {
+        _toDate = selected;
+      }
+    });
+    await _load();
+  }
+
+  Future<void> _pickToDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: _toDate ?? _fromDate ?? indiaNow(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (selected == null) return;
+    setState(() {
+      _toDate = selected;
+      if (_fromDate != null && _fromDate!.isAfter(selected)) {
+        _fromDate = selected;
+      }
+    });
+    await _load();
+  }
+
+  Future<void> _clearDates() async {
+    setState(() {
+      _fromDate = null;
+      _toDate = null;
+    });
+    await _load();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -672,53 +870,68 @@ class _DairyUsageScreenState extends ConsumerState<DairyUsageScreen> {
               icon: const Icon(Icons.add),
               label: const Text('Record usage'),
             ),
-      body: _DairyListState(
-        isLoading: state.isLoading,
-        isOffline: state.isOffline,
-        isUnauthorized: state.isUnauthorized,
-        errorMessage: state.errorMessage,
-        isEmpty: state.usage.isEmpty,
-        emptyTitle: 'No usage recorded',
-        emptyMessage:
-            'Manual batch usage and automatic delivery consumption will appear here.',
-        onRetry: _load,
-        child: RefreshIndicator(
-          onRefresh: _load,
-          child: ListView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: state.usage.length,
-            itemBuilder: (context, index) {
-              final usage = state.usage[index];
-              final reference = usageReference(usage);
-              return Card(
-                child: ListTile(
-                  leading: Icon(
-                    usage.isAutomatic
-                        ? Icons.receipt_long_outlined
-                        : Icons.local_drink_outlined,
-                    color: usage.isAutomatic
-                        ? Theme.of(context).colorScheme.primary
-                        : null,
-                  ),
-                  title: Text(
-                    formatMilkQuantity(usage.quantityUsed, usage.unit),
-                  ),
-                  subtitle: Text(
-                    [
-                      if (reference.isNotEmpty)
-                        reference
-                      else if (usage.batchNumber != null &&
-                          usage.batchNumber!.isNotEmpty)
-                        usage.batchNumber!,
-                      '${usage.source.label} • ${usage.purpose} • ${formatDairyDateTime(usage.usedAt)}',
-                    ].join('\n'),
-                  ),
-                  isThreeLine: true,
-                ),
-              );
-            },
+      body: Column(
+        children: [
+          _DairyDateRangeFilter(
+            fromDate: _fromDate,
+            toDate: _toDate,
+            enabled: !state.isLoading,
+            onPickFrom: _pickFromDate,
+            onPickTo: _pickToDate,
+            onClear: _clearDates,
           ),
-        ),
+          Expanded(
+            child: _DairyListState(
+              isLoading: state.isLoading,
+              isOffline: state.isOffline,
+              isUnauthorized: state.isUnauthorized,
+              errorMessage: state.errorMessage,
+              isEmpty: state.usage.isEmpty,
+              emptyTitle: _hasDateFilter
+                  ? 'No usage on selected dates'
+                  : 'No usage recorded',
+              emptyMessage: _hasDateFilter ? 'Try a different date range.' : 'Manual batch usage and automatic delivery consumption will appear here.',
+              onRetry: _load,
+              child: RefreshIndicator(
+                onRefresh: _load,
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: state.usage.length,
+                  itemBuilder: (context, index) {
+                    final usage = state.usage[index];
+                    final reference = usageReference(usage);
+                    return Card(
+                      child: ListTile(
+                        leading: Icon(
+                          usage.isAutomatic
+                              ? Icons.receipt_long_outlined
+                              : Icons.local_drink_outlined,
+                          color: usage.isAutomatic
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
+                        ),
+                        title: Text(
+                          formatMilkQuantity(usage.quantityUsed, usage.unit),
+                        ),
+                        subtitle: Text(
+                          [
+                            if (reference.isNotEmpty)
+                              reference
+                            else if (usage.batchNumber != null &&
+                                usage.batchNumber!.isNotEmpty)
+                              usage.batchNumber!,
+                            '${usage.source.label} • ${usage.purpose} • ${formatDairyDateTime(usage.usedAt)}',
+                          ].join('\n'),
+                        ),
+                        isThreeLine: true,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -952,6 +1165,88 @@ class _DetailRow extends StatelessWidget {
       ],
     ),
   );
+}
+
+/// Day-granularity range check on India-wall-clock calendar days, so a
+/// production/usage timestamp falls inside the selected filter range when
+/// its calendar date does.
+bool _withinDairyDateRange(DateTime value, DateTime? from, DateTime? to) {
+  final day = formatApiDairyDate(value);
+  if (from != null && day.compareTo(formatApiDairyDate(from)) < 0) {
+    return false;
+  }
+  if (to != null && day.compareTo(formatApiDairyDate(to)) > 0) {
+    return false;
+  }
+  return true;
+}
+
+/// Shared From/To date filter row for the dairy list screens. The dairy
+/// manager picks calendar days; the screens reload (or re-filter) with the
+/// selected range, and the trailing action clears it.
+class _DairyDateRangeFilter extends StatelessWidget {
+  const _DairyDateRangeFilter({
+    required this.fromDate,
+    required this.toDate,
+    required this.enabled,
+    required this.onPickFrom,
+    required this.onPickTo,
+    required this.onClear,
+  });
+
+  final DateTime? fromDate;
+  final DateTime? toDate;
+  final bool enabled;
+  final VoidCallback? onPickFrom;
+  final VoidCallback? onPickTo;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasFilter = fromDate != null || toDate != null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Tooltip(
+              message: 'Choose start date',
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.calendar_today_outlined, size: 18),
+                label: Text(
+                  fromDate == null
+                      ? 'From date'
+                      : 'From ${formatDairyDate(fromDate!)}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onPressed: enabled ? onPickFrom : null,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Tooltip(
+              message: 'Choose end date',
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.calendar_today_outlined, size: 18),
+                label: Text(
+                  toDate == null ? 'To date' : 'To ${formatDairyDate(toDate!)}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+                onPressed: enabled ? onPickTo : null,
+              ),
+            ),
+          ),
+          if (hasFilter)
+            IconButton(
+              tooltip: 'Clear date filter',
+              icon: const Icon(Icons.filter_alt_off_outlined),
+              onPressed: enabled ? onClear : null,
+            ),
+        ],
+      ),
+    );
+  }
 }
 
 class _DairyListState extends StatelessWidget {

@@ -999,7 +999,8 @@ public sealed class CheckoutChargeTests
                     new BranchAllocationService(db),
                     new TestNotificationEventWriter(db, clock),
                     new NumberSeriesService(db, timeProvider),
-                    timeProvider));
+                    timeProvider,
+                    new DoodhDirect.Infrastructure.RefundReplacement.RefundReplacementConfigurationService(db, timeProvider)));
         }
 
         public ValueTask DisposeAsync() => Db.DisposeAsync();

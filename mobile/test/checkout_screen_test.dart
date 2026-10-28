@@ -100,8 +100,17 @@ void main() {
       expect(find.text('Choose where this order should arrive'), findsOneWidget);
       expect(find.text('Default'), findsOneWidget);
       // The selected address is shown in the summary block and as the closed
-      // dropdown's current value.
-      expect(find.text('Home'), findsOneWidget);
+      // dropdown's current value. The persistent bottom nav contributes its
+      // own 'Home' destination label, so the address label is asserted
+      // alongside (not instead of) the nav destination.
+      expect(
+        find.descendant(
+          of: find.byType(NavigationBar),
+          matching: find.text('Home'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Home'), findsNWidgets(2));
       expect(find.text('Home — Bengaluru'), findsOneWidget);
       expect(
         find.textContaining('12 Market Road, Indiranagar, Bengaluru'),
@@ -451,7 +460,10 @@ void main() {
         await tester.tap(find.text('Razorpay'));
         await tester.pumpAndSettle();
 
-        expect(find.text('DoodhDirect Wallet balance'), findsNothing);
+        // The wallet balance card and opt-in toggle stay visible: the toggle
+        // controls wallet-first splitting of the Razorpay charge.
+        expect(find.text('DoodhDirect Wallet balance'), findsOneWidget);
+        expect(find.text('Use wallet balance'), findsOneWidget);
         expect(
           find.bySemanticsLabel(
             RegExp(
@@ -484,8 +496,10 @@ void main() {
         find.text('Your wallet balance is too low for this order.'),
         findsOneWidget,
       );
-      expect(paymentRepository.lastMethod, PaymentMethod.wallet);
-      expect(paymentRepository.lastOrderId, 'order-1');
+      // The plan flow reports the failure; the opt-in stays OFF by default.
+      expect(paymentRepository.planCalls, 1);
+      expect(paymentRepository.lastPlanOrderId, 'order-1');
+      expect(paymentRepository.lastPlanUseWallet, isFalse);
     });
 
     testWidgets('shows processing state while the payment is created',
@@ -513,7 +527,7 @@ void main() {
       await tester.tap(find.text('Pay ₹60.00'));
       await tester.pumpAndSettle();
 
-      expect(paymentRepository.createCalls, 1);
+      expect(paymentRepository.planCalls, 1);
       expect(
         router.routerDelegate.currentConfiguration.uri.path,
         '/payments/payment-1/result',
@@ -815,6 +829,9 @@ class _FakeCustomerRepository extends CustomerRepository {
       List<CustomerAddress>.unmodifiable(addresses);
 
   @override
+  Future<CustomerBankDetail?> getBankDetail(String token) async => null;
+
+  @override
   Future<CustomerAddress> createAddress(String token, AddressDraft request) async {
     createCalls += 1;
     lastCreatedDraft = request;
@@ -856,6 +873,10 @@ class _FakePaymentRepository extends PaymentRepository {
   int createCalls = 0;
   String? lastOrderId;
   PaymentMethod? lastMethod;
+  int planCalls = 0;
+  String? lastPlanOrderId;
+  bool? lastPlanUseWallet;
+  String? lastPlanIdempotencyKey;
 
   @override
   Future<List<PaymentCapability>> getCapabilities(String token) async => const [
@@ -876,11 +897,45 @@ class _FakePaymentRepository extends PaymentRepository {
       ];
 
   @override
+  Future<PaymentPlan> createPlan({
+    required String token,
+    required String orderId,
+    required bool useWalletBalance,
+    required String idempotencyKey,
+  }) {
+    planCalls += 1;
+    lastPlanOrderId = orderId;
+    lastPlanUseWallet = useWalletBalance;
+    lastPlanIdempotencyKey = idempotencyKey;
+    if (neverCompletes) {
+      return Completer<PaymentPlan>().future;
+    }
+    final error = createError;
+    if (error != null) {
+      return Future<PaymentPlan>.error(error);
+    }
+    final payment = createResult!;
+    return Future.value(
+      PaymentPlan(
+        paymentGroupId: payment.paymentGroupId ?? 'group-1',
+        payableAmount: payment.amount,
+        walletApplied: payment.amount,
+        razorpayAmount: 0,
+        usesWallet: true,
+        payment: payment,
+        components: [payment],
+      ),
+    );
+  }
+
+  @override
   Future<PaymentDetails> create({
     required String token,
     required String orderId,
     required PaymentMethod method,
     required String idempotencyKey,
+    bool useWalletBalance = false,
+    double? expectedPayableAmount,
   }) {
     createCalls += 1;
     lastOrderId = orderId;

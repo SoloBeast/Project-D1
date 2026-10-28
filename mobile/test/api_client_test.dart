@@ -28,11 +28,18 @@ void main() {
   });
 
   test('Development registration uses the centralized API URL', () async {
+    // The default is platform-aware (Android emulators resolve to the host
+    // loopback 10.0.2.2; everything else keeps localhost), so assert the
+    // centralized value instead of a hardcoded host.
+    expect(
+      apiBaseUrl,
+      anyOf('http://localhost:5209', 'http://10.0.2.2:5209'),
+    );
     final client = MockClient((request) async {
       expect(request.method, 'POST');
       expect(
         request.url.toString(),
-        'http://localhost:5209/api/v1/auth/register',
+        '$apiBaseUrl/api/v1/auth/register',
       );
       return http.Response(
         '{"success":true,"data":null,"errors":[]}',
@@ -492,4 +499,64 @@ void main() {
       );
     },
   );
+
+  test('error envelopes carry the structured recovery payload', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        '{"success":false,"data":{"subscriptionId":"sub-recover-1"},'
+        '"errors":[{"code":"WALLET_SPLIT_REMAINDER_BELOW_MINIMUM",'
+        '"message":"The wallet split was rejected."}]}',
+        422,
+        headers: {'content-type': 'application/json'},
+      ),
+    );
+    final api = ApiClient(
+      client: client,
+      baseUrl: 'https://api.example.test',
+    );
+
+    await expectLater(
+      api.post('/api/v1/subscriptions', accessToken: 'access-token'),
+      throwsA(
+        isA<ApiException>()
+            .having((error) => error.statusCode, 'statusCode', 422)
+            .having(
+              (error) => error.code,
+              'code',
+              'WALLET_SPLIT_REMAINDER_BELOW_MINIMUM',
+            )
+            .having(
+              (error) => error.data?['subscriptionId'],
+              'data.subscriptionId',
+              'sub-recover-1',
+            ),
+      ),
+    );
+  });
+
+  test('error envelopes without data leave the payload null', () async {
+    final client = MockClient(
+      (request) async => http.Response(
+        '{"success":false,"errors":[{"code":"FORBIDDEN",'
+        '"message":"Not allowed."}]}',
+        403,
+        headers: {'content-type': 'application/json'},
+      ),
+    );
+    final api = ApiClient(
+      client: client,
+      baseUrl: 'https://api.example.test',
+    );
+
+    await expectLater(
+      api.get('/api/v1/deliveries/delivery-1', accessToken: 'access-token'),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.data,
+          'data',
+          isNull,
+        ),
+      ),
+    );
+  });
 }

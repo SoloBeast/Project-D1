@@ -41,6 +41,37 @@ class RefundReplacementRepository {
         as Map<String, dynamic>,
   );
 
+  /// Stage 2.1: single atomic submission binding validated proof evidence to
+  /// the ticket. The server re-derives the evidence requirement from its own
+  /// records; field values here are advisory only.
+  Future<RefundReplacementRequest> submitWithImage(
+    String token,
+    String deliveryId, {
+    required RefundReplacementType type,
+    required String reason,
+    String? remarks,
+    String? milkTestId,
+    required Uint8List imageBytes,
+    required String fileName,
+    required String contentType,
+  }) async => RefundReplacementRequest.fromJson(
+    (await api.postMultipart(
+          '/api/v1/deliveries/$deliveryId/refund-replacement',
+          fieldName: 'image',
+          bytes: imageBytes,
+          fileName: fileName,
+          contentType: contentType,
+          fields: {
+            'type': _wireType(type),
+            'reason': reason,
+            'remarks': ?remarks,
+            'milkTestId': ?milkTestId,
+          },
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+
   Future<List<RefundReplacementRequest>> listForCustomer(String token) async =>
       ((await api.get(
                     '/api/v1/customer/refund-replacements',
@@ -151,11 +182,20 @@ class RefundReplacementRepository {
   /// remains authoritative for weekday, cutoff, branch, uniqueness,
   /// vacation/skip, and concurrency validation. Null preserves the existing
   /// refund/one-time approval behavior, letting the server propose the date.
+  ///
+  /// Stage 2: for order-backed Refund tickets [applyDeduction] is required —
+  /// true applies the shared Admin Centre percentage (snapshotted by the
+  /// backend), false waives it to zero and requires [waiverReason]. Null
+  /// preserves the existing subscription approval behavior. The keys are
+  /// omitted when null so legacy payloads stay byte-identical.
   Future<RefundReplacementRequest> approve(
     String token,
     String requestId, {
     String? remarks,
     DateTime? replacementDate,
+    bool? applyDeduction,
+    String? waiverReason,
+    String? settlementMethod,
   }) async => RefundReplacementRequest.fromJson(
     (await api.post(
           '/api/v1/refund-replacements/$requestId/approve',
@@ -163,7 +203,28 @@ class RefundReplacementRepository {
             'remarks': remarks,
             if (replacementDate != null)
               'replacementDate': _wireDateOnly(replacementDate),
+            if (applyDeduction case final bool apply)
+              'applyDeduction': apply,
+            if (waiverReason case final String reason) 'waiverReason': reason,
+            if (settlementMethod case final String method)
+              'settlementMethod': method,
           },
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+
+  /// Stage 2: read-only preview of an order-backed Refund ticket's proposed
+  /// wallet settlement. The UI renders the response verbatim and never
+  /// computes money itself. Never mutates server state.
+  Future<OrderRefundPreview> getOrderRefundPreview(
+    String token,
+    String requestId, {
+    required bool applyDeduction,
+  }) async => OrderRefundPreview.fromJson(
+    (await api.get(
+          '/api/v1/refund-replacements/$requestId/order-refund-preview'
+          '?applyDeduction=${applyDeduction ? 'true' : 'false'}',
           accessToken: token,
         ))['data']
         as Map<String, dynamic>,
@@ -181,6 +242,25 @@ class RefundReplacementRepository {
   ) async => ReplacementDateProposal.fromJson(
     (await api.get(
           '/api/v1/refund-replacements/$requestId/replacement-date-proposal',
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+
+  /// Legacy remediation: atomically supersedes an approved, order-backed
+  /// Replacement ticket and creates exactly one linked Pending Refund
+  /// ticket. Requires `REFUND_REPLACEMENT.MANAGE_BRANCH`; the backend
+  /// enforces branch scope, the Failed-delivery precondition, and
+  /// idempotency (409 when the ticket no longer qualifies). Issues no
+  /// wallet credit and creates no financial refund record.
+  Future<RemediationPair> remediate(
+    String token,
+    String requestId, {
+    required String reason,
+  }) async => RemediationPair.fromJson(
+    (await api.post(
+          '/api/v1/refund-replacements/$requestId/remediate',
+          body: {'reason': reason},
           accessToken: token,
         ))['data']
         as Map<String, dynamic>,
@@ -232,5 +312,6 @@ String _wireStatus(RefundReplacementStatus status) => switch (status) {
   RefundReplacementStatus.completed => 'Completed',
   RefundReplacementStatus.failed => 'Failed',
   RefundReplacementStatus.cancelled => 'Cancelled',
+  RefundReplacementStatus.superseded => 'Superseded',
   RefundReplacementStatus.unknown => 'Pending',
 };

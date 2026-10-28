@@ -1,3 +1,5 @@
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
@@ -184,16 +186,16 @@ Future<void> _pumpScreen(
   final goRouter =
       router ??
       GoRouter(
-        routes: [
-          GoRoute(path: '/', builder: (context, state) => screen),
-        ],
+        routes: [GoRoute(path: '/', builder: (context, state) => screen)],
       );
   addTearDown(goRouter.dispose);
   await tester.pumpWidget(
     ProviderScope(
       key: UniqueKey(),
       overrides: [
-        authRepositoryProvider.overrideWithValue(_AuthenticatedAuthRepository()),
+        authRepositoryProvider.overrideWithValue(
+          _AuthenticatedAuthRepository(),
+        ),
         subscriptionControllerProvider.overrideWith(
           () => _SeededSubscriptionController(subscriptionState),
         ),
@@ -254,18 +256,14 @@ void main() {
       await _pumpScreen(
         tester,
         const SubscriptionListScreen(),
-        subscriptionState: SubscriptionState(
-          subscriptions: [_subscription()],
-        ),
+        subscriptionState: SubscriptionState(subscriptions: [_subscription()]),
       );
 
       expect(find.text('Your recurring plans'), findsOneWidget);
       expect(find.text('Whole Milk'), findsOneWidget);
       expect(find.text('1.125 litre per delivery'), findsOneWidget);
-      expect(
-        find.text('Mon Morning, Wed Morning, Fri Morning'),
-        findsOneWidget,
-      );
+      expect(find.text('Monday, Wednesday, Friday'), findsOneWidget);
+      expect(find.text('Batch: Morning'), findsOneWidget);
       expect(find.text('Active'), findsOneWidget);
       expect(find.textContaining('24 deliveries remaining'), findsOneWidget);
       expect(find.text('6/30'), findsOneWidget);
@@ -328,8 +326,7 @@ void main() {
         const SubscriptionListScreen(),
         subscriptionState: const SubscriptionState(
           isOffline: true,
-          errorMessage:
-              'Unable to reach DoodhDirect. Check your connection and try again.',
+          errorMessage: 'Unable to reach DoodhDirect. Check your connection and try again.',
         ),
       );
       expect(find.text('You are offline'), findsOneWidget);
@@ -437,10 +434,7 @@ void main() {
       expect(find.text('Delivery days'), findsOneWidget);
       expect(find.text('Active window'), findsOneWidget);
       expect(find.text('Unit price'), findsOneWidget);
-      expect(
-        find.text('Home, 1 Main Street, Pune 411001'),
-        findsOneWidget,
-      );
+      expect(find.text('Home, 1 Main Street, Pune 411001'), findsOneWidget);
       // Schedule updates are disabled: hold (pause/resume) or cancel only.
       expect(find.text('Update schedule'), findsNothing);
       expect(find.text('Pause subscription'), findsOneWidget);
@@ -530,14 +524,16 @@ void main() {
     testWidgets('calendar separates upcoming and history with real statuses', (
       tester,
     ) async {
-      final upcoming = DateTime.now().add(const Duration(days: 5));
-      final past = DateTime.now().subtract(const Duration(days: 5));
+      final now = indiaNow();
+      final upcoming = now.add(const Duration(days: 5));
+      final past = now.subtract(const Duration(days: 5));
       await _pumpScreen(
         tester,
         SubscriptionCalendarScreen(subscriptionId: 'subscription-1'),
         subscriptionState: SubscriptionState(
           calendar: [
             _delivery(SubscriptionDeliveryStatus.scheduled, upcoming),
+            _delivery(SubscriptionDeliveryStatus.scheduled, past),
             _delivery(SubscriptionDeliveryStatus.delivered, past),
             _delivery(SubscriptionDeliveryStatus.skipped, past),
           ],
@@ -548,10 +544,26 @@ void main() {
       expect(find.text('Upcoming deliveries'), findsOneWidget);
       expect(find.text('Delivery history'), findsOneWidget);
       expect(find.textContaining('Scheduled'), findsOneWidget);
+      expect(find.text('Past due'), findsOneWidget);
       expect(find.textContaining('Delivered'), findsOneWidget);
       expect(find.textContaining('Skipped'), findsOneWidget);
-      // Only the scheduled upcoming occurrence offers Skip.
+      // Only the scheduled upcoming occurrence offers Skip; past-due dates
+      // remain visible as scheduled, not failed, and cannot be skipped late.
       expect(find.byTooltip('Skip delivery'), findsOneWidget);
+      // Past due remains persisted as Scheduled (not Failed) and is shown in
+      // history, without offering a late skip action.
+      final pastDueCard = find.ancestor(
+        of: find.text('Past due'),
+        matching: find.byType(DoodhCard),
+      );
+      expect(pastDueCard, findsOneWidget);
+      expect(
+        find.descendant(
+          of: pastDueCard,
+          matching: find.byTooltip('Skip delivery'),
+        ),
+        findsNothing,
+      );
     });
 
     testWidgets('failed and cancelled deliveries render their status', (
@@ -589,8 +601,7 @@ void main() {
         SubscriptionCalendarScreen(subscriptionId: 'subscription-1'),
         subscriptionState: const SubscriptionState(
           isOffline: true,
-          errorMessage:
-              'Unable to reach DoodhDirect. Check your connection and try again.',
+          errorMessage: 'Unable to reach DoodhDirect. Check your connection and try again.',
         ),
       );
       expect(find.text('You are offline'), findsOneWidget);

@@ -330,6 +330,12 @@ void main() {
               productName: 'Whole Milk',
               reason: VacationIneligibleReason.deliveryPrepared,
             ),
+            VacationIneligibleItem(
+              date: DateTime(2026, 10, 21),
+              subscriptionId: 'sub-1',
+              productName: 'Whole Milk',
+              reason: VacationIneligibleReason.cutoffPassed,
+            ),
           ],
         );
       final container = await _pumpApp(tester, subscriptionRepository: subscriptions);
@@ -378,9 +384,20 @@ void main() {
       );
       // Factual partial result: skipped count plus the ineligible reason list.
       expect(find.text('1 delivery skipped'), findsOneWidget);
-      expect(find.textContaining('1 date could not be skipped'), findsOneWidget);
+      expect(find.textContaining('2 dates could not be skipped'), findsOneWidget);
       expect(
         find.textContaining('Delivery already being prepared'),
+        findsOneWidget,
+      );
+      // Option (iii) explainers: materialized deliveries stay scheduled and
+      // assignable; past-cutoff dates need an earlier vacation.
+      expect(
+        find.textContaining('stays scheduled and assignable'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Skip cutoff passed'), findsOneWidget);
+      expect(
+        find.textContaining('before the day starts'),
         findsOneWidget,
       );
       expect(find.byKey(const ValueKey('vacation-done')), findsOneWidget);

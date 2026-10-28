@@ -58,6 +58,39 @@ public sealed record CheckoutResult(
     decimal ChargesTotal,
     decimal PayableAmount);
 
+public sealed record CancelOrderRequest(
+    string? ReasonCode,
+    string? Comment,
+    bool Confirmed = false,
+    decimal? ConfirmedDeductionPercentage = null,
+    decimal? ConfirmedRefundAmount = null);
+
+public sealed record OrderCancellationRefundResult(
+    decimal GrossBasis,
+    decimal DeductionPercentage,
+    decimal DeductionAmount,
+    decimal RefundedAmount,
+    string Status);
+
+public sealed record OrderCancellationResult(
+    string ReasonCode,
+    string? Comment,
+    long CancelledByUserId,
+    DateTime CancelledAt,
+    OrderCancellationRefundResult? Refund = null);
+
+public sealed record CancelOrderPreviewResult(
+    bool CanCancel,
+    string? BlockReason,
+    string? DeliveryStatus,
+    bool PickupOccurred,
+    decimal DeductionPercentage,
+    decimal GrossBasis,
+    decimal DeductionAmount,
+    decimal EstimatedRefund,
+    decimal EligiblePaidAmount,
+    bool RequiresConfirmation);
+
 public sealed record OrderResult(
     Guid PublicId,
     string OrderNumber,
@@ -93,7 +126,8 @@ public sealed record OrderResult(
     string? GatewayPaymentId,
     Guid? DeliveryPublicId,
     string? DeliveryReferenceNumber,
-    DeliveryStatus? DeliveryStatus);
+    DeliveryStatus? DeliveryStatus,
+    OrderCancellationResult? Cancellation = null);
 
 public sealed record OrderItemResult(
     Guid ProductId,
@@ -150,7 +184,9 @@ public interface IOrderService
 
     Task<OrderResult> GetAsync(long customerId, Guid orderId, bool bypassOwnership, CancellationToken cancellationToken);
 
-    Task<OrderResult> CancelAsync(long customerId, Guid orderId, CancellationToken cancellationToken);
+    Task<OrderResult> CancelAsync(long customerId, Guid orderId, CancelOrderRequest request, CancellationToken cancellationToken);
+
+    Task<CancelOrderPreviewResult> PreviewCancelAsync(long customerId, Guid orderId, CancellationToken cancellationToken);
 }
 
 public static class OrderMappings
@@ -168,7 +204,8 @@ public static class OrderMappings
         this Order order,
         Payment? payment = null,
         Delivery? delivery = null,
-        IReadOnlyCollection<OrderCharge>? charges = null) => new(
+        IReadOnlyCollection<OrderCharge>? charges = null,
+        OrderCancellationResult? cancellation = null) => new(
             order.PublicId,
             order.OrderNumber,
             order.Type,
@@ -211,7 +248,8 @@ public static class OrderMappings
             payment?.GatewayPaymentId,
             delivery?.PublicId,
             delivery?.ReferenceNumber,
-            delivery?.Status);
+            delivery?.Status,
+            cancellation);
 }
 
 public static class OrderValidation

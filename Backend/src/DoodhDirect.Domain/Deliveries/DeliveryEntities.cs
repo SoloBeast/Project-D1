@@ -300,6 +300,36 @@ public sealed class Delivery : AuditableEntity
         Remarks = Optional(reason);
     }
 
+    /// <summary>
+    /// O3: stops a picked-up / in-transit one-time-order delivery at the
+    /// customer's confirmed cancellation. Allowed only from
+    /// <see cref="DeliveryStatus.Assigned"/>, <see
+    /// cref="DeliveryStatus.PickedUp"/>, <see
+    /// cref="DeliveryStatus.OutForDelivery"/> or <see
+    /// cref="DeliveryStatus.Arrived"/> — never from Delivered, Failed or
+    /// Cancelled. The row is preserved with its operational history
+    /// (assignments, OTPs, locations) and becomes terminally ineligible for
+    /// completion: <see cref="Complete"/> requires Arrived, so a cancelled
+    /// delivery can never be marked delivered afterwards. This is not a
+    /// failure: it creates no failure ticket and triggers no failure refund
+    /// lifecycle. The O3 deduction settlement is owned by the order
+    /// cancellation refund path.
+    /// </summary>
+    public void CancelAfterPickup(DateTime cancelledAt, string? reason)
+    {
+        EnsureIndiaLocal(cancelledAt, nameof(cancelledAt));
+        if (Status is not (DeliveryStatus.Assigned
+            or DeliveryStatus.PickedUp
+            or DeliveryStatus.OutForDelivery
+            or DeliveryStatus.Arrived))
+        {
+            throw InvalidTransition("cancelled after pickup");
+        }
+
+        Status = DeliveryStatus.Cancelled;
+        Remarks = Optional(reason);
+    }
+
     public void Fail(
         long employeeId,
         DateTime failedAt,
@@ -349,6 +379,42 @@ public sealed class Delivery : AuditableEntity
         Status = DeliveryStatus.Failed;
         FailedAt = failedAt;
         FailureReason = DeliveryFailureReasons.CustomerRejectedMilkTest;
+        Remarks = Optional(remarks);
+        FailureLatitude = null;
+        FailureLongitude = null;
+    }
+
+    /// <summary>
+    /// Records a confirmed miss for a subscription occurrence that was never
+    /// operationalized: the row is still <see
+    /// cref="DeliveryStatus.ReadyForAssignment"/>, so no assignment, pickup
+    /// or visit ever happened and no service was provided. Only branch
+    /// managers confirm misses through the missed-occurrence workflow (never
+    /// assigned delivery staff, who fail attempted visits via <see
+    /// cref="Fail"/>); the service layer restricts this to past-due
+    /// occurrences with no operational history. The row is preserved as a
+    /// failed operational record so the existing fail-ticket, audit and
+    /// notification machinery applies unchanged.
+    /// </summary>
+    public void RecordUnattemptedFailure(
+        DateTime failedAt,
+        string reason,
+        string? remarks)
+    {
+        EnsureIndiaLocal(failedAt, nameof(failedAt));
+        if (Status != DeliveryStatus.ReadyForAssignment)
+        {
+            throw InvalidTransition("failed");
+        }
+        var normalizedReason = reason?.Trim() ?? string.Empty;
+        if (!DeliveryFailureReasons.Allowed.Contains(normalizedReason))
+        {
+            throw new ArgumentException("The failure reason is not supported.", nameof(reason));
+        }
+
+        Status = DeliveryStatus.Failed;
+        FailedAt = failedAt;
+        FailureReason = DeliveryFailureReasons.Allowed.Single(x => x.Equals(normalizedReason, StringComparison.OrdinalIgnoreCase));
         Remarks = Optional(remarks);
         FailureLatitude = null;
         FailureLongitude = null;

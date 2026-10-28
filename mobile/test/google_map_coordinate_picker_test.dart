@@ -3,8 +3,27 @@ import 'dart:async';
 import 'package:doodh_direct_mobile/features/customer/current_location_provider.dart';
 import 'package:doodh_direct_mobile/features/customer/google_map_coordinate_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// The picker pre-checks the OS location status before delegating to the
+/// injected provider. Unit tests have no platform implementation (an
+/// unmocked `checkPermission` never completes in a widget test), so tests
+/// that exercise the provider path mock a granted status; rationale and
+/// denial sequencing is covered in `permission_onboarding_test.dart`.
+void _mockGrantedLocationPermission() {
+  const channel = MethodChannel('flutter.baseflow.com/geolocator');
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'checkPermission') return 2; // whileInUse
+        return null;
+      });
+  addTearDown(
+    () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null),
+  );
+}
 
 void main() {
   testWidgets('shows a configuration error when Maps has no API key', (
@@ -122,6 +141,7 @@ void main() {
   });
 
   testWidgets('uses current location only after explicit action', (tester) async {
+    _mockGrantedLocationPermission();
     const currentLocation = LatLng(28.6129, 77.2295);
     LatLng? selected;
     var providerCalls = 0;
@@ -155,6 +175,7 @@ void main() {
   testWidgets('shows a friendly message when location permission is denied', (
     tester,
   ) async {
+    _mockGrantedLocationPermission();
     await tester.pumpWidget(
       MaterialApp(
         home: GoogleMapCoordinatePicker(
@@ -183,6 +204,7 @@ void main() {
   testWidgets('rejects invalid coordinates from the location provider', (
     tester,
   ) async {
+    _mockGrantedLocationPermission();
     await tester.pumpWidget(
       MaterialApp(
         home: GoogleMapCoordinatePicker(

@@ -209,9 +209,31 @@ public sealed class DeliveryService(
         }
 
         var occurrences = await occurrenceQuery.ToListAsync(cancellationToken);
+        var fetchedCount = 0;
         await ExecuteSerializableAsync(async () =>
         {
-            foreach (var occurrence in occurrences)
+            // Race guard (skip vs. fetch): mirrors MaterializeEligibleAsync.
+            // The occurrence list was read outside the serializable
+            // transaction, so each occurrence is re-validated in-transaction
+            // before its Delivery is inserted. An occurrence committed as
+            // Skipped (or otherwise no longer Scheduled) must never produce
+            // a Delivery; it is silently dropped instead of failing the
+            // fetch call.
+            var occurrenceIds = occurrences.Select(x => x.Id).ToArray();
+            var stillScheduledIds = occurrenceIds.Length == 0
+                ? new HashSet<long>()
+                : (await dbContext.SubscriptionDeliveries
+                    .AsNoTracking()
+                    .Where(x => occurrenceIds.Contains(x.Id) &&
+                        x.Status == SubscriptionDeliveryStatus.Scheduled)
+                    .Select(x => x.Id)
+                    .ToListAsync(cancellationToken)).ToHashSet();
+            var eligibleOccurrences = occurrences
+                .Where(x => stillScheduledIds.Contains(x.Id))
+                .ToArray();
+            fetchedCount = eligibleOccurrences.Length;
+
+            foreach (var occurrence in eligibleOccurrences)
             {
                 var subscription = occurrence.Subscription;
                 var address = subscription.CustomerAddress;
@@ -236,16 +258,16 @@ public sealed class DeliveryService(
                 dbContext.Deliveries.Add(delivery);
             }
 
-            if (occurrences.Count > 0)
+            if (eligibleOccurrences.Length > 0)
             {
                 AddAudit(actor.UserId, "DELIVERY.FETCH_SUBSCRIPTIONS", "SubscriptionDelivery", throughDate.ToString("yyyy-MM-dd"), null,
-                    new { SubscriptionOccurrencesCreated = occurrences.Count }, null, timeProvider.Now);
+                    new { SubscriptionOccurrencesCreated = eligibleOccurrences.Length }, null, timeProvider.Now);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 await IssuePendingOtpsAsync(cancellationToken);
             }
         }, cancellationToken);
 
-        return new DeliveryMaterializationResult(0, occurrences.Count);
+        return new DeliveryMaterializationResult(0, fetchedCount);
     }
 
     public async Task<IReadOnlyList<DeliveryResult>> GetTodayForStaffAsync(
@@ -1200,6 +1222,190 @@ public sealed class DeliveryService(
         return await PublishChangedAsync(deliveryId, cancellationToken);
     }
 
+    /// <summary>
+    /// Lists past-due scheduled subscription occurrences of a branch that were
+    /// never operationalized: no operational delivery row exists, so the visit
+    /// was never materialized, assigned or attempted. Only active
+    /// subscriptions qualify; skipped (vacation/manual), replacement,
+    /// failed, delivered and cancelled occurrences are never listed here.
+    /// </summary>
+    public async Task<IReadOnlyList<MissedOccurrenceResult>> GetMissedOccurrencesAsync(
+        DeliveryActor actor,
+        long branchId,
+        CancellationToken cancellationToken)
+    {
+        EnsureBranchAccess(actor, branchId);
+        var today = timeProvider.Today;
+        var rows = await dbContext.SubscriptionDeliveries
+            .AsNoTracking()
+            .Include(x => x.Subscription).ThenInclude(x => x!.Customer)
+            .Where(x => x.BranchId == branchId
+                && x.Status == SubscriptionDeliveryStatus.Scheduled
+                && !x.IsReplacement
+                && x.ScheduledDate < today
+                && x.Subscription.Status == SubscriptionStatus.Active
+                && !dbContext.Deliveries.Any(d => d.SubscriptionDeliveryId == x.Id))
+            .OrderBy(x => x.ScheduledDate)
+            .ToListAsync(cancellationToken);
+        return rows.Select(x => new MissedOccurrenceResult(
+            x.PublicId,
+            x.Subscription.PublicId,
+            x.Subscription.SubscriptionNumber ?? string.Empty,
+            x.ScheduledDate,
+            today.DayNumber - x.ScheduledDate.DayNumber,
+            x.BranchId,
+            x.BranchNameSnapshot,
+            x.Subscription.Customer.PublicId,
+            x.Subscription.Customer.DisplayName
+                ?? x.Subscription.Customer.Email
+                ?? x.Subscription.Customer.Mobile
+                ?? string.Empty,
+            x.Subscription.TotalEntitlement <= 0
+                ? 0m
+                : decimal.Round(
+                    x.Subscription.PayableAmount / x.Subscription.TotalEntitlement,
+                    2,
+                    MidpointRounding.AwayFromZero))).ToArray();
+    }
+
+    /// <summary>
+    /// Records a manager-confirmed miss for a past-due scheduled subscription
+    /// occurrence that was never operationalized. The operational delivery row
+    /// is created directly in the failed state (never attempted: no
+    /// assignment, pickup or visit), the occurrence is marked failed, and the
+    /// existing delivery-fail ticket machinery issues the remedy ticket with
+    /// a frozen zero deduction — no service was provided, so the ordinary
+    /// customer-fault deduction never applies. The customer still chooses the
+    /// remedy (or the timeout auto-refunds); nothing is marked delivered and
+    /// no money moves here. Retrying a recorded miss returns the existing
+    /// failed delivery instead of creating duplicates.
+    /// </summary>
+    public async Task<DeliveryResult> FailMissedOccurrenceAsync(
+        DeliveryActor actor,
+        long branchId,
+        Guid occurrenceId,
+        FailMissedOccurrenceRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        Guid deliveryPublicId = Guid.Empty;
+        IMediaStorage? proofMediaStorage = null;
+        await ExecuteSerializableAsync(async () =>
+        {
+            var occurrence = await dbContext.SubscriptionDeliveries
+                .Include(x => x.Subscription).ThenInclude(x => x!.Customer)
+                .Include(x => x.Subscription).ThenInclude(x => x!.CustomerAddress)
+                .SingleOrDefaultAsync(x => x.PublicId == occurrenceId, cancellationToken)
+                ?? throw new NotFoundException("The missed delivery was not found.");
+            if (occurrence.BranchId != branchId)
+            {
+                throw new NotFoundException("The missed delivery was not found for this branch.");
+            }
+            EnsureBranchAccess(actor, occurrence.BranchId);
+            var subscription = occurrence.Subscription;
+            if (subscription.Status != SubscriptionStatus.Active)
+            {
+                throw new ConflictException("Only occurrences of an active subscription can be recorded as missed.");
+            }
+            if (occurrence.IsReplacement)
+            {
+                throw new BusinessRuleException(
+                    "A re-delivery replacement cannot be recorded as missed; resolve it through the refund workflow instead.");
+            }
+
+            var delivery = await dbContext.Deliveries
+                .SingleOrDefaultAsync(x => x.SubscriptionDeliveryId == occurrence.Id, cancellationToken);
+            if (occurrence.Status == SubscriptionDeliveryStatus.Failed)
+            {
+                if (delivery is not null)
+                {
+                    var openTicket = await dbContext.RefundReplacementRequests
+                        .AsNoTracking()
+                        .Where(x => x.DeliveryId == delivery.Id
+                            && (x.Status == RefundReplacementStatus.Pending
+                                || x.Status == RefundReplacementStatus.Approved
+                                || x.Status == RefundReplacementStatus.AwaitingCustomerChoice))
+                        .Select(x => x.PublicId)
+                        .SingleOrDefaultAsync(cancellationToken);
+                    if (openTicket != Guid.Empty)
+                    {
+                        deliveryPublicId = delivery.PublicId;
+                        return;
+                    }
+                }
+                throw new ConflictException(
+                    "This missed delivery has already been recorded; resolve it through the refund workflow instead.");
+            }
+            if (occurrence.Status != SubscriptionDeliveryStatus.Scheduled)
+            {
+                throw new ConflictException(
+                    "Only a scheduled occurrence can be recorded as missed; skipped, delivered and cancelled occurrences are resolved through their own workflows.");
+            }
+            if (delivery is not null)
+            {
+                throw new ConflictException(
+                    "An operational delivery already exists for this occurrence; fail it from the delivery instead.");
+            }
+            if (occurrence.ScheduledDate >= timeProvider.Today)
+            {
+                throw new BusinessRuleException("Only a past-due occurrence can be recorded as missed.");
+            }
+
+            var now = timeProvider.Now;
+            var address = subscription.CustomerAddress;
+            var missed = Delivery.ForSubscriptionOccurrence(
+                occurrence.Id,
+                subscription.CustomerId,
+                occurrence.BranchId,
+                occurrence.ScheduledDate,
+                $"SUB-{subscription.PublicId:N}-{occurrence.ScheduledDate:yyyyMMdd}",
+                address.ContactName,
+                address.ContactMobile,
+                occurrence.AddressSnapshot,
+                address.DeliveryInstructions,
+                address.Latitude,
+                address.Longitude);
+            missed.AssignDeliveryNumber(
+                await numberSeriesService.GetNextNumberAsync(
+                    "DELIVERY",
+                    subscription.CustomerId,
+                    cancellationToken,
+                    occurrence.BranchCodeSnapshot));
+            dbContext.Deliveries.Add(missed);
+            // Flush the new operational row inside the transaction so the
+            // remedy ticket below can reference its assigned identity id,
+            // mirroring how materialization persists rows before use.
+            await dbContext.SaveChangesAsync(cancellationToken);
+            Mutate(() => missed.RecordUnattemptedFailure(now, request.Reason, request.Remarks));
+            Mutate(() => subscription.MarkFailed(occurrence, now));
+            var creator = ResolveTicketCreator(ref proofMediaStorage);
+            await creator.CreateOrReuseAsync(
+                missed,
+                null,
+                RefundReplacementSource.DeliveryFailed,
+                null,
+                actor.UserId,
+                now,
+                cancellationToken,
+                noServiceProvided: true);
+            AddAudit(actor.UserId, "DELIVERY.MISSED_OCCURRENCE_FAIL", "Delivery", missed.PublicId.ToString(), null,
+                new { missed.Status, missed.FailureReason, NoServiceProvided = true }, request.Remarks, now);
+            AddDeliveryEvent(
+                missed,
+                NotificationEventTypes.DeliveryFailed,
+                $"delivery:{missed.PublicId:N}:failed:{now.Ticks}",
+                "Your delivery could not be completed.",
+                now,
+                new Dictionary<string, string>
+                {
+                    ["reason"] = request.Reason
+                });
+            await dbContext.SaveChangesAsync(cancellationToken);
+            deliveryPublicId = missed.PublicId;
+        }, cancellationToken);
+        return await PublishChangedAsync(deliveryPublicId, cancellationToken);
+    }
+
     private IDeliveryFailTicketCreator ResolveTicketCreator(ref IMediaStorage? mediaStorage)
     {
         if (deliveryFailTicketCreator is not null)
@@ -1516,7 +1722,12 @@ public sealed class DeliveryService(
                     delivery.Order.PayableAmount,
                     delivery.Order.Items
                         .Select(x => $"{x.ProductNameSnapshot} x {x.Quantity:0.###} {x.UnitOfMeasureSnapshot}")
-                        .ToArray()));
+                        .ToArray()),
+            delivery.SubscriptionDelivery?.Subscription.PublicId,
+            delivery.SubscriptionDelivery?.Subscription.SubscriptionNumber,
+            delivery.SubscriptionDelivery?.PublicId,
+            delivery.SubscriptionDelivery?.Subscription.ProductNameSnapshot,
+            delivery.SubscriptionDelivery?.Subscription.UnitOfMeasureSnapshot);
     }
 
     private CustomerDeliveryResult ToCustomerResult(Delivery delivery)
@@ -1538,7 +1749,23 @@ public sealed class DeliveryService(
             delivery.CompletedAt,
             delivery.FailedAt,
             delivery.FailureReason,
-            GetActiveOtp(delivery));
+            GetActiveOtp(delivery),
+            delivery.SubscriptionDelivery?.PublicId,
+            delivery.SubscriptionDelivery?.Subscription.PublicId,
+            delivery.SubscriptionDelivery?.Subscription.SubscriptionNumber,
+            delivery.SubscriptionDelivery?.Slot,
+            delivery.SubscriptionDelivery?.Quantity,
+            delivery.Order is null
+                ? null
+                : new DeliveryOrderSummary(
+                    delivery.Order.OrderNumber,
+                    delivery.Order.Items.Sum(x => x.Quantity),
+                    delivery.Order.PayableAmount,
+                    delivery.Order.Items
+                        .Select(x => $"{x.ProductNameSnapshot} x {x.Quantity:0.###} {x.UnitOfMeasureSnapshot}")
+                        .ToArray()),
+            delivery.SubscriptionDelivery?.Subscription.ProductNameSnapshot,
+            delivery.SubscriptionDelivery?.Subscription.UnitOfMeasureSnapshot);
     }
 
     private string? GetActiveOtp(Delivery delivery)

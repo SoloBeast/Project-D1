@@ -83,6 +83,7 @@ void main() {
       'price': 80.25,
       'branchIds': ['branch-1', 'branch-2'],
       'applicableChargeIds': <String>[],
+      'allowOrderOutsideBranchRadius': false,
     });
     expect(category.toJson(), {
       'code': 'MILK',
@@ -210,5 +211,58 @@ void main() {
     expect(formatQuantity(1.5), '1.5');
     expect(formatQuantity(1.125), '1.125');
     expect(formatQuantity(1.2344), '1.234');
+  });
+
+  group('outside-radius eligibility flag', () {
+    Map<String, dynamic> productJson() => {
+      'publicId': 'product-1',
+      'sku': 'MILK-001',
+      'name': 'Fresh Buffalo Milk',
+      'description': null,
+      'category': {
+        'publicId': 'category-1',
+        'code': 'MILK',
+        'name': 'Milk',
+        'description': null,
+        'isActive': true,
+      },
+      'unitOfMeasure': 'litre',
+      'price': 80,
+      'isActive': true,
+      'branchAvailability': <Map<String, dynamic>>[],
+    };
+
+    test('missing key fails closed to false', () {
+      final product = CatalogueProduct.fromJson(productJson());
+      expect(product.allowOrderOutsideBranchRadius, isFalse);
+    });
+
+    test('explicit value round-trips through product and draft', () {
+      final optedIn = CatalogueProduct.fromJson(
+        productJson()..['allowOrderOutsideBranchRadius'] = true,
+      );
+      expect(optedIn.allowOrderOutsideBranchRadius, isTrue);
+
+      final draft = ProductDraft.fromProduct(optedIn);
+      expect(draft.allowOrderOutsideBranchRadius, isTrue);
+      expect(
+        draft.toJson()['allowOrderOutsideBranchRadius'],
+        isTrue,
+      );
+
+      const fresh = ProductDraft(
+        sku: 'MILK-001',
+        name: 'Fresh Buffalo Milk',
+        description: null,
+        categoryId: 'category-1',
+        unitOfMeasure: 'litre',
+        price: 80,
+      );
+      expect(fresh.allowOrderOutsideBranchRadius, isFalse);
+      expect(
+        fresh.toJson()['allowOrderOutsideBranchRadius'],
+        isFalse,
+      );
+    });
   });
 }

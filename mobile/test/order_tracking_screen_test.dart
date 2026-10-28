@@ -215,7 +215,15 @@ void main() {
 
     expect(find.text('Delivered'), findsNWidgets(2));
     expect(find.text('Your delivery has been completed.'), findsOneWidget);
-    expect(find.text('Completed on 16/08/2026'), findsOneWidget);
+    // Item 3: the completion timestamp renders with date and time (the
+    // expectation goes through the same formatter, so it holds on any
+    // device timezone).
+    expect(
+      find.text(
+        'Completed on ${formatDeliveryDateTime(DateTime(2026, 8, 16, 9, 30))}',
+      ),
+      findsOneWidget,
+    );
     // The final stage is the reached state of the delivery.
     expect(find.bySemanticsLabel('Delivered: current step'), findsOneWidget);
     expect(find.text('Delivery needs attention'), findsNothing);
@@ -241,8 +249,12 @@ void main() {
     expect(find.text('This delivery attempt could not be completed.'),
         findsOneWidget);
     expect(find.text('Delivery failed'), findsOneWidget);
+    // Item 3: the failed-attempt timestamp renders with date and time.
     expect(
-      find.text('Customer not available · Attempted on 16/08/2026'),
+      find.text(
+        'Customer not available · Attempted on '
+        '${formatDeliveryDateTime(DateTime(2026, 8, 16, 18, 0))}',
+      ),
       findsOneWidget,
     );
     expect(find.text('Delivery needs attention'), findsOneWidget);

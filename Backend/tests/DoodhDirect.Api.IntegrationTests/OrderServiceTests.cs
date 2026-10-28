@@ -196,7 +196,7 @@ public sealed class OrderServiceTests
             harness.Service.GetAsync(harness.OtherCustomer.Id, order.PublicId, false, CancellationToken.None));
 
         var cancelled = await harness.Service.CancelAsync(
-            harness.Customer.Id, order.PublicId, CancellationToken.None);
+            harness.Customer.Id, order.PublicId, new CancelOrderRequest("ChangedMind", "  needs later delivery  "), CancellationToken.None);
         var expectedCancelledAt = new DateTime(2026, 8, 20, 2, 41, 0, DateTimeKind.Unspecified);
         Assert.Equal(OrderStatus.Cancelled, cancelled.Status);
         Assert.Equal(expectedCancelledAt, cancelled.CancelledAt);
@@ -205,8 +205,10 @@ public sealed class OrderServiceTests
         var cancelledOrder = await harness.Db.Orders.SingleAsync(x => x.PublicId == order.PublicId);
         Assert.Equal(expectedCancelledAt, cancelledOrder.CancelledAt);
 
-        await Assert.ThrowsAsync<BusinessRuleException>(() =>
-            harness.Service.CancelAsync(harness.Customer.Id, order.PublicId, CancellationToken.None));
+        var repeat = await harness.Service.CancelAsync(
+            harness.Customer.Id, order.PublicId, new CancelOrderRequest("ChangedMind", null), CancellationToken.None);
+        Assert.Equal(OrderStatus.Cancelled, repeat.Status);
+        Assert.Single(harness.Db.OrderCancellations.Where(x => x.OrderId == cancelledOrder.Id));
     }
 
     [Fact]
@@ -408,7 +410,7 @@ public sealed class OrderServiceTests
             var timeProvider = new TestIndiaTimeProvider(clock);
             return new OrderHarness(
                 db, customer, otherCustomer, address, product, nearBranch, nearAvailability,
-                farAvailability, new OrderService(db, allocation, notificationEventWriter, new NumberSeriesService(db, timeProvider), timeProvider));
+                farAvailability, new OrderService(db, allocation, notificationEventWriter, new NumberSeriesService(db, timeProvider), timeProvider, new DoodhDirect.Infrastructure.RefundReplacement.RefundReplacementConfigurationService(db, timeProvider)));
         }
 
         public ValueTask DisposeAsync() => Db.DisposeAsync();

@@ -27,6 +27,14 @@ public sealed class PaymentsWalletControllerTests
     [InlineData(typeof(WalletController), nameof(WalletController.Get), AuthorizationCodes.WalletReadOwn)]
     [InlineData(typeof(WalletController), nameof(WalletController.GetTransactions), AuthorizationCodes.WalletReadOwn)]
     [InlineData(typeof(WalletAdministrationController), nameof(WalletAdministrationController.Adjust), AuthorizationCodes.WalletAdjust)]
+    [InlineData(typeof(WalletController), nameof(WalletController.SubmitWithdrawal), AuthorizationCodes.WalletWithdrawOwn)]
+    [InlineData(typeof(WalletController), nameof(WalletController.ListWithdrawals), AuthorizationCodes.WalletWithdrawOwn)]
+    [InlineData(typeof(WalletController), nameof(WalletController.GetWithdrawal), AuthorizationCodes.WalletWithdrawOwn)]
+    [InlineData(typeof(WithdrawalAdministrationController), nameof(WithdrawalAdministrationController.List), AuthorizationCodes.WithdrawalsProcess)]
+    [InlineData(typeof(WithdrawalAdministrationController), nameof(WithdrawalAdministrationController.Get), AuthorizationCodes.WithdrawalsProcess)]
+    [InlineData(typeof(WithdrawalAdministrationController), nameof(WithdrawalAdministrationController.GetBankDetail), AuthorizationCodes.WithdrawalsProcess)]
+    [InlineData(typeof(WithdrawalAdministrationController), nameof(WithdrawalAdministrationController.Complete), AuthorizationCodes.WithdrawalsProcess)]
+    [InlineData(typeof(WithdrawalAdministrationController), nameof(WithdrawalAdministrationController.Reject), AuthorizationCodes.WithdrawalsProcess)]
     public void FinancialRoute_RequiresExpectedPermission(Type controllerType, string methodName, string permission)
     {
         var method = controllerType.GetMethod(methodName, BindingFlags.Instance | BindingFlags.Public);
@@ -245,6 +253,7 @@ public sealed class PaymentsWalletControllerTests
             new PaymentResult(
                 Guid.NewGuid(),
                 Guid.NewGuid(),
+                null,
                 "ORD-TEST-1",
                 PaymentMethod.Razorpay,
                 "Razorpay",
@@ -312,6 +321,23 @@ public sealed class PaymentsWalletControllerTests
             PaymentMethod method,
             string idempotencyKey,
             CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<PaymentPlanResult> CreateOrderPlanAsync(
+            long customerId,
+            Guid orderId,
+            bool useWalletBalance,
+            string idempotencyKey,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<PaymentPlanResult> CreateSubscriptionPlanAsync(
+            long customerId,
+            long subscriptionId,
+            bool useWalletBalance,
+            string idempotencyKey,
+            CancellationToken cancellationToken,
+            bool expirePriorAttempts = false) =>
             throw new NotSupportedException();
 
         public Task<PaymentResult> VerifyAsync(long customerId, VerifyPaymentRequest request, CancellationToken cancellationToken) =>

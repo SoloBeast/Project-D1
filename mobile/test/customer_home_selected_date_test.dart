@@ -741,6 +741,8 @@ void main() {
             status: DeliveryStatus.outForDelivery,
             scheduledDate: _day(1),
             destinationAddress: '1 Main Road, Bengaluru',
+            subscriptionDeliveryId: 'd-9',
+            subscriptionId: 'sub-1',
             assignedEmployeeId: null,
             assignedEmployeeName: null,
             isTrackingActive: false,

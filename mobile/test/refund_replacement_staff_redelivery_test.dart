@@ -275,15 +275,23 @@ void main() {
         size: const Size(1600, 1200),
       );
 
+      // Status filters live behind the AppBar filter icon.
+      expect(
+        find.widgetWithText(ChoiceChip, 'Closed without delivery'),
+        findsNothing,
+      );
+      expect(find.text('RR-2026-0001'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Filters'));
+      await tester.pumpAndSettle();
       expect(
         find.widgetWithText(ChoiceChip, 'Closed without delivery'),
         findsOneWidget,
       );
-      expect(find.text('RR-2026-0001'), findsOneWidget);
-
-      await tester.tap(
-        find.widgetWithText(ChoiceChip, 'Closed without delivery'),
-      );
+      final failedChip = find.widgetWithText(ChoiceChip, 'Closed without delivery');
+      await tester.ensureVisible(failedChip);
+      await tester.pumpAndSettle();
+      await tester.tap(failedChip);
       await tester.pumpAndSettle();
       expect(repository.lastStaffStatus, RefundReplacementStatus.failed);
     });
@@ -549,9 +557,12 @@ void main() {
       );
     });
 
-    testWidgets('pending refund approval keeps the remarks-only flow', (
+    testWidgets('pending order refund approval records the deduction decision', (
       tester,
     ) async {
+      // Stage 2: one-time order Refunds approve through the explicit
+      // apply/waive deduction dialog with a live preview — the legacy
+      // remarks-only flow no longer applies to order tickets.
       final repository = _Slice6FakeRepository()
         ..staffRequest = _ticket(status: RefundReplacementStatus.pending);
       await _pumpStaff(
@@ -560,20 +571,35 @@ void main() {
         repository,
       );
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Approve refund decision'),
+      );
       await tester.pumpAndSettle();
-      expect(find.text('Approve request'), findsOneWidget);
+      await tester.tap(find.text('Apply deduction'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('180.00 INR'), findsOneWidget);
+      // No settlement method is preselected: support must consciously
+      // choose one before the approval can be submitted.
+      await tester.tap(find.text('Wallet refund'));
+      await tester.pumpAndSettle();
       await tester.tap(
         find.descendant(
           of: find.byType(AlertDialog),
-          matching: find.widgetWithText(FilledButton, 'Approve'),
+          matching: find.widgetWithText(
+            FilledButton,
+            'Approve refund decision',
+          ),
         ),
       );
       await tester.pumpAndSettle();
 
       expect(repository.approveCalls, 1);
       expect(repository.approvedDate, isNull);
-      expect(find.text('Request approved.'), findsOneWidget);
+      expect(repository.approvedApplyDeduction, isTrue);
+      expect(
+        find.textContaining('Refund decision approved.'),
+        findsOneWidget,
+      );
     });
 
     testWidgets('awaiting-choice ticket without a choice offers no decision', (
@@ -827,7 +853,28 @@ class _Slice6FakeRepository extends RefundReplacementRepository {
   int approveCalls = 0;
   DateTime? approvedDate;
   String? approvedRemarks;
+  bool? approvedApplyDeduction;
+  String? approvedWaiverReason;
+  String? approvedSettlementMethod;
   RefundReplacementStatus? lastStaffStatus;
+
+  @override
+  Future<OrderRefundPreview> getOrderRefundPreview(
+    String token,
+    String requestId, {
+    required bool applyDeduction,
+  }) async => OrderRefundPreview(
+    requestId: requestId,
+    requestNumber: 'RR-2026-0001',
+    orderPublicId: 'order-pub-1',
+    orderNumber: 'ORD-1001',
+    grossBasis: 200,
+    appliedPercentage: applyDeduction ? 10 : 0,
+    deductionAmount: applyDeduction ? 20 : 0,
+    eligiblePaid: 200,
+    proposedRefund: applyDeduction ? 180 : 200,
+    currency: 'INR',
+  );
 
   @override
   Future<RefundReplacementPage> listForStaff(
@@ -872,10 +919,16 @@ class _Slice6FakeRepository extends RefundReplacementRepository {
     String requestId, {
     String? remarks,
     DateTime? replacementDate,
+    bool? applyDeduction,
+    String? waiverReason,
+    String? settlementMethod,
   }) async {
     approveCalls++;
     approvedDate = replacementDate;
     approvedRemarks = remarks;
+    approvedApplyDeduction = applyDeduction;
+    approvedWaiverReason = waiverReason;
+    approvedSettlementMethod = settlementMethod;
     final gate = approveGate;
     if (gate != null) await gate.future;
     if (approveFailure != null) throw approveFailure!;

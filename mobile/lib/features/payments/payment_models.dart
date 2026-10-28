@@ -77,9 +77,52 @@ class PaymentCapability {
   final String? unavailableReason;
 }
 
+/// Server-authoritative wallet-first split plan. The client sends only
+/// whether to apply the wallet; every amount here is computed by the server
+/// from the frozen payable total and the actual wallet balance.
+class PaymentPlan {
+  const PaymentPlan({
+    required this.paymentGroupId,
+    required this.payableAmount,
+    required this.walletApplied,
+    required this.razorpayAmount,
+    required this.usesWallet,
+    required this.payment,
+    required this.components,
+  });
+
+  factory PaymentPlan.fromJson(Map<String, dynamic> json) => PaymentPlan(
+    paymentGroupId: json['paymentGroupId'] as String?,
+    payableAmount: (json['payableAmount'] as num).toDouble(),
+    walletApplied: (json['walletApplied'] as num).toDouble(),
+    razorpayAmount: (json['razorpayAmount'] as num).toDouble(),
+    usesWallet: json['usesWallet'] as bool,
+    payment: PaymentDetails.fromJson(json['payment'] as Map<String, dynamic>),
+    components: ((json['components'] as List<dynamic>?) ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map(PaymentDetails.fromJson)
+        .toList(growable: false),
+  );
+
+  final String? paymentGroupId;
+  final double payableAmount;
+  final double walletApplied;
+  final double razorpayAmount;
+  final bool usesWallet;
+  final PaymentDetails payment;
+  final List<PaymentDetails> components;
+
+  bool get isWalletOnly => usesWallet && razorpayAmount <= 0;
+  bool get needsRazorpay => razorpayAmount > 0;
+  String get formattedPayable => '₹${payableAmount.toStringAsFixed(2)}';
+  String get formattedWallet => '₹${walletApplied.toStringAsFixed(2)}';
+  String get formattedRazorpay => '₹${razorpayAmount.toStringAsFixed(2)}';
+}
+
 class PaymentDetails {
   const PaymentDetails({
     required this.publicId,
+    required this.paymentGroupId,
     required this.orderId,
     required this.orderNumber,
     required this.subscriptionId,
@@ -101,6 +144,7 @@ class PaymentDetails {
 
   factory PaymentDetails.fromJson(Map<String, dynamic> json) => PaymentDetails(
     publicId: json['publicId'] as String,
+    paymentGroupId: json['paymentGroupId'] as String?,
     orderId: json['orderId'] as String?,
     orderNumber: json['orderNumber'] as String?,
     subscriptionId: json['subscriptionId'] as String?,
@@ -125,6 +169,7 @@ class PaymentDetails {
   );
 
   final String publicId;
+  final String? paymentGroupId;
   final String? orderId;
   final String? orderNumber;
   final String? subscriptionId;

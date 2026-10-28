@@ -10,9 +10,13 @@ using DoodhDirect.Domain.Customer;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
 using DoodhDirect.Domain.Payments;
+using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Persistence.Migrations;
+using DoodhDirect.Infrastructure.Setup;
 using DoodhDirect.Infrastructure.Subscriptions;
+using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
@@ -145,11 +149,14 @@ public sealed class SubscriptionServiceTests
 
         await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.PauseAsync(
             harness.Customer.Id, created.Subscription.PublicId, CancellationToken.None));
-        await Assert.ThrowsAsync<InvalidOperationException>(() => harness.Service.SkipAsync(
+        // Single-date skip cutoff failures are typed business-rule errors
+        // (HTTP 422), not raw domain InvalidOperationExceptions (HTTP 500).
+        var skipError = await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.SkipAsync(
             harness.Customer.Id,
             created.Subscription.PublicId,
             new SkipSubscriptionDeliveryRequest(delivery.PublicId),
             CancellationToken.None));
+        Assert.Equal("The skip cutoff has passed for this delivery.", skipError.Message);
 
         Assert.Equal(
             SubscriptionDeliveryStatus.Scheduled,
@@ -407,7 +414,8 @@ public sealed class SubscriptionServiceTests
     {
         await using var harness = await SubscriptionHarness.CreateAsync(
             utcNow: new DateTime(2026, 10, 14, 20, 0, 0, DateTimeKind.Utc),
-            cutoffHours: 24);
+            cutoffHours: 24,
+            vacationCutoffHours: 24);
         await harness.Service.CreateAsync(
             harness.Customer.Id,
             harness.Request(
@@ -433,6 +441,129 @@ public sealed class SubscriptionServiceTests
             (await harness.Db.SubscriptionDeliveries
                 .AsNoTracking()
                 .SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task Vacation_RespectsInclusiveBoundariesAndMatchesCalendar()
+    {
+        await using var harness = await SubscriptionHarness.CreateAsync(
+            utcNow: new DateTime(2026, 10, 13, 18, 0, 0, DateTimeKind.Utc),
+            cutoffHours: 24);
+        // Monday occurrences: 19 Oct, 26 Oct, 2 Nov.
+        var created = await harness.Service.CreateAsync(
+            harness.Customer.Id,
+            harness.Request(
+                startDate: new DateOnly(2026, 10, 15),
+                days: [DayOfWeek.Monday],
+                entitlement: 3),
+            "subscription-a",
+            CancellationToken.None);
+        await harness.ActivateAsync();
+
+        // Inclusive range over the first two occurrences; the day before
+        // (18 Oct) has no occurrence and 2 Nov stays outside the range.
+        var result = await harness.Service.CreateVacationAsync(
+            harness.Customer.Id,
+            new CreateVacationRequest(new DateOnly(2026, 10, 19), new DateOnly(2026, 10, 26)),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.SkippedCount);
+        Assert.Equal(
+            [new DateOnly(2026, 10, 19), new DateOnly(2026, 10, 26)],
+            result.SkippedDates.Select(x => x.Date).OrderBy(x => x).ToArray());
+        Assert.Empty(result.Ineligible);
+
+        var statuses = await harness.Db.SubscriptionDeliveries
+            .AsNoTracking()
+            .OrderBy(x => x.ScheduledDate)
+            .ToListAsync();
+        Assert.Equal(
+            [SubscriptionDeliveryStatus.Skipped, SubscriptionDeliveryStatus.Skipped, SubscriptionDeliveryStatus.Scheduled],
+            statuses.Select(x => x.Status).ToArray());
+
+        // The customer calendar reflects the same underlying state.
+        var calendar = await harness.Service.GetCalendarAsync(
+            harness.Customer.Id,
+            created.Subscription.PublicId,
+            CancellationToken.None);
+        Assert.Equal(
+            [SubscriptionDeliveryStatus.Skipped, SubscriptionDeliveryStatus.Skipped, SubscriptionDeliveryStatus.Scheduled],
+            calendar.OrderBy(x => x.ScheduledDate).Select(x => x.Status).ToArray());
+
+        // Skips never consume prepaid entitlement.
+        var reloaded = await harness.Db.Subscriptions
+            .AsNoTracking()
+            .SingleAsync(x => x.PublicId == created.Subscription.PublicId);
+        Assert.Equal(0, reloaded.UsedEntitlement);
+        Assert.Equal(3, reloaded.RemainingEntitlement);
+    }
+
+    [Fact]
+    public async Task Vacation_SingleDayRangeSkipsExactlyThatDate()
+    {
+        await using var harness = await SubscriptionHarness.CreateAsync(
+            utcNow: new DateTime(2026, 10, 13, 18, 0, 0, DateTimeKind.Utc),
+            cutoffHours: 24);
+        await harness.Service.CreateAsync(
+            harness.Customer.Id,
+            harness.Request(
+                startDate: new DateOnly(2026, 10, 15),
+                days: [DayOfWeek.Monday],
+                entitlement: 2),
+            "subscription-a",
+            CancellationToken.None);
+        await harness.ActivateAsync();
+
+        var result = await harness.Service.CreateVacationAsync(
+            harness.Customer.Id,
+            new CreateVacationRequest(new DateOnly(2026, 10, 19), new DateOnly(2026, 10, 19)),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.SkippedCount);
+        Assert.Equal(new DateOnly(2026, 10, 19), Assert.Single(result.SkippedDates).Date);
+        Assert.Empty(result.Ineligible);
+    }
+
+    [Fact]
+    public async Task Vacation_DeliveredOccurrenceIsReportedAndKeepsEntitlementConsumed()
+    {
+        await using var harness = await SubscriptionHarness.CreateAsync(
+            utcNow: new DateTime(2026, 10, 13, 18, 0, 0, DateTimeKind.Utc),
+            cutoffHours: 24);
+        var created = await harness.Service.CreateAsync(
+            harness.Customer.Id,
+            harness.Request(
+                startDate: new DateOnly(2026, 10, 15),
+                days: [DayOfWeek.Monday],
+                entitlement: 2),
+            "subscription-a",
+            CancellationToken.None);
+        await harness.ActivateAsync();
+
+        var tracked = await harness.Db.Subscriptions
+            .Include(x => x.Deliveries)
+            .SingleAsync(x => x.PublicId == created.Subscription.PublicId);
+        var first = tracked.Deliveries.Single(x => x.ScheduledDate == new DateOnly(2026, 10, 19));
+        tracked.MarkDelivered(first, harness.TimeProvider.Now);
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var result = await harness.Service.CreateVacationAsync(
+            harness.Customer.Id,
+            new CreateVacationRequest(new DateOnly(2026, 10, 19), new DateOnly(2026, 10, 26)),
+            CancellationToken.None);
+
+        // Only the still-scheduled 26 Oct occurrence is skipped; the
+        // delivered one is reported with its actual reason and untouched.
+        Assert.Equal(1, result.SkippedCount);
+        Assert.Equal(new DateOnly(2026, 10, 26), Assert.Single(result.SkippedDates).Date);
+        var ineligible = Assert.Single(result.Ineligible);
+        Assert.Equal(new DateOnly(2026, 10, 19), ineligible.Date);
+        Assert.Equal("alreadyDelivered", ineligible.Reason);
+        var reloaded = await harness.Db.Subscriptions
+            .AsNoTracking()
+            .SingleAsync(x => x.PublicId == created.Subscription.PublicId);
+        Assert.Equal(1, reloaded.UsedEntitlement);
     }
 
     [Fact]
@@ -646,6 +777,366 @@ public sealed class SubscriptionServiceTests
             CancellationToken.None));
     }
 
+    // ------------------------------------------------------- document numbers
+
+    [Fact]
+    public async Task DocumentNumber_AssignedFromBranchScopedSeries()
+    {
+        await using var harness = await SubscriptionHarness.CreateAsync();
+        var created = await harness.Service.CreateAsync(
+            harness.Customer.Id, harness.Request(), "subscription-1", CancellationToken.None);
+
+        // August 2026 falls in Indian financial year 26-27.
+        Assert.Equal("SUB/MAIN/26-27/000001", created.Subscription.SubscriptionNumber);
+        Assert.Equal(
+            "SUB/MAIN/26-27/000001",
+            (await harness.Db.Subscriptions.AsNoTracking().SingleAsync()).SubscriptionNumber);
+        Assert.Equal(1, await harness.Db.NumberSeries
+            .Where(x => x.Code == "SUB")
+            .Select(x => x.LastUsedNumber)
+            .SingleAsync());
+    }
+
+    [Fact]
+    public async Task DocumentNumber_IncrementsAcrossSubscriptions()
+    {
+        await using var harness = await SubscriptionHarness.CreateAsync();
+        var first = await harness.Service.CreateAsync(
+            harness.Customer.Id, harness.Request(), "subscription-1", CancellationToken.None);
+        var product = await harness.AddSecondProductAsync();
+        var second = await harness.CreateSecondSubscriptionAsync(product, "subscription-2", new DateOnly(2026, 8, 19));
+
+        Assert.Equal("SUB/MAIN/26-27/000001", first.Subscription.SubscriptionNumber);
+        Assert.Equal("SUB/MAIN/26-27/000002", second.Subscription.SubscriptionNumber);
+    }
+
+    [Fact]
+    public async Task DocumentNumber_IdempotentRetryReusesNumber()
+    {
+        await using var harness = await SubscriptionHarness.CreateAsync();
+        var first = await harness.Service.CreateAsync(
+            harness.Customer.Id, harness.Request(), "subscription-1", CancellationToken.None);
+        var replayed = await harness.Service.CreateAsync(
+            harness.Customer.Id, harness.Request(), "subscription-1", CancellationToken.None);
+
+        Assert.Equal(first.Subscription.PublicId, replayed.Subscription.PublicId);
+        Assert.Equal("SUB/MAIN/26-27/000001", replayed.Subscription.SubscriptionNumber);
+        // The retry reuses the persisted subscription: no second allocation.
+        Assert.Equal(1, await harness.Db.NumberSeries
+            .Where(x => x.Code == "SUB")
+            .Select(x => x.LastUsedNumber)
+            .SingleAsync());
+        Assert.Equal(1, await harness.Db.Subscriptions.CountAsync());
+    }
+
+    [Fact]
+    public async Task DocumentNumber_MissingSeriesFailsFast()
+    {
+        await using var harness = await SubscriptionHarness.CreateAsync(seedSubscriptionSeries: false);
+
+        var exception = await Assert.ThrowsAsync<NotFoundException>(() => harness.Service.CreateAsync(
+            harness.Customer.Id, harness.Request(), "subscription-1", CancellationToken.None));
+
+        Assert.Equal("Number series 'SUB' for scope 'MAIN' was not found.", exception.Message);
+        Assert.Equal(0, await harness.Db.Subscriptions.CountAsync());
+    }
+
+    [Fact]
+    public async Task DocumentNumber_UsesScopeSuffixedLegacySeries()
+    {
+        await using var harness = await SubscriptionHarness.CreateAsync();
+        // Replace the canonical row with a legacy scope-suffixed row shaped
+        // like the production SUB_DB0001/SUB_DB0002 rows.
+        var canonical = await harness.Db.NumberSeries.SingleAsync(x => x.Code == "SUB");
+        harness.Db.NumberSeries.Remove(canonical);
+        harness.Db.NumberSeries.Add(new NumberSeries(
+            "SUB_MAIN",
+            "Legacy subscription numbers for branch MAIN",
+            "SUB/{SCOPE}/{FY}/{NUMBER:000000}",
+            1,
+            1,
+            NumberSeriesResetPolicy.Never,
+            "MAIN"));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var created = await harness.Service.CreateAsync(
+            harness.Customer.Id, harness.Request(), "subscription-1", CancellationToken.None);
+
+        Assert.Equal("SUB/MAIN/26-27/000001", created.Subscription.SubscriptionNumber);
+    }
+
+    [Fact]
+    public async Task DocumentNumber_ConcurrentCreationsAllocateDistinctNumbers()
+    {
+        await using var harness = await SqlSubscriptionHarness.CreateAsync();
+
+        // Genuine parallel creation against one branch series row: the loser
+        // of the optimistic-concurrency race retries once on a fresh scope
+        // (the same retry any API caller performs after a 500 — the stale
+        // tracked series row cannot be reused), then both numbers must be
+        // present and distinct — duplicates are never issued.
+        static async Task<CreatedSubscriptionResult> CreateWithRetryAsync(
+            SqlSubscriptionHarness sqlHarness,
+            string idempotencyKey)
+        {
+            await using var attemptDb = sqlHarness.CreateContext();
+            try
+            {
+                return await sqlHarness.CreateService(attemptDb).CreateAsync(
+                    sqlHarness.CustomerId,
+                    sqlHarness.Request(sqlHarness.ProductId, sqlHarness.AddressId),
+                    idempotencyKey,
+                    CancellationToken.None);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                await using var retryDb = sqlHarness.CreateContext();
+                return await sqlHarness.CreateService(retryDb).CreateAsync(
+                    sqlHarness.CustomerId,
+                    sqlHarness.Request(sqlHarness.ProductId, sqlHarness.AddressId),
+                    idempotencyKey,
+                    CancellationToken.None);
+            }
+        }
+
+        var results = await Task.WhenAll(
+            CreateWithRetryAsync(harness, "sql-concurrent-1"),
+            CreateWithRetryAsync(harness, "sql-concurrent-2"));
+
+        var numbers = results.Select(x => x.Subscription.SubscriptionNumber).OrderBy(x => x).ToArray();
+        Assert.Equal(["SUB/MAIN/26-27/000001", "SUB/MAIN/26-27/000002"], numbers);
+    }
+
+    [Fact]
+    public async Task DocumentNumber_BackfillSql_AssignsHistoricalNumbersAndAdvancesCounters()
+    {
+        await using var harness = await SqlSubscriptionHarness.CreateAsync();
+        await using (var setupDb = harness.CreateContext())
+        {
+            var service = harness.CreateService(setupDb);
+            await service.CreateAsync(
+                harness.CustomerId,
+                harness.Request(harness.ProductId, harness.AddressId),
+                "sql-backfill-1",
+                CancellationToken.None);
+            await service.CreateAsync(
+                harness.CustomerId,
+                harness.Request(harness.ProductId, harness.AddressId),
+                "sql-backfill-2",
+                CancellationToken.None);
+        }
+
+        await using var db = harness.CreateContext();
+        var ids = await db.Subscriptions.OrderBy(x => x.Id).Select(x => x.Id).ToListAsync();
+        Assert.Equal(2, ids.Count);
+
+        // Simulate pre-migration rows: numbers absent, counters rewound, and
+        // one subscription under a scope with no configured series.
+        await db.Database.ExecuteSqlRawAsync(
+            "UPDATE Subscription SET SubscriptionNumber = NULL");
+        await db.Database.ExecuteSqlRawAsync(
+            "UPDATE NumberSeries SET LastUsedNumber = 0 WHERE Code LIKE 'SUB%'");
+        await db.Database.ExecuteSqlRawAsync(
+            "UPDATE Subscription SET BranchCodeSnapshot = 'GHOST' WHERE Id = {0}", ids[1]);
+
+        await db.Database.ExecuteSqlRawAsync(SubscriptionDocumentNumber.BackfillSql);
+
+        var rows = await db.Subscriptions.AsNoTracking().OrderBy(x => x.Id).ToListAsync();
+        Assert.Matches(@"^SUB/MAIN/\d{2}-\d{2}/000001$", rows[0].SubscriptionNumber);
+        Assert.Null(rows[1].SubscriptionNumber);
+        Assert.Equal(
+            1,
+            await db.NumberSeries
+                .Where(x => x.Code == "SUB" && x.ScopeKey == "MAIN")
+                .Select(x => x.LastUsedNumber)
+                .SingleAsync());
+
+        // Re-running the backfill is a no-op: numbers are stable and the
+        // live counter is never rewound.
+        await db.Database.ExecuteSqlRawAsync(SubscriptionDocumentNumber.BackfillSql);
+        var rerun = await db.Subscriptions.AsNoTracking().OrderBy(x => x.Id).ToListAsync();
+        Assert.Equal(rows[0].SubscriptionNumber, rerun[0].SubscriptionNumber);
+        Assert.Null(rerun[1].SubscriptionNumber);
+        Assert.Equal(
+            1,
+            await db.NumberSeries
+                .Where(x => x.Code == "SUB" && x.ScopeKey == "MAIN")
+                .Select(x => x.LastUsedNumber)
+                .SingleAsync());
+
+        // Fresh allocations continue past the backfilled value — no collision.
+        await using var afterDb = harness.CreateContext();
+        var third = await harness.CreateService(afterDb).CreateAsync(
+            harness.CustomerId,
+            harness.Request(harness.ProductId, harness.AddressId),
+            "sql-backfill-3",
+            CancellationToken.None);
+        Assert.Matches(@"^SUB/MAIN/\d{2}-\d{2}/000002$", third.Subscription.SubscriptionNumber);
+    }
+
+    // ------------------------------------------------------- vacation cutoff
+
+    [Fact]
+    public async Task Vacation_TomorrowSkippableDuringPrecedingDayUnderDefaultCutoff()
+    {
+        // No vacation-cutoff row: the 0-hour default applies. The harness
+        // clock value is observed as IST wall time, so this is afternoon on
+        // Mon 19 Oct and tomorrow (Tue 20 Oct) stays eligible all day.
+        await using var harness = await SubscriptionHarness.CreateAsync(
+            utcNow: new DateTime(2026, 10, 19, 14, 3, 0, DateTimeKind.Utc));
+        await harness.Service.CreateAsync(
+            harness.Customer.Id,
+            harness.Request(
+                startDate: new DateOnly(2026, 10, 20),
+                days: [DayOfWeek.Tuesday],
+                entitlement: 1),
+            "subscription-a",
+            CancellationToken.None);
+        await harness.ActivateAsync();
+
+        var result = await harness.Service.CreateVacationAsync(
+            harness.Customer.Id,
+            new CreateVacationRequest(new DateOnly(2026, 10, 20), new DateOnly(2026, 10, 20)),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.SkippedCount);
+        Assert.Empty(result.Ineligible);
+    }
+
+    [Fact]
+    public async Task Vacation_SameDayBlockedOnceDateBegins()
+    {
+        // 00:30 IST on Tue 20 Oct: the date has begun, so even the 0-hour
+        // default cutoff has passed for today's occurrence.
+        await using var harness = await SubscriptionHarness.CreateAsync(
+            utcNow: new DateTime(2026, 10, 20, 0, 30, 0, DateTimeKind.Utc));
+        await harness.Service.CreateAsync(
+            harness.Customer.Id,
+            harness.Request(
+                startDate: new DateOnly(2026, 10, 20),
+                days: [DayOfWeek.Tuesday],
+                entitlement: 1),
+            "subscription-a",
+            CancellationToken.None);
+        await harness.ActivateAsync();
+
+        var result = await harness.Service.CreateVacationAsync(
+            harness.Customer.Id,
+            new CreateVacationRequest(new DateOnly(2026, 10, 20), new DateOnly(2026, 10, 20)),
+            CancellationToken.None);
+
+        Assert.Equal(0, result.SkippedCount);
+        var ineligible = Assert.Single(result.Ineligible);
+        Assert.Equal("cutoffPassed", ineligible.Reason);
+    }
+
+    [Fact]
+    public async Task Vacation_ExactCutoffBoundaryAllowsSkip()
+    {
+        // 24h vacation cutoff for the Thu 15 Oct occurrence: the boundary is
+        // exactly 00:00 IST on Wed 14 Oct.
+        await using var atBoundary = await SubscriptionHarness.CreateAsync(
+            utcNow: new DateTime(2026, 10, 14, 0, 0, 0, DateTimeKind.Utc),
+            vacationCutoffHours: 24);
+        await atBoundary.Service.CreateAsync(
+            atBoundary.Customer.Id,
+            atBoundary.Request(
+                startDate: new DateOnly(2026, 10, 15),
+                days: [DayOfWeek.Thursday],
+                entitlement: 1),
+            "subscription-a",
+            CancellationToken.None);
+        await atBoundary.ActivateAsync();
+
+        var allowed = await atBoundary.Service.CreateVacationAsync(
+            atBoundary.Customer.Id,
+            new CreateVacationRequest(new DateOnly(2026, 10, 15), new DateOnly(2026, 10, 15)),
+            CancellationToken.None);
+        Assert.Equal(1, allowed.SkippedCount);
+
+        // One minute past the boundary the same date is reported, not skipped.
+        await using var pastBoundary = await SubscriptionHarness.CreateAsync(
+            utcNow: new DateTime(2026, 10, 14, 0, 1, 0, DateTimeKind.Utc),
+            vacationCutoffHours: 24);
+        await pastBoundary.Service.CreateAsync(
+            pastBoundary.Customer.Id,
+            pastBoundary.Request(
+                startDate: new DateOnly(2026, 10, 15),
+                days: [DayOfWeek.Thursday],
+                entitlement: 1),
+            "subscription-a",
+            CancellationToken.None);
+        await pastBoundary.ActivateAsync();
+
+        var rejected = await pastBoundary.Service.CreateVacationAsync(
+            pastBoundary.Customer.Id,
+            new CreateVacationRequest(new DateOnly(2026, 10, 15), new DateOnly(2026, 10, 15)),
+            CancellationToken.None);
+        Assert.Equal(0, rejected.SkippedCount);
+        Assert.Equal("cutoffPassed", Assert.Single(rejected.Ineligible).Reason);
+    }
+
+    [Fact]
+    public async Task Vacation_MultiDateSkipsEligibleAndReportsLateIndividually()
+    {
+        // 01:30 IST on Thu 15 Oct with a 24h vacation cutoff: the 15 Oct
+        // occurrence is late, but the 22 Oct occurrence still skips — one
+        // ineligible date never blocks the rest of the range.
+        await using var harness = await SubscriptionHarness.CreateAsync(
+            utcNow: new DateTime(2026, 10, 15, 1, 30, 0, DateTimeKind.Utc),
+            vacationCutoffHours: 24);
+        await harness.Service.CreateAsync(
+            harness.Customer.Id,
+            harness.Request(
+                startDate: new DateOnly(2026, 10, 15),
+                days: [DayOfWeek.Thursday],
+                entitlement: 2),
+            "subscription-a",
+            CancellationToken.None);
+        await harness.ActivateAsync();
+
+        var result = await harness.Service.CreateVacationAsync(
+            harness.Customer.Id,
+            new CreateVacationRequest(new DateOnly(2026, 10, 15), new DateOnly(2026, 10, 22)),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.SkippedCount);
+        Assert.Equal(new DateOnly(2026, 10, 22), Assert.Single(result.SkippedDates).Date);
+        var late = Assert.Single(result.Ineligible);
+        Assert.Equal(new DateOnly(2026, 10, 15), late.Date);
+        Assert.Equal("cutoffPassed", late.Reason);
+    }
+
+    [Fact]
+    public async Task VacationCutoff_DoesNotAlterPause()
+    {
+        // Shared cutoff 24h with no vacation-cutoff row (0h default), at
+        // 01:30 IST on Thu 15 Oct: pause stays blocked inside 24h while the
+        // 22 Oct vacation stays allowed.
+        await using var harness = await SubscriptionHarness.CreateAsync(
+            utcNow: new DateTime(2026, 10, 15, 1, 30, 0, DateTimeKind.Utc),
+            cutoffHours: 24);
+        var created = await harness.Service.CreateAsync(
+            harness.Customer.Id,
+            harness.Request(
+                startDate: new DateOnly(2026, 10, 15),
+                days: [DayOfWeek.Thursday],
+                entitlement: 2),
+            "subscription-a",
+            CancellationToken.None);
+        await harness.ActivateAsync();
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.PauseAsync(
+            harness.Customer.Id, created.Subscription.PublicId, CancellationToken.None));
+
+        var vacation = await harness.Service.CreateVacationAsync(
+            harness.Customer.Id,
+            new CreateVacationRequest(new DateOnly(2026, 10, 22), new DateOnly(2026, 10, 22)),
+            CancellationToken.None);
+        Assert.Equal(1, vacation.SkippedCount);
+    }
+
     private sealed class SubscriptionHarness : IAsyncDisposable
     {
         private readonly SqliteConnection connection;
@@ -760,7 +1251,9 @@ public sealed class SubscriptionServiceTests
 
         public static async Task<SubscriptionHarness> CreateAsync(
             DateTime? utcNow = null,
-            int? cutoffHours = null)
+            int? cutoffHours = null,
+            int? vacationCutoffHours = null,
+            bool seedSubscriptionSeries = true)
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -798,12 +1291,32 @@ public sealed class SubscriptionServiceTests
                 77.5946m);
             db.AddRange(product, branch, address);
             await db.SaveChangesAsync();
+            if (seedSubscriptionSeries)
+            {
+                // Branch-scoped SUB series consumed by subscription creation.
+                db.NumberSeries.Add(new NumberSeries(
+                    SubscriptionService.SubscriptionSeriesCode,
+                    "Subscription document numbers for branch MAIN",
+                    "SUB/{SCOPE}/{FY}/{NUMBER:000000}",
+                    1,
+                    1,
+                    NumberSeriesResetPolicy.Never,
+                    branch.Code));
+                await db.SaveChangesAsync();
+            }
             db.ProductBranches.Add(new ProductBranch(product.Id, branch.Id, true, 100m));
             if (cutoffHours.HasValue)
             {
                 db.SystemConfigurations.Add(new SystemConfiguration(
                     "Subscription.SkipPauseCutoffHours",
                     cutoffHours.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    "integer"));
+            }
+            if (vacationCutoffHours.HasValue)
+            {
+                db.SystemConfigurations.Add(new SystemConfiguration(
+                    "Subscription.VacationSkipCutoffHours",
+                    vacationCutoffHours.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     "integer"));
             }
             await db.SaveChangesAsync();
@@ -818,7 +1331,8 @@ public sealed class SubscriptionServiceTests
                 allocation,
                 paymentService,
                 timeProvider,
-                notificationEventWriter);
+                notificationEventWriter,
+                new NumberSeriesService(db, timeProvider));
             return new SubscriptionHarness(
                 connection, db, customer, otherCustomer, product, address, clock, timeProvider, paymentService, service);
         }
@@ -862,6 +1376,7 @@ public sealed class SubscriptionServiceTests
                 Guid.NewGuid(),
                 null,
                 null,
+                null,
                 method,
                 method switch
                 {
@@ -896,6 +1411,21 @@ public sealed class SubscriptionServiceTests
             PaymentMethod method,
             string idempotencyKey,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<PaymentPlanResult> CreateOrderPlanAsync(
+            long customerId,
+            Guid orderId,
+            bool useWalletBalance,
+            string idempotencyKey,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<PaymentPlanResult> CreateSubscriptionPlanAsync(
+            long customerId,
+            long subscriptionId,
+            bool useWalletBalance,
+            string idempotencyKey,
+            CancellationToken cancellationToken,
+            bool expirePriorAttempts = false) => throw new NotSupportedException();
 
         public Task<PaymentResult> CompleteDevelopmentAsync(
             long customerId,
@@ -943,5 +1473,143 @@ public sealed class SubscriptionServiceTests
             byte[] payload,
             string signature,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+    }
+
+    /// <summary>
+    /// SQL Server scratch database (unique name per run, deleted on dispose)
+    /// for the subscription-number concurrency test: parallel serializable
+    /// creation transactions need a real relational engine, which SQLite
+    /// in-memory cannot provide.
+    /// </summary>
+    private sealed class SqlSubscriptionHarness : IAsyncDisposable
+    {
+        private const string SqlServerInstance = @".\SQLEXPRESS";
+        private readonly string connectionString;
+
+        private SqlSubscriptionHarness(
+            string connectionString,
+            long customerId,
+            Guid productId,
+            Guid addressId)
+        {
+            this.connectionString = connectionString;
+            CustomerId = customerId;
+            ProductId = productId;
+            AddressId = addressId;
+        }
+
+        public long CustomerId { get; }
+        public Guid ProductId { get; }
+        public Guid AddressId { get; }
+
+        public DoodhDirectDbContext CreateContext()
+        {
+            var options = new DbContextOptionsBuilder<DoodhDirectDbContext>()
+                .UseSqlServer(
+                    connectionString,
+                    sql =>
+                    {
+                        sql.CommandTimeout(60);
+                        sql.EnableRetryOnFailure(maxRetryCount: 5);
+                    })
+                .Options;
+            return new DoodhDirectDbContext(options);
+        }
+
+        public SubscriptionService CreateService(DoodhDirectDbContext db)
+        {
+            var clock = new TestClock(new DateTime(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc));
+            var time = new TestIndiaTimeProvider(clock);
+            return new SubscriptionService(
+                db,
+                new FixedBranchAllocationService(db.Branches.Single(x => x.Code == "MAIN")),
+                new CapturingSubscriptionPaymentService(db, clock),
+                time,
+                new TestNotificationEventWriter(db, clock),
+                new NumberSeriesService(db, time));
+        }
+
+        public CreateSubscriptionRequest Request(Guid productId, Guid addressId) => new(
+            productId,
+            addressId,
+            1m,
+            new DateOnly(2026, 8, 17),
+            [DayOfWeek.Monday],
+            2,
+            PaymentMethod.Razorpay);
+
+        public static async Task<SqlSubscriptionHarness> CreateAsync()
+        {
+            var databaseName = $"DoodhDirect_Test_SubNumber_{Guid.NewGuid():N}";
+            var builder = new SqlConnectionStringBuilder
+            {
+                DataSource = SqlServerInstance,
+                InitialCatalog = databaseName,
+                IntegratedSecurity = true,
+                Encrypt = true,
+                TrustServerCertificate = true,
+                MultipleActiveResultSets = true
+            };
+            var options = new DbContextOptionsBuilder<DoodhDirectDbContext>()
+                .UseSqlServer(builder.ConnectionString, sql => sql.CommandTimeout(60))
+                .Options;
+            var db = new DoodhDirectDbContext(options);
+            try
+            {
+                await db.Database.EnsureCreatedAsync();
+            }
+            catch (SqlException ex)
+            {
+                await db.DisposeAsync();
+                throw new InvalidOperationException(
+                    $"This test requires the local SQL Server Express instance ('{SqlServerInstance}').", ex);
+            }
+
+            var customer = new User(UserType.Customer);
+            customer.SetProfile("Customer");
+            var branch = new Branch("MAIN", "Main Branch", "Bengaluru", "Karnataka", 12.9716m, 77.5946m);
+            db.AddRange(customer, branch);
+            await db.SaveChangesAsync();
+
+            var category = new ProductCategory("MILK", "Milk");
+            category.Activate();
+            db.ProductCategories.Add(category);
+            await db.SaveChangesAsync();
+            var product = new Product(category.Id, "MILK-001", "Fresh Milk", null, "litre", 80m);
+            product.Activate();
+            var address = new CustomerAddress(
+                customer.Id, "Home", "1 Main Road", "Central", "Bengaluru", "Karnataka",
+                "560001", "Customer", "9999999999", 12.9716m, 77.5946m);
+            db.AddRange(product, address);
+            await db.SaveChangesAsync();
+            db.ProductBranches.Add(new ProductBranch(product.Id, branch.Id, true, 100m));
+            db.NumberSeries.Add(new NumberSeries(
+                SubscriptionService.SubscriptionSeriesCode,
+                "Subscription document numbers for branch MAIN",
+                "SUB/{SCOPE}/{FY}/{NUMBER:000000}",
+                1,
+                1,
+                NumberSeriesResetPolicy.Never,
+                branch.Code));
+            await db.SaveChangesAsync();
+
+            var harness = new SqlSubscriptionHarness(
+                builder.ConnectionString, customer.Id, product.PublicId, address.PublicId);
+            await db.DisposeAsync();
+            return harness;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await using var db = CreateContext();
+            try
+            {
+                await db.Database.EnsureDeletedAsync();
+            }
+            catch
+            {
+                // Best-effort cleanup; the database name is unique per run.
+            }
+        }
     }
 }

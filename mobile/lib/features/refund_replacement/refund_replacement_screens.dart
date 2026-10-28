@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../deliveries/delivery_models.dart';
 import 'refund_replacement_controller.dart';
 import 'refund_replacement_models.dart';
 
@@ -158,16 +159,24 @@ mixin _RefundReplacementImagePicking<T extends ConsumerStatefulWidget>
 ///
 /// When [milkTestId] is supplied the screen is the special milk-test-rejection
 /// flow: the request is pre-linked to that test and no proof image is required.
+///
+/// [sourceType] is the authoritative delivery source from the deliveries API
+/// (`sourceType` on the customer/delivery detail). One-time order deliveries
+/// support Refund only in this release; subscription occurrences keep Refund
+/// and Replacement. A null/unknown source fails safe to refund-only so the UI
+/// never offers an unsupported Replacement option.
 class CustomerRefundReplacementScreen extends ConsumerStatefulWidget {
   const CustomerRefundReplacementScreen({
     super.key,
     required this.deliveryId,
     this.milkTestId,
+    this.sourceType,
     this.pickImage,
   });
 
   final String deliveryId;
   final String? milkTestId;
+  final DeliverySourceType? sourceType;
   final RefundReplacementImagePicker? pickImage;
 
   @override
@@ -187,6 +196,15 @@ class _CustomerRefundReplacementScreenState
   RefundReplacementImagePicker? get pickImage => widget.pickImage;
 
   bool get _isMilkTestFlow => widget.milkTestId != null;
+
+  /// True only for subscription occurrences, the single source that supports
+  /// Replacement. Everything else (one-time order, null, unknown) is
+  /// refund-only: the fail-safe default when the source cannot be determined
+  /// reliably.
+  bool get _isSubscriptionDelivery =>
+      widget.sourceType == DeliverySourceType.subscriptionOccurrence;
+
+  bool get _isRefundOnly => !_isSubscriptionDelivery;
 
   @override
   void initState() {
@@ -212,6 +230,9 @@ class _CustomerRefundReplacementScreenState
 
     return Scaffold(
       appBar: AppBar(title: const Text('Refund or replacement')),
+      bottomNavigationBar: CustomerBottomNavigation(
+        currentPath: '/deliveries/${widget.deliveryId}/refund-replacement',
+      ),
       body: _body(state, eligibility),
     );
   }
@@ -269,24 +290,37 @@ class _CustomerRefundReplacementScreenState
           const SizedBox(height: 8),
           DoodhSectionHeader(title: 'Request type'),
           const SizedBox(height: 8),
-          SegmentedButton<RefundReplacementType>(
-            segments: const [
-              ButtonSegment(
-                value: RefundReplacementType.refund,
-                label: Text('Refund'),
-                icon: Icon(Icons.currency_rupee),
-              ),
-              ButtonSegment(
-                value: RefundReplacementType.replacement,
-                label: Text('Replacement'),
-                icon: Icon(Icons.autorenew),
-              ),
-            ],
-            selected: {_type},
-            onSelectionChanged: state.isSaving
-                ? null
-                : (selection) => setState(() => _type = selection.first),
-          ),
+          if (_isRefundOnly) ...[
+            const _Notice(
+              icon: Icons.currency_rupee,
+              text:
+                  'Only Refund is supported for one-time order deliveries.',
+            ),
+            const SizedBox(height: 8),
+            const _InfoRow(
+              icon: Icons.currency_rupee,
+              label: 'Request type',
+              value: 'Refund',
+            ),
+          ] else
+            SegmentedButton<RefundReplacementType>(
+              segments: const [
+                ButtonSegment(
+                  value: RefundReplacementType.refund,
+                  label: Text('Refund'),
+                  icon: Icon(Icons.currency_rupee),
+                ),
+                ButtonSegment(
+                  value: RefundReplacementType.replacement,
+                  label: Text('Replacement'),
+                  icon: Icon(Icons.autorenew),
+                ),
+              ],
+              selected: {_type},
+              onSelectionChanged: state.isSaving
+                  ? null
+                  : (selection) => setState(() => _type = selection.first),
+            ),
           const SizedBox(height: 20),
           TextField(
             controller: _reasonController,
@@ -309,6 +343,12 @@ class _CustomerRefundReplacementScreenState
           ),
           const SizedBox(height: 12),
           if (proofRequired) ...[
+            const _Notice(
+              icon: Icons.photo_camera_outlined,
+              text:
+                  'A proof image is required for this request. Please attach a clear photo of the delivered product showing the issue.',
+            ),
+            const SizedBox(height: 8),
             _ProofImagePicker(
               candidate: _proof,
               enabled: !state.isSaving,
@@ -316,7 +356,13 @@ class _CustomerRefundReplacementScreenState
               onClear: () => setState(() => _proof = null),
             ),
             const SizedBox(height: 16),
-          ] else
+          ] else if (eligibility.isFailedDeliveryWithoutProduct)
+            const _Notice(
+              icon: Icons.image_not_supported_outlined,
+              text:
+                  'No photo is needed for this request. Our records confirm this delivery failed and you did not receive the product, so you can submit without an attachment.',
+            )
+          else
             const _Notice(
               icon: Icons.image_not_supported_outlined,
               text: 'No proof image is required for this request.',
@@ -353,31 +399,24 @@ class _CustomerRefundReplacementScreenState
       return;
     }
 
+    // Stage 2.1: evidence rides with the submission in a single atomic server
+    // transaction — no separate post-submit upload. The server re-derives the
+    // requirement and rejects photo-required tickets without valid evidence.
     final controller = ref.read(refundReplacementControllerProvider.notifier);
     final submitted = await controller.submitRequest(
       widget.deliveryId,
-      type: _type,
+      // Refund-only sources always submit Refund, regardless of local state.
+      type: _isRefundOnly ? RefundReplacementType.refund : _type,
       reason: reason,
       remarks: _remarksController.text.trim().isEmpty
           ? null
           : _remarksController.text.trim(),
       milkTestId: widget.milkTestId,
+      imageBytes: _proof?.bytes,
+      imageFileName: _proof?.fileName,
+      imageContentType: _proof?.contentType,
     );
     if (!submitted || !mounted) return;
-
-    final request = ref
-        .read(refundReplacementControllerProvider)
-        .selectedCustomerRequest;
-    final imageId = request?.requestId;
-    if (imageId != null && _proof != null) {
-      await controller.uploadImage(
-        imageId,
-        bytes: _proof!.bytes,
-        fileName: _proof!.fileName,
-        contentType: _proof!.contentType,
-      );
-    }
-    if (!mounted) return;
     _showMessage('Request submitted.');
     context.pop();
   }
@@ -400,7 +439,8 @@ class _ProofImagePicker extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text('Proof image', style: Theme.of(context).textTheme.titleMedium),
+      Text('Proof image (required)',
+          style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 8),
       if (candidate == null)
         OutlinedButton.icon(
@@ -479,37 +519,44 @@ class _CustomerRefundReplacementListScreenState
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(refundReplacementControllerProvider);
-    if (state.isUnauthorized) return const UnauthorizedStatePanel();
-    if (state.isLoading && state.customerRequests.isEmpty) {
-      return const LoadingStatePanel(message: 'Loading your requests...');
-    }
-    if (state.isOffline && state.customerRequests.isEmpty) {
-      return OfflineStatePanel(onRetry: _load);
-    }
-    if (state.errorMessage != null && state.customerRequests.isEmpty) {
-      return ErrorStatePanel(message: state.errorMessage!, onRetry: _load);
-    }
-    if (state.customerRequests.isEmpty) {
-      return const EmptyStatePanel(
+    Widget body;
+    if (state.isUnauthorized) {
+      body = const UnauthorizedStatePanel();
+    } else if (state.isLoading && state.customerRequests.isEmpty) {
+      body = const LoadingStatePanel(message: 'Loading your requests...');
+    } else if (state.isOffline && state.customerRequests.isEmpty) {
+      body = OfflineStatePanel(onRetry: _load);
+    } else if (state.errorMessage != null && state.customerRequests.isEmpty) {
+      body = ErrorStatePanel(message: state.errorMessage!, onRetry: _load);
+    } else if (state.customerRequests.isEmpty) {
+      body = const EmptyStatePanel(
         title: 'No requests yet',
         message: 'Refund or replacement requests you raise for your deliveries will appear here.',
       );
+    } else {
+      body = RefreshIndicator(
+        onRefresh: _load,
+        child: ListView.separated(
+          padding: DoodhSpacing.pagePadding,
+          itemCount: state.customerRequests.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (context, index) {
+            final request = state.customerRequests[index];
+            return _CustomerRequestCard(
+              request: request,
+              onTap: () =>
+                  context.push('/refund-replacements/${request.requestId}'),
+            );
+          },
+        ),
+      );
     }
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView.separated(
-        padding: DoodhSpacing.pagePadding,
-        itemCount: state.customerRequests.length,
-        separatorBuilder: (_, _) => const SizedBox(height: 12),
-        itemBuilder: (context, index) {
-          final request = state.customerRequests[index];
-          return _CustomerRequestCard(
-            request: request,
-            onTap: () =>
-                context.push('/refund-replacements/${request.requestId}'),
-          );
-        },
+    return Scaffold(
+      appBar: AppBar(title: const Text('Support tickets')),
+      bottomNavigationBar: const CustomerBottomNavigation(
+        currentPath: '/refund-replacements',
       ),
+      body: body,
     );
   }
 }
@@ -548,6 +595,9 @@ class _CustomerRefundReplacementDetailScreenState
         : null;
     return Scaffold(
       appBar: AppBar(title: const Text('Request details')),
+      bottomNavigationBar: CustomerBottomNavigation(
+        currentPath: '/refund-replacements/${widget.requestId}',
+      ),
       body: request == null
           ? _missingBody(state)
           : _RefundReplacementDetailBody(request: request),
@@ -670,6 +720,21 @@ class _RefundReplacementDetailBody extends ConsumerWidget {
         ),
       if (request.decisionRemarks?.isNotEmpty ?? false)
         _Remarks(label: 'Decision remarks', text: request.decisionRemarks!),
+      // Stage 2: the confirmed deduction outcome, rendered only from
+      // authoritative API fields. Approval alone is never presented as a
+      // wallet credit — only a completed ticket names the refunded result.
+      if ((request.isOrderRefundTicket ||
+                  request.isSubscriptionDeliveryFailRefund) &&
+          request.appliedDeductionPercentage != null)
+        _InfoRow(
+          icon: request.deductionWaived
+              ? Icons.money_off_outlined
+              : Icons.percent_outlined,
+          label: 'Deduction decision',
+          value: request.deductionWaived
+              ? 'Deduction waived'
+              : 'Deduction of ${request.appliedDeductionPercentage!.toStringAsFixed(2)}% applied',
+        ),
       // D1-D slice 7: the persisted replacement date survives reloads
       // because it is read from the backend on every load, never from the
       // approval response. The delivery number is the real public
@@ -695,6 +760,43 @@ class _RefundReplacementDetailBody extends ConsumerWidget {
               'could not be delivered, so the refund-only remedy has been '
               'resolved instead. No further re-delivery is available for '
               'this failure.',
+        ),
+      // Legacy remediation: the unsupported one-time Replacement request
+      // was replaced by a supported Refund request. The linked Refund
+      // ticket number is shown as text only — the customer API exposes no
+      // public id for the replacement ticket, so there is no deep link.
+      // Nothing here claims money already moved; the Refund ticket's own
+      // wallet settlement (on completion) is the only refund proof.
+      if (request.isSuperseded) ...[
+        const _Notice(
+          icon: Icons.swap_horiz_outlined,
+          text:
+              'This replacement request is not supported for one-time '
+              'orders, so it was superseded by a Refund request for the '
+              'same delivery. Refund is the supported remedy. No refund '
+              'has been issued by this change — watch the linked Refund '
+              'request for the wallet settlement.',
+        ),
+        if (request.supersededByRequestNumber != null)
+          _InfoRow(
+            icon: Icons.currency_rupee_outlined,
+            label: 'Refund request',
+            value: request.supersededByRequestNumber!,
+          ),
+      ],
+      // The Refund half of a remediation pair names the legacy ticket it
+      // replaced. The customer API returns the legacy ticket's public id,
+      // so navigation to the superseded request is authorized.
+      if (request.isRemediationRefund &&
+          request.supersedesRequestNumber != null &&
+          request.supersedesRequestPublicId != null)
+        _LinkedRefundReplacementRow(
+          icon: Icons.history_outlined,
+          label: 'Supersedes',
+          value: request.supersedesRequestNumber!,
+          onTap: () => context.push(
+            '/refund-replacements/${request.supersedesRequestPublicId}',
+          ),
         ),
       // D1-D slice 7.1: subscription-cancellation resolution is distinct
       // from replacement failure — voided, refunded, never delivered, and
@@ -979,6 +1081,58 @@ class _InfoRow extends StatelessWidget {
   );
 }
 
+/// Tappable info row for an authorized linked-ticket reference. Used only
+/// when the API returns the linked ticket's public id; otherwise the number
+/// is rendered as plain text via [_InfoRow] and never deep-linked.
+class _LinkedRefundReplacementRow extends StatelessWidget {
+  const _LinkedRefundReplacementRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 6),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: DoodhColors.muted),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 110,
+          child: Text(label, style: const TextStyle(color: DoodhColors.muted)),
+        ),
+        Expanded(
+          child: InkWell(
+            onTap: onTap,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    value,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+                const Icon(Icons.open_in_new, size: 16),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
 class _Remarks extends StatelessWidget {
   const _Remarks({required this.label, required this.text});
 
@@ -1109,6 +1263,21 @@ class _CustomerChoicePanel extends ConsumerWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             const SizedBox(height: 12),
+            // Stage 3: the customer must know the price of choosing Refund
+            // before choosing — the frozen customer-fault deduction
+            // percentage from the authoritative ticket snapshot. Support
+            // reviews each case at approval and can waive it.
+            if (request.isSubscriptionDeliveryFailTicket &&
+                request.deliveryFailDeductionPercentageSnapshot != null)
+              _Notice(
+                icon: Icons.percent_outlined,
+                text:
+                    'If you choose Refund, a customer-fault deduction of '
+                    '${request.deliveryFailDeductionPercentageSnapshot!.toStringAsFixed(2)}% '
+                    'will be applied to your refund (for example, when no '
+                    'one was available to receive the delivery). Support '
+                    'reviews each case and can waive the deduction.',
+              ),
             if (locked) ...[
               _Notice(
                 icon: choice == CustomerChoice.refund
@@ -1240,6 +1409,9 @@ DoodhStatusTone _statusTone(RefundReplacementStatus status) => switch (status) {
   RefundReplacementStatus.completed => DoodhStatusTone.success,
   RefundReplacementStatus.failed => DoodhStatusTone.error,
   RefundReplacementStatus.cancelled => DoodhStatusTone.neutral,
+  // Superseded is terminal but neutral: it is not a failure, a refund
+  // settlement, or a rejection — the linked Refund ticket carries on.
+  RefundReplacementStatus.superseded => DoodhStatusTone.neutral,
   RefundReplacementStatus.unknown => DoodhStatusTone.neutral,
 };
 
@@ -1291,6 +1463,10 @@ class _StaffRefundReplacementListScreenState
     extends ConsumerState<StaffRefundReplacementListScreen> {
   RefundReplacementStatus? _status;
 
+  /// Client-side submission-day filter (the staff list API supports only
+  /// branch + status server-side). Null means all dates.
+  DateTime? _date;
+
   @override
   void initState() {
     super.initState();
@@ -1306,17 +1482,146 @@ class _StaffRefundReplacementListScreenState
     _load();
   }
 
+  static bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  List<RefundReplacementListItem> _visibleItems(
+    List<RefundReplacementListItem> items,
+  ) {
+    final date = _date;
+    if (date == null) return items;
+    return items
+        .where((item) => _isSameDay(item.submittedAtUtc, date))
+        .toList(growable: false);
+  }
+
+  Future<void> _chooseDate(BuildContext dialogContext) async {
+    final selected = await showDatePicker(
+      context: dialogContext,
+      initialDate: _date ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (selected == null) return;
+    setState(() => _date = selected);
+  }
+
+  /// Date and status filters live in this sheet behind the AppBar icons.
+  /// The front screen keeps only the request list.
+  Future<void> _openFilters() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Filters',
+                  style: Theme.of(sheetContext).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w800, fontSize: 16),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(
+                          Icons.calendar_today_outlined,
+                          size: 18,
+                        ),
+                        label: Text(
+                          _date == null
+                              ? 'All dates'
+                              : formatRefundReplacementDate(_date!),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onPressed: () async {
+                          await _chooseDate(sheetContext);
+                          setSheetState(() {});
+                        },
+                      ),
+                    ),
+                    if (_date != null) ...[
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: () => setSheetState(() => _date = null),
+                        child: const Text('Clear date'),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Status',
+                  style: Theme.of(sheetContext).textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                _StaffStatusFilter(
+                  selected: _status,
+                  onSelected: (status) {
+                    setSheetState(() => _status = status);
+                    _selectStatus(status);
+                  },
+                ),
+                const SizedBox(height: 4),
+                TextButton.icon(
+                  onPressed: _status != null || _date != null
+                      ? () {
+                          setSheetState(() {
+                            _status = null;
+                            _date = null;
+                          });
+                          _selectStatus(null);
+                        }
+                      : null,
+                  icon: const Icon(Icons.filter_alt_off_outlined, size: 18),
+                  label: const Text('Reset filters'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(refundReplacementControllerProvider);
-    final items = state.staffPage?.items ?? const [];
+    final items = _visibleItems(state.staffPage?.items ?? const []);
     return Scaffold(
-      appBar: AppBar(title: const Text('Refund / replacement requests')),
-      body: Column(
-        children: [
-          _StaffStatusFilter(selected: _status, onSelected: _selectStatus),
-          Expanded(child: _body(state, items)),
+      appBar: AppBar(
+        title: const Text('Refund / replacement requests'),
+        actions: [
+          IconButton(
+            key: const ValueKey('staff-refund-date-filter-action'),
+            tooltip: 'Filter by date',
+            icon: Badge(
+              isLabelVisible: _date != null,
+              child: const Icon(Icons.calendar_today_outlined),
+            ),
+            onPressed: () => _chooseDate(context),
+          ),
+          IconButton(
+            key: const ValueKey('staff-refund-filters-action'),
+            tooltip: 'Filters',
+            icon: Badge(
+              isLabelVisible: _status != null || _date != null,
+              child: const Icon(Icons.tune_outlined),
+            ),
+            onPressed: _openFilters,
+          ),
         ],
+      ),
+      body: Column(
+        children: [Expanded(child: _body(state, items))],
       ),
     );
   }
@@ -1338,7 +1643,7 @@ class _StaffRefundReplacementListScreenState
     if (items.isEmpty) {
       return const EmptyStatePanel(
         title: 'No requests found',
-        message: 'No refund or replacement requests match this filter.',
+        message: 'No refund or replacement requests match these filters.',
       );
     }
     return RefreshIndicator(
@@ -1375,6 +1680,7 @@ class _StaffStatusFilter extends StatelessWidget {
     RefundReplacementStatus.completed,
     RefundReplacementStatus.failed,
     RefundReplacementStatus.cancelled,
+    RefundReplacementStatus.superseded,
   ];
 
   @override
@@ -1443,6 +1749,21 @@ class _StaffRequestCard extends StatelessWidget {
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
+            // Legacy remediation pair linkage, rendered from the
+            // authoritative list field. The superseded legacy row names
+            // its replacement Refund ticket; a remediation Refund row
+            // names the legacy ticket it supersedes. Numbers only — the
+            // list API exposes no linked public id, so there is no
+            // deep link here. Never presented as money already moved.
+            if (item.isRemediationRefund &&
+                item.supersedesRequestNumber != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Supersedes ${item.supersedesRequestNumber}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
             const SizedBox(height: 4),
             Text(
               '${item.branchName} (${item.branchCode})',
@@ -1503,12 +1824,36 @@ class _StaffRefundReplacementDetailScreenState
     return permissions.contains('REFUND_REPLACEMENT.MANAGE_BRANCH');
   }
 
-  Future<void> _decide(String decision) async {
+  /// Employee-origin policy: only an Owner or System Administrator may
+  /// decide a request that belongs to a staff account. The backend
+  /// enforces this; the UI only hides the actions to stay consistent.
+  bool get _isAdmin {
+    final roles =
+        ref.read(sessionControllerProvider).session?.user.roles ??
+        const [];
+    return roles.contains('OWNER') || roles.contains('SYSTEM_ADMIN');
+  }
+
+  /// Forwards the staff decision plus the remarks collected in the confirm
+  /// dialog. The dialog returns null on cancel and a (possibly empty)
+  /// string on confirm; empty input is normalized to null so the backend
+  /// stores no blank remarks. Without this the typed remarks never left
+  /// the device and customers could not see them on their ticket.
+  Future<void> _decide(String decision, [String? remarks]) async {
+    final normalized = remarks != null && remarks.trim().isEmpty
+        ? null
+        : remarks?.trim();
     final controller = ref.read(refundReplacementControllerProvider.notifier);
     final succeeded = switch (decision) {
-      'approve' => await controller.approve(widget.requestId),
-      'reject' => await controller.reject(widget.requestId),
-      _ => await controller.complete(widget.requestId),
+      'approve' => await controller.approve(
+        widget.requestId,
+        remarks: normalized,
+      ),
+      'reject' => await controller.reject(
+        widget.requestId,
+        remarks: normalized,
+      ),
+      _ => await controller.complete(widget.requestId, remarks: normalized),
     };
     if (!mounted || !succeeded) return;
     final message = switch (decision) {
@@ -1518,6 +1863,53 @@ class _StaffRefundReplacementDetailScreenState
     };
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Legacy remediation: collects the mandatory business justification,
+  /// executes the single authorized backend operation, and refreshes both
+  /// sides of the new pair. Duplicate submissions are blocked by
+  /// [RefundReplacementState.isSaving] (button disabled plus a controller
+  /// re-entry guard). On conflict or failure the authoritative detail is
+  /// reloaded before another attempt is permitted — never retried blindly.
+  /// Nothing here is executed automatically; staff confirm every run.
+  Future<void> _remediate(RefundReplacementRequest request) async {
+    final reason = await _promptRemediationReason(context, request: request);
+    if (reason == null || !mounted) return;
+    final controller = ref.read(refundReplacementControllerProvider.notifier);
+    final pair = await controller.remediateLegacyReplacement(
+      widget.requestId,
+      reason: reason,
+    );
+    if (!mounted) return;
+    if (pair != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Remediation complete. Linked Refund request '
+            '${pair.refundTicket.requestNumber} is Pending — '
+            'no refund has been issued yet.',
+          ),
+        ),
+      );
+      // Refresh the superseded legacy detail, then open the new Refund
+      // ticket so its Pending state and number are shown immediately.
+      await controller.loadStaffRequest(widget.requestId);
+      if (!mounted) return;
+      context.push(
+        '/staff/refund-replacements/${pair.refundTicket.requestId}',
+      );
+      return;
+    }
+    final state = ref.read(refundReplacementControllerProvider);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          state.errorMessage ??
+              'Remediation could not be completed. Reloaded the latest state.',
+        ),
+      ),
+    );
+    await controller.loadStaffRequest(widget.requestId);
   }
 
   @override
@@ -1535,8 +1927,15 @@ class _StaffRefundReplacementDetailScreenState
                 Expanded(
                   child: _StaffRequestDetailBody(
                     request: request,
+                    // Subscription tickets have no order: the Order row
+                    // opens the authoritative linked delivery instead of a
+                    // dead link, so staff always reach the fulfillment
+                    // record (items/quantity for order-backed tickets, the
+                    // delivery detail for subscription occurrences).
                     onOrderTap: request.orderPublicId == null
-                        ? null
+                        ? () => context.push(
+                            '/staff/delivery/${request.deliveryId}',
+                          )
                         : () => context.push(
                             '/staff/orders/${request.orderPublicId}',
                           ),
@@ -1547,6 +1946,17 @@ class _StaffRefundReplacementDetailScreenState
                         : () => context.push(
                             '/staff/delivery/${request.deliveryId}/milk-test',
                           ),
+                    // The refund half carries the legacy ticket's public
+                    // id, so staff navigation to the superseded request is
+                    // authorized. The superseded ticket itself exposes only
+                    // the replacement number (no public id) and is shown
+                    // as text — never deep-linked or inferred.
+                    onLegacyTicketTap:
+                        request.supersedesRequestPublicId == null
+                        ? null
+                        : () => context.push(
+                            '/staff/refund-replacements/${request.supersedesRequestPublicId}',
+                          ),
                   ),
                 ),
                 if (_canManage)
@@ -1555,6 +1965,13 @@ class _StaffRefundReplacementDetailScreenState
                     isSaving: state.isSaving,
                     errorMessage: state.errorMessage,
                     onDecide: _decide,
+                    onRemediate: request.isLegacyRemediationEligible
+                        ? () => _remediate(request)
+                        : null,
+                    // Employee-originated tickets are hidden from
+                    // non-administrators; the backend still enforces this.
+                    employeeOriginBlocked:
+                        request.isEmployeeOriginated && !_isAdmin,
                   ),
               ],
             ),
@@ -1583,12 +2000,14 @@ class _StaffRequestDetailBody extends StatelessWidget {
     required this.onOrderTap,
     required this.onDeliveryTap,
     required this.onMilkTestTap,
+    this.onLegacyTicketTap,
   });
 
   final RefundReplacementRequest request;
   final VoidCallback? onOrderTap;
   final VoidCallback? onDeliveryTap;
   final VoidCallback? onMilkTestTap;
+  final VoidCallback? onLegacyTicketTap;
 
   @override
   Widget build(BuildContext context) => ListView(
@@ -1677,6 +2096,45 @@ class _StaffRequestDetailBody extends StatelessWidget {
               'entitlement refund was resolved instead. This is not a '
               'replacement failure.',
         ),
+      // Legacy remediation: the unsupported one-time Replacement was
+      // replaced by a supported Refund request. Shown as terminal but
+      // never as Completed, Failed, Rejected, or Refunded — and never as
+      // money already moved. The replacement number is text only (the
+      // detail API exposes no linked public id, so no deep link).
+      if (request.isSuperseded) ...[
+        const _Notice(
+          icon: Icons.swap_horiz_outlined,
+          text:
+              'This replacement request is not supported for one-time '
+              'orders, so it was superseded by a Refund request for the '
+              'same delivery. Refund is the supported remedy. Superseding '
+              'issued no refund and credited nothing — the linked Refund '
+              'ticket follows the normal approval and wallet-settlement '
+              'workflow.',
+        ),
+        if (request.supersededByRequestNumber != null)
+          _InfoRow(
+            icon: Icons.currency_rupee_outlined,
+            label: 'Refund request',
+            value: request.supersededByRequestNumber!,
+          ),
+      ],
+      // The Refund half of a remediation pair. Navigation to the legacy
+      // ticket is offered only because the API returns its public id.
+      if (request.isRemediationRefund &&
+          request.supersedesRequestNumber != null)
+        onLegacyTicketTap == null
+            ? _InfoRow(
+                icon: Icons.history_outlined,
+                label: 'Supersedes',
+                value: request.supersedesRequestNumber!,
+              )
+            : _StaffLinkedRow(
+                icon: Icons.history_outlined,
+                label: 'Supersedes',
+                value: request.supersedesRequestNumber!,
+                onTap: onLegacyTicketTap,
+              ),
       _StaffLinkedRow(
         icon: Icons.local_shipping_outlined,
         label: 'Delivery',
@@ -1717,6 +2175,22 @@ class _StaffRequestDetailBody extends StatelessWidget {
       ],
       if (request.decisionRemarks?.isNotEmpty ?? false)
         _Remarks(label: 'Decision remarks', text: request.decisionRemarks!),
+      // Stage 2: the persisted support deduction decision for order-backed
+      // Refund tickets. Rendered only from authoritative API fields — the
+      // UI never infers a deduction from the delivery state.
+      if ((request.isOrderRefundTicket ||
+                  request.isSubscriptionDeliveryFailRefund) &&
+          request.appliedDeductionPercentage != null)
+        _InfoRow(
+          icon: request.deductionWaived
+              ? Icons.money_off_outlined
+              : Icons.percent_outlined,
+          label: 'Customer-fault deduction',
+          value: request.deductionWaived
+              ? 'Waived (0%)'
+                    '${request.deductionWaiverReason?.isNotEmpty ?? false ? ' · ${request.deductionWaiverReason}' : ''}'
+              : '${request.appliedDeductionPercentage!.toStringAsFixed(2)}% applied',
+        ),
       if (request.replacementDate != null)
         _InfoRow(
           icon: Icons.event_repeat_outlined,
@@ -1781,7 +2255,7 @@ class _StaffLinkedRow extends StatelessWidget {
           Icon(icon, size: 18, color: DoodhColors.muted),
           const SizedBox(width: 8),
           SizedBox(
-            width: 90,
+            width: 110,
             child: Text(
               label,
               style: const TextStyle(color: DoodhColors.muted),
@@ -1811,12 +2285,27 @@ class _StaffDecisionActions extends StatelessWidget {
     required this.isSaving,
     required this.errorMessage,
     required this.onDecide,
+    this.onRemediate,
+    this.employeeOriginBlocked = false,
   });
 
   final RefundReplacementRequest request;
   final bool isSaving;
   final String? errorMessage;
-  final Future<void> Function(String decision) onDecide;
+  final Future<void> Function(String decision, String? remarks) onDecide;
+
+  /// Legacy remediation entry point. Non-null only when the loaded ticket
+  /// is remediation-eligible from authoritative API fields (order-backed,
+  /// approved Replacement, not already superseded) and the viewer may
+  /// manage branch requests. The backend re-validates the Failed-delivery
+  /// precondition and returns 409 otherwise.
+  final Future<void> Function()? onRemediate;
+
+  /// Employee-origin policy: true when this ticket belongs to a staff
+  /// account and the viewer is not an Owner/System Administrator. All
+  /// decision actions (including remediation) are replaced with an
+  /// explanatory notice. Enforcement lives in the backend service guard.
+  final bool employeeOriginBlocked;
 
   @override
   Widget build(BuildContext context) {
@@ -1825,12 +2314,16 @@ class _StaffDecisionActions extends StatelessWidget {
     // tickets (rejected, completed, failed) and choice-pending tickets with
     // no choice yet offer no actions — and a failed replacement is never
     // offered another re-delivery.
-    final canDecide = request.isStaffDecidable;
+    final canDecide = request.isStaffDecidable && !employeeOriginBlocked;
     final isApproved = request.status == RefundReplacementStatus.approved;
     // Audit remediation B: a failed replacement is refund-only — rejecting
     // it would strand the original ticket, and the backend refuses the
     // rejection. Only Approve stays available, with an explicit explanation.
     final isRefundOnly = request.isRefundOnly;
+    // Stage 2: one-time order Refund tickets follow the explicit deduction
+    // decision flow. Replacement/re-delivery is never offered — the backend
+    // policy is refund-only for one-time orders.
+    final isOrderRefund = request.isOrderRefundTicket;
     return Material(
       elevation: 8,
       child: SafeArea(
@@ -1848,6 +2341,17 @@ class _StaffDecisionActions extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
               ],
+              if (employeeOriginBlocked) ...[
+                const _Notice(
+                  icon: Icons.admin_panel_settings_outlined,
+                  text:
+                      'This request belongs to a staff account and can only '
+                      'be decided by an Owner or System Administrator. The '
+                      'actions are hidden for your role — the backend '
+                      'enforces this rule.',
+                ),
+                const SizedBox(height: 12),
+              ],
               if (canDecide && isRefundOnly) ...[
                 const _Notice(
                   icon: Icons.info_outline,
@@ -1858,7 +2362,64 @@ class _StaffDecisionActions extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
               ],
-              if (canDecide)
+              if (canDecide && isOrderRefund) ...[
+                const _Notice(
+                  icon: Icons.currency_rupee,
+                  text:
+                      'Refund only — replacement/re-delivery is not available '
+                      'for one-time orders. Approving records your deduction '
+                      'decision; the wallet is credited only on completion.',
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: isSaving
+                            ? null
+                            : () async {
+                                final remarks = await _promptStaffDecision(
+                                  context,
+                                  title: 'Reject request',
+                                  confirmLabel: 'Reject',
+                                );
+                                if (remarks == null) return;
+                                await onDecide('reject', remarks);
+                              },
+                        icon: const Icon(Icons.close),
+                        label: const Text('Reject'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: isSaving
+                            ? null
+                            : () async {
+                                final approved =
+                                    await _promptOrderRefundApproval(
+                                      context,
+                                      request: request,
+                                    );
+                                if (!context.mounted || !approved) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Refund decision approved. No money has moved yet — '
+                                      'wallet refunds settle on completion; bank '
+                                      'transfers are confirmed separately.',
+                                    ),
+                                  ),
+                                );
+                              },
+                        icon: const Icon(Icons.check),
+                        label: const Text('Approve refund decision'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if (canDecide && !isOrderRefund)
                 Row(
                   children: [
                     if (!isRefundOnly)
@@ -1873,7 +2434,7 @@ class _StaffDecisionActions extends StatelessWidget {
                                     confirmLabel: 'Reject',
                                   );
                                   if (remarks == null) return;
-                                  await onDecide('reject');
+                                  await onDecide('reject', remarks);
                                 },
                           icon: const Icon(Icons.close),
                           label: const Text('Reject'),
@@ -1891,7 +2452,28 @@ class _StaffDecisionActions extends StatelessWidget {
                                 // the detail state refreshes and the approved
                                 // date shows inline. Here only the confirmation
                                 // is announced; nothing is submitted twice.
-                                if (request.isRedeliveryApproval) {
+                                // Stage 3: a subscription failed-delivery
+                                // Refund approval must carry support's explicit
+                                // apply/waive deduction decision — the backend
+                                // rejects the approval without it.
+                                if (request.isSubscriptionDeliveryFailRefund &&
+                                    request.deliveryFailDeductionPercentageSnapshot !=
+                                        null) {
+                                  final approved =
+                                      await _promptSubscriptionDeductionApproval(
+                                        context,
+                                        request: request,
+                                      );
+                                  if (!context.mounted || !approved) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Refund decision approved. No money has moved yet — '
+                                        'complete the ticket to credit the wallet.',
+                                      ),
+                                    ),
+                                  );
+                                } else if (request.isRedeliveryApproval) {
                                   final result =
                                       await _promptRedeliveryApproval(
                                         context,
@@ -1916,7 +2498,7 @@ class _StaffDecisionActions extends StatelessWidget {
                                         confirmLabel: 'Approve',
                                       );
                                   if (remarks == null) return;
-                                  await onDecide('approve');
+                                  await onDecide('approve', remarks);
                                 }
                               },
                         icon: const Icon(Icons.check),
@@ -1925,40 +2507,95 @@ class _StaffDecisionActions extends StatelessWidget {
                     ),
                   ],
                 )
-              else if (isApproved) ...[
-                // One-time order tickets settle in Payments, outside this
-                // ticket: the backend blocks completion until a verified
-                // refund exists for the order. The action stays available
-                // for the settle-then-complete flow, but the copy must not
-                // imply the settlement is already verified.
-                if (request.isOneTimeOrderTicket) ...[
+              else if (isApproved && !employeeOriginBlocked) ...[
+                // Stage 2: a manual-bank ticket never completes here — the
+                // frozen amount is reserved for the bank transfer and the
+                // transfer is confirmed separately. The complete action is
+                // hidden and the backend rejects direct completion.
+                if (request.isManualBankTransfer) ...[
                   const _Notice(
-                    icon: Icons.info_outline,
+                    icon: Icons.account_balance_outlined,
                     text:
-                        'One-time order refunds are settled in Payments, '
-                        'outside this ticket. If the refund has not been '
-                        'settled there yet, completing is blocked — settle '
-                        'it first, then mark completed.',
+                        'Manual bank transfer approved. The frozen amount is '
+                        'reserved for transfer to the customer\'s saved bank '
+                        'account — completing here is disabled. Confirm the '
+                        'transfer once it is made.',
+                  ),
+                ],
+                // Stage 2: completing an approved one-time order Refund runs
+                // the backend's authoritative wallet settlement — this is the
+                // step where money actually moves. Approval alone credited
+                // nothing. A failed settlement keeps the ticket Approved and
+                // retryable, and the server message is shown verbatim.
+                if (isOrderRefund && !request.isManualBankTransfer) ...[
+                  _Notice(
+                    icon: Icons.account_balance_wallet_outlined,
+                    text:
+                        'Completing credits '
+                        '${request.appliedDeductionPercentage != null ? 'the frozen refund ' : 'the refund '}'
+                        'to the customer\'s wallet now. '
+                        'Approving the decision moved no money.',
                   ),
                   const SizedBox(height: 12),
                 ],
-                FilledButton.icon(
+                if (!request.isManualBankTransfer)
+                  FilledButton.icon(
                   onPressed: isSaving
                       ? null
                       : () async {
                           final remarks = await _promptStaffDecision(
                             context,
-                            title: 'Complete request',
-                            confirmLabel: 'Complete',
+                            title: isOrderRefund
+                                ? 'Complete and credit wallet'
+                                : 'Complete request',
+                            confirmLabel: isOrderRefund
+                                ? 'Complete and credit wallet'
+                                : 'Complete',
                           );
                           if (remarks == null) return;
-                          await onDecide('complete');
+                          await onDecide('complete', remarks);
                         },
                   icon: const Icon(Icons.task_alt),
-                  label: const Text('Mark completed'),
+                  label: Text(
+                    isOrderRefund
+                        ? 'Complete and credit wallet'
+                        : 'Mark completed',
+                  ),
                 ),
-              ]
-              else
+              ],
+              // Legacy remediation: an eligible unsupported Replacement
+              // gets an explicit staff action that creates the linked
+              // Pending Refund ticket. Shown only for eligible tickets;
+              // superseded tickets show their linkage inline instead.
+              // Never automatic, never a refund itself.
+              if (onRemediate != null && !employeeOriginBlocked) ...[
+                const SizedBox(height: 12),
+                const _Notice(
+                  icon: Icons.swap_horiz_outlined,
+                  text:
+                      'One-time orders support Refund only — this approved '
+                      'Replacement cannot be fulfilled. Replacing it creates '
+                      'a linked Pending Refund ticket for the same delivery. '
+                      'This issues no refund and credits nothing; the new '
+                      'ticket follows the normal approval and wallet '
+                      'settlement.',
+                ),
+                const SizedBox(height: 4),
+                OutlinedButton.icon(
+                  onPressed: isSaving ? null : onRemediate,
+                  icon: isSaving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.swap_horiz_outlined),
+                  label: const Text(
+                    'Replace unsupported request with Refund request',
+                  ),
+                ),
+              ],
+              if (onRemediate == null && !canDecide && !isApproved)
                 const Text(
                   'This request is final and no further action is available.',
                   style: TextStyle(color: DoodhColors.muted),
@@ -1969,6 +2606,696 @@ class _StaffDecisionActions extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Opens the one-time order refund approval dialog: support explicitly
+/// chooses Apply/Waive deduction with a live authoritative preview, then the
+/// dialog submits the decision itself (single flight, guarded against
+/// duplicates) through the shared controller. Returns true when the backend
+/// confirmed the approval; false/null means cancelled or failed. Approval
+/// records the decision and frozen snapshot only — the wallet is credited on
+/// completion, never here.
+Future<bool> _promptOrderRefundApproval(
+  BuildContext context, {
+  required RefundReplacementRequest request,
+}) async =>
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) =>
+          _OrderRefundApprovalDialog(request: request),
+    ) ??
+    false;
+
+/// Opens the subscription failed-delivery refund approval dialog: support
+/// explicitly chooses Apply/Waive customer-fault deduction against the
+/// frozen failure snapshot, then the dialog submits the decision itself
+/// (single flight, guarded against duplicates) through the shared
+/// controller. Returns true when the backend confirmed the approval;
+/// false/null means cancelled or failed. Approval records the decision and
+/// frozen snapshot only — the wallet is credited on completion, never here.
+/// There is no live amount preview (no subscription preview endpoint): the
+/// dialog surfaces the authoritative frozen percentage verbatim and never
+/// computes money itself.
+Future<bool> _promptSubscriptionDeductionApproval(
+  BuildContext context, {
+  required RefundReplacementRequest request,
+}) async =>
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) =>
+          _SubscriptionDeductionDialog(request: request),
+    ) ??
+    false;
+
+class _SubscriptionDeductionDialog extends ConsumerStatefulWidget {
+  const _SubscriptionDeductionDialog({required this.request});
+
+  final RefundReplacementRequest request;
+
+  @override
+  ConsumerState<_SubscriptionDeductionDialog> createState() =>
+      _SubscriptionDeductionDialogState();
+}class _SubscriptionDeductionDialogState
+extends ConsumerState<_SubscriptionDeductionDialog> {
+  final _waiverController = TextEditingController();
+  final _remarksController = TextEditingController();
+  bool? _applyDeduction;
+  RefundSettlementMethod? _settlementMethod;
+  bool _submitting = false;
+  String? _submitError;
+
+  @override
+  void dispose() {
+    _waiverController.dispose();
+    _remarksController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final apply = _applyDeduction;
+    final settlement = _settlementMethod;
+    if (apply == null || settlement == null || _submitting) return;
+    final waiverReason = _waiverController.text.trim();
+    if (apply == false && waiverReason.isEmpty) {
+      setState(() {
+        _submitError =
+            'A waiver reason is required when waiving the deduction.';
+      });
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _submitError = null;
+    });
+    final remarks = _remarksController.text.trim();
+    final controller = ref.read(refundReplacementControllerProvider.notifier);
+    final succeeded = await controller.approve(
+      widget.request.requestId,
+      remarks: remarks.isEmpty ? null : remarks,
+      applyDeduction: apply,
+      waiverReason: apply ? null : waiverReason,
+      settlementMethod: settlement.wireValue,
+    );
+    if (!mounted) return;
+    if (succeeded) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    setState(() {
+      _submitting = false;
+      _submitError =
+          ref.read(refundReplacementControllerProvider).errorMessage ??
+          'The deduction decision could not be recorded. Please try again.';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isSaving = ref.watch(refundReplacementControllerProvider).isSaving;
+    final busy = _submitting || isSaving;
+    final ready = _applyDeduction != null && _settlementMethod != null && !busy;
+    final frozen =
+        widget.request.deliveryFailDeductionPercentageSnapshot ?? 0;
+    final failure =
+        widget.request.failureReasonSnapshot?.isNotEmpty ?? false
+        ? widget.request.failureReasonSnapshot!
+        : widget.request.reason;
+    return AlertDialog(
+      title: const Text('Approve refund decision'),
+      content: SizedBox(
+        width: 440,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Approving records your decision only. The wallet is credited '
+                'when the ticket is completed — not now.',
+                style: TextStyle(color: DoodhColors.muted, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              _InfoRow(
+                icon: Icons.report_outlined,
+                label: 'Failure',
+                value: failure,
+              ),
+              _InfoRow(
+                icon: Icons.percent_outlined,
+                label: 'Frozen deduction',
+                value: '${frozen.toStringAsFixed(2)}%',
+              ),
+              const SizedBox(height: 12),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment<bool>(
+                    value: true,
+                    label: Text('Apply deduction'),
+                    icon: Icon(Icons.percent_outlined),
+                  ),
+                  ButtonSegment<bool>(
+                    value: false,
+                    label: Text('Waive deduction'),
+                    icon: Icon(Icons.money_off_outlined),
+                  ),
+                ],
+                // No preselected decision: support must consciously choose.
+                emptySelectionAllowed: true,
+                selected: _applyDeduction == null
+                    ? const <bool>{}
+                    : {_applyDeduction!},
+                onSelectionChanged: busy
+                    ? null
+                    : (selection) => setState(() {
+                        _applyDeduction = selection.first;
+                        _submitError = null;
+                      }),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Apply deducts the frozen ${frozen.toStringAsFixed(2)}% for a '
+                'customer-fault failure. Waive applies 0% and needs a reason.',
+                style: const TextStyle(
+                  color: DoodhColors.muted,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Settlement method',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+              const SizedBox(height: 4),
+              SegmentedButton<RefundSettlementMethod>(
+                segments: const [
+                  ButtonSegment<RefundSettlementMethod>(
+                    value: RefundSettlementMethod.wallet,
+                    label: Text('Wallet refund'),
+                    icon: Icon(Icons.account_balance_wallet_outlined),
+                  ),
+                  ButtonSegment<RefundSettlementMethod>(
+                    value: RefundSettlementMethod.manualBankTransfer,
+                    label: Text('Manual bank transfer'),
+                    icon: Icon(Icons.account_balance_outlined),
+                  ),
+                ],
+                // No preselected method: support must consciously choose.
+                emptySelectionAllowed: true,
+                selected: _settlementMethod == null
+                    ? const <RefundSettlementMethod>{}
+                    : {_settlementMethod!},
+                onSelectionChanged: busy
+                    ? null
+                    : (selection) => setState(() {
+                        _settlementMethod = selection.first;
+                        _submitError = null;
+                      }),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Wallet refund credits the wallet on completion. Manual '
+                'bank transfer reserves the frozen amount for a bank '
+                'transfer to the customer\'s saved bank details — no '
+                'wallet credit is made.',
+                style: TextStyle(
+                  color: DoodhColors.muted,
+                  fontSize: 12,
+                ),
+              ),
+              if (_applyDeduction == false) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _waiverController,
+                  enabled: !busy,
+                  maxLines: 2,
+                  maxLength: 500,
+                  decoration: const InputDecoration(
+                    labelText: 'Waiver reason (required)',
+                    alignLabelWithHint: true,
+                  ),
+                  onChanged: (_) {
+                    if (_submitError != null) {
+                      setState(() => _submitError = null);
+                    }
+                  },
+                ),
+              ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: _remarksController,
+                enabled: !busy,
+                maxLines: 2,
+                maxLength: 500,
+                decoration: const InputDecoration(
+                  labelText: 'Remarks (optional)',
+                  alignLabelWithHint: true,
+                ),
+              ),
+              if (_submitError != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _submitError!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: busy ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: ready ? _submit : null,
+          child: busy
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Approve refund decision'),
+        ),
+      ],
+    );
+  }
+}
+
+class _OrderRefundApprovalDialog extends ConsumerStatefulWidget {
+  const _OrderRefundApprovalDialog({required this.request});
+
+  final RefundReplacementRequest request;
+
+  @override
+  ConsumerState<_OrderRefundApprovalDialog> createState() =>
+      _OrderRefundApprovalDialogState();
+}
+
+class _OrderRefundApprovalDialogState
+    extends ConsumerState<_OrderRefundApprovalDialog> {
+  static const _offlineMessage =
+      'Unable to reach DoodhDirect. Check your connection and try again.';
+  static const _processingMessage =
+      'The refund preview could not be loaded. Please try again.';
+
+  final _waiverController = TextEditingController();
+  final _remarksController = TextEditingController();
+  bool? _applyDeduction;
+  RefundSettlementMethod? _settlementMethod;
+  bool _loadingPreview = false;
+  String? _previewError;
+  OrderRefundPreview? _preview;
+  bool _submitting = false;
+  String? _submitError;
+
+  @override
+  void dispose() {
+    _waiverController.dispose();
+    _remarksController.dispose();
+    super.dispose();
+  }
+
+  void _selectDecision(bool apply) {
+    if (_submitting) return;
+    setState(() {
+      _applyDeduction = apply;
+      _submitError = null;
+    });
+    _fetchPreview();
+  }
+
+  Future<void> _fetchPreview() async {
+    final apply = _applyDeduction;
+    if (apply == null) return;
+    setState(() {
+      _loadingPreview = true;
+      _previewError = null;
+    });
+    try {
+      final token = ref.read(sessionControllerProvider).session?.accessToken;
+      if (token == null) {
+        throw const ApiException(401, 'UNAUTHORIZED', 'Your session has expired.');
+      }
+      final preview = await ref
+          .read(refundReplacementRepositoryProvider)
+          .getOrderRefundPreview(
+            token,
+            widget.request.requestId,
+            applyDeduction: apply,
+          );
+      if (!mounted) return;
+      setState(() {
+        _preview = preview;
+        _loadingPreview = false;
+      });
+    } on ApiNetworkException {
+      if (!mounted) return;
+      setState(() {
+        _previewError = _offlineMessage;
+        _loadingPreview = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _previewError = error.message;
+        _loadingPreview = false;
+      });
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _previewError = _processingMessage;
+        _loadingPreview = false;
+      });
+    }
+  }
+
+  Future<void> _submit() async {
+    final apply = _applyDeduction;
+    final settlement = _settlementMethod;
+    if (apply == null || settlement == null || _submitting) return;
+    final waiverReason = _waiverController.text.trim();
+    if (apply == false && waiverReason.isEmpty) {
+      setState(() {
+        _submitError =
+            'A waiver reason is required when waiving the deduction.';
+      });
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _submitError = null;
+    });
+    final remarks = _remarksController.text.trim();
+    final controller = ref.read(refundReplacementControllerProvider.notifier);
+    final succeeded = await controller.approve(
+      widget.request.requestId,
+      remarks: remarks.isEmpty ? null : remarks,
+      applyDeduction: apply,
+      waiverReason: apply ? null : waiverReason,
+      settlementMethod: settlement.wireValue,
+    );
+    if (!mounted) return;
+    if (succeeded) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    setState(() {
+      _submitting = false;
+      _submitError =
+          ref.read(refundReplacementControllerProvider).errorMessage ??
+          _processingMessage;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isSaving = ref.watch(refundReplacementControllerProvider).isSaving;
+    final busy = _submitting || isSaving;
+    final ready =
+        _applyDeduction != null &&
+        _settlementMethod != null &&
+        !_loadingPreview &&
+        !busy;
+    return AlertDialog(
+      title: const Text('Approve refund decision'),
+      content: SizedBox(
+        width: 440,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Approving records your decision only. The wallet is credited '
+                'when the ticket is completed — not now.',
+                style: TextStyle(color: DoodhColors.muted, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment<bool>(
+                    value: true,
+                    label: Text('Apply deduction'),
+                    icon: Icon(Icons.percent_outlined),
+                  ),
+                  ButtonSegment<bool>(
+                    value: false,
+                    label: Text('Waive deduction'),
+                    icon: Icon(Icons.money_off_outlined),
+                  ),
+                ],
+                // No preselected decision: support must consciously choose.
+                emptySelectionAllowed: true,
+                selected: _applyDeduction == null
+                    ? const <bool>{}
+                    : {_applyDeduction!},
+                onSelectionChanged: busy
+                    ? null
+                    : (selection) => _selectDecision(selection.first),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Apply uses the shared Admin Centre deduction %. Waive '
+                'applies 0% and needs a reason.',
+                style: TextStyle(color: DoodhColors.muted, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Settlement method',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+              const SizedBox(height: 4),
+              SegmentedButton<RefundSettlementMethod>(
+                segments: const [
+                  ButtonSegment<RefundSettlementMethod>(
+                    value: RefundSettlementMethod.wallet,
+                    label: Text('Wallet refund'),
+                    icon: Icon(Icons.account_balance_wallet_outlined),
+                  ),
+                  ButtonSegment<RefundSettlementMethod>(
+                    value: RefundSettlementMethod.manualBankTransfer,
+                    label: Text('Manual bank transfer'),
+                    icon: Icon(Icons.account_balance_outlined),
+                  ),
+                ],
+                // No preselected method: support must consciously choose.
+                emptySelectionAllowed: true,
+                selected: _settlementMethod == null
+                    ? const <RefundSettlementMethod>{}
+                    : {_settlementMethod!},
+                onSelectionChanged: busy
+                    ? null
+                    : (selection) => setState(() {
+                        _settlementMethod = selection.first;
+                        _submitError = null;
+                      }),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Wallet refund credits the wallet on completion. Manual '
+                'bank transfer reserves the previewed amount for a bank '
+                'transfer to the customer\'s saved bank details — no '
+                'wallet credit is made.',
+                style: TextStyle(color: DoodhColors.muted, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              if (_applyDeduction == null)
+                const Text(
+                  'Select a decision above to load the authoritative refund preview.',
+                  style: TextStyle(color: DoodhColors.muted, fontSize: 12),
+                )
+              else if (_loadingPreview) ...[
+                const Row(
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 12),
+                    Expanded(child: Text('Loading refund preview...')),
+                  ],
+                ),
+              ] else if (_previewError != null) ...[
+                Text(
+                  _previewError!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: busy ? null : _fetchPreview,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Retry'),
+                  ),
+                ),
+              ] else if (_preview != null)
+                _OrderRefundPreviewCard(preview: _preview!),
+              if (_applyDeduction == false) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _waiverController,
+                  enabled: !busy,
+                  maxLines: 2,
+                  maxLength: 500,
+                  decoration: const InputDecoration(
+                    labelText: 'Waiver reason (required)',
+                    alignLabelWithHint: true,
+                  ),
+                  onChanged: (_) {
+                    if (_submitError != null) {
+                      setState(() => _submitError = null);
+                    }
+                  },
+                ),
+              ],
+              const SizedBox(height: 12),
+              TextField(
+                controller: _remarksController,
+                enabled: !busy,
+                maxLines: 2,
+                maxLength: 500,
+                decoration: const InputDecoration(
+                  labelText: 'Remarks (optional)',
+                  alignLabelWithHint: true,
+                ),
+              ),
+              if (_submitError != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _submitError!,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: busy ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: ready ? _submit : null,
+          child: busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Approve refund decision'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Renders the authoritative refund preview verbatim. Never computes money:
+/// every figure comes from the backend response. A zero or missing refund is
+/// explained, never presented as a success.
+class _OrderRefundPreviewCard extends StatelessWidget {
+  const _OrderRefundPreviewCard({required this.preview});
+
+  final OrderRefundPreview preview;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    margin: EdgeInsets.zero,
+    child: Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Refund preview · ${preview.orderNumber}',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          _previewRow(
+            context,
+            'Order amount',
+            _money(preview.grossBasis, preview.currency),
+          ),
+          _previewRow(
+            context,
+            'Deduction (${preview.appliedPercentage.toStringAsFixed(2)}%)',
+            _money(preview.deductionAmount, preview.currency),
+          ),
+          _previewRow(
+            context,
+            'Eligible paid',
+            _money(preview.eligiblePaid, preview.currency),
+          ),
+          const Divider(),
+          _previewRow(
+            context,
+            'Proposed wallet refund',
+            _money(preview.proposedRefund, preview.currency),
+            strong: true,
+          ),
+          if (preview.hasNoRefund) ...[
+            const SizedBox(height: 8),
+            const _Notice(
+              icon: Icons.info_outline,
+              text:
+                  'The preview shows no refundable amount — the order may be '
+                  'unpaid or already fully refunded. Approving is still '
+                  'allowed, but completing will be blocked until an eligible '
+                  'paid amount exists.',
+            ),
+          ] else ...[
+            const SizedBox(height: 4),
+            const Text(
+              'Advisory only — settlement revalidates at completion.',
+              style: TextStyle(color: DoodhColors.muted, fontSize: 12),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+
+  static String _money(double amount, String currency) =>
+      '${amount.toStringAsFixed(2)} $currency';
+
+  static Widget _previewRow(
+    BuildContext context,
+    String label,
+    String value, {
+    bool strong = false,
+  }) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(color: DoodhColors.muted),
+              ),
+            ),
+            Text(
+              value,
+              style: strong
+                  ? Theme.of(
+                      context,
+                    ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)
+                  : null,
+            ),
+          ],
+        ),
+      );
 }
 
 /// Result of the re-delivery approval dialog: optional remarks plus the
@@ -2247,40 +3574,174 @@ DateTime _dateOnly(DateTime value) =>
 
 /// Prompts for optional decision remarks. Returns null when the manager
 /// cancels, or the (possibly empty) remarks string when confirmed.
+/// Legacy remediation confirmation. Shows the order, delivery, and ticket
+/// numbers with the Refund-only policy, requires a nonblank business
+/// justification, and states plainly that the operation creates a linked
+/// Pending Refund ticket without issuing any refund or wallet credit.
+/// Returns the trimmed justification, or null when staff cancel.
+Future<String?> _promptRemediationReason(
+  BuildContext context, {
+  required RefundReplacementRequest request,
+}) => showDialog<String>(
+  context: context,
+  builder: (dialogContext) => _RemediationConfirmDialog(request: request),
+);
+
+/// Confirmation dialog for legacy remediation. The confirm action stays
+/// disabled until staff enter a nonblank justification. The dialog owns
+/// its text controller (created and disposed with its state) so the
+/// exit animation never touches a disposed controller.
+class _RemediationConfirmDialog extends StatefulWidget {
+  const _RemediationConfirmDialog({required this.request});
+
+  final RefundReplacementRequest request;
+
+  @override
+  State<_RemediationConfirmDialog> createState() =>
+      _RemediationConfirmDialogState();
+}
+
+class _RemediationConfirmDialogState
+    extends State<_RemediationConfirmDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController()..addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onChanged() => setState(() {});
+
+  @override
+  Widget build(BuildContext context) {
+    final request = widget.request;
+    final hasJustification = _controller.text.trim().isNotEmpty;
+    return AlertDialog(
+      title: const Text('Replace with Refund request'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Order ${request.orderNumber ?? request.orderPublicId ?? '—'}'),
+            Text('Delivery ${request.deliveryNumber ?? request.deliveryId}'),
+            Text('Ticket ${request.requestNumber}'),
+            const SizedBox(height: 12),
+            const Text(
+              'One-time orders support Refund only: this approved '
+              'Replacement cannot be fulfilled. Confirming supersedes it '
+              'and opens a linked Pending Refund ticket for the same '
+              'delivery. This does not issue a refund or credit the '
+              'wallet — the new ticket needs its own approval and '
+              'completion.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              maxLines: 3,
+              maxLength: 1000,
+              decoration: const InputDecoration(
+                labelText: 'Business justification (required)',
+                alignLabelWithHint: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            // Release field focus before popping so no disposed focus
+            // node lingers (and the keyboard dismisses on device).
+            FocusScope.of(context).unfocus();
+            Navigator.of(context).pop();
+          },
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: hasJustification
+              ? () {
+                  FocusScope.of(context).unfocus();
+                  Navigator.of(
+                    context,
+                  ).pop(_controller.text.trim());
+                }
+              : null,
+          child: const Text('Replace with Refund'),
+        ),
+      ],
+    );
+  }
+}
+
 Future<String?> _promptStaffDecision(
   BuildContext context, {
   required String title,
   required String confirmLabel,
-}) async {
-  final controller = TextEditingController();
-  try {
-    return await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          maxLines: 3,
-          maxLength: 500,
-          decoration: const InputDecoration(
-            labelText: 'Remarks (optional)',
-            alignLabelWithHint: true,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(controller.text.trim()),
-            child: Text(confirmLabel),
-          ),
-        ],
-      ),
-    );
-  } finally {
-    controller.dispose();
+}) => showDialog<String>(
+  context: context,
+  builder: (dialogContext) => _StaffDecisionDialog(
+    title: title,
+    confirmLabel: confirmLabel,
+  ),
+);
+
+/// Confirm dialog for a staff approve/reject/complete decision with optional
+/// remarks. The [TextEditingController] is owned by the dialog widget (not
+/// the awaiting future) so it is disposed only when the dialog unmounts —
+/// disposing it at pop time races the exit animation and crashes on the
+/// still-mounted [TextField].
+class _StaffDecisionDialog extends StatefulWidget {
+  const _StaffDecisionDialog({
+    required this.title,
+    required this.confirmLabel,
+  });
+
+  final String title;
+  final String confirmLabel;
+
+  @override
+  State<_StaffDecisionDialog> createState() => _StaffDecisionDialogState();
+}
+
+class _StaffDecisionDialogState extends State<_StaffDecisionDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.title),
+    content: TextField(
+      controller: _controller,
+      maxLines: 3,
+      maxLength: 500,
+      decoration: const InputDecoration(
+        labelText: 'Remarks (optional)',
+        alignLabelWithHint: true,
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () =>
+            Navigator.of(context).pop(_controller.text.trim()),
+        child: Text(widget.confirmLabel),
+      ),
+    ],
+  );
 }

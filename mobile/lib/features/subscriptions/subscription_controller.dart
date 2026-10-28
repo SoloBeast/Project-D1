@@ -27,6 +27,7 @@ class SubscriptionState {
     this.isSaving = false,
     this.isOffline = false,
     this.errorMessage,
+    this.pendingRecoverySubscriptionId,
   });
 
   final List<SubscriptionDetails> subscriptions;
@@ -42,6 +43,10 @@ class SubscriptionState {
   final bool isSaving;
   final bool isOffline;
   final String? errorMessage;
+  /// Public id of a `PaymentPending` subscription the server preserved when
+  /// it rejected the initial payment plan. The UI offers it as a retry
+  /// entry point instead of leaving the subscription unreachable.
+  final String? pendingRecoverySubscriptionId;
 
   SubscriptionState copyWith({
     List<SubscriptionDetails>? subscriptions,
@@ -55,6 +60,8 @@ class SubscriptionState {
     bool? isOffline,
     String? errorMessage,
     bool clearError = false,
+    String? pendingRecoverySubscriptionId,
+    bool clearRecovery = false,
   }) => SubscriptionState(
     subscriptions: subscriptions ?? this.subscriptions,
     selectedSubscription: clearSelectedSubscription
@@ -67,6 +74,9 @@ class SubscriptionState {
     isSaving: isSaving ?? this.isSaving,
     isOffline: isOffline ?? this.isOffline,
     errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
+    pendingRecoverySubscriptionId: clearRecovery
+        ? null
+        : pendingRecoverySubscriptionId ?? this.pendingRecoverySubscriptionId,
   );
 }
 
@@ -84,7 +94,12 @@ class SubscriptionController extends Notifier<SubscriptionState> {
     final token = _token;
     if (token == null) return null;
 
-    state = state.copyWith(isSaving: true, isOffline: false, clearError: true);
+    state = state.copyWith(
+      isSaving: true,
+      isOffline: false,
+      clearError: true,
+      clearRecovery: true,
+    );
     try {
       final created = await _repository.create(
         token: token,
@@ -100,15 +115,28 @@ class SubscriptionController extends Notifier<SubscriptionState> {
       );
       return created;
     } on Object catch (error) {
+      // When the server rejects the payment plan but preserves a recoverable
+      // pending subscription, keep its id so the UI can offer a retry path
+      // instead of leaving the subscription unreachable.
+      String? recoveryId;
+      if (error is ApiException) {
+        final payload = error.data;
+        final rawId = payload == null ? null : payload['subscriptionId'];
+        recoveryId = rawId is String ? rawId : null;
+      }
       _setFailure(error, saving: true);
+      if (recoveryId != null) {
+        state = state.copyWith(pendingRecoverySubscriptionId: recoveryId);
+      }
       return null;
     }
   }
 
   Future<CreatedSubscription?> retryPayment(
     String subscriptionId,
-    PaymentMethod paymentMethod,
-  ) async {
+    PaymentMethod paymentMethod, {
+    bool useWalletBalance = false,
+  }) async {
     final token = _token;
     if (token == null) return null;
 
@@ -120,6 +148,7 @@ class SubscriptionController extends Notifier<SubscriptionState> {
         paymentMethod: paymentMethod,
         idempotencyKey:
             'mobile-subscription-retry-${DateTime.now().microsecondsSinceEpoch}',
+        useWalletBalance: useWalletBalance,
       );
       ref.read(paymentControllerProvider.notifier).adopt(created.payment);
       state = state.copyWith(
@@ -340,8 +369,31 @@ class SubscriptionController extends Notifier<SubscriptionState> {
       isLoading: saving ? state.isLoading : false,
       isSaving: saving ? false : state.isSaving,
       isOffline: !isApiError,
-      errorMessage: isApiError ? error.message : _offlineMessage,
+      errorMessage: isApiError ? _retryMessage(error) : _offlineMessage,
     );
+  }
+
+  /// Maps plan-aware retry error codes to accurate UI copy. A successful
+  /// wallet component alone never means the whole purchase completed: when
+  /// a Razorpay attempt is still live the user must finish or reconcile it
+  /// instead of starting a new one.
+  String _retryMessage(ApiException error) {
+    switch (error.code) {
+      case 'SPLIT_PLAN_ATTEMPT_IN_PROGRESS':
+        return 'A card payment attempt is already in progress for this plan, '
+            'with wallet funds held. Complete the existing card payment or '
+            'reconcile it before starting a new one — no additional amount '
+            'has been charged.';
+      case 'SPLIT_PLAN_OUTCOME_AMBIGUOUS':
+        return 'The card payment status is still being reconciled. '
+            'Please refresh before retrying — no new attempt was started.';
+      case 'CONFLICT':
+        if (error.message.contains('already has a completed payment')) {
+          return 'This purchase is already paid and confirmed.';
+        }
+        return error.message;
+    }
+    return error.message;
   }
 }
 

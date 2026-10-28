@@ -24,6 +24,114 @@ public enum OrderStatus
     RejectedByCustomer
 }
 
+public enum OrderCancellationReason
+{
+    OrderedByMistake,
+    ChangedMind,
+    DuplicateOrder,
+    DeliveryTimeNoLongerSuitable,
+    Other
+}
+
+public sealed class OrderCancellation : Entity
+{
+    public const int MaxCommentLength = 500;
+
+    private OrderCancellation() { }
+
+    public OrderCancellation(
+        long orderId,
+        string reasonCode,
+        string? comment,
+        long cancelledByUserId,
+        DateTime cancelledAt)
+    {
+        if (orderId <= 0) throw new ArgumentOutOfRangeException(nameof(orderId));
+        if (cancelledByUserId <= 0) throw new ArgumentOutOfRangeException(nameof(cancelledByUserId));
+        if (cancelledAt.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException("Timestamp must be an India-local wall-clock value.", nameof(cancelledAt));
+        }
+
+        OrderId = orderId;
+        ReasonCode = NormalizeReason(reasonCode);
+        Comment = NormalizeComment(comment, ReasonCode);
+        CancelledByUserId = cancelledByUserId;
+        CancelledAt = cancelledAt;
+    }
+
+    public long OrderId { get; private set; }
+    public string ReasonCode { get; private set; } = string.Empty;
+    public string? Comment { get; private set; }
+    public long CancelledByUserId { get; private set; }
+    public DateTime CancelledAt { get; private set; }
+    /// <summary>
+    /// Frozen O2/O3 settlement snapshot: the Admin Centre delivery-fail
+    /// deduction percentage in force at the accepted cancellation (0 before
+    /// pickup), the frozen payable basis, the rounded deduction, and the
+    /// final wallet credit. Null until the cancellation refund is settled;
+    /// later configuration changes can never reprice a recorded row.
+    /// </summary>
+    public decimal? AppliedDeductionPercentage { get; private set; }
+    public decimal? DeductionAmount { get; private set; }
+    public decimal? RefundAmount { get; private set; }
+    public decimal? GrossBasis { get; private set; }
+
+    public void RecordRefundSnapshot(
+        decimal deductionPercentage,
+        decimal deductionAmount,
+        decimal refundAmount,
+        decimal grossBasis)
+    {
+        if (deductionPercentage < 0 || deductionPercentage > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(deductionPercentage));
+        }
+        if (deductionAmount < 0) throw new ArgumentOutOfRangeException(nameof(deductionAmount));
+        if (refundAmount < 0) throw new ArgumentOutOfRangeException(nameof(refundAmount));
+        if (grossBasis < 0) throw new ArgumentOutOfRangeException(nameof(grossBasis));
+        AppliedDeductionPercentage = decimal.Round(deductionPercentage, 2, MidpointRounding.AwayFromZero);
+        DeductionAmount = decimal.Round(deductionAmount, 2, MidpointRounding.AwayFromZero);
+        RefundAmount = decimal.Round(refundAmount, 2, MidpointRounding.AwayFromZero);
+        GrossBasis = decimal.Round(grossBasis, 2, MidpointRounding.AwayFromZero);
+    }
+
+    public Order Order { get; private set; } = null!;
+
+    public static string NormalizeReason(string? reasonCode)
+    {
+        if (string.IsNullOrWhiteSpace(reasonCode))
+        {
+            throw new ArgumentException("A cancellation reason code is required.", nameof(reasonCode));
+        }
+
+        var trimmed = reasonCode.Trim();
+        if (!Enum.TryParse<OrderCancellationReason>(trimmed, ignoreCase: false, out _))
+        {
+            throw new ArgumentException($"Unknown cancellation reason '{trimmed}'.", nameof(reasonCode));
+        }
+
+        return trimmed;
+    }
+
+    public static string? NormalizeComment(string? comment, string reasonCode)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(comment) ? null : comment.Trim();
+        if (trimmed is not null && trimmed.Length > MaxCommentLength)
+        {
+            throw new ArgumentException($"Cancellation comment cannot exceed {MaxCommentLength} characters.", nameof(comment));
+        }
+
+        if (string.Equals(reasonCode, nameof(OrderCancellationReason.Other), StringComparison.Ordinal)
+            && trimmed is null)
+        {
+            throw new ArgumentException("A comment is required when the reason is Other.", nameof(comment));
+        }
+
+        return trimmed;
+    }
+}
+
 public sealed class Order : AuditableEntity
 {
     private Order() { }
@@ -120,6 +228,7 @@ public sealed class Order : AuditableEntity
     public Branch Branch { get; private set; } = null!;
     public ICollection<OrderItem> Items { get; private set; } = [];
     public ICollection<OrderCharge> Charges { get; private set; } = [];
+    public OrderCancellation? Cancellation { get; private set; }
 
     public void AddItem(OrderItem item)
     {
@@ -200,7 +309,12 @@ public sealed class Order : AuditableEntity
 
     public void Cancel(DateTime now)
     {
-        if (Status != OrderStatus.Confirmed)
+        // O2/O3: a confirmed order may cancel before pickup; once the
+        // delivery is assigned or underway (order Assigned/OutForDelivery)
+        // cancellation remains possible but settles with the configured
+        // deduction — the service freezes the percentage and refunds the
+        // remainder. Terminal or payment-incomplete states stay rejected.
+        if (Status is not (OrderStatus.Confirmed or OrderStatus.Assigned or OrderStatus.OutForDelivery))
         {
             throw new InvalidOperationException($"An order in status '{Status}' cannot be cancelled.");
         }

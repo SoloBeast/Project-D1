@@ -387,12 +387,43 @@ class OrderController extends Notifier<OrderState> {
     }
   }
 
-  Future<bool> cancel(String orderId) async {
+  Future<CancelOrderPreview?> previewCancel(String orderId) async {
+    final token = _token;
+    if (token == null) return null;
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      final preview = await _repository.previewCancel(token, orderId);
+      state = state.copyWith(isSaving: false);
+      return preview;
+    } on ApiException catch (error) {
+      state = state.copyWith(isSaving: false, errorMessage: error.message);
+    } on Object {
+      state = state.copyWith(isSaving: false, errorMessage: _offlineMessage);
+    }
+    return null;
+  }
+
+  Future<bool> cancel(
+    String orderId, {
+    String? reasonCode,
+    String? comment,
+    bool confirmed = false,
+    double? confirmedDeductionPercentage,
+    double? confirmedRefundAmount,
+  }) async {
     final token = _token;
     if (token == null) return false;
     state = state.copyWith(isSaving: true, clearError: true);
     try {
-      final order = await _repository.cancel(token, orderId);
+      final order = await _repository.cancel(
+        token,
+        orderId,
+        reasonCode: reasonCode,
+        comment: comment,
+        confirmed: confirmed,
+        confirmedDeductionPercentage: confirmedDeductionPercentage,
+        confirmedRefundAmount: confirmedRefundAmount,
+      );
       state = state.copyWith(
         selectedOrder: order,
         orders: state.orders

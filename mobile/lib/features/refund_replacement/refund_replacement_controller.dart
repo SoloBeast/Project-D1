@@ -25,8 +25,10 @@ class RefundReplacementState {
     this.selectedCustomerRequest,
     this.staffPage,
     this.selectedStaffRequest,
+    this.orderRefundPreview,
     this.isLoading = false,
     this.isSaving = false,
+    this.isPreviewLoading = false,
     this.isOffline = false,
     this.isUnauthorized = false,
     this.errorMessage,
@@ -37,8 +39,10 @@ class RefundReplacementState {
   final RefundReplacementRequest? selectedCustomerRequest;
   final RefundReplacementPage? staffPage;
   final RefundReplacementRequest? selectedStaffRequest;
+  final OrderRefundPreview? orderRefundPreview;
   final bool isLoading;
   final bool isSaving;
+  final bool isPreviewLoading;
   final bool isOffline;
   final bool isUnauthorized;
   final String? errorMessage;
@@ -52,8 +56,11 @@ class RefundReplacementState {
     RefundReplacementPage? staffPage,
     RefundReplacementRequest? selectedStaffRequest,
     bool clearSelectedStaffRequest = false,
+    OrderRefundPreview? orderRefundPreview,
+    bool clearOrderRefundPreview = false,
     bool? isLoading,
     bool? isSaving,
+    bool? isPreviewLoading,
     bool? isOffline,
     bool? isUnauthorized,
     String? errorMessage,
@@ -68,8 +75,12 @@ class RefundReplacementState {
     selectedStaffRequest: clearSelectedStaffRequest
         ? null
         : selectedStaffRequest ?? this.selectedStaffRequest,
+    orderRefundPreview: clearOrderRefundPreview
+        ? null
+        : orderRefundPreview ?? this.orderRefundPreview,
     isLoading: isLoading ?? this.isLoading,
     isSaving: isSaving ?? this.isSaving,
+    isPreviewLoading: isPreviewLoading ?? this.isPreviewLoading,
     isOffline: isOffline ?? this.isOffline,
     isUnauthorized: isUnauthorized ?? this.isUnauthorized,
     errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
@@ -95,21 +106,39 @@ class RefundReplacementController extends Notifier<RefundReplacementState> {
     );
   });
 
+  /// Stage 2.1: when [imageBytes] is supplied the evidence rides with the
+  /// submission in one atomic server transaction; otherwise the plain JSON
+  /// submission is used (which the server rejects for photo-required tickets).
   Future<bool> submitRequest(
     String deliveryId, {
     required RefundReplacementType type,
     required String reason,
     String? remarks,
     String? milkTestId,
+    Uint8List? imageBytes,
+    String? imageFileName,
+    String? imageContentType,
   }) => _save(() async {
-    final request = await _repository.submit(
-      _token!,
-      deliveryId,
-      type: type,
-      reason: reason,
-      remarks: remarks,
-      milkTestId: milkTestId,
-    );
+    final request = imageBytes == null
+        ? await _repository.submit(
+            _token!,
+            deliveryId,
+            type: type,
+            reason: reason,
+            remarks: remarks,
+            milkTestId: milkTestId,
+          )
+        : await _repository.submitWithImage(
+            _token!,
+            deliveryId,
+            type: type,
+            reason: reason,
+            remarks: remarks,
+            milkTestId: milkTestId,
+            imageBytes: imageBytes,
+            fileName: imageFileName ?? 'proof.jpg',
+            contentType: imageContentType ?? 'image/jpeg',
+          );
     state = state.copyWith(eligibility: null, selectedCustomerRequest: request);
   });
 
@@ -198,6 +227,12 @@ class RefundReplacementController extends Notifier<RefundReplacementState> {
           replacementDate: request.replacementDate,
           replacementDeliveryNumber: request.replacementDeliveryNumber,
           isRefundOnly: request.isRefundOnly,
+          appliedDeductionPercentage: request.appliedDeductionPercentage,
+          deductionWaived: request.deductionWaived,
+          deductionWaiverReason: request.deductionWaiverReason,
+          supersedesRequestNumber: request.supersedesRequestNumber,
+          supersedesRequestPublicId: request.supersedesRequestPublicId,
+          supersededByRequestNumber: request.supersededByRequestNumber,
         ),
       );
     }
@@ -231,19 +266,108 @@ class RefundReplacementController extends Notifier<RefundReplacementState> {
   /// D1-D: approves a request, forwarding an optional staff-confirmed
   /// replacement date for re-delivery tickets. Null preserves the existing
   /// refund/one-time approval behavior.
+  ///
+  /// Stage 2: for order-backed Refund tickets [applyDeduction] carries
+  /// support's explicit apply/waive decision and [waiverReason] the required
+  /// reason when waiving. Approval records the decision and frozen snapshot
+  /// only — it never credits the wallet.
   Future<bool> approve(
     String requestId, {
     String? remarks,
     DateTime? replacementDate,
+    bool? applyDeduction,
+    String? waiverReason,
+    String? settlementMethod,
   }) => _save(() async {
     final request = await _repository.approve(
       _token!,
       requestId,
       remarks: remarks,
       replacementDate: replacementDate,
+      applyDeduction: applyDeduction,
+      waiverReason: waiverReason,
+      settlementMethod: settlementMethod,
     );
-    state = state.copyWith(selectedStaffRequest: request);
+    state = state.copyWith(
+      selectedStaffRequest: request,
+      clearOrderRefundPreview: true,
+    );
   });
+
+  /// Stage 2: loads the authoritative refund preview for an order-backed
+  /// Refund ticket. Returns the preview (or null on failure) and caches it
+  /// in state; the preview never mutates server state. A failed load keeps
+  /// any previously loaded preview and surfaces the server message.
+  Future<OrderRefundPreview?> previewOrderRefund(
+    String requestId, {
+    required bool applyDeduction,
+  }) async {
+    final token = _token;
+    if (token == null) return null;
+    state = state.copyWith(
+      isPreviewLoading: true,
+      isOffline: false,
+      isUnauthorized: false,
+      clearError: true,
+    );
+    try {
+      final preview = await _repository.getOrderRefundPreview(
+        token,
+        requestId,
+        applyDeduction: applyDeduction,
+      );
+      state = state.copyWith(
+        orderRefundPreview: preview,
+        isPreviewLoading: false,
+      );
+      return preview;
+    } on Object catch (error) {
+      _setFailure(error);
+      state = state.copyWith(isPreviewLoading: false);
+      return null;
+    }
+  }
+
+  void clearOrderRefundPreview() =>
+      state = state.copyWith(clearOrderRefundPreview: true);
+
+  /// Legacy remediation: replaces an eligible unsupported Replacement
+  /// ticket with a linked Pending Refund ticket. Returns the pair on
+  /// success (and selects the superseded legacy ticket, so the detail
+  /// refreshes); returns null on any failure with the server message in
+  /// [RefundReplacementState.errorMessage]. Guards against duplicate
+  /// submissions while a save is already in flight. Callers reload
+  /// authoritative state after a conflict before permitting another
+  /// attempt. Never issues a refund or credits the wallet — the new ticket
+  /// follows the standard approval and settlement workflow.
+  Future<RemediationPair?> remediateLegacyReplacement(
+    String requestId, {
+    required String reason,
+  }) async {
+    final token = _token;
+    if (token == null || state.isSaving) return null;
+    state = state.copyWith(
+      isSaving: true,
+      isOffline: false,
+      isUnauthorized: false,
+      clearError: true,
+    );
+    try {
+      final pair = await _repository.remediate(
+        token,
+        requestId,
+        reason: reason,
+      );
+      state = state.copyWith(
+        selectedStaffRequest: pair.legacyTicket,
+        isSaving: false,
+      );
+      return pair;
+    } on Object catch (error) {
+      _setFailure(error, saving: true);
+      return null;
+    }
+  }
 
   Future<bool> reject(String requestId, {String? remarks}) =>
       _decide(requestId, 'reject', remarks);

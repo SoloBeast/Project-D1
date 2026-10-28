@@ -81,6 +81,73 @@ public sealed class OrderDomainTests
             order.Cancel(new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Utc)));
     }
 
+    [Theory]
+    [InlineData(OrderStatus.Assigned)]
+    [InlineData(OrderStatus.OutForDelivery)]
+    public void Cancel_AllowsAssignedAndInTransitOrdersForPickupAwareSettlement(OrderStatus status)
+    {
+        var order = CreateOrder();
+        order.ConfirmPayment();
+        order.AssignForDelivery();
+        if (status == OrderStatus.OutForDelivery)
+        {
+            order.StartDelivery();
+        }
+
+        order.Cancel(new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Unspecified));
+
+        Assert.Equal(OrderStatus.Cancelled, order.Status);
+    }
+
+    [Theory]
+    [InlineData(OrderStatus.PendingPayment)]
+    [InlineData(OrderStatus.Delivered)]
+    [InlineData(OrderStatus.Failed)]
+    [InlineData(OrderStatus.PaymentFailed)]
+    public void Cancel_RejectsTerminalAndUnpaidStatuses(OrderStatus status)
+    {
+        var order = CreateOrder();
+        if (status != OrderStatus.PendingPayment && status != OrderStatus.PaymentFailed)
+        {
+            order.ConfirmPayment();
+            order.AssignForDelivery();
+            if (status == OrderStatus.OutForDelivery || status == OrderStatus.Delivered || status == OrderStatus.Failed)
+            {
+                order.StartDelivery();
+            }
+            if (status == OrderStatus.Delivered)
+            {
+                order.MarkDelivered();
+            }
+            if (status == OrderStatus.Failed)
+            {
+                order.MarkDeliveryFailed();
+            }
+        }
+        if (status == OrderStatus.PaymentFailed)
+        {
+            order.FailPayment();
+        }
+
+        Assert.Throws<InvalidOperationException>(() =>
+            order.Cancel(new DateTime(2026, 8, 16, 1, 0, 0, DateTimeKind.Unspecified)));
+    }
+
+    [Fact]
+    public void RecordRefundSnapshot_FreezesSettlementTerms()
+    {
+        var cancellation = new OrderCancellation(7, "ChangedMind", null, 3,
+            new DateTime(2026, 8, 20, 2, 41, 0, DateTimeKind.Unspecified));
+        Assert.Null(cancellation.AppliedDeductionPercentage);
+
+        cancellation.RecordRefundSnapshot(25m, 20m, 60m, 80m);
+
+        Assert.Equal(25m, cancellation.AppliedDeductionPercentage);
+        Assert.Equal(20m, cancellation.DeductionAmount);
+        Assert.Equal(60m, cancellation.RefundAmount);
+        Assert.Equal(80m, cancellation.GrossBasis);
+    }
+
     private static Order CreateOrder(decimal subtotal = 160m, decimal discountAmount = 0m) =>
         new(
             customerId: 1,

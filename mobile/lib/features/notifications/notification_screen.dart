@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import 'notification_controller.dart';
 import 'notification_models.dart';
+import 'permission_onboarding.dart';
 import 'push_notification_gateway.dart';
 
 class NotificationInboxScreen extends ConsumerStatefulWidget {
@@ -57,6 +58,9 @@ class _NotificationInboxScreenState
     );
 
     return Scaffold(
+      bottomNavigationBar: const CustomerBottomNavigation(
+        currentPath: '/notifications',
+      ),
       appBar: AppBar(
         title: const Text('Notifications'),
         actions: [
@@ -183,6 +187,14 @@ class _PermissionPanel extends ConsumerWidget {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Text('Enable'),
+            )
+          else
+            // Permanently denied (or restricted): the OS dialog cannot be
+            // shown again, so the only route is app settings. The inbox
+            // above keeps working regardless.
+            TextButton(
+              onPressed: openAppSettings,
+              child: const Text('Settings'),
             ),
         ],
       ),

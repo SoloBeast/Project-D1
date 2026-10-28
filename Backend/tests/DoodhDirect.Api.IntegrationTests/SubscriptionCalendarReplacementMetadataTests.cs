@@ -12,6 +12,7 @@ using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.Setup;
 using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Setup;
 using DoodhDirect.Infrastructure.Subscriptions;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -281,7 +282,8 @@ public sealed class SubscriptionCalendarReplacementMetadataTests
                 new FixedBranchAllocationService(branch),
                 new UnusedPaymentService(),
                 timeProvider,
-                new TestNotificationEventWriter(db, timeProvider));
+                new TestNotificationEventWriter(db, timeProvider),
+                new NumberSeriesService(db, timeProvider));
             return new CalendarHarness(connection, db, trackedCustomer, trackedOther, trackedSubscription, service);
         }
 
@@ -326,6 +328,10 @@ public sealed class SubscriptionCalendarReplacementMetadataTests
         public Task<PaymentResult> CreateForSubscriptionAsync(long customerId, long subscriptionId, PaymentMethod method, string idempotencyKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
         public Task<PaymentResult> RetrySubscriptionAsync(long customerId, Guid subscriptionId, PaymentMethod method, string idempotencyKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<PaymentPlanResult> CreateOrderPlanAsync(long customerId, Guid orderId, bool useWalletBalance, string idempotencyKey, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+        public Task<PaymentPlanResult> CreateSubscriptionPlanAsync(long customerId, long subscriptionId, bool useWalletBalance, string idempotencyKey, CancellationToken cancellationToken, bool expirePriorAttempts = false) =>
             throw new NotSupportedException();
         public Task<PaymentResult> CreateWalletTopUpAsync(long customerId, decimal amount, string idempotencyKey, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

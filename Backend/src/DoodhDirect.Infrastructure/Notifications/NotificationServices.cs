@@ -175,6 +175,31 @@ internal sealed class NotificationService(
         return MapDevice(device);
     }
 
+    public async Task<UserDeviceResult> DeactivateDeviceAsync(
+        NotificationActor actor,
+        string deviceIdentifier,
+        CancellationToken cancellationToken)
+    {
+        ValidateActor(actor);
+        ValidateLength(deviceIdentifier, 1, 500, "deviceIdentifier");
+
+        // Owner-scoped lookup only: a device owned by another user resolves to
+        // NotFound exactly like a missing device, leaking no cross-user detail.
+        var deviceHash = tokenGenerator.Hash(deviceIdentifier.Trim());
+        var device = await dbContext.UserDevices.SingleOrDefaultAsync(
+            x => x.UserId == actor.UserId && x.DeviceIdentifierHash == deviceHash,
+            cancellationToken)
+            ?? throw new NotFoundException("Notification device was not found.");
+
+        if (device.IsActive)
+        {
+            device.Invalidate(timeProvider.Now);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return MapDevice(device);
+    }
+
     public async Task<IReadOnlyCollection<NotificationPreferenceResult>> GetPreferencesAsync(
         NotificationActor actor,
         CancellationToken cancellationToken)

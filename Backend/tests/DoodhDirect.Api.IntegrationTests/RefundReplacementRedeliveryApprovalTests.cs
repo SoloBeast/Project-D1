@@ -35,7 +35,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         await ChooseReDeliveryAsync(service, harness, requestId);
 
         var approved = await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
         // No schedules on the harness subscription: first cutoff-satisfiable
@@ -85,7 +85,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var approved = await service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest("Re-drive on Thursday", new DateOnly(2026, 8, 20)),
+            new ApproveRefundReplacementRequest("Re-drive on Thursday", new DateOnly(2026, 8, 20), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
         Assert.Equal(new DateOnly(2026, 8, 20), approved.ReplacementDate);
@@ -116,7 +116,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
             .SingleAsync()).FailureReasonSnapshot;
 
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         var replacement = Assert.Single(await harness.Db.SubscriptionDeliveries.AsNoTracking()
             .Where(x => x.IsReplacement).ToListAsync());
@@ -136,7 +136,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var exception = await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 16)),
+            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 16), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None));
         Assert.Equal("replacementDate", exception.Field);
 
@@ -161,7 +161,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var exception = await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 24)),
+            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 24), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None));
         Assert.Equal("replacementDate", exception.Field);
 
@@ -182,7 +182,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var exception = await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 17)),
+            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 17), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None));
         Assert.Equal("replacementDate", exception.Field);
 
@@ -203,7 +203,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         await ChooseReDeliveryAsync(service, harness, requestId);
 
         var approved = await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         Assert.Equal(new DateOnly(2026, 8, 24), approved.ReplacementDate);
         var subscription = await harness.Db.Subscriptions.AsNoTracking().SingleAsync();
@@ -228,7 +228,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var service = CreateService(harness);
         await ChooseReDeliveryAsync(service, harness, requestId);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         var rows = await harness.Db.SubscriptionDeliveries.AsNoTracking()
             .OrderBy(x => x.ScheduledDate).ToListAsync();
@@ -255,7 +255,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         await ChooseReDeliveryAsync(service, harness, requestId);
 
         await Assert.ThrowsAsync<ConflictException>(() => service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None));
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None));
 
         harness.Db.ChangeTracker.Clear();
         Assert.Equal(1, await harness.Db.SubscriptionDeliveries.AsNoTracking().CountAsync());
@@ -278,7 +278,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
             CancellationToken.None);
 
         var approved = await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
         Assert.Null(approved.ReplacementDate);
@@ -295,7 +295,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var service = CreateService(harness);
 
         var approved = await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
         Assert.Null(approved.ReplacementDate);
@@ -320,7 +320,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         harness.Db.ChangeTracker.Clear();
 
         await Assert.ThrowsAsync<ConflictException>(() => service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None));
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None));
 
         harness.Db.ChangeTracker.Clear();
         Assert.Equal(2, await harness.Db.SubscriptionDeliveries.AsNoTracking().CountAsync());
@@ -338,10 +338,10 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var service = CreateService(harness);
         await ChooseReDeliveryAsync(service, harness, requestId);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         await Assert.ThrowsAsync<ConflictException>(() => service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None));
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None));
 
         harness.Db.ChangeTracker.Clear();
         Assert.Equal(2, await harness.Db.SubscriptionDeliveries.AsNoTracking().CountAsync());
@@ -435,9 +435,9 @@ public sealed class RefundReplacementRedeliveryApprovalTests
             new[]
             {
                 firstService.ApproveAsync(
-                    actor, harness.RequestPublicId, new ApproveRefundReplacementRequest(null), CancellationToken.None),
+                    actor, harness.RequestPublicId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None),
                 secondService.ApproveAsync(
-                    actor, harness.RequestPublicId, new ApproveRefundReplacementRequest(null), CancellationToken.None)
+                    actor, harness.RequestPublicId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None)
             }.Select(async attempt =>
             {
                 try
@@ -655,6 +655,17 @@ public sealed class RefundReplacementRedeliveryApprovalTests
                 RefundReplacementStatus.AwaitingCustomerChoice);
             ticket.AssignRequestNumber("RR/TEST/000001");
             db.RefundReplacementRequests.Add(ticket);
+            await db.SaveChangesAsync();
+            // Stage 2 conditional evidence: subscription tickets carry the
+            // staff-captured proof (mandatory at fail time in the real flow).
+            ticket.AddImage(new RefundReplacementImage(
+                ticket.Id,
+                "test/redelivery/sql-proof.jpg",
+                "proof.jpg",
+                "image/jpeg",
+                5,
+                staff.Id,
+                now));
             await db.SaveChangesAsync();
 
             ticket.RecordCustomerChoice(CustomerChoice.ReDelivery, now);

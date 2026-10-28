@@ -1,3 +1,4 @@
+using System.IO;
 using DoodhDirect.Application.Abstractions;
 using DoodhDirect.Application.Branding;
 using DoodhDirect.Application.Branches;
@@ -86,6 +87,10 @@ public static class DependencyInjection
             .Bind(configuration.GetSection(DeliveryFailTimeoutOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
+        services.AddOptions<VacationRefundOptions>()
+            .Bind(configuration.GetSection(VacationRefundOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
         // NOTE: Razorpay credentials are not validated at boot. They may be configured at
         // runtime through the Integration settings store (Integration.Razorpay.*), which
         // overrides static appsettings values per call.
@@ -118,9 +123,24 @@ public static class DependencyInjection
             .ValidateDataAnnotations()
             .Validate(
                 options => Enum.GetValues<DoodhDirect.Domain.Notifications.NotificationChannel>()
-                    .All(channel => IsSupportedNotificationProvider(options.ProviderFor(channel))),
-                "Notifications providers must be 'Unconfigured' or 'DevelopmentMock'.")
+                    .All(channel => IsSupportedNotificationProvider(channel, options.ProviderFor(channel))),
+                "Notifications providers must be 'Unconfigured' or 'DevelopmentMock', or 'Fcm' for the Push channel.")
             .ValidateOnStart();
+        // FCM credentials are server-side only (service-account file path plus
+        // environment overrides). Required values are enforced at startup only
+        // when the Push channel actually selects 'Fcm'.
+        services.AddOptions<FcmPushOptions>()
+            .Bind(configuration.GetSection(FcmPushOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+        services.AddSingleton<IValidateOptions<FcmPushOptions>, FcmPushOptionsValidator>();
+        services.AddHttpClient(
+            FcmPushGateway.HttpClientName,
+            (provider, client) =>
+            {
+                var options = provider.GetRequiredService<IOptions<FcmPushOptions>>().Value;
+                client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+            });
         services.AddOptions<SeedOptions>()
             .Bind(configuration.GetSection(SeedOptions.SectionName))
             .ValidateOnStart();
@@ -137,8 +157,33 @@ public static class DependencyInjection
 
         services.AddHealthChecks()
             .AddDbContextCheck<DoodhDirectDbContext>("sql-server", tags: ["ready"]);
-        services.AddDataProtection()
+        // Bank account numbers (and integration/OTP secrets) are encrypted with
+        // ASP.NET Core DataProtection. The default key ring is ephemeral: keys
+        // are lost on restart/redeploy/scale-out, which would make stored bank
+        // details unreadable (fail-closed). Set DataProtection:KeyDirectory to a
+        // durable, deployment-managed directory (persisted volume / file share
+        // with OS-level ACLs) so keys survive restarts and are shared by every
+        // instance. When unset, the ephemeral ring is kept for development only.
+        var dataProtection = services.AddDataProtection()
             .SetApplicationName("DoodhDirect");
+        var keyDirectory = configuration["DataProtection:KeyDirectory"];
+        if (string.IsNullOrWhiteSpace(keyDirectory) && environment.IsDevelopment())
+        {
+            // Local development convenience default: a durable directory outside
+            // the repository, so bank-detail keys survive API restarts on a dev
+            // machine with zero per-machine configuration. Explicit configuration
+            // (including environment variables) always wins when present.
+            // Production and shared environments must set DataProtection:KeyDirectory
+            // to their own securely managed durable location; they never use this.
+            keyDirectory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DoodhDirect",
+                "DataProtection-Keys");
+        }
+        if (!string.IsNullOrWhiteSpace(keyDirectory))
+        {
+            dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keyDirectory));
+        }
         services.AddSingleton<IIndiaTimeProvider>(_ => new IndiaTimeProvider(timeZone));
         services.AddSingleton<IClock, SystemUtcClock>();
         services.AddSingleton<SecureTokenGenerator>();
@@ -162,8 +207,11 @@ public static class DependencyInjection
         services.AddScoped<IRefundReplacementConfigurationService, RefundReplacementConfigurationService>();
         services.AddScoped<IDeliveryFailTicketCreator, DeliveryFailTicketCreator>();
         services.AddScoped<IRefundReplacementService, RefundReplacementService>();
+        services.AddScoped<IRefundBankExportService, RefundBankExportService>();
         services.AddScoped<IDeliveryFailTimeoutProcessor, DeliveryFailTimeoutProcessor>();
         services.AddHostedService<DeliveryFailTimeoutWorker>();
+        services.AddScoped<IVacationRefundService, VacationRefundService>();
+        services.AddHostedService<VacationRefundWorker>();
         services.AddScoped<ICameraService, CameraService>();
         services.AddScoped<INotificationEventWriter, NotificationEventWriter>();
         services.AddScoped<INotificationService, NotificationService>();
@@ -177,6 +225,11 @@ public static class DependencyInjection
         services.AddScoped<IPaymentService>(provider => provider.GetRequiredService<PaymentService>());
         services.AddScoped<IPaymentReconciliationCoordinator, PaymentReconciliationCoordinator>();
         services.AddScoped<IWalletService, WalletService>();
+        services.AddSingleton<BankDetailProtector>();
+        services.AddSingleton<CompanyBankDetailProtector>();
+        services.AddSingleton<ManualBankBeneficiaryProtector>();
+        services.AddScoped<ICompanyBankService, CompanyBankService>();
+        services.AddScoped<IWithdrawalService, WithdrawalService>();
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<INumberSeriesService, NumberSeriesService>();
         services.AddScoped<IEmployeeService, EmployeeService>();
@@ -257,18 +310,34 @@ public static class DependencyInjection
             services.AddSingleton<INotificationChannelGateway>(provider =>
             {
                 var options = provider.GetRequiredService<IOptions<NotificationOptions>>().Value;
-                return NotificationOptions.IsDevelopmentMock(options.ProviderFor(channel))
-                    ? new DevelopmentNotificationGateway(channel)
-                    : new UnconfiguredNotificationGateway(channel);
+                if (NotificationOptions.IsDevelopmentMock(options.ProviderFor(channel)))
+                {
+                    return new DevelopmentNotificationGateway(channel);
+                }
+
+                if (channel == DoodhDirect.Domain.Notifications.NotificationChannel.Push
+                    && string.Equals(
+                        options.PushProvider,
+                        FcmPushOptions.ProviderName,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return ActivatorUtilities.CreateInstance<FcmPushGateway>(provider);
+                }
+
+                return new UnconfiguredNotificationGateway(channel);
             });
         }
 
         return services;
     }
 
-    private static bool IsSupportedNotificationProvider(string provider) =>
+    private static bool IsSupportedNotificationProvider(
+        DoodhDirect.Domain.Notifications.NotificationChannel channel,
+        string provider) =>
         string.Equals(provider, "Unconfigured", StringComparison.OrdinalIgnoreCase)
-        || NotificationOptions.IsDevelopmentMock(provider);
+        || NotificationOptions.IsDevelopmentMock(provider)
+        || (channel == DoodhDirect.Domain.Notifications.NotificationChannel.Push
+            && string.Equals(provider, FcmPushOptions.ProviderName, StringComparison.OrdinalIgnoreCase));
 
     private sealed class SystemUtcClock : IClock
     {

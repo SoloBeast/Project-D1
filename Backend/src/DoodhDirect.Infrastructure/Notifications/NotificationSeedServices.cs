@@ -38,6 +38,11 @@ public sealed class NotificationTemplateSeedService(DoodhDirectDbContext dbConte
                         {
                             existingTemplate.Update(existingTemplate.TitleTemplate, body, existingTemplate.IsActive);
                         }
+                        else if (eventType != NotificationEventTypes.DeliveryOtpIssued &&
+                            existingTemplate.BodyTemplate == previousDefault)
+                        {
+                            existingTemplate.Update(existingTemplate.TitleTemplate, body, existingTemplate.IsActive);
+                        }
 
                         continue;
                     }
@@ -59,7 +64,7 @@ public sealed class NotificationTemplateSeedService(DoodhDirectDbContext dbConte
     private static string BodyTemplate(string eventType, string title) =>
         eventType == NotificationEventTypes.DeliveryOtpIssued
             ? "Your delivery OTP is {{otp}}. Share it only with the assigned delivery staff."
-            : $"{title}: {{{{message}}}}";
+            : "{{message}}";
 
     private static string Humanize(string eventType)
     {

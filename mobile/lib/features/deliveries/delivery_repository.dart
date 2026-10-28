@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 
 import 'delivery_models.dart';
@@ -59,6 +61,39 @@ class DeliveryRepository {
       ),
     ).map(DeliveryDetails.fromJson).toList(growable: false);
   }
+
+  /// Past-due scheduled subscription occurrences of a branch that were
+  /// never operationalized. Skipped, replacement, failed, delivered and
+  /// cancelled occurrences are never listed here.
+  Future<List<MissedOccurrence>> getMissedOccurrences(
+    String token,
+    int branchId,
+  ) async => _list(
+    await api.get(
+      '/api/v1/delivery-management/branches/$branchId/missed-occurrences',
+      accessToken: token,
+    ),
+  ).map(MissedOccurrence.fromJson).toList(growable: false);
+
+  /// Records a manager-confirmed miss for a past-due occurrence with no
+  /// operational delivery. A failed operational record plus the remedy
+  /// ticket (frozen zero deduction: no service was provided) are created
+  /// through the existing delivery-fail workflow; nothing is marked
+  /// delivered here.
+  Future<DeliveryDetails> failMissedOccurrence({
+    required String token,
+    required int branchId,
+    required String occurrenceId,
+    required String reason,
+    String? remarks,
+  }) async => DeliveryDetails.fromJson(
+    (await api.post(
+          '/api/v1/delivery-management/branches/$branchId/missed-occurrences/$occurrenceId/fail',
+          body: {'reason': reason, 'remarks': remarks},
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
 
   Future<List<DeliveryEmployee>> getEmployees(
     String token,
@@ -176,6 +211,37 @@ class DeliveryRepository {
     String? remarks,
   }) =>
       _action(token, id, 'fail', body: {'reason': reason, 'remarks': remarks});
+
+  /// Fails a subscription delivery with the required staff proof image
+  /// (multipart `fail-with-proof`). The server validates type/size, stores
+  /// the proof, and opens the remedy ticket atomically. One-time order
+  /// deliveries must keep using [fail] — the server rejects proof there.
+  Future<DeliveryDetails> failWithProof(
+    String token,
+    String id, {
+    required String reason,
+    String? remarks,
+    required Uint8List imageBytes,
+    required String fileName,
+    required String contentType,
+  }) async {
+    final fields = <String, String>{'reason': reason};
+    if (remarks != null) {
+      fields['remarks'] = remarks;
+    }
+    return DeliveryDetails.fromJson(
+      (await api.postMultipart(
+            '/api/v1/delivery/$id/fail-with-proof',
+            fieldName: 'proof',
+            bytes: imageBytes,
+            fileName: fileName,
+            contentType: contentType,
+            fields: fields,
+            accessToken: token,
+          ))['data']
+          as Map<String, dynamic>,
+    );
+  }
   Future<DeliveryLocation> recordLocation({
     required String token,
     required String id,

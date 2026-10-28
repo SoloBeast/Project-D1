@@ -83,6 +83,9 @@ public sealed class BranchService(
             // Guarantee the branch-scoped ORDER series exists the moment the branch
             // does, so order creation for this branch always has a series to consume.
             await numberSeriesSeedService.EnsureScopedOrderSeriesAsync(branch.Code, cancellationToken);
+            // Same guarantee for the branch-scoped SUBSCRIPTION series so
+            // subscription creation for this branch always has a series.
+            await numberSeriesSeedService.EnsureScopedSubscriptionSeriesAsync(branch.Code, cancellationToken);
 
             AddAudit(actorUserId, ActionCreated, branch, null, BranchSnapshot(branch), null);
             await dbContext.SaveChangesAsync(cancellationToken);

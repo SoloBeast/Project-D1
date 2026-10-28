@@ -29,10 +29,14 @@ class SubscriptionRepository {
     required String subscriptionId,
     required PaymentMethod paymentMethod,
     required String idempotencyKey,
+    bool useWalletBalance = false,
   }) async {
     final response = await api.post(
       '/api/v1/subscriptions/$subscriptionId/retry-payment',
-      body: {'paymentMethod': paymentMethod.apiValue},
+      body: {
+        'paymentMethod': paymentMethod.apiValue,
+        'useWalletBalance': useWalletBalance,
+      },
       accessToken: token,
       extraHeaders: {'Idempotency-Key': idempotencyKey},
     );

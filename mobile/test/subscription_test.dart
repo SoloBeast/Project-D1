@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
@@ -14,6 +15,8 @@ import 'package:doodh_direct_mobile/features/subscriptions/subscription_controll
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_models.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_repository.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_screens.dart';
+import 'package:doodh_direct_mobile/features/wallet/wallet_controller.dart';
+import 'package:doodh_direct_mobile/features/wallet/wallet_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -50,6 +53,8 @@ void main() {
         'slot': 'Evening',
         'totalEntitlement': 30,
         'paymentMethod': 'Wallet',
+        // Wallet-first opt-in defaults OFF.
+        'useWalletBalance': false,
       });
       expect(update.toJson(), {
         'quantity': 0.75,
@@ -99,6 +104,32 @@ void main() {
       );
     });
 
+    test(
+      'scheduled calendar occurrences become past due only after their date',
+      () {
+        final today = indiaNow();
+        final scheduledToday = SubscriptionDelivery.fromJson(
+          deliveryJson(scheduledDate: _isoDate(today)),
+        );
+        final scheduledYesterday = SubscriptionDelivery.fromJson(
+          deliveryJson(
+            scheduledDate: _isoDate(today.subtract(const Duration(days: 1))),
+          ),
+        );
+        final deliveredYesterday = SubscriptionDelivery.fromJson(
+          deliveryJson(
+            status: 'Delivered',
+            scheduledDate: _isoDate(today.subtract(const Duration(days: 1))),
+          ),
+        );
+
+        expect(scheduledToday.isPastDue, isFalse);
+        expect(scheduledYesterday.status, SubscriptionDeliveryStatus.scheduled);
+        expect(scheduledYesterday.isPastDue, isTrue);
+        expect(deliveredYesterday.isPastDue, isFalse);
+      },
+    );
+
     test('calendar occurrences parse replacement metadata; replacements never offer skip', () {
       // Ordinary occurrences stay unflagged with Skip available.
       final ordinary = SubscriptionDelivery.fromJson(deliveryJson());
@@ -118,10 +149,7 @@ void main() {
 
       // Legacy payloads without the flag keep ordinary semantics.
       expect(deliveryJson().containsKey('isReplacement'), isFalse);
-      expect(
-        SubscriptionDelivery.fromJson(deliveryJson()).canSkip,
-        isTrue,
-      );
+      expect(SubscriptionDelivery.fromJson(deliveryJson()).canSkip, isTrue);
     });
   });
 
@@ -141,6 +169,7 @@ void main() {
           'slot': 'Morning',
           'totalEntitlement': 30,
           'paymentMethod': 'Wallet',
+          'useWalletBalance': false,
         });
         return successResponse({
           'subscription': subscriptionJson(),
@@ -179,7 +208,11 @@ void main() {
         );
         expect(request.headers['Authorization'], 'Bearer customer-token');
         expect(request.headers['Idempotency-Key'], 'subscription-retry-1');
-        expect(jsonDecode(request.body), {'paymentMethod': 'Razorpay'});
+        // The retry propagates the wallet opt-in flag to the server.
+        expect(jsonDecode(request.body), {
+          'paymentMethod': 'Razorpay',
+          'useWalletBalance': true,
+        });
         return successResponse({
           'subscription': subscriptionJson(status: 'PaymentPending'),
           'payment': paymentJson(
@@ -196,6 +229,7 @@ void main() {
         subscriptionId: 'subscription-1',
         paymentMethod: PaymentMethod.razorpay,
         idempotencyKey: 'subscription-retry-1',
+        useWalletBalance: true,
       );
 
       expect(result.subscription.status, SubscriptionStatus.paymentPending);
@@ -377,6 +411,205 @@ void main() {
     });
   });
 
+  group('subscription payment recovery', () {
+    CreateSubscriptionRequest recoveryRequest() => CreateSubscriptionRequest(
+      productId: 'product-1',
+      addressId: 'address-1',
+      quantity: 1.125,
+      startDate: DateTime(2026, 8, 17, 14, 30),
+      deliveryDays: const {DeliveryWeekday.monday},
+      slot: SubscriptionDeliverySlot.morning,
+      totalEntitlement: 4,
+      paymentMethod: PaymentMethod.razorpay,
+      useWalletBalance: true,
+    );
+
+    test(
+      'rejected plan with a recoverable id keeps the recovery reference',
+      () async {
+        final container = await authenticatedContainer(
+          _FailingSubscriptionRepository(
+            ApiException(
+              422,
+              'WALLET_SPLIT_REMAINDER_BELOW_MINIMUM',
+              'The wallet split was rejected.',
+              data: {'subscriptionId': 'sub-recover-1'},
+            ),
+          ),
+        );
+        addTearDown(container.dispose);
+
+        final created = await container
+            .read(subscriptionControllerProvider.notifier)
+            .create(recoveryRequest());
+        final state = container.read(subscriptionControllerProvider);
+
+        expect(created, isNull);
+        expect(state.isSaving, isFalse);
+        expect(state.isOffline, isFalse);
+        expect(state.errorMessage, 'The wallet split was rejected.');
+        expect(state.pendingRecoverySubscriptionId, 'sub-recover-1');
+      },
+    );
+
+    test(
+      'rejected plan without a recoverable id keeps no stale reference',
+      () async {
+        final container = await authenticatedContainer(
+          _FailingSubscriptionRepository(
+            const ApiException(
+              422,
+              'WALLET_SPLIT_REMAINDER_BELOW_MINIMUM',
+              'The wallet split was rejected.',
+            ),
+          ),
+        );
+        addTearDown(container.dispose);
+
+        final created = await container
+            .read(subscriptionControllerProvider.notifier)
+            .create(recoveryRequest());
+        final state = container.read(subscriptionControllerProvider);
+
+        expect(created, isNull);
+        expect(state.errorMessage, 'The wallet split was rejected.');
+        expect(state.pendingRecoverySubscriptionId, isNull);
+      },
+    );
+
+    test('a fresh create clears a previous recovery reference', () async {
+      final repository = _FakeSubscriptionRepository();
+      final container = await authenticatedContainer(repository);
+      addTearDown(container.dispose);
+
+      final created = await container
+          .read(subscriptionControllerProvider.notifier)
+          .create(recoveryRequest());
+      final state = container.read(subscriptionControllerProvider);
+
+      expect(created, isNotNull);
+      expect(state.errorMessage, isNull);
+      expect(state.pendingRecoverySubscriptionId, isNull);
+    });
+
+    test(
+      'retry while a plan attempt is live reports progress, not completion',
+      () async {
+        final container = await authenticatedContainer(
+          _FailingSubscriptionRepository(
+            const ApiException(
+              409,
+              'SPLIT_PLAN_ATTEMPT_IN_PROGRESS',
+              'The subscription has a payment attempt in progress.',
+            ),
+          ),
+        );
+        addTearDown(container.dispose);
+
+        final retried = await container
+            .read(subscriptionControllerProvider.notifier)
+            .retryPayment('subscription-1', PaymentMethod.razorpay);
+        final state = container.read(subscriptionControllerProvider);
+
+        expect(retried, isNull);
+        expect(state.isSaving, isFalse);
+        expect(state.isOffline, isFalse);
+        expect(state.errorMessage, contains('already in progress'));
+        expect(state.errorMessage, isNot(contains('completed')));
+        expect(state.subscriptions, isEmpty);
+      },
+    );
+
+    test('retry with an ambiguous outcome asks for refresh first', () async {
+      final container = await authenticatedContainer(
+        _FailingSubscriptionRepository(
+          const ApiException(
+            409,
+            'SPLIT_PLAN_OUTCOME_AMBIGUOUS',
+            'A previous card payment is captured or reconciling.',
+          ),
+        ),
+      );
+      addTearDown(container.dispose);
+
+      final retried = await container
+          .read(subscriptionControllerProvider.notifier)
+          .retryPayment('subscription-1', PaymentMethod.razorpay);
+      final state = container.read(subscriptionControllerProvider);
+
+      expect(retried, isNull);
+      expect(state.errorMessage, contains('reconciled'));
+      expect(state.errorMessage, isNot(contains('completed')));
+    });
+
+    test('retry of a fully paid purchase says so accurately', () async {
+      final container = await authenticatedContainer(
+        _FailingSubscriptionRepository(
+          const ApiException(
+            409,
+            'CONFLICT',
+            'The subscription already has a completed payment.',
+          ),
+        ),
+      );
+      addTearDown(container.dispose);
+
+      final retried = await container
+          .read(subscriptionControllerProvider.notifier)
+          .retryPayment('subscription-1', PaymentMethod.wallet);
+      final state = container.read(subscriptionControllerProvider);
+
+      expect(retried, isNull);
+      expect(
+        state.errorMessage,
+        'This purchase is already paid and confirmed.',
+      );
+    });
+
+    test('unrelated retry errors pass through verbatim', () async {
+      final container = await authenticatedContainer(
+        _FailingSubscriptionRepository(
+          const ApiException(422, 'BUSINESS_RULE', 'Custom rule message.'),
+        ),
+      );
+      addTearDown(container.dispose);
+
+      final retried = await container
+          .read(subscriptionControllerProvider.notifier)
+          .retryPayment('subscription-1', PaymentMethod.wallet);
+      final state = container.read(subscriptionControllerProvider);
+
+      expect(retried, isNull);
+      expect(state.errorMessage, 'Custom rule message.');
+    });
+
+    testWidgets('setup surfaces the recoverable pending subscription', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(800, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await pumpScreen(
+        tester,
+        const SubscriptionSetupScreen(),
+        catalogueState: CatalogueState(products: [_product]),
+        customerState: CustomerState(addresses: [_address]),
+        subscriptionState: const SubscriptionState(
+          errorMessage: 'The wallet split was rejected.',
+          pendingRecoverySubscriptionId: 'sub-recover-1',
+        ),
+      );
+
+      // The tall surface keeps the whole setup form mounted, including the
+      // error banner and its recovery action.
+      expect(find.text('View pending subscription'), findsWidgets);
+      expect(
+        find.textContaining('saved as pending', findRichText: true),
+        findsOneWidget,
+      );
+    });
+  });
+
   group('subscription product selection', () {
     test('deduplicates available products by immutable public ID', () {
       final replacement = productFixture('product-1', 'Replacement Milk');
@@ -397,6 +630,102 @@ void main() {
         resolveAvailableSubscriptionProductId([replacement], 'product-1'),
         'product-1',
       );
+    });
+
+    testWidgets('preselects the product passed from a Subscribe tap', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(800, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      // Ghee sorts first, like the storefront; the customer tapped
+      // Subscribe on Buffalo Milk, so its estimate must win.
+      await pumpScreen(
+        tester,
+        const SubscriptionSetupScreen(initialProductId: 'product-milk'),
+        catalogueState: CatalogueState(products: [_gheeFixture, _milkFixture]),
+        customerState: CustomerState(addresses: [_address]),
+      );
+
+      expect(find.text('\u20B92400'), findsOneWidget);
+      expect(find.text('\u20B918000'), findsNothing);
+    });
+
+    testWidgets('falls back to the first product without a passed product', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(800, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await pumpScreen(
+        tester,
+        const SubscriptionSetupScreen(),
+        catalogueState: CatalogueState(products: [_gheeFixture, _milkFixture]),
+        customerState: CustomerState(addresses: [_address]),
+      );
+
+      expect(find.text('\u20B918000'), findsOneWidget);
+      expect(find.text('\u20B92400'), findsNothing);
+    });
+
+    testWidgets('falls back to the first product for an unknown id', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(800, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await pumpScreen(
+        tester,
+        const SubscriptionSetupScreen(initialProductId: 'product-gone'),
+        catalogueState: CatalogueState(products: [_gheeFixture, _milkFixture]),
+        customerState: CustomerState(addresses: [_address]),
+      );
+
+      expect(find.text('\u20B918000'), findsOneWidget);
+      expect(find.text('\u20B92400'), findsNothing);
+    });
+
+    testWidgets('shows the server wallet balance beside the Wallet option', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(800, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await pumpScreen(
+        tester,
+        const SubscriptionSetupScreen(),
+        catalogueState: CatalogueState(products: [_product]),
+        customerState: CustomerState(addresses: [_address]),
+        walletState: WalletState(
+          wallet: WalletDetails(
+            publicId: 'wallet-1',
+            balance: 10000,
+            currency: 'INR',
+            createdAt: DateTime.utc(2026, 8, 16),
+            updatedAt: DateTime.utc(2026, 8, 16),
+          ),
+        ),
+      );
+
+      expect(find.text('Available balance \u20B910000.00'), findsOneWidget);
+    });
+
+    testWidgets('degrades gracefully when the wallet balance is unknown', (
+      tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(800, 2400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await pumpScreen(
+        tester,
+        const SubscriptionSetupScreen(),
+        catalogueState: CatalogueState(products: [_product]),
+        customerState: CustomerState(addresses: [_address]),
+      );
+
+      // No invented amount: the option stays usable with a status line.
+      expect(find.text('Wallet balance unavailable'), findsOneWidget);
+      expect(find.text('DoodhDirect Wallet'), findsOneWidget);
     });
 
     test('falls back predictably when selection disappears', () {
@@ -541,10 +870,8 @@ void main() {
       expect(find.text('Subscriptions'), findsOneWidget);
       expect(find.text('Whole Milk'), findsOneWidget);
       expect(find.textContaining('24 deliveries remaining'), findsOneWidget);
-      expect(
-        find.textContaining('Mon Morning, Wed Morning, Fri Morning'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('Monday, Wednesday, Friday'), findsOneWidget);
+      expect(find.textContaining('Batch: Morning'), findsOneWidget);
       expect(find.byTooltip('Create subscription'), findsOneWidget);
     });
 
@@ -588,25 +915,26 @@ void main() {
       expect(find.text('Complete Payment'), findsNothing);
     });
 
-    testWidgets('detail surfaces the next scheduled occurrence for active plans', (
-      tester,
-    ) async {
-      final futureSubscription = SubscriptionDetails.fromJson(
-        subscriptionJson(startDate: '2030-01-01', endDate: '2030-12-31'),
-      );
-      await pumpScreen(
-        tester,
-        const SubscriptionDetailScreen(subscriptionId: 'subscription-1'),
-        subscriptionState: SubscriptionState(
-          subscriptions: [futureSubscription],
-          selectedSubscription: futureSubscription,
-        ),
-      );
+    testWidgets(
+      'detail surfaces the next scheduled occurrence for active plans',
+      (tester) async {
+        final futureSubscription = SubscriptionDetails.fromJson(
+          subscriptionJson(startDate: '2030-01-01', endDate: '2030-12-31'),
+        );
+        await pumpScreen(
+          tester,
+          const SubscriptionDetailScreen(subscriptionId: 'subscription-1'),
+          subscriptionState: SubscriptionState(
+            subscriptions: [futureSubscription],
+            selectedSubscription: futureSubscription,
+          ),
+        );
 
-      expect(find.text('Your plan'), findsOneWidget);
-      expect(find.text('Delivery days'), findsOneWidget);
-      expect(find.text('Next delivery'), findsOneWidget);
-    });
+        expect(find.text('Your plan'), findsOneWidget);
+        expect(find.text('Delivery days'), findsOneWidget);
+        expect(find.text('Next delivery'), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'pending detail shows amount and deliberate completion actions',
@@ -734,19 +1062,23 @@ void main() {
     testWidgets('calendar offers skip only for scheduled deliveries', (
       tester,
     ) async {
+      final deliveredDate = _isoDate(
+        _todayIndia.subtract(const Duration(days: 2)),
+      );
       await pumpScreen(
         tester,
         const SubscriptionCalendarScreen(subscriptionId: 'subscription-1'),
         subscriptionState: SubscriptionState(
           calendar: [
             _delivery,
-            SubscriptionDelivery.fromJson(deliveryJson(status: 'Delivered')),
+            SubscriptionDelivery.fromJson(
+              deliveryJson(status: 'Delivered', scheduledDate: deliveredDate),
+            ),
           ],
         ),
       );
 
       expect(find.text('Delivery calendar'), findsOneWidget);
-      expect(find.text('17/08/2026'), findsNWidgets(2));
       expect(find.textContaining('Scheduled'), findsOneWidget);
       expect(find.textContaining('Delivered'), findsOneWidget);
       expect(find.byTooltip('Skip delivery'), findsOneWidget);
@@ -755,7 +1087,9 @@ void main() {
     testWidgets('calendar separates upcoming deliveries from history', (
       tester,
     ) async {
-      final future = DateTime.now().add(const Duration(days: 5));
+      final future = _todayIndia.add(const Duration(days: 5));
+      final past = _todayIndia.subtract(const Duration(days: 5));
+      final pastIso = _isoDate(past);
       final futureIso =
           '${future.year.toString().padLeft(4, '0')}-'
           '${future.month.toString().padLeft(2, '0')}-'
@@ -773,15 +1107,17 @@ void main() {
                 publicId: 'delivery-future',
               ),
             ),
-            _delivery,
-            SubscriptionDelivery.fromJson(deliveryJson(status: 'Delivered')),
+            SubscriptionDelivery.fromJson(deliveryJson(scheduledDate: pastIso)),
+            SubscriptionDelivery.fromJson(
+              deliveryJson(status: 'Delivered', scheduledDate: pastIso),
+            ),
           ],
         ),
       );
 
       expect(find.text('Upcoming deliveries'), findsOneWidget);
       expect(find.text('Delivery history'), findsOneWidget);
-      expect(find.byTooltip('Skip delivery'), findsNWidgets(2));
+      expect(find.byTooltip('Skip delivery'), findsOneWidget);
     });
 
     testWidgets('list distinguishes API and offline empty states', (
@@ -823,7 +1159,11 @@ final createRequest = CreateSubscriptionRequest(
 );
 
 final _subscription = SubscriptionDetails.fromJson(subscriptionJson());
-final _delivery = SubscriptionDelivery.fromJson(deliveryJson());
+final _delivery = SubscriptionDelivery.fromJson(
+  deliveryJson(
+    scheduledDate: _isoDate(_todayIndia.add(const Duration(days: 2))),
+  ),
+);
 Map<String, dynamic> subscriptionJson({
   String status = 'Active',
   String startDate = '2026-08-17',
@@ -886,6 +1226,13 @@ Map<String, dynamic> paymentJson({
   'createdAtUtc': '2026-08-16T09:00:00Z',
 };
 
+String _isoDate(DateTime value) =>
+    '${value.year.toString().padLeft(4, '0')}-'
+    '${value.month.toString().padLeft(2, '0')}-'
+    '${value.day.toString().padLeft(2, '0')}';
+
+final DateTime _todayIndia = indiaNow();
+
 Map<String, dynamic> deliveryJson({
   String status = 'Scheduled',
   String scheduledDate = '2026-08-17',
@@ -937,6 +1284,7 @@ Future<void> pumpScreen(
   SubscriptionState subscriptionState = const SubscriptionState(),
   CatalogueState catalogueState = const CatalogueState(),
   CustomerState customerState = const CustomerState(),
+  WalletState walletState = const WalletState(),
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -950,6 +1298,9 @@ Future<void> pumpScreen(
         ),
         customerControllerProvider.overrideWith(
           () => _SeededCustomerController(customerState),
+        ),
+        walletControllerProvider.overrideWith(
+          () => _SeededWalletController(walletState),
         ),
       ],
       child: MaterialApp(home: screen),
@@ -1016,6 +1367,7 @@ class _FakeSubscriptionRepository extends SubscriptionRepository {
     required String subscriptionId,
     required PaymentMethod paymentMethod,
     required String idempotencyKey,
+    bool useWalletBalance = false,
   }) async {
     retrySubscriptionIds.add(subscriptionId);
     retryMethods.add(paymentMethod);
@@ -1043,6 +1395,22 @@ class _FailingSubscriptionRepository extends SubscriptionRepository {
   @override
   Future<List<SubscriptionDetails>> getMine(String token) async =>
       throw failure;
+
+  @override
+  Future<CreatedSubscription> create({
+    required String token,
+    required CreateSubscriptionRequest request,
+    required String idempotencyKey,
+  }) async => throw failure;
+
+  @override
+  Future<CreatedSubscription> retryPayment({
+    required String token,
+    required String subscriptionId,
+    required PaymentMethod paymentMethod,
+    required String idempotencyKey,
+    bool useWalletBalance = false,
+  }) async => throw failure;
 }
 
 class _SeededSubscriptionController extends SubscriptionController {
@@ -1069,8 +1437,9 @@ class _SeededSubscriptionController extends SubscriptionController {
   @override
   Future<CreatedSubscription?> retryPayment(
     String subscriptionId,
-    PaymentMethod paymentMethod,
-  ) async => retryResult;
+    PaymentMethod paymentMethod, {
+    bool useWalletBalance = false,
+  }) async => retryResult;
 }
 
 class _SeededCatalogueController extends CatalogueController {
@@ -1092,6 +1461,18 @@ class _SeededCustomerController extends CustomerController {
 
   @override
   CustomerState build() => initialState;
+
+  @override
+  Future<void> load() async {}
+}
+
+class _SeededWalletController extends WalletController {
+  _SeededWalletController(this.initialState);
+
+  final WalletState initialState;
+
+  @override
+  WalletState build() => initialState;
 
   @override
   Future<void> load() async {}
@@ -1165,6 +1546,22 @@ CustomerAddress addressFixture({
   isDefault: isDefault,
   isActive: isActive,
 );
+
+CatalogueProduct pricedFixture(String publicId, String name, double price) =>
+    CatalogueProduct(
+      publicId: publicId,
+      sku: 'SKU-$publicId',
+      name: name,
+      description: null,
+      category: _product.category,
+      unitOfMeasure: _product.unitOfMeasure,
+      price: price,
+      isActive: true,
+      branchAvailability: _product.branchAvailability,
+    );
+
+final _gheeFixture = pricedFixture('product-ghee', 'Desi Ghee', 600);
+final _milkFixture = pricedFixture('product-milk', 'Buffalo Milk', 80);
 
 CatalogueProduct productFixture(String publicId, String name) =>
     CatalogueProduct(

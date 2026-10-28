@@ -32,7 +32,7 @@ public sealed class RefundReplacementRedeliveryCompletionTests
         var service = CreateRefundService(harness);
         await ChooseReDeliveryAsync(service, harness, requestId);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         var exception = await Assert.ThrowsAsync<BusinessRuleException>(() => service.CompleteAsync(
             StaffActor(harness),
@@ -59,7 +59,7 @@ public sealed class RefundReplacementRedeliveryCompletionTests
         var service = CreateRefundService(harness);
         await ChooseReDeliveryAsync(service, harness, requestId);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         var deliveryId = await MaterializeReplacementAsync(harness);
         await AdvanceToArrivedAsync(harness, deliveryId);
@@ -94,7 +94,7 @@ public sealed class RefundReplacementRedeliveryCompletionTests
         var service = CreateRefundService(harness);
         await ChooseReDeliveryAsync(service, harness, requestId);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         var deliveryId = await MaterializeReplacementAsync(harness);
         await AdvanceToArrivedAsync(harness, deliveryId);
@@ -141,9 +141,9 @@ public sealed class RefundReplacementRedeliveryCompletionTests
         await ChooseAsync(service, harness, firstId, CustomerChoice.ReDelivery);
         await ChooseAsync(service, harness, secondId, CustomerChoice.Refund);
         await service.ApproveAsync(
-            StaffActor(harness), firstId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), firstId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         var deliveryId = await MaterializeReplacementAsync(harness);
         await AdvanceToArrivedAsync(harness, deliveryId);
@@ -181,7 +181,7 @@ public sealed class RefundReplacementRedeliveryCompletionTests
         var service = CreateRefundService(harness);
         await ChooseReDeliveryAsync(service, harness, requestId);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         var deliveryId = await MaterializeReplacementAsync(harness);
         await AdvanceToArrivedAsync(harness, deliveryId);
@@ -232,7 +232,7 @@ public sealed class RefundReplacementRedeliveryCompletionTests
         var service = CreateRefundService(harness);
         await ChooseReDeliveryAsync(service, harness, requestId);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         var deliveryId = await MaterializeReplacementAsync(harness);
         await AdvanceToArrivedAsync(harness, deliveryId);

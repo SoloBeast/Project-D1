@@ -17,12 +17,22 @@ class ApiNetworkException implements Exception {
 }
 
 class ApiException implements Exception {
-  const ApiException(this.statusCode, this.code, this.message, {this.field});
+  const ApiException(
+    this.statusCode,
+    this.code,
+    this.message, {
+    this.field,
+    this.data,
+  });
 
   final int statusCode;
   final String code;
   final String message;
   final String? field;
+  // Structured recovery payload from the error envelope (e.g. a
+  // recoverable `subscriptionId` when a payment plan is rejected after
+  // the subscription row was persisted). Null when the server sent none.
+  final Map<String, dynamic>? data;
 
   @override
   String toString() => '$statusCode $code: $message';
@@ -190,6 +200,7 @@ class ApiClient {
     required Uint8List bytes,
     required String fileName,
     required String contentType,
+    Map<String, String>? fields,
     String? accessToken,
   }) => _multipart(
     'POST',
@@ -198,6 +209,7 @@ class ApiClient {
     bytes: bytes,
     fileName: fileName,
     contentType: contentType,
+    fields: fields,
     accessToken: accessToken,
   );
 
@@ -225,11 +237,13 @@ class ApiClient {
     required Uint8List bytes,
     required String fileName,
     required String contentType,
+    Map<String, String>? fields,
     String? accessToken,
   }) async {
     Future<http.Response> send(String? token) async {
       final request = http.MultipartRequest(method, Uri.parse('$baseUrl$path'))
         ..headers.addAll(_headers(token, includeContentType: false))
+        ..fields.addAll(fields ?? const <String, String>{})
         ..files.add(
           http.MultipartFile.fromBytes(
             fieldName,
@@ -317,6 +331,9 @@ class ApiClient {
             body['message'] as String? ??
             'The request could not be completed.',
         field: firstError?['field'] as String?,
+        data: body['data'] is Map<String, dynamic>
+            ? body['data'] as Map<String, dynamic>
+            : null,
       );
     }
     return body;

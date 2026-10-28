@@ -5,6 +5,7 @@ using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Application.Orders;
 using DoodhDirect.Application.Payments;
+using DoodhDirect.Application.Setup;
 using DoodhDirect.Application.Subscriptions;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Configuration;
@@ -25,10 +26,22 @@ public sealed class SubscriptionService(
     IBranchAllocationService branchAllocationService,
     IPaymentService paymentService,
     IIndiaTimeProvider timeProvider,
-    INotificationEventWriter notificationEventWriter) : ISubscriptionService
+    INotificationEventWriter notificationEventWriter,
+    INumberSeriesService numberSeriesService) : ISubscriptionService
 {
+    /// <summary>
+    /// Number-series code requested for subscription document numbers with
+    /// the branch code as scope. Resolves exact (SUB, scope) rows, then the
+    /// documented scope-suffixed fallback (SUB_&lt;scope&gt;, scope) covering
+    /// the existing SUB_DB0001/SUB_DB0002 rows. Missing series fail fast with
+    /// NotFoundException — a GUID is never substituted silently.
+    /// </summary>
+    public const string SubscriptionSeriesCode = "SUB";
+
     private const string CutoffConfigurationKey = "Subscription.SkipPauseCutoffHours";
     private const int DefaultCutoffHours = 24;
+    private const string VacationCutoffConfigurationKey = "Subscription.VacationSkipCutoffHours";
+    private const int DefaultVacationCutoffHours = 0;
 
     public async Task<CreatedSubscriptionResult> CreateAsync(
         long customerId,
@@ -44,8 +57,18 @@ public sealed class SubscriptionService(
             .SingleOrDefaultAsync(x => x.CustomerId == customerId && x.IdempotencyKey == normalizedKey, cancellationToken);
         if (existing is not null)
         {
-            return await CompleteCreationAsync(
-                customerId, existing, request, normalizedKey, cancellationToken);
+            try
+            {
+                return await CompleteCreationAsync(
+                    customerId, existing, request, normalizedKey, cancellationToken);
+            }
+            catch (WalletRemainderBelowGatewayMinimumException exception)
+            {
+                throw new SubscriptionInitialPaymentRejectedException(
+                    existing.PublicId,
+                    exception.Code,
+                    exception.Message);
+            }
         }
 
         Subscription? subscription = null;
@@ -77,6 +100,15 @@ public sealed class SubscriptionService(
                     .SingleAsync(x => x.Id == allocation.BranchId, cancellationToken);
 
                 var dates = GenerateDates(request.StartDate, request.DeliveryDays, request.TotalEntitlement);
+                // Document number from the branch-scoped SUB series, allocated
+                // in-transaction like order numbers: a rolled-back save rolls
+                // back the counter, and idempotent retries reuse the persisted
+                // subscription (and its number) instead of allocating again.
+                var subscriptionNumber = await numberSeriesService.GetNextNumberAsync(
+                    SubscriptionSeriesCode,
+                    customerId,
+                    cancellationToken,
+                    branch.Code);
                 var created = new Subscription(
                     customerId,
                     product.Id,
@@ -94,6 +126,7 @@ public sealed class SubscriptionService(
                     branch.Code,
                     branch.Name,
                     FormatAddress(address));
+                created.AssignSubscriptionNumber(subscriptionNumber);
 
                 foreach (var day in request.DeliveryDays.Distinct())
                 {
@@ -118,6 +151,33 @@ public sealed class SubscriptionService(
                     if (!master.IsUsed)
                     {
                         master.MarkUsed();
+                    }
+                }
+
+                // Deterministic wallet-split guard BEFORE persistence: the
+                // frozen payable is final here, so a sub-₹1 Razorpay remainder
+                // can be rejected without creating an unreachable subscription.
+                // The plan's own revalidation still runs later and remains
+                // authoritative against concurrent balance changes.
+                if (request.UseWalletBalance && request.PaymentMethod == PaymentMethod.Razorpay)
+                {
+                    var walletBalance = await dbContext.Wallets
+                        .AsNoTracking()
+                        .Where(x => x.CustomerId == customerId)
+                        .Select(x => new { x.Balance, x.Currency })
+                        .SingleOrDefaultAsync(cancellationToken);
+                    var balance = walletBalance?.Balance ?? 0m;
+                    var currency = walletBalance?.Currency ?? "INR";
+                    var walletApplied = decimal.Min(balance, created.PayableAmount);
+                    var remainder = created.PayableAmount - walletApplied;
+                    if (remainder > 0 && remainder < 1.00m)
+                    {
+                        throw new WalletRemainderBelowGatewayMinimumException(
+                            walletApplied,
+                            remainder,
+                            created.PayableAmount,
+                            1.00m,
+                            currency);
                     }
                 }
 
@@ -192,8 +252,22 @@ public sealed class SubscriptionService(
         }
 
         await LoadNavigationAsync(subscription!, cancellationToken);
-        return await CompleteCreationAsync(
-            customerId, subscription!, request, normalizedKey, cancellationToken);
+        try
+        {
+            return await CompleteCreationAsync(
+                customerId, subscription!, request, normalizedKey, cancellationToken);
+        }
+        catch (WalletRemainderBelowGatewayMinimumException exception)
+            when (subscription is not null)
+        {
+            // Residual concurrent-balance case: the subscription row already
+            // exists, so return its ID for client recovery instead of
+            // leaving an unreachable PaymentPending subscription.
+            throw new SubscriptionInitialPaymentRejectedException(
+                subscription.PublicId,
+                exception.Code,
+                exception.Message);
+        }
     }
 
     public async Task<IReadOnlyList<SubscriptionResult>> GetForCustomerAsync(long customerId, CancellationToken cancellationToken) =>
@@ -215,6 +289,20 @@ public sealed class SubscriptionService(
         CancellationToken cancellationToken)
     {
         ValidateIdempotencyKey(idempotencyKey);
+        if (request.UseWalletBalance && request.PaymentMethod == PaymentMethod.Razorpay)
+        {
+            var target = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
+            var retryPlan = await paymentService.CreateSubscriptionPlanAsync(
+                customerId,
+                target.Id,
+                useWalletBalance: true,
+                idempotencyKey,
+                cancellationToken,
+                expirePriorAttempts: true);
+            var retrySubscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
+            return new CreatedSubscriptionResult(retrySubscription.ToResult(), retryPlan.Payment, retryPlan);
+        }
+
         var payment = await paymentService.RetrySubscriptionAsync(
             customerId,
             subscriptionId,
@@ -328,9 +416,10 @@ public sealed class SubscriptionService(
     /// replacement — untouched; the D1-C timeout worker still refunds it at
     /// its persisted deadline.</item>
     /// </list>
-    /// Ordinary future occurrences keep the existing policy: no general
-    /// cancellation refund exists, and only safely-voided approved replacements
-    /// are refunded (each resolved separately under the payment cap).
+    /// Ordinary future occurrences receive the automatic unused-prepaid
+    /// cancellation refund (0% deduction, frozen pricing, capped by remaining
+    /// refundable payments); safely-voided approved replacements keep their
+    /// existing separate refund under the payment cap.
     /// </summary>
     public async Task<SubscriptionResult> CancelAsync(long customerId, Guid subscriptionId, CancellationToken cancellationToken)
     {
@@ -343,6 +432,20 @@ public sealed class SubscriptionService(
             // resolutions all contend on committed state only.
             var subscription = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
             var now = timeProvider.Now;
+
+            if (subscription.Status == SubscriptionStatus.Cancelled)
+            {
+                return subscription.ToResult(await LoadCancelRefundSummaryAsync(subscription.Id, cancellationToken));
+            }
+
+            var cancelSnapshots = subscription.Deliveries
+                .Where(x => !x.IsReplacement
+                    && x.ScheduledDate >= subscription.StartDate
+                    && x.ScheduledDate <= subscription.EndDate
+                    && x.Status == SubscriptionDeliveryStatus.Scheduled)
+                .OrderBy(x => x.ScheduledDate)
+                .ThenBy(x => x.Id)
+                .ToList();
 
             // Unchanged domain transition (same throw behavior for
             // Completed/PaymentFailed): flips every Scheduled occurrence —
@@ -372,13 +475,19 @@ public sealed class SubscriptionService(
                 await ResolvePendingReplacementAsync(customerId, subscription, candidate, now, cancellationToken);
             }
 
+            // Built after the redelivery resolutions so the remaining-
+            // refundable cap observes their tracked payment mutations;
+            // combined credits can never exceed the frozen payable.
+            var cancelPlan = await BuildCancelRefundPlanAsync(subscription, cancelSnapshots, cancellationToken);
+            var cancelRefundSummary = await ApplyCancelRefundAsync(customerId, subscription, cancelPlan, now, cancellationToken);
+
             await InvalidateMaterializedOtpsAsync(subscription.Deliveries.Select(x => x.Id), now, cancellationToken);
 
             SubscriptionResult? result;
             try
             {
                 await dbContext.SaveChangesAsync(cancellationToken);
-                result = subscription.ToResult();
+                result = subscription.ToResult(cancelRefundSummary);
             }
             catch (DbUpdateConcurrencyException exception)
             {
@@ -389,11 +498,15 @@ public sealed class SubscriptionService(
             {
                 // A concurrent winner committed first (ticket row-version, or
                 // the wallet/refund/event idempotency keys, all namespaced to
-                // this path): re-read, and if no candidate is still pending
-                // the other instance won — adopt its outcome instead of failing.
-                // A retry is safe either way (completed tickets are skipped).
-                // A deadlock victim must NOT adopt: SQL Server aborts the
-                // whole transaction, so the adoption reads fail and the
+                // this path): re-read and adopt its outcome instead of failing.
+                // Adoption requires the winner's CANCELLED state to be visible:
+                // a deadlock victim's adoption read can race ahead of the
+                // winner's commit and observe the pre-race Active state, which
+                // must never be reported as a successful outcome. When no
+                // committed cancellation is visible, fail closed with a
+                // retryable conflict — the retry observes the winner.
+                // A deadlock victim must NOT adopt blindly: SQL Server aborts
+                // the whole transaction, so if the adoption reads fail the
                 // original error is rethrown for the execution strategy to
                 // retry cleanly (the retry then observes the resolved state).
                 dbContext.ChangeTracker.Clear();
@@ -415,13 +528,14 @@ public sealed class SubscriptionService(
                     // it in a fresh transaction.
                     throw;
                 }
-                if (stillPending!.Count == 0)
+                var current = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
+                if (stillPending!.Count == 0 && current.Status == SubscriptionStatus.Cancelled)
                 {
-                    var current = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
-                    return current.ToResult();
+                    return current.ToResult(await LoadCancelRefundSummaryAsync(current.Id, cancellationToken));
                 }
 
-                throw;
+                throw new ConflictException(
+                    "The subscription was changed by another operation. Refresh and try again.");
             }
 
             return result;
@@ -440,9 +554,12 @@ public sealed class SubscriptionService(
             dbContext.ChangeTracker.Clear();
             var current = await FindOwnedAsync(customerId, subscriptionId, cancellationToken);
             var stillPending = await FindPendingRedeliveryCandidatesAsync(current.Id, cancellationToken);
-            if (stillPending.Count == 0)
+            // Adopt only a verifiably committed cancellation; a re-read that
+            // raced ahead of the winner's commit still shows Active and must
+            // fall through to the retryable conflict below.
+            if (stillPending.Count == 0 && current.Status == SubscriptionStatus.Cancelled)
             {
-                return current.ToResult();
+                return current.ToResult(await LoadCancelRefundSummaryAsync(current.Id, cancellationToken));
             }
 
             throw new ConflictException(
@@ -475,7 +592,22 @@ public sealed class SubscriptionService(
             }
             var now = timeProvider.Now;
             await EnsureNoMaterializedDeliveryAsync(delivery, cancellationToken);
-            subscription.Skip(delivery, now, await GetCutoffAsync(cancellationToken));
+            // Single-date skips keep the shared skip/pause cutoff, but the
+            // failure must be a typed business-rule error (HTTP 422) instead
+            // of the domain InvalidOperationException (HTTP 500). The domain
+            // guard below stays as the backstop.
+            var deliveryStarts = DateTime.SpecifyKind(
+                delivery.ScheduledDate.ToDateTime(TimeOnly.MinValue),
+                DateTimeKind.Unspecified);
+            if (now > deliveryStarts - await GetCutoffAsync(cancellationToken))
+            {
+                throw new BusinessRuleException("The skip cutoff has passed for this delivery.");
+            }
+            subscription.Skip(
+                delivery,
+                now,
+                await GetCutoffAsync(cancellationToken),
+                SubscriptionSkipCause.Manual);
             AddSkipAudit(customerId, subscription, delivery, now);
             notificationEventWriter.Add(new NotificationEventRequest(
                 customerId,
@@ -504,7 +636,10 @@ public sealed class SubscriptionService(
         return ExecuteSerializableAsync(async () =>
         {
             var now = timeProvider.Now;
-            var cutoff = await GetCutoffAsync(cancellationToken);
+            // Vacation uses its own cutoff (default 0h: a date stays eligible
+            // until its local delivery date begins). Pause and redelivery keep
+            // reading the shared Subscription.SkipPauseCutoffHours key.
+            var cutoff = await GetVacationCutoffAsync(cancellationToken);
 
             // Fresh read inside the serializable transaction: eligibility is
             // evaluated against committed state only.
@@ -579,7 +714,7 @@ public sealed class SubscriptionService(
                     continue;
                 }
 
-                subscription.Skip(occurrence, now, cutoff);
+                subscription.Skip(occurrence, now, cutoff, SubscriptionSkipCause.Vacation);
                 AddSkipAudit(customerId, subscription, occurrence, now);
                 skipped.Add(new VacationSkippedItem(
                     occurrence.ScheduledDate,
@@ -703,6 +838,17 @@ public sealed class SubscriptionService(
         CancellationToken cancellationToken)
     {
         EnsureMatchingCreationRequest(subscription, request);
+        if (request.UseWalletBalance && request.PaymentMethod == PaymentMethod.Razorpay)
+        {
+            var plan = await paymentService.CreateSubscriptionPlanAsync(
+                customerId,
+                subscription.Id,
+                useWalletBalance: true,
+                idempotencyKey,
+                cancellationToken);
+            return new CreatedSubscriptionResult(subscription.ToResult(), plan.Payment, plan);
+        }
+
         var payment = await paymentService.CreateForSubscriptionAsync(
             customerId,
             subscription.Id,
@@ -817,11 +963,20 @@ public sealed class SubscriptionService(
         var operational = candidate.Operational;
 
         // The ticket's frozen deduction snapshot is authoritative; current
-        // configuration is never consulted (same rule as D1-C).
-        var deductionPercentage = ticket.DeliveryFailDeductionPercentageSnapshot
-            ?? throw new ConflictException(
-                $"The subscription cannot be cancelled: replacement ticket {ticket.RequestNumber} has no frozen deduction. " +
-                "Resolve it with staff support first.");
+        // configuration is never consulted (same rule as D1-C). Subscription
+        // test-failure tickets (MilkTestRejected) always settle at 0%.
+        decimal deductionPercentage;
+        if (ticket.Source == RefundReplacementSource.MilkTestRejected && ticket.SubscriptionDeliveryId.HasValue)
+        {
+            deductionPercentage = 0m;
+        }
+        else
+        {
+            deductionPercentage = ticket.DeliveryFailDeductionPercentageSnapshot
+                ?? throw new ConflictException(
+                    $"The subscription cannot be cancelled: replacement ticket {ticket.RequestNumber} has no frozen deduction. " +
+                    "Resolve it with staff support first.");
+        }
 
         // Success/PartiallyRefunded mirror the D1-C lookup; Refunded is also
         // matched so an exhausted payment reports its exact state below
@@ -909,7 +1064,7 @@ public sealed class SubscriptionService(
                 payment,
                 final,
                 idempotencyKey,
-                $"Subscription-cancellation re-delivery refund {ticket.RequestNumber} for delivery {deliveryNumber}",
+                $"Subscription-cancellation re-delivery refund {ticket.RequestNumber} for subscription {subscription.SubscriptionNumber ?? deliveryNumber}",
                 now,
                 cancellationToken);
             RecordCancelRefund(payment, final, idempotencyKey, ticket.CustomerId, now);
@@ -1062,6 +1217,288 @@ public sealed class SubscriptionService(
         Mutate(() => payment.CompleteRefund(amount));
     }
 
+    private sealed record CancelRefundPlan(
+        IReadOnlyList<SubscriptionDelivery> Eligible,
+        int ExcludedCount,
+        IReadOnlyList<decimal> Allocations,
+        decimal Total,
+        IReadOnlyList<Payment> SuccessfulPayments);
+
+    internal static string CancelOccurrenceKey(Guid subscriptionPublicId, Guid occurrencePublicId) =>
+        $"subscription-cancel:{subscriptionPublicId:N}:occurrence-{occurrencePublicId:N}";
+
+    internal static string CancelPaymentKey(Guid subscriptionPublicId, long paymentId) =>
+        $"subscription-cancel:{subscriptionPublicId:N}:payment-{paymentId}";
+
+    internal static string CancelEventKey(Guid subscriptionPublicId) =>
+        $"subscription-cancel:{subscriptionPublicId:N}:refunded";
+
+    private async Task<CancelRefundPlan> BuildCancelRefundPlanAsync(
+        Subscription subscription,
+        IReadOnlyList<SubscriptionDelivery> snapshots,
+        CancellationToken cancellationToken)
+    {
+        if (snapshots.Count == 0)
+        {
+            return new CancelRefundPlan([], 0, [], 0m, []);
+        }
+
+        var payments = await dbContext.Payments
+            .Include(x => x.Refunds)
+            .Where(x => x.SubscriptionId == subscription.Id && x.CustomerId == subscription.CustomerId)
+            .OrderBy(x => x.Id)
+            .ToListAsync(cancellationToken);
+        if (payments.Any(x => x.Status is PaymentStatus.Initiated or PaymentStatus.Pending))
+        {
+            throw new ConflictException(
+                "The subscription cannot be cancelled yet: a payment attempt is still pending gateway confirmation. " +
+                "Wait for it to succeed, expire, or resolve it via retry-payment before cancelling.");
+        }
+        if (payments.Any(x => x.Status == PaymentStatus.RefundPending))
+        {
+            throw new ConflictException(
+                "The subscription cannot be cancelled yet: another refund is already in progress. " +
+                "Wait for it to settle before cancelling.");
+        }
+
+        var successful = payments
+            .Where(x => x.Status is PaymentStatus.Success or PaymentStatus.PartiallyRefunded)
+            .OrderBy(x => x.Id)
+            .ToList();
+        if (successful.Count == 0)
+        {
+            return new CancelRefundPlan([], snapshots.Count, [], 0m, []);
+        }
+
+        var candidateIds = snapshots.Select(x => x.Id).ToList();
+        var alreadyRefunded = await dbContext.SubscriptionCancelRefundOccurrences
+            .AsNoTracking()
+            .Where(x => candidateIds.Contains(x.SubscriptionDeliveryId))
+            .Select(x => x.SubscriptionDeliveryId)
+            .ToListAsync(cancellationToken);
+        var vacationIncluded = await dbContext.VacationRefundOccurrences
+            .AsNoTracking()
+            .Where(x => candidateIds.Contains(x.SubscriptionDeliveryId))
+            .Select(x => x.SubscriptionDeliveryId)
+            .ToListAsync(cancellationToken);
+        var tickets = await dbContext.RefundReplacementRequests
+            .AsNoTracking()
+            .Where(x => x.SubscriptionDeliveryId != null && candidateIds.Contains(x.SubscriptionDeliveryId.Value))
+            .ToListAsync(cancellationToken);
+        if (tickets.Any(x => x.Status is RefundReplacementStatus.Pending
+            or RefundReplacementStatus.Approved
+            or RefundReplacementStatus.AwaitingCustomerChoice))
+        {
+            throw new ConflictException(
+                "The subscription cannot be cancelled yet: an unresolved refund or replacement claim overlaps its remaining deliveries. " +
+                "Resolve the pending claim with staff support first.");
+        }
+
+        var settledIds = tickets
+            .Where(x => x.Status is RefundReplacementStatus.Completed
+                or RefundReplacementStatus.Cancelled
+                or RefundReplacementStatus.Failed)
+            .Select(x => x.SubscriptionDeliveryId!.Value)
+            .ToHashSet();
+        var excludedIds = alreadyRefunded.Concat(vacationIncluded).Concat(settledIds).ToHashSet();
+        var eligible = snapshots.Where(x => !excludedIds.Contains(x.Id)).ToList();
+        var excludedCount = snapshots.Count - eligible.Count;
+        if (eligible.Count == 0)
+        {
+            return new CancelRefundPlan([], excludedCount, [], 0m, successful);
+        }
+
+        var gross = decimal.Round(
+            subscription.PayableAmount / subscription.TotalEntitlement,
+            2,
+            MidpointRounding.AwayFromZero);
+        var allocations = eligible.Select(_ => gross).ToList();
+        var remaining = successful.Sum(x => x.Amount - x.RefundedAmount);
+        var total = allocations.Sum();
+        if (total > remaining)
+        {
+            var shortfall = total - remaining;
+            for (var i = allocations.Count - 1; i >= 0 && shortfall > 0; i--)
+            {
+                var reduction = Math.Min(allocations[i], shortfall);
+                allocations[i] -= reduction;
+                shortfall -= reduction;
+            }
+
+            total = allocations.Sum();
+        }
+
+        return new CancelRefundPlan(eligible, excludedCount, allocations, total, successful);
+    }
+
+    private async Task<SubscriptionCancellationRefundResult> ApplyCancelRefundAsync(
+        long customerId,
+        Subscription subscription,
+        CancelRefundPlan plan,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (plan.Eligible.Count == 0 || plan.Total <= 0)
+        {
+            return new SubscriptionCancellationRefundResult(0, plan.ExcludedCount, 0m, "None");
+        }
+
+        var paidTotal = plan.Total;
+        var remainingToAllocate = paidTotal;
+        var paymentAllocations = new List<(Payment Payment, decimal Amount)>();
+        foreach (var payment in plan.SuccessfulPayments)
+        {
+            if (remainingToAllocate <= 0) break;
+            var balance = payment.Amount - payment.RefundedAmount;
+            if (balance <= 0) continue;
+            var portion = balance > remainingToAllocate ? remainingToAllocate : balance;
+            paymentAllocations.Add((payment, portion));
+            remainingToAllocate -= portion;
+        }
+
+        if (remainingToAllocate > 0)
+        {
+            throw new ConflictException(
+                "The subscription cannot be cancelled yet: its remaining refundable balance changed during cancellation. Refresh and try again.");
+        }
+
+        for (var i = 0; i < plan.Eligible.Count; i++)
+        {
+            var occurrence = plan.Eligible[i];
+            var allocation = plan.Allocations[i];
+            if (allocation <= 0) continue;
+            var occurrenceKey = CancelOccurrenceKey(subscription.PublicId, occurrence.PublicId);
+            var alreadyLinked = await dbContext.SubscriptionCancelRefundOccurrences
+                .AnyAsync(x => x.SubscriptionDeliveryId == occurrence.Id, cancellationToken);
+            if (!alreadyLinked)
+            {
+                dbContext.SubscriptionCancelRefundOccurrences.Add(new SubscriptionCancelRefundOccurrence(
+                    subscription.Id,
+                    occurrence.Id,
+                    allocation,
+                    occurrenceKey,
+                    now));
+            }
+
+            await CreditCancelRefundWalletAsync(
+                customerId,
+                subscription.Id,
+                plan.SuccessfulPayments.First().Currency,
+                allocation,
+                occurrenceKey,
+                $"Subscription-cancellation unused-prepaid refund for {occurrence.ScheduledDate:dd MMM yyyy}",
+                now,
+                cancellationToken);
+        }
+
+        foreach (var (payment, amount) in paymentAllocations)
+        {
+            RecordCancelRefund(
+                payment,
+                amount,
+                CancelPaymentKey(subscription.PublicId, payment.Id),
+                customerId,
+                now);
+        }
+
+        var basis = JsonSerializer.Serialize(new
+        {
+            subscriptionPayable = subscription.PayableAmount,
+            totalEntitlement = subscription.TotalEntitlement,
+            deductionPercentage = 0m,
+            eligibleOccurrences = plan.Eligible.Select((x, i) => new
+            {
+                occurrencePublicId = x.PublicId,
+                scheduledDate = x.ScheduledDate,
+                allocation = plan.Allocations[i]
+            }).ToArray(),
+            excludedCount = plan.ExcludedCount,
+            total = plan.Total
+        });
+        dbContext.AddAuditLog(new AuditLog(
+            customerId,
+            "SUBSCRIPTION.CANCEL_REFUND",
+            "Subscription",
+            subscription.PublicId.ToString(),
+            null,
+            basis,
+            null,
+            null,
+            $"Subscription cancelled; {plan.Total.ToString("0.00", CultureInfo.InvariantCulture)} unused-prepaid value refunded to wallet (0% deduction).",
+            now));
+        notificationEventWriter.Add(new NotificationEventRequest(
+            customerId,
+            NotificationEventTypes.SubscriptionCancelRefunded,
+            CancelEventKey(subscription.PublicId),
+            new Dictionary<string, string>
+            {
+                ["subscriptionId"] = subscription.PublicId.ToString(),
+                ["eligibleOccurrences"] = plan.Eligible.Count.ToString(CultureInfo.InvariantCulture),
+                ["amount"] = plan.Total.ToString("0.00", CultureInfo.InvariantCulture),
+                ["message"] = $"Your subscription was cancelled. {plan.Total.ToString("0.00", CultureInfo.InvariantCulture)} of unused prepaid value was credited to your wallet."
+            },
+            $"/subscriptions/{subscription.PublicId}",
+            now));
+
+        return new SubscriptionCancellationRefundResult(plan.Eligible.Count, plan.ExcludedCount, plan.Total, "Completed");
+    }
+
+    private async Task CreditCancelRefundWalletAsync(
+        long customerId,
+        long subscriptionId,
+        string currency,
+        decimal amount,
+        string idempotencyKey,
+        string description,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var wallet = dbContext.Wallets.Local.SingleOrDefault(x => x.CustomerId == customerId)
+            ?? await dbContext.Wallets
+                .SingleOrDefaultAsync(x => x.CustomerId == customerId, cancellationToken);
+        if (wallet is null)
+        {
+            wallet = new Wallet(customerId, currency);
+            dbContext.Wallets.Add(wallet);
+        }
+        else
+        {
+            var existing = await dbContext.WalletTransactions
+                .SingleOrDefaultAsync(
+                    x => x.WalletId == wallet.Id && x.IdempotencyKey == idempotencyKey,
+                    cancellationToken);
+            if (existing is not null)
+            {
+                return;
+            }
+        }
+
+        Mutate(() => wallet.Credit(
+            WalletTransactionType.RefundCredit,
+            amount,
+            idempotencyKey,
+            description,
+            now,
+            null,
+            subscriptionId: subscriptionId));
+    }
+
+    private async Task<SubscriptionCancellationRefundResult> LoadCancelRefundSummaryAsync(
+        long subscriptionId,
+        CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.SubscriptionCancelRefundOccurrences
+            .AsNoTracking()
+            .Where(x => x.SubscriptionId == subscriptionId)
+            .ToListAsync(cancellationToken);
+        if (rows.Count == 0)
+        {
+            return new SubscriptionCancellationRefundResult(0, 0, 0m, "None");
+        }
+
+        return new SubscriptionCancellationRefundResult(rows.Count, 0, rows.Sum(x => x.AllocationAmount), "Completed");
+    }
+
     private static void Mutate(Action operation)
     {
         try
@@ -1163,6 +1600,27 @@ public sealed class SubscriptionService(
             hours < 0)
         {
             return TimeSpan.FromHours(DefaultCutoffHours);
+        }
+
+        return TimeSpan.FromHours(hours);
+    }
+
+    /// <summary>
+    /// Vacation-specific skip cutoff, stored through the same
+    /// <c>SystemConfiguration</c> mechanism as the shared key. Defaults to 0
+    /// hours so tomorrow stays skippable during the preceding calendar day;
+    /// the shared pause/redelivery cutoff is never consulted here.
+    /// </summary>
+    private async Task<TimeSpan> GetVacationCutoffAsync(CancellationToken cancellationToken)
+    {
+        var configuration = await dbContext.SystemConfigurations
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Key == VacationCutoffConfigurationKey, cancellationToken);
+        if (configuration is null ||
+            !double.TryParse(configuration.Value, out var hours) ||
+            hours < 0)
+        {
+            return TimeSpan.FromHours(DefaultVacationCutoffHours);
         }
 
         return TimeSpan.FromHours(hours);

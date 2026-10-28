@@ -65,7 +65,7 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         var exception = await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 18)),
+            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 18), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None));
         Assert.Equal("replacementDate", exception.Field);
         Assert.Contains("vacation or skipped", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -81,7 +81,7 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         var approved = await service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 19)),
+            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 19), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
@@ -102,7 +102,7 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         var refundService = CreateRefundService(harness);
         await ChooseReDeliveryAsync(refundService, harness, requestId);
         var approved = await refundService.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         Assert.Equal(new DateOnly(2026, 8, 18), approved.ReplacementDate);
 
         var subscriptionService = CreateSubscriptionService(harness);
@@ -132,7 +132,7 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         var refundService = CreateRefundService(harness);
         await ChooseReDeliveryAsync(refundService, harness, requestId);
         var approved = await refundService.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         Assert.Equal(new DateOnly(2026, 8, 18), approved.ReplacementDate);
 
         // An ordinary scheduled occurrence beside the replacement proves the
@@ -244,7 +244,8 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
             null!,
             null!,
             harness.TimeProvider,
-            new TestNotificationEventWriter(harness.Db, harness.TimeProvider));
+            new TestNotificationEventWriter(harness.Db, harness.TimeProvider),
+            new NumberSeriesService(harness.Db, harness.TimeProvider));
 
     /// <summary>
     /// Seeds a vacation/skipped occurrence on <paramref name="date"/> the same

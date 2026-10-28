@@ -1,4 +1,5 @@
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
+import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/branding/doodh_brand_mark.dart';
 import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
@@ -188,7 +189,7 @@ class CustomerShell extends ConsumerWidget {
   /// row so no empty bar is wasted above the content).
   final Widget? header;
 
-  static const _items = [
+  static const _customerItems = [
     (
       icon: Icons.home_outlined,
       selected: Icons.home_rounded,
@@ -196,10 +197,10 @@ class CustomerShell extends ConsumerWidget {
       path: '/home',
     ),
     (
-      icon: Icons.storefront_outlined,
-      selected: Icons.storefront_rounded,
-      label: 'Products',
-      path: '/catalogue',
+      icon: Icons.receipt_long_outlined,
+      selected: Icons.receipt_long_rounded,
+      label: 'Orders',
+      path: '/orders',
     ),
     (
       icon: Icons.event_repeat_outlined,
@@ -221,107 +222,43 @@ class CustomerShell extends ConsumerWidget {
     ),
   ];
 
-  int get _selectedIndex {
-    if (currentPath.startsWith('/orders') ||
-        currentPath.startsWith('/wallet') ||
-        currentPath.startsWith('/notifications') ||
-        currentPath.startsWith('/customer/account')) {
-      return 4;
-    }
-    final index = _items.indexWhere(
-      (item) => currentPath.startsWith(item.path),
-    );
-    return index >= 0 && index < 4 ? index : 0;
-  }
-
-  void _openMore(BuildContext context, WidgetRef ref) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(DoodhRadii.lgValue),
-        ),
-      ),
-      builder: (sheetContext) {
-        void go(String path) {
-          Navigator.of(sheetContext).pop();
-          context.go(path);
-        }
-
-        void push(String path) {
-          Navigator.of(sheetContext).pop();
-          context.push(path);
-        }
-
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              DoodhSpacing.md,
-              DoodhSpacing.sm,
-              DoodhSpacing.md,
-              DoodhSpacing.md,
-            ),
-            child: ListView(
-              shrinkWrap: true,
-              children: [
-                const ListTile(
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: DoodhSpacing.sm,
-                  ),
-                  title: Text(
-                    'More',
-                    style: TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  subtitle: Text('Manage your DoodhDirect account'),
-                ),
-                _MoreDestinationTile(
-                  icon: Icons.receipt_long_outlined,
-                  label: 'Orders',
-                  onTap: () => go('/orders'),
-                ),
-                _MoreDestinationTile(
-                  icon: Icons.account_balance_wallet_outlined,
-                  label: 'Wallet',
-                  onTap: () => go('/wallet'),
-                ),
-                _MoreDestinationTile(
-                  icon: Icons.notifications_none,
-                  label: 'Notifications',
-                  onTap: () => push('/notifications'),
-                ),
-                _MoreDestinationTile(
-                  icon: Icons.person_outline,
-                  label: 'Profile / Account',
-                  onTap: () => go('/customer/account'),
-                ),
-                const Divider(height: DoodhSpacing.lg),
-                _MoreDestinationTile(
-                  key: const ValueKey('customer-more-sign-out'),
-                  icon: Icons.logout_rounded,
-                  label: 'Sign out',
-                  destructive: true,
-                  onTap: () async {
-                    Navigator.of(sheetContext).pop();
-                    await ref
-                        .read(sessionControllerProvider.notifier)
-                        .signOut();
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
+  // Staff self-ordering: Home opens the shopping catalogue while Dashboard
+  // returns to the employee home ('/home' renders the role workspace).
+  static const _staffItems = [
+    (
+      icon: Icons.home_outlined,
+      selected: Icons.home_rounded,
+      label: 'Home',
+      path: '/catalogue',
+    ),
+    (
+      icon: Icons.receipt_long_outlined,
+      selected: Icons.receipt_long_rounded,
+      label: 'Orders',
+      path: '/orders',
+    ),
+    (
+      icon: Icons.event_repeat_outlined,
+      selected: Icons.event_repeat_rounded,
+      label: 'Subscription',
+      path: '/subscriptions',
+    ),
+    (
+      icon: Icons.dashboard_outlined,
+      selected: Icons.dashboard_rounded,
+      label: 'Dashboard',
+      path: '/home',
+    ),
+    (
+      icon: Icons.more_horiz_outlined,
+      selected: Icons.more_horiz_rounded,
+      label: 'More',
+      path: '/more',
+    ),
+  ];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cartCount = ref.watch(
-      orderControllerProvider.select((state) => state.cart.length),
-    );
     return Scaffold(
       appBar: AppBar(
         // The customer home passes a rich two-row header (brand block +
@@ -371,39 +308,166 @@ class CustomerShell extends ConsumerWidget {
       ),
       body: child,
       floatingActionButton: floatingActionButton,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          if (index == 4) {
-            _openMore(context, ref);
-          } else {
-            context.go(_items[index].path);
-          }
-        },
-        destinations: [
-          for (var index = 0; index < _items.length; index++)
-            NavigationDestination(
-              icon: index == 3
-                  ? Badge(
-                      isLabelVisible: cartCount > 0,
-                      label: Text(cartCount > 99 ? '99+' : '$cartCount'),
-                      child: Icon(_items[index].icon),
-                    )
-                  : Icon(_items[index].icon),
-              selectedIcon: index == 3
-                  ? Badge(
-                      isLabelVisible: cartCount > 0,
-                      label: Text(cartCount > 99 ? '99+' : '$cartCount'),
-                      child: Icon(_items[index].selected),
-                    )
-                  : Icon(_items[index].selected),
-              label: _items[index].label,
-              key: index == 4
-                  ? const ValueKey('customer-more-navigation')
-                  : null,
-            ),
-        ],
+      bottomNavigationBar: CustomerBottomNavigation(currentPath: currentPath),
+    );
+  }
+}
+
+/// Persistent customer bottom navigation, shared by [CustomerShell] and every
+/// customer detail screen so the menu sticks around on the whole customer
+/// journey (delivery tracking, order details, milk test, refund screens,
+/// checkout, catalogue details, subscriptions, wallet, notifications).
+/// Staff sessions (employee self-ordering) see Dashboard in the 4th slot
+/// instead of Cart: Home opens the shopping catalogue ('/catalogue') while
+/// Dashboard returns to '/home', which renders their role workspace.
+class CustomerBottomNavigation extends ConsumerWidget {
+  const CustomerBottomNavigation({super.key, required this.currentPath});
+
+  final String currentPath;
+
+  static int selectedIndexFor(String currentPath, bool isStaff) {
+    // Account-adjacent destinations all live under the More sheet.
+    if (currentPath.startsWith('/wallet') ||
+        currentPath.startsWith('/notifications') ||
+        currentPath.startsWith('/customer/account') ||
+        currentPath.startsWith('/refund-replacements')) {
+      return 4;
+    }
+    final items =
+        isStaff ? CustomerShell._staffItems : CustomerShell._customerItems;
+    final index = items.indexWhere(
+      (item) => currentPath.startsWith(item.path),
+    );
+    // A direct prefix hit always wins: staff Home ('/catalogue') and
+    // Dashboard ('/home') no longer share a path, so no tie-breaking is
+    // needed. Unmatched screens reached via self-ordering highlight the
+    // Dashboard return destination for staff and Home for customers
+    // (historical behavior).
+    if (index >= 0) return index;
+    return isStaff ? 3 : 0;
+  }
+
+  static void openMore(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(DoodhRadii.lgValue),
+        ),
       ),
+      builder: (sheetContext) {
+        void go(String path) {
+          Navigator.of(sheetContext).pop();
+          context.go(path);
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              DoodhSpacing.md,
+              DoodhSpacing.sm,
+              DoodhSpacing.md,
+              DoodhSpacing.md,
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                const ListTile(
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: DoodhSpacing.sm,
+                  ),
+                  title: Text(
+                    'More',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text('Manage your DoodhDirect account'),
+                ),
+                _MoreDestinationTile(
+                  icon: Icons.account_balance_wallet_outlined,
+                  label: 'Wallet',
+                  onTap: () => go('/wallet'),
+                ),
+                _MoreDestinationTile(
+                  icon: Icons.support_agent_outlined,
+                  label: 'Support tickets',
+                  onTap: () => go('/refund-replacements'),
+                ),
+                _MoreDestinationTile(
+                  icon: Icons.person_outline,
+                  label: 'Profile / Account',
+                  onTap: () => go('/customer/account'),
+                ),
+                const Divider(height: DoodhSpacing.lg),
+                _MoreDestinationTile(
+                  key: const ValueKey('customer-more-sign-out'),
+                  icon: Icons.logout_rounded,
+                  label: 'Sign out',
+                  destructive: true,
+                  onTap: () async {
+                    Navigator.of(sheetContext).pop();
+                    await ref
+                        .read(sessionControllerProvider.notifier)
+                        .signOut();
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cartCount = ref.watch(
+      orderControllerProvider.select((state) => state.cart.length),
+    );
+    final role = ref.watch(
+      sessionControllerProvider.select((state) => state.role),
+    );
+    final isStaff = role != null && role != UserRole.customer;
+    final items =
+        isStaff ? CustomerShell._staffItems : CustomerShell._customerItems;
+    // The Cart badge is customer-only: staff see Dashboard (no badge) in
+    // that slot.
+    final showCartBadge = !isStaff;
+    return NavigationBar(
+      selectedIndex: selectedIndexFor(currentPath, isStaff),
+      onDestinationSelected: (index) {
+        if (index == 4) {
+          openMore(context, ref);
+        } else {
+          context.go(items[index].path);
+        }
+      },
+      destinations: [
+        for (var index = 0; index < items.length; index++)
+          NavigationDestination(
+            icon: showCartBadge && index == 3
+                ? Badge(
+                    isLabelVisible: cartCount > 0,
+                    label: Text(cartCount > 99 ? '99+' : '$cartCount'),
+                    child: Icon(items[index].icon),
+                  )
+                : Icon(items[index].icon),
+            selectedIcon: showCartBadge && index == 3
+                ? Badge(
+                    isLabelVisible: cartCount > 0,
+                    label: Text(cartCount > 99 ? '99+' : '$cartCount'),
+                    child: Icon(items[index].selected),
+                  )
+                : Icon(items[index].selected),
+            label: items[index].label,
+            key: index == 4
+                ? const ValueKey('customer-more-navigation')
+                : (isStaff && index == 3
+                      ? const ValueKey('staff-dashboard-navigation')
+                      : null),
+          ),
+      ],
     );
   }
 }

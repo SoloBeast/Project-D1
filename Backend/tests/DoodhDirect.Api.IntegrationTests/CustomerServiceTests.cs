@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text.Json;
 using DoodhDirect.Application.Common;
 using DoodhDirect.Application.Customer;
 using DoodhDirect.Domain.Customer;
@@ -6,6 +8,7 @@ using DoodhDirect.Domain.Setup;
 using DoodhDirect.Infrastructure.Customer;
 using DoodhDirect.Infrastructure.Persistence;
 using DoodhDirect.Infrastructure.Setup;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
@@ -307,7 +310,173 @@ public sealed class CustomerServiceTests
         "+919876543210",
         12.9716m,
         77.5946m);
+
+    [Fact]
+    public async Task SaveBankDetail_SavesValidDetailsAndReturnsMaskedResult()
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+
+        var result = await harness.Service.SaveBankDetailAsync(
+            harness.Customer.Id,
+            new UpsertCustomerBankDetailRequest(
+                "Asha Sharma", "State Bank of India", "123456789012", "SBIN0001234"),
+            CancellationToken.None);
+
+        Assert.Equal("Asha Sharma", result.AccountHolderName);
+        Assert.Equal("State Bank of India", result.BankName);
+        Assert.Equal("···· 9012", result.MaskedAccountNumber);
+        Assert.Equal("9012", result.AccountLast4);
+        Assert.Equal("SBIN0001234", result.Ifsc);
+        Assert.True(result.IsComplete);
+
+        var stored = await harness.Db.CustomerBankDetails.AsNoTracking().SingleAsync();
+        Assert.NotEqual("123456789012", stored.ProtectedAccountNumber);
+        Assert.Equal("9012", stored.AccountLast4);
+    }
+
+    [Theory]
+    [InlineData("", "State Bank of India", "123456789012", "SBIN0001234", "accountHolderName")]
+    [InlineData("Asha Sharma", "", "123456789012", "SBIN0001234", "bankName")]
+    [InlineData("Asha Sharma", "State Bank of India", null, "SBIN0001234", "AccountNumber")]
+    [InlineData("Asha Sharma", "State Bank of India", "123456789012", "", "ifsc")]
+    [InlineData("Asha Sharma", "State Bank of India", "12345", "SBIN0001234", "accountNumber")]
+    [InlineData("Asha Sharma", "State Bank of India", "12345678901A", "SBIN0001234", "accountNumber")]
+    [InlineData("Asha Sharma", "State Bank of India", "123456789012", "SBIN123", "ifsc")]
+    [InlineData("Asha Sharma", "State Bank of India", "123456789012", "SBIN00012", "ifsc")]
+    public async Task SaveBankDetail_RejectsMissingOrInvalidFields(
+        string holder, string bank, string? account, string ifsc, string expectedField)
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() =>
+            harness.Service.SaveBankDetailAsync(
+                harness.Customer.Id,
+                new UpsertCustomerBankDetailRequest(holder, bank, account, ifsc),
+                CancellationToken.None));
+
+        Assert.Equal(expectedField, exception.Field);
+        Assert.Empty(await harness.Db.CustomerBankDetails.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task SaveBankDetail_UpdatesExistingDetailsWithoutRequiringAccountNumber()
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+        await harness.Service.SaveBankDetailAsync(
+            harness.Customer.Id,
+            new UpsertCustomerBankDetailRequest(
+                "Asha Sharma", "State Bank of India", "123456789012", "SBIN0001234"),
+            CancellationToken.None);
+
+        var kept = await harness.Service.SaveBankDetailAsync(
+            harness.Customer.Id,
+            new UpsertCustomerBankDetailRequest(
+                "Asha Sharma", "HDFC Bank", null, "HDFC0001234"),
+            CancellationToken.None);
+
+        Assert.Equal("HDFC Bank", kept.BankName);
+        Assert.Equal("···· 9012", kept.MaskedAccountNumber);
+        Assert.Equal("HDFC0001234", kept.Ifsc);
+
+        var replaced = await harness.Service.SaveBankDetailAsync(
+            harness.Customer.Id,
+            new UpsertCustomerBankDetailRequest(
+                "Asha Sharma", "HDFC Bank", "987654321098", "HDFC0001234"),
+            CancellationToken.None);
+
+        Assert.Equal("···· 1098", replaced.MaskedAccountNumber);
+        Assert.Equal("1098", replaced.AccountLast4);
+        Assert.Equal(1, await harness.Db.CustomerBankDetails.CountAsync());
+    }
+
+    [Fact]
+    public async Task BankDetail_CustomersCannotReadOrModifyEachOthersDetails()
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+        await harness.Service.SaveBankDetailAsync(
+            harness.Customer.Id,
+            new UpsertCustomerBankDetailRequest(
+                "Asha Sharma", "State Bank of India", "123456789012", "SBIN0001234"),
+            CancellationToken.None);
+
+        var other = new User(UserType.Customer);
+        harness.Db.Users.Add(other);
+        await harness.Db.SaveChangesAsync();
+
+        Assert.Null(await harness.Service.GetBankDetailAsync(other.Id, CancellationToken.None));
+
+        await harness.Service.SaveBankDetailAsync(
+            other.Id,
+            new UpsertCustomerBankDetailRequest(
+                "Ravi Kumar", "HDFC Bank", "987654321098", "HDFC0001234"),
+            CancellationToken.None);
+
+        Assert.Equal(2, await harness.Db.CustomerBankDetails.CountAsync());
+        var first = await harness.Service.GetBankDetailAsync(harness.Customer.Id, CancellationToken.None);
+        Assert.NotNull(first);
+        Assert.Equal("9012", first.AccountLast4);
+        Assert.Equal("State Bank of India", first.BankName);
+    }
+
+    [Fact]
+    public async Task BankDetail_GeneralProfileResponsesNeverExposeFullAccountNumber()
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+        const string accountNumber = "123456789012";
+        await harness.Service.SaveBankDetailAsync(
+            harness.Customer.Id,
+            new UpsertCustomerBankDetailRequest(
+                "Asha Sharma", "State Bank of India", accountNumber, "SBIN0001234"),
+            CancellationToken.None);
+
+        var profileJson = JsonSerializer.Serialize(
+            await harness.Service.GetProfileAsync(harness.Customer.Id, CancellationToken.None));
+        Assert.DoesNotContain(accountNumber, profileJson);
+
+        var bankDetail = await harness.Service.GetBankDetailAsync(harness.Customer.Id, CancellationToken.None);
+        Assert.NotNull(bankDetail);
+        Assert.Equal("···· 9012", bankDetail.MaskedAccountNumber);
+        var bankJson = JsonSerializer.Serialize(bankDetail);
+        Assert.DoesNotContain(accountNumber, bankJson);
+    }
+
+    [Fact]
+    public async Task SaveBankDetail_EncryptionFailure_FailsWithoutPersisting()
+    {
+        await using var harness = await CustomerHarness.CreateAsync();
+        var service = new CustomerService(
+            harness.Db,
+            new NumberSeriesService(harness.Db, harness.TimeProvider),
+            harness.TimeProvider,
+            new BankDetailProtector(new ThrowingDataProtectionProvider()));
+
+        await Assert.ThrowsAsync<CryptographicException>(() =>
+            service.SaveBankDetailAsync(
+                harness.Customer.Id,
+                new UpsertCustomerBankDetailRequest(
+                    "Asha Sharma", "State Bank of India", "123456789012", "SBIN0001234"),
+                CancellationToken.None));
+
+        Assert.Empty(await harness.Db.CustomerBankDetails.AsNoTracking().ToListAsync());
+    }
+
 }
+
+internal sealed class ThrowingDataProtectionProvider : IDataProtectionProvider
+    {
+        public IDataProtector CreateProtector(string purpose) => new ThrowingDataProtector();
+
+        private sealed class ThrowingDataProtector : IDataProtector
+        {
+            public IDataProtector CreateProtector(string purpose) => this;
+
+            public byte[] Protect(byte[] plaintext) =>
+                throw new CryptographicException("Test protector unavailable.");
+
+            public byte[] Unprotect(byte[] protectedData) =>
+                throw new CryptographicException("Test protector unavailable.");
+        }
+    }
 
 internal sealed class CustomerHarness : IAsyncDisposable
 {
@@ -315,17 +484,20 @@ internal sealed class CustomerHarness : IAsyncDisposable
         SqliteConnection connection,
         DoodhDirectDbContext db,
         User customer,
+        TestIndiaTimeProvider timeProvider,
         CustomerService service)
     {
         Connection = connection;
         Db = db;
         Customer = customer;
+        TimeProvider = timeProvider;
         Service = service;
     }
 
     public SqliteConnection Connection { get; }
     public DoodhDirectDbContext Db { get; }
     public User Customer { get; }
+    public TestIndiaTimeProvider TimeProvider { get; }
     public CustomerService Service { get; }
 
     public static async Task<CustomerHarness> CreateAsync()
@@ -350,7 +522,12 @@ internal sealed class CustomerHarness : IAsyncDisposable
             connection,
             db,
             customer,
-            new CustomerService(db, new NumberSeriesService(db, timeProvider), timeProvider));
+            timeProvider,
+            new CustomerService(
+                db,
+                new NumberSeriesService(db, timeProvider),
+                timeProvider,
+                new BankDetailProtector(new EphemeralDataProtectionProvider())));
     }
 
     public async ValueTask DisposeAsync()

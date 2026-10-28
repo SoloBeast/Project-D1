@@ -13,8 +13,108 @@ namespace DoodhDirect.Infrastructure.Customer;
 public sealed class CustomerService(
     DoodhDirectDbContext dbContext,
     INumberSeriesService numberSeriesService,
-    IIndiaTimeProvider timeProvider) : ICustomerService
+    IIndiaTimeProvider timeProvider,
+    BankDetailProtector bankDetailProtector) : ICustomerService
 {
+    public async Task<CustomerBankDetailResult?> GetBankDetailAsync(long userId, CancellationToken cancellationToken)
+    {
+        var detail = await dbContext.CustomerBankDetails
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
+        return detail is null ? null : ToBankDetailResult(detail);
+    }
+
+    public async Task<CustomerBankDetailResult> SaveBankDetailAsync(long userId, UpsertCustomerBankDetailRequest request, CancellationToken cancellationToken)
+    {
+        var holder = request.AccountHolderName?.Trim() ?? string.Empty;
+        var bank = request.BankName?.Trim() ?? string.Empty;
+        var ifsc = request.Ifsc?.Trim().ToUpperInvariant() ?? string.Empty;
+        var account = request.AccountNumber?.Trim() ?? string.Empty;
+        ValidateBankDetail(holder, bank, account, ifsc);
+
+        await EnsureUserExistsAsync(userId, cancellationToken);
+        CustomerBankDetail? saved = null;
+        await ExecuteInTransactionAsync(async () =>
+        {
+            saved = await dbContext.CustomerBankDetails
+                .SingleOrDefaultAsync(x => x.UserId == userId, cancellationToken);
+            if (saved is null)
+            {
+                if (string.IsNullOrEmpty(account))
+                {
+                    throw new ValidationAppException("Account number is required.", nameof(request.AccountNumber));
+                }
+
+                saved = new CustomerBankDetail(
+                    userId,
+                    holder,
+                    bank,
+                    bankDetailProtector.Protect(account),
+                    Last4(account),
+                    ifsc);
+                dbContext.CustomerBankDetails.Add(saved);
+            }
+            else if (string.IsNullOrEmpty(account))
+            {
+                saved.Update(holder, bank, saved.ProtectedAccountNumber, saved.AccountLast4, ifsc);
+            }
+            else
+            {
+                saved.Update(holder, bank, bankDetailProtector.Protect(account), Last4(account), ifsc);
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
+        return ToBankDetailResult(saved!);
+    }
+
+    public async Task<CustomerBankDetailResult?> GetBankDetailByCustomerIdAsync(Guid customerId, CancellationToken cancellationToken) =>
+        await GetBankDetailAsync(await ResolveCustomerIdAsync(customerId, cancellationToken), cancellationToken);
+
+    private static CustomerBankDetailResult ToBankDetailResult(CustomerBankDetail detail) => new(
+        detail.PublicId,
+        detail.AccountHolderName,
+        detail.BankName,
+        $"···· {detail.AccountLast4}",
+        detail.AccountLast4,
+        detail.Ifsc,
+        true,
+        detail.CreatedAt,
+        detail.UpdatedAt);
+
+    private static string Last4(string accountNumber)
+    {
+        var digits = new string(accountNumber.Where(char.IsDigit).ToArray());
+        var source = digits.Length >= 4 ? digits : accountNumber;
+        return source[^4..];
+    }
+
+    private static readonly Regex IfscPattern = new("^[A-Z]{4}0[A-Z0-9]{6}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex BankAccountPattern = new("^[0-9]{9,18}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static void ValidateBankDetail(string holder, string bank, string account, string ifsc)
+    {
+        if (string.IsNullOrWhiteSpace(holder) || holder.Length > 100)
+        {
+            throw new ValidationAppException("Account holder name is required and must be at most 100 characters.", "accountHolderName");
+        }
+
+        if (string.IsNullOrWhiteSpace(bank) || bank.Length > 100)
+        {
+            throw new ValidationAppException("Bank name is required and must be at most 100 characters.", "bankName");
+        }
+
+        if (!string.IsNullOrEmpty(account) && !BankAccountPattern.IsMatch(account))
+        {
+            throw new ValidationAppException("Account number must be 9 to 18 digits.", "accountNumber");
+        }
+
+        if (!IfscPattern.IsMatch(ifsc))
+        {
+            throw new ValidationAppException("IFSC must look like ABCD0123456: four letters, zero, then six letters or digits.", "ifsc");
+        }
+    }
+
     private static readonly Regex PinCodePattern = new("^[1-9][0-9]{5}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Regex MobilePattern = new("^(?:\\+?91)?[6-9][0-9]{9}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly IReadOnlySet<string> SupportedGenders =

@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'notification_models.dart';
 import 'notification_repository.dart';
+import 'permission_onboarding.dart';
 import 'push_notification_gateway.dart';
 
 final deviceMetadataServiceProvider = Provider<DeviceMetadataService>(
@@ -200,6 +201,9 @@ class NotificationController extends Notifier<NotificationState> {
     state = state.copyWith(isRequestingPermission: true, clearError: true);
     try {
       final status = await _pushGateway.requestPermission();
+      // The customer engaged with the rationale (or the inbox banner), so
+      // the once-per-install prompt must not reappear whatever the outcome.
+      unawaited(_onboardingStore.setRationaleShown());
       if (!_isActive(userId)) return status;
       state = state.copyWith(
         permissionStatus: status,
@@ -217,6 +221,51 @@ class NotificationController extends Notifier<NotificationState> {
       return PushPermissionStatus.unavailable;
     }
   }
+
+  /// Re-reads the OS permission state (used by first-launch onboarding so
+  /// the decision is made on a fresh value, never a stale one).
+  Future<void> refreshPermissionStatus() async {
+    final userId = _activeUserId;
+    if (userId == null) return;
+    try {
+      if (!await _pushGateway.initialize()) {
+        if (_isActive(userId)) {
+          state = state.copyWith(
+            permissionStatus: PushPermissionStatus.unavailable,
+          );
+        }
+        return;
+      }
+      final status = await _pushGateway.permissionStatus();
+      if (_isActive(userId)) {
+        state = state.copyWith(permissionStatus: status);
+      }
+    } on Object {
+      if (_isActive(userId)) {
+        state = state.copyWith(
+          permissionStatus: PushPermissionStatus.unavailable,
+        );
+      }
+    }
+  }
+
+  /// True only for the once-per-install first prompt: authenticated, OS
+  /// permission still undecided, rationale never presented, and Firebase
+  /// actually available (unconfigured Firebase reports `unavailable`, so no
+  /// prompt is ever shown and in-app notifications keep working).
+  Future<bool> shouldShowPermissionRationale() async {
+    if (_activeUserId == null) return false;
+    if (state.permissionStatus != PushPermissionStatus.notDetermined) {
+      return false;
+    }
+    return !await _onboardingStore.hasShownRationale();
+  }
+
+  Future<void> markPermissionRationaleShown() =>
+      _onboardingStore.setRationaleShown();
+
+  PermissionOnboardingStore get _onboardingStore =>
+      ref.read(permissionOnboardingStoreProvider);
 
   String? takePendingDeepLink() {
     final link = state.pendingDeepLink;

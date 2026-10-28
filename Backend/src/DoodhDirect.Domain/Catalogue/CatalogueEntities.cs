@@ -54,6 +54,15 @@ public sealed class Product : AuditableEntity
     public decimal Price { get; private set; }
     public bool IsActive { get; private set; } = true;
 
+    /// <summary>
+    /// Location eligibility: when true, this product may be ordered for a
+    /// delivery address outside every active branch service radius.
+    /// Inside a radius the flag imposes no restriction. Orthogonal to
+    /// <see cref="IsActive"/> and per-branch <see cref="ProductBranch"/>
+    /// availability. Defaults to false.
+    /// </summary>
+    public bool AllowOrderOutsideBranchRadius { get; private set; }
+
     public ProductCategory Category { get; private set; } = null!;
     public ICollection<ProductBranch> ProductBranches { get; private set; } = [];
 
@@ -82,6 +91,9 @@ public sealed class Product : AuditableEntity
 
     public void Activate() => IsActive = true;
     public void Deactivate() => IsActive = false;
+
+    public void AllowOutsideBranchRadius() => AllowOrderOutsideBranchRadius = true;
+    public void DisallowOutsideBranchRadius() => AllowOrderOutsideBranchRadius = false;
 
     private static string? Normalize(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();

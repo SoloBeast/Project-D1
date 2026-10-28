@@ -1,6 +1,8 @@
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/features/customer/current_location_provider.dart';
+import 'package:doodh_direct_mobile/features/notifications/permission_onboarding.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 const addressSelectionFallback = LatLng(28.367, 77.317);
@@ -236,6 +238,10 @@ class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker> {
   }
 
   Future<void> _useCurrentLocation() async {
+    // First-use permission flow scoped strictly to this picker: explain
+    // before the OS prompt, route permanent denial to settings, and never
+    // request location outside the address flow (no background location).
+    if (!await _ensureLocationPermission()) return;
     setState(() {
       _isLocating = true;
       _locationError = null;
@@ -263,6 +269,29 @@ class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker> {
     } finally {
       if (mounted) setState(() => _isLocating = false);
     }
+  }
+
+  /// Returns true when the OS location request may proceed. Shows the
+  /// rationale sheet before a first-time prompt and the settings guidance
+  /// when permission is permanently denied; manual map selection always
+  /// remains available. An unreadable OS state (e.g. unit tests) falls
+  /// through so the injected provider decides.
+  Future<bool> _ensureLocationPermission() async {
+    LocationPermission? status;
+    try {
+      status = await Geolocator.checkPermission();
+    } on Object {
+      status = null;
+    }
+    if (!mounted) return false;
+    if (status == LocationPermission.deniedForever) {
+      await showLocationSettingsGuidance(context);
+      return false;
+    }
+    if (status == LocationPermission.denied) {
+      return showLocationRationale(context);
+    }
+    return true;
   }
 
   void _showLocationError(CurrentLocationException error) {

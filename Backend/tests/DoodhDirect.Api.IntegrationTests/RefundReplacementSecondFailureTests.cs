@@ -94,7 +94,7 @@ public sealed class RefundReplacementSecondFailureTests
             CancellationToken.None);
 
         var approved = await service.ApproveAsync(
-            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
         Assert.Null(approved.ReplacementDate);
@@ -157,7 +157,7 @@ public sealed class RefundReplacementSecondFailureTests
 
         var service = CreateRefundService(harness);
         var exception = await Assert.ThrowsAsync<ConflictException>(() => service.ApproveAsync(
-            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null), CancellationToken.None));
+            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None));
         Assert.Contains("refund", exception.Message, StringComparison.OrdinalIgnoreCase);
 
         harness.Db.ChangeTracker.Clear();
@@ -187,7 +187,7 @@ public sealed class RefundReplacementSecondFailureTests
             new ChooseRefundReplacementRequest(CustomerChoice.ReDelivery),
             CancellationToken.None);
         await choiceService.ApproveAsync(
-            StaffActor(harness), firstId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), firstId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         harness.Db.ChangeTracker.Clear();
 
         await harness.Service.MaterializeEligibleAsync(

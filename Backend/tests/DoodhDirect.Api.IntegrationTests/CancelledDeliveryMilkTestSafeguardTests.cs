@@ -278,7 +278,7 @@ public sealed class CancelledDeliveryMilkTestSafeguardTests
                 CancellationToken.None);
             await choiceService.ApproveAsync(
                 new RefundReplacementActor(inner.Manager.Id, new HashSet<long> { inner.Branch.Id }, true),
-                requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+                requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
             inner.Db.ChangeTracker.Clear();
 
             var payment = Payment.CreateForSubscription(
@@ -326,7 +326,8 @@ public sealed class CancelledDeliveryMilkTestSafeguardTests
                 new FixedBranchAllocationService(inner.Branch),
                 new NotSupportedPaymentService(),
                 inner.TimeProvider,
-                new TestNotificationEventWriter(inner.Db, inner.TimeProvider));
+                new TestNotificationEventWriter(inner.Db, inner.TimeProvider),
+                new NumberSeriesService(inner.Db, inner.TimeProvider));
             await cancelService.CancelAsync(
                 inner.Customer.Id, inner.Subscription.PublicId, CancellationToken.None);
             inner.Db.ChangeTracker.Clear();
@@ -383,6 +384,10 @@ public sealed class CancelledDeliveryMilkTestSafeguardTests
             throw new NotSupportedException("Cancellation tests never retry payments.");
         public Task<DoodhDirect.Application.Payments.PaymentResult> RetrySubscriptionAsync(long c, Guid s, PaymentMethod m, string k, CancellationToken t) =>
             throw new NotSupportedException("Cancellation tests never retry payments.");
+        public Task<DoodhDirect.Application.Payments.PaymentPlanResult> CreateOrderPlanAsync(long c, Guid o, bool u, string k, CancellationToken t) =>
+            throw new NotSupportedException("Cancellation tests never create payment plans.");
+        public Task<DoodhDirect.Application.Payments.PaymentPlanResult> CreateSubscriptionPlanAsync(long c, long s, bool u, string k, CancellationToken t, bool e = false) =>
+            throw new NotSupportedException("Cancellation tests never create payment plans.");
         public Task<DoodhDirect.Application.Payments.PaymentResult> CreateWalletTopUpAsync(long c, decimal a, string k, CancellationToken t) =>
             throw new NotSupportedException("Cancellation tests never top up.");
         public Task<DoodhDirect.Application.Payments.PaymentResult> VerifyAsync(long c, DoodhDirect.Application.Payments.VerifyPaymentRequest r, CancellationToken t) =>

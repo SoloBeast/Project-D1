@@ -2,15 +2,30 @@ import 'dart:convert';
 
 import 'package:doodh_direct_mobile/core/device/device_metadata_service.dart';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
-const apiBaseUrl = String.fromEnvironment(
-  'DOOHDIRECT_API_URL',
-  defaultValue: 'http://localhost:5209',
-  // defaultValue: 'http://10.0.2.2:5209',
-  // defaultValue: 'https://mem-submissions-cfr-virtually.trycloudflare.com',
+const _apiBaseUrlOverride = String.fromEnvironment('DOOHDIRECT_API_URL');
+// defaultValue: 'https://mem-submissions-cfr-virtually.trycloudflare.com',
 
-);
+/// Base URL for the backend API.
+///
+/// An explicit `--dart-define=DOOHDIRECT_API_URL=...` always wins. Otherwise
+/// the default is platform-aware: `localhost` is unreachable from an Android
+/// emulator (it loops back to the emulator itself), which surfaced as the
+/// generic "Unable to refresh delivery status" banner on Home, so Android
+/// defaults to the emulator host loopback `10.0.2.2`. Web, desktop, iOS
+/// simulator and physical devices reached via `adb reverse` keep `localhost`.
+/// Physical devices on the developer LAN must pass their host explicitly,
+/// e.g. `--dart-define=DOOHDIRECT_API_URL=http://<lan-ip>:5209` — never
+/// hardcode a developer-specific IP here.
+String get apiBaseUrl {
+  if (_apiBaseUrlOverride.isNotEmpty) return _apiBaseUrlOverride;
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    return 'http://10.0.2.2:5209';
+  }
+  return 'http://localhost:5209';
+}
 
 enum UserRole { customer, delivery, dairy, owner, admin, support, accountant }
 
@@ -578,9 +593,28 @@ class AuthRepository {
 
   Future<void> logout(AuthSession session) async {
     try {
+      await deactivateDevice(session);
       await _api.post('/api/v1/auth/logout', accessToken: session.accessToken);
     } finally {
       await clear();
+    }
+  }
+
+  /// Best-effort deactivation of this installation's push device so a
+  /// logged-out device stops receiving the previous user's notifications.
+  /// Never throws: a failure must not trap the user in the app or prevent
+  /// local logout. Server-side logout cleanup is the backstop when this
+  /// call cannot run (offline, expired token). Sends no token, only the
+  /// stable installation identifier already used for auth device binding.
+  Future<void> deactivateDevice(AuthSession session) async {
+    try {
+      final identifier = (await _deviceMetadata.get()).deviceIdentifier;
+      await _api.post(
+        '/api/v1/devices/${Uri.encodeComponent(identifier)}/deactivate',
+        accessToken: session.accessToken,
+      );
+    } on Object {
+      // Best-effort only; server-side logout cleanup covers the rest.
     }
   }
 

@@ -12,7 +12,8 @@ public sealed record CreateSubscriptionRequest(
     IReadOnlyCollection<DayOfWeek> DeliveryDays,
     int TotalEntitlement,
     PaymentMethod PaymentMethod,
-    SubscriptionDeliverySlot Slot = SubscriptionDeliverySlot.Morning);
+    SubscriptionDeliverySlot Slot = SubscriptionDeliverySlot.Morning,
+    bool UseWalletBalance = false);
 
 public sealed record UpdateSubscriptionRequest(
     decimal? Quantity,
@@ -49,7 +50,9 @@ public sealed record VacationResult(
     IReadOnlyList<VacationSkippedItem> SkippedDates,
     IReadOnlyList<VacationIneligibleItem> Ineligible);
 
-public sealed record RetrySubscriptionPaymentRequest(PaymentMethod PaymentMethod);
+public sealed record RetrySubscriptionPaymentRequest(
+    PaymentMethod PaymentMethod,
+    bool UseWalletBalance = false);
 
 public sealed record SubscriptionScheduleResult(
     DayOfWeek DayOfWeek,
@@ -68,8 +71,15 @@ public sealed record SubscriptionDeliveryResult(
     SubscriptionDeliverySlot Slot = SubscriptionDeliverySlot.Morning,
     bool IsReplacement = false);
 
+public sealed record SubscriptionCancellationRefundResult(
+    int EligibleOccurrences,
+    int ExcludedOccurrences,
+    decimal RefundedAmount,
+    string Status);
+
 public sealed record SubscriptionResult(
     Guid PublicId,
+    string? SubscriptionNumber,
     SubscriptionStatus Status,
     Guid ProductId,
     string ProductSku,
@@ -93,11 +103,13 @@ public sealed record SubscriptionResult(
     DateTime? PausedAt,
     DateTime? CancelledAt,
     DateTime? CompletedAt,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    SubscriptionCancellationRefundResult? CancellationRefund = null);
 
 public sealed record CreatedSubscriptionResult(
     SubscriptionResult Subscription,
-    PaymentResult Payment);
+    PaymentResult Payment,
+    PaymentPlanResult? PaymentPlan = null);
 
 public interface ISubscriptionService
 {
@@ -171,8 +183,9 @@ public interface ISubscriptionService
 
 public static class SubscriptionMappings
 {
-    public static SubscriptionResult ToResult(this Subscription subscription) => new(
+    public static SubscriptionResult ToResult(this Subscription subscription, SubscriptionCancellationRefundResult? cancellationRefund = null) => new(
         subscription.PublicId,
+        subscription.SubscriptionNumber,
         subscription.Status,
         subscription.Product.PublicId,
         subscription.ProductSkuSnapshot,
@@ -199,7 +212,8 @@ public static class SubscriptionMappings
         subscription.PausedAt,
         subscription.CancelledAt,
         subscription.CompletedAt,
-        subscription.CreatedAt);
+        subscription.CreatedAt,
+        cancellationRefund);
 
     public static SubscriptionDeliveryResult ToResult(this SubscriptionDelivery delivery) => new(
         delivery.PublicId,

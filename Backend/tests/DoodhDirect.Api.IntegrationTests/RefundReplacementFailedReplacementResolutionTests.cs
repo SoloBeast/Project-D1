@@ -279,7 +279,7 @@ public sealed class RefundReplacementFailedReplacementResolutionTests
             CustomerActor(harness), requestId,
             new ChooseRefundReplacementRequest(CustomerChoice.ReDelivery), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         harness.Db.ChangeTracker.Clear();
         return requestId;
     }

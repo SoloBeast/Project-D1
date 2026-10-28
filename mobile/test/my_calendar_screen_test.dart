@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/app/app.dart';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
@@ -32,16 +33,19 @@ import 'package:flutter_test/flutter_test.dart';
 /// calendars, month navigation, date selection, and distinct empty/loading/
 /// error states — with real Delivery status always authoritative.
 
-DateTime _dateOnly(DateTime value) =>
-    DateTime(value.year, value.month, value.day);
+DateTime _dateOnly(DateTime value) {
+  final india = indiaWallClock(value);
+  return DateTime(india.year, india.month, india.day);
+}
 
-final DateTime _today = _dateOnly(DateTime.now());
+final DateTime _today = _dateOnly(indiaNow());
 
-/// A deterministic, distinct day inside the CURRENT month grid (days 2–10),
-/// so every test date always renders a cell and never collides with another
-/// test date regardless of where today sits in the month.
+/// A deterministic, distinct day in the CURRENT month (days 2–10).
 DateTime _inMonth(int offset) =>
     DateTime(_today.year, _today.month, (offset + 1).clamp(2, 10));
+
+DateTime _nextMonthDay(int offset) =>
+    DateTime(_today.year, _today.month + 1, (offset + 1).clamp(2, 10));
 
 String _iso(DateTime value) =>
     '${value.year.toString().padLeft(4, '0')}-'
@@ -77,6 +81,9 @@ CustomerDelivery _delivery(
   DeliveryStatus status = DeliveryStatus.outForDelivery,
   String reference = 'REF-1',
   DeliverySourceType source = DeliverySourceType.oneTimeOrder,
+  String? subscriptionId,
+  String? subscriptionDeliveryId,
+  String? subscriptionNumber,
 }) => CustomerDelivery(
   deliveryId: id,
   sourceType: source,
@@ -84,6 +91,9 @@ CustomerDelivery _delivery(
   status: status,
   scheduledDate: date,
   destinationAddress: '1 Main Road, Bengaluru',
+  subscriptionDeliveryId: subscriptionDeliveryId,
+  subscriptionId: subscriptionId,
+  subscriptionNumber: subscriptionNumber,
   assignedEmployeeId: null,
   assignedEmployeeName: null,
   isTrackingActive: false,
@@ -378,10 +388,65 @@ Finder _dayCell(DateTime date) =>
     find.byKey(ValueKey('my-calendar-day-${_iso(date)}'));
 
 Future<void> _selectDay(WidgetTester tester, DateTime date) async {
-  await tester.ensureVisible(_dayCell(date));
-  await tester.tap(_dayCell(date));
+  final indiaDate = _dateOnly(date);
+  var visibleMonthLabel = tester
+      .widget<Text>(find.byKey(const ValueKey('my-calendar-month-label')))
+      .data!;
+  final monthLabel = '${_monthName(indiaDate.month)} ${indiaDate.year}';
+  while (visibleMonthLabel != monthLabel) {
+    final visibleParts = visibleMonthLabel.split(' ');
+    final visibleMonth = _monthNameIndex(visibleParts[0]);
+    final visibleYear = int.parse(visibleParts[1]);
+    final delta =
+        (indiaDate.year - visibleYear) * 12 + indiaDate.month - visibleMonth;
+    await tester.tap(
+      find.byKey(
+        ValueKey(
+          delta > 0 ? 'my-calendar-next-month' : 'my-calendar-previous-month',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    visibleMonthLabel = tester
+        .widget<Text>(find.byKey(const ValueKey('my-calendar-month-label')))
+        .data!;
+  }
+  await tester.ensureVisible(_dayCell(indiaDate));
+  await tester.tap(_dayCell(indiaDate));
   await tester.pumpAndSettle();
 }
+
+String _monthName(int month) => const [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+][month - 1];
+
+int _monthNameIndex(String month) =>
+    const [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ].indexOf(month) +
+    1;
 
 void main() {
   testWidgets('My Calendar renders the reference month grid and legend', (
@@ -436,12 +501,9 @@ void main() {
     expect(tester.widget<Text>(label).data, startLabel);
 
     // Today returns the selection to today's date.
-    await tester.tap(_dayCell(_inMonth(1)));
+    await tester.tap(_dayCell(_today));
     await tester.pumpAndSettle();
-    expect(
-      find.textContaining(_heading(_inMonth(1)).split(' ').first),
-      findsOneWidget,
-    );
+    expect(find.text(_heading(_today)), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('my-calendar-today-action')));
     await tester.pumpAndSettle();
     expect(
@@ -520,11 +582,11 @@ void main() {
           _subscription('sub-b', 'Buffalo Milk'),
         ]
         ..calendars = {
-          'sub-a': [_occurrence('occ-a', _inMonth(5))],
+          'sub-a': [_occurrence('occ-a', _nextMonthDay(5))],
           'sub-b': [
             _occurrence(
               'occ-b',
-              _inMonth(5),
+              _nextMonthDay(5),
               slot: SubscriptionDeliverySlot.evening,
             ),
           ],
@@ -538,9 +600,9 @@ void main() {
       // The screen asked for EVERY active subscription's calendar.
       expect(subscriptions.calendarRequests, containsAll(['sub-a', 'sub-b']));
 
-      await _selectDay(tester, _inMonth(5));
+      await _selectDay(tester, _nextMonthDay(5));
       final section = find.byKey(const ValueKey('my-calendar-day-section'));
-      expect(find.text(_heading(_inMonth(5))), findsOneWidget);
+      expect(find.text(_heading(_nextMonthDay(5))), findsOneWidget);
       expect(find.text('Cow Milk'), findsOneWidget);
       expect(find.text('Buffalo Milk'), findsOneWidget);
       expect(find.textContaining('Morning ·'), findsOneWidget);
@@ -558,16 +620,57 @@ void main() {
   );
 
   testWidgets(
+    'past-due scheduled occurrence is not shown as Upcoming or Failed',
+    (tester) async {
+      final now = indiaNow();
+      final localPast = DateTime(now.year, now.month, now.day - 1);
+      final past = indiaToUtc(localPast);
+      final subscriptions = _CalendarSubscriptionRepository()
+        ..subscriptions = [_subscription('sub-a', 'Cow Milk')]
+        ..calendars = {
+          'sub-a': [_occurrence('occ-past-due', past)],
+        };
+      await _pumpCalendar(
+        tester,
+        deliveryRepository: _CalendarDeliveryRepository(),
+        subscriptionRepository: subscriptions,
+      );
+
+      if (localPast.month != now.month || localPast.year != now.year) {
+        await tester.tap(
+          find.byKey(const ValueKey('my-calendar-previous-month')),
+        );
+        await tester.pumpAndSettle();
+      }
+      await _selectDay(tester, localPast);
+      final section = find.byKey(const ValueKey('my-calendar-day-section'));
+      expect(find.text('Cow Milk'), findsOneWidget);
+      expect(
+        find.descendant(of: section, matching: find.text('Past due')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: section, matching: find.text('Upcoming')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: section, matching: find.text('Failed')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
     'future scheduled occurrence shows Upcoming; skipped occurrence shows Vacation/Skipped',
     (tester) async {
       final subscriptions = _CalendarSubscriptionRepository()
         ..subscriptions = [_subscription('sub-a', 'Cow Milk')]
         ..calendars = {
           'sub-a': [
-            _occurrence('occ-s', _inMonth(6)),
+            _occurrence('occ-s', _nextMonthDay(6)),
             _occurrence(
               'occ-v',
-              _inMonth(7),
+              _nextMonthDay(7),
               status: SubscriptionDeliveryStatus.skipped,
             ),
           ],
@@ -579,7 +682,7 @@ void main() {
       );
 
       final section = find.byKey(const ValueKey('my-calendar-day-section'));
-      await _selectDay(tester, _inMonth(6));
+      await _selectDay(tester, _nextMonthDay(6));
       expect(
         find.descendant(of: section, matching: find.text('Upcoming')),
         findsOneWidget,
@@ -589,8 +692,8 @@ void main() {
         findsNothing,
       );
 
-      await _selectDay(tester, _inMonth(7));
-      expect(find.text(_heading(_inMonth(7))), findsOneWidget);
+      await _selectDay(tester, _nextMonthDay(7));
+      expect(find.text(_heading(_nextMonthDay(7))), findsOneWidget);
       expect(
         find.descendant(of: section, matching: find.text('Vacation / Skipped')),
         findsOneWidget,
@@ -605,25 +708,28 @@ void main() {
     (tester) async {
       // Same-day: sub-a's occurrence AND its own materialized Delivery
       // (reference SUB-<subGuidNoDashes>-<yyyyMMdd> per backend DeliveryService).
+      final occurrenceDate = _nextMonthDay(8);
       final ownReference =
           'SUB-${'sub-a'.replaceAll('-', '')}-'
-          '${_inMonth(8).year.toString().padLeft(4, '0')}'
-          '${_inMonth(8).month.toString().padLeft(2, '0')}'
-          '${_inMonth(8).day.toString().padLeft(2, '0')}';
+          '${occurrenceDate.year.toString().padLeft(4, '0')}'
+          '${occurrenceDate.month.toString().padLeft(2, '0')}'
+          '${occurrenceDate.day.toString().padLeft(2, '0')}';
       final deliveries = _CalendarDeliveryRepository()
         ..deliveries = [
           _delivery(
             'd-9',
-            _inMonth(8),
+            occurrenceDate,
             status: DeliveryStatus.delivered,
             reference: ownReference,
             source: DeliverySourceType.subscriptionOccurrence,
+            subscriptionId: 'sub-a',
+            subscriptionDeliveryId: 'occ-x',
           ),
         ];
       final subscriptions = _CalendarSubscriptionRepository()
         ..subscriptions = [_subscription('sub-a', 'Cow Milk')]
         ..calendars = {
-          'sub-a': [_occurrence('occ-x', _inMonth(8))],
+          'sub-a': [_occurrence('occ-x', occurrenceDate)],
         };
       await _pumpCalendar(
         tester,
@@ -631,7 +737,7 @@ void main() {
         subscriptionRepository: subscriptions,
       );
 
-      await _selectDay(tester, _inMonth(8));
+      await _selectDay(tester, occurrenceDate);
 
       final section = find.byKey(const ValueKey('my-calendar-day-section'));
       // The REAL delivery row (authoritative status) is shown exactly once —
@@ -654,19 +760,22 @@ void main() {
     (tester) async {
       // A's materialized Delivery + B's future Scheduled occurrence, same
       // date. B must NOT be suppressed by A's Delivery.
+      final occurrenceDate = _nextMonthDay(8);
       final aReference =
           'SUB-${'sub-a'.replaceAll('-', '')}-'
-          '${_inMonth(8).year.toString().padLeft(4, '0')}'
-          '${_inMonth(8).month.toString().padLeft(2, '0')}'
-          '${_inMonth(8).day.toString().padLeft(2, '0')}';
+          '${occurrenceDate.year.toString().padLeft(4, '0')}'
+          '${occurrenceDate.month.toString().padLeft(2, '0')}'
+          '${occurrenceDate.day.toString().padLeft(2, '0')}';
       final deliveries = _CalendarDeliveryRepository()
         ..deliveries = [
           _delivery(
             'd-a',
-            _inMonth(8),
+            occurrenceDate,
             status: DeliveryStatus.delivered,
             reference: aReference,
             source: DeliverySourceType.subscriptionOccurrence,
+            subscriptionId: 'sub-a',
+            subscriptionDeliveryId: 'occ-a',
           ),
         ];
       final subscriptions = _CalendarSubscriptionRepository()
@@ -675,8 +784,8 @@ void main() {
           _subscription('sub-b', 'Buffalo Milk'),
         ]
         ..calendars = {
-          'sub-a': [_occurrence('occ-a', _inMonth(8))],
-          'sub-b': [_occurrence('occ-b', _inMonth(8))],
+          'sub-a': [_occurrence('occ-a', occurrenceDate)],
+          'sub-b': [_occurrence('occ-b', occurrenceDate)],
         };
       await _pumpCalendar(
         tester,
@@ -684,7 +793,7 @@ void main() {
         subscriptionRepository: subscriptions,
       );
 
-      await _selectDay(tester, _inMonth(8));
+      await _selectDay(tester, occurrenceDate);
 
       final section = find.byKey(const ValueKey('my-calendar-day-section'));
       // A's real Delivery (authoritative Delivered status)…
@@ -796,6 +905,8 @@ void main() {
             status: DeliveryStatus.failed,
             reference: ownReference,
             source: DeliverySourceType.subscriptionOccurrence,
+            subscriptionId: 'sub-a',
+            subscriptionDeliveryId: 'occ-f',
           ),
         ];
       final subscriptions = _CalendarSubscriptionRepository()
@@ -869,7 +980,7 @@ void main() {
       final subscriptions = _CalendarSubscriptionRepository()
         ..subscriptions = [beyondTerm]
         ..calendars = {
-          'sub-a': [_occurrence('occ-r', _inMonth(6))],
+          'sub-a': [_occurrence('occ-r', _nextMonthDay(6))],
         };
       await _pumpCalendar(
         tester,
@@ -877,7 +988,7 @@ void main() {
         subscriptionRepository: subscriptions,
       );
 
-      await _selectDay(tester, _inMonth(6));
+      await _selectDay(tester, _nextMonthDay(6));
       final section = find.byKey(const ValueKey('my-calendar-day-section'));
       expect(find.text('Cow Milk'), findsOneWidget);
       expect(
@@ -907,6 +1018,8 @@ void main() {
             status: DeliveryStatus.outForDelivery,
             reference: ownReference,
             source: DeliverySourceType.subscriptionOccurrence,
+            subscriptionId: 'sub-a',
+            subscriptionDeliveryId: 'occ-r',
           ),
         ];
       final subscriptions = _CalendarSubscriptionRepository()
@@ -1006,8 +1119,8 @@ void main() {
               _inMonth(2),
               status: SubscriptionDeliveryStatus.failed,
             ),
-            _occurrence('occ-r', _inMonth(6), isReplacement: true),
-            _occurrence('occ-o', _inMonth(7)),
+            _occurrence('occ-r', _nextMonthDay(6), isReplacement: true),
+            _occurrence('occ-o', _nextMonthDay(7)),
           ],
         };
       await _pumpCalendar(
@@ -1020,8 +1133,8 @@ void main() {
 
       // The replacement renders on its own scheduled date with the explicit
       // label — never as a plain Upcoming row.
-      await _selectDay(tester, _inMonth(6));
-      expect(find.text(_heading(_inMonth(6))), findsOneWidget);
+      await _selectDay(tester, _nextMonthDay(6));
+      expect(find.text(_heading(_nextMonthDay(6))), findsOneWidget);
       expect(find.text('Cow Milk'), findsOneWidget);
       expect(
         find.descendant(
@@ -1037,7 +1150,7 @@ void main() {
       expect(find.text('No deliveries for this date'), findsNothing);
 
       // The ordinary control on its own date is still plain Upcoming.
-      await _selectDay(tester, _inMonth(7));
+      await _selectDay(tester, _nextMonthDay(7));
       expect(
         find.descendant(of: section, matching: find.text('Upcoming')),
         findsOneWidget,

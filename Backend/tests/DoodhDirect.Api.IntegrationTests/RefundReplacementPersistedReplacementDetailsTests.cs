@@ -36,7 +36,7 @@ public sealed class RefundReplacementPersistedReplacementDetailsTests
         var approved = await service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest("Re-drive on Thursday", ReplacementDay),
+            new ApproveRefundReplacementRequest("Re-drive on Thursday", ReplacementDay, SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
@@ -58,7 +58,7 @@ public sealed class RefundReplacementPersistedReplacementDetailsTests
         var approved = await service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, ReplacementDay),
+            new ApproveRefundReplacementRequest(null, ReplacementDay, SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
         harness.Db.ChangeTracker.Clear();
 
@@ -97,7 +97,7 @@ public sealed class RefundReplacementPersistedReplacementDetailsTests
         await service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, ReplacementDay),
+            new ApproveRefundReplacementRequest(null, ReplacementDay, SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
         harness.Db.ChangeTracker.Clear();
 
@@ -122,7 +122,7 @@ public sealed class RefundReplacementPersistedReplacementDetailsTests
         await service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, ReplacementDay),
+            new ApproveRefundReplacementRequest(null, ReplacementDay, SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
         harness.Db.ChangeTracker.Clear();
 
@@ -149,7 +149,7 @@ public sealed class RefundReplacementPersistedReplacementDetailsTests
         await service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, ReplacementDay),
+            new ApproveRefundReplacementRequest(null, ReplacementDay, SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
         await harness.Service.MaterializeEligibleAsync(
@@ -202,7 +202,7 @@ public sealed class RefundReplacementPersistedReplacementDetailsTests
             new ChooseRefundReplacementRequest(CustomerChoice.Refund),
             CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         var completed = await service.CompleteAsync(
             StaffActor(harness), requestId, new DecideRefundReplacementRequest("Refund verified"),
             CancellationToken.None);

@@ -25,6 +25,9 @@ CustomerDelivery _delivery({
   DeliverySourceType sourceType = DeliverySourceType.oneTimeOrder,
   String reference = 'ORD/MAIN/2026/000042',
   DeliveryStatus status = DeliveryStatus.readyForAssignment,
+  String? subscriptionId,
+  String? subscriptionDeliveryId,
+  String? subscriptionNumber,
 }) => CustomerDelivery(
   deliveryId: id,
   sourceType: sourceType,
@@ -32,6 +35,9 @@ CustomerDelivery _delivery({
   status: status,
   scheduledDate: date,
   destinationAddress: '12 Milk Street',
+  subscriptionDeliveryId: subscriptionDeliveryId,
+  subscriptionId: subscriptionId,
+  subscriptionNumber: subscriptionNumber,
   assignedEmployeeId: null,
   assignedEmployeeName: null,
   isTrackingActive: false,
@@ -276,7 +282,8 @@ void main() {
         publicId: '0f8f2f71-1984-b1e8-8127-21a15a04069e',
         status: SubscriptionStatus.cancelled,
       );
-      // SUB-{publicId:N}-{yyyyMMdd}
+      // Explicit subscription linkage from the API contract (no reference
+      // text parsing): the delivery carries the owning subscription id.
       final reference =
           'SUB-0f8f2f711984b1e8812721a15a04069e-${_format(_day(1))}';
       await _pumpHome(
@@ -287,6 +294,7 @@ void main() {
             date: _day(1),
             sourceType: DeliverySourceType.subscriptionOccurrence,
             reference: reference,
+            subscriptionId: '0f8f2f71-1984-b1e8-8127-21a15a04069e',
           ),
         ],
         subscriptions: [paused],
@@ -412,6 +420,30 @@ void main() {
   );
 
   testWidgets(
+    'past-due subscription delivery remains visible and is labelled Past due',
+    (tester) async {
+      final yesterday = _indiaToday().subtract(const Duration(days: 1));
+      await _pumpHome(
+        tester,
+        deliveries: [
+          _delivery(
+            id: 'd-past-due',
+            date: yesterday,
+            sourceType: DeliverySourceType.subscriptionOccurrence,
+            reference: 'SUB-PAST-DUE',
+            subscriptionId: 'sub-past-due',
+            subscriptionDeliveryId: 'occ-past-due',
+          ),
+        ],
+      );
+
+      expect(find.text('Past due'), findsOneWidget);
+      expect(find.text('Ready for assignment'), findsNothing);
+      expect(find.byKey(const ValueKey('home-upcoming-skip-d-occ-past-due')), findsNothing);
+    },
+  );
+
+  testWidgets(
     'calendar occurrence already materialized into a Delivery is not duplicated',
     (tester) async {
       final today = _indiaToday();
@@ -425,6 +457,8 @@ void main() {
             date: today,
             sourceType: DeliverySourceType.subscriptionOccurrence,
             reference: reference,
+            subscriptionId: '0f8f2f71-1984-b1e8-8127-21a15a04069e',
+            subscriptionDeliveryId: 'occ-9',
           ),
         ],
         subscriptions: [

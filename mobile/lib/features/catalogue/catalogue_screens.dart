@@ -205,8 +205,10 @@ class _ProductCatalogueScreenState
                                             cartQuantities[product.publicId],
                                         imageHeight: 120,
                                         onOpen: () => _openProduct(product),
-                                        onSubscribe: () =>
-                                            context.push('/subscriptions/new'),
+                                        onSubscribe: () => context.push(
+                                          '/subscriptions/new',
+                                          extra: product,
+                                        ),
                                         onAddToCart: () => _addToCart(product),
                                       ),
                                   ],
@@ -446,7 +448,19 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                 ? const LoadingStatePanel(message: 'Loading product')
                 : ErrorStatePanel(message: _error!, onRetry: _load))
           : _buildBody(product),
-      bottomNavigationBar: product == null ? null : _buildActionBar(product),
+      bottomNavigationBar: product == null
+          ? const CustomerBottomNavigation(
+              currentPath: '/catalogue',
+            )
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildActionBar(product),
+                CustomerBottomNavigation(
+                  currentPath: '/catalogue/products/${widget.productId}',
+                ),
+              ],
+            ),
     );
   }
 
@@ -516,7 +530,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                           label: 'Subscribe',
                           icon: Icons.event_repeat_outlined,
                           variant: DoodhButtonVariant.secondary,
-                          onPressed: () => context.push('/subscriptions/new'),
+                          onPressed: () => context.push(
+                            '/subscriptions/new',
+                            extra: product,
+                          ),
                         ),
                       ),
                       const SizedBox(width: DoodhSpacing.sm),
@@ -636,8 +653,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                                   onOpen: () => context.push(
                                     '/catalogue/products/${item.publicId}',
                                   ),
-                                  onSubscribe: () =>
-                                      context.push('/subscriptions/new'),
+                                  onSubscribe: () => context.push(
+                                    '/subscriptions/new',
+                                    extra: item,
+                                  ),
                                   onAddToCart: () =>
                                       _addToCart(item, quantity: 1),
                                 ),
@@ -1784,6 +1803,8 @@ class _ProductRowState extends State<_ProductRow> {
   late String _unit = widget.product?.unitOfMeasure ?? 'litre';
   late Set<String> _selectedBranchIds = _initialBranchIds();
   late Set<String> _selectedChargeIds = _initialChargeIds();
+  late bool _allowOutsideRadius =
+      widget.product?.allowOrderOutsideBranchRadius ?? false;
   bool _saving = false;
 
   CatalogueProduct? get _product => widget.product;
@@ -1863,6 +1884,7 @@ class _ProductRowState extends State<_ProductRow> {
     _categoryId = product.category.publicId;
     _selectedBranchIds = _initialBranchIds();
     _selectedChargeIds = _initialChargeIds();
+    _allowOutsideRadius = product.allowOrderOutsideBranchRadius;
   }
 
   static String _format(double value) => value == value.roundToDouble()
@@ -1896,7 +1918,8 @@ class _ProductRowState extends State<_ProductRow> {
           _description.text.trim().isNotEmpty ||
           _unit != 'litre' ||
           !_sameSet(_selectedBranchIds, baseBranchIds) ||
-          _selectedChargeIds.isNotEmpty;
+          _selectedChargeIds.isNotEmpty ||
+          _allowOutsideRadius;
     }
     return _name.text.trim() != product.name ||
         _sku.text.trim() != product.sku ||
@@ -1905,7 +1928,8 @@ class _ProductRowState extends State<_ProductRow> {
         _unit != product.unitOfMeasure ||
         _categoryId != product.category.publicId ||
         !_sameSet(_selectedBranchIds, baseBranchIds) ||
-        !_sameSet(_selectedChargeIds, baseChargeIds);
+        !_sameSet(_selectedChargeIds, baseChargeIds) ||
+        _allowOutsideRadius != product.allowOrderOutsideBranchRadius;
   }
 
   Set<String> _defaultBranchIdsForCompare() {
@@ -1941,6 +1965,7 @@ class _ProductRowState extends State<_ProductRow> {
           price: _priceValue!,
           branchIds: _selectedBranchIds.toList(growable: false),
           chargeIds: _selectedChargeIds.toList(growable: false),
+          allowOrderOutsideBranchRadius: _allowOutsideRadius,
         ));
         // On success the screen closes the draft; on failure the list error
         // banner carries the server message.
@@ -1956,6 +1981,7 @@ class _ProductRowState extends State<_ProductRow> {
             price: _priceValue!,
             branchIds: _selectedBranchIds.toList(growable: false),
             chargeIds: _selectedChargeIds.toList(growable: false),
+            allowOrderOutsideBranchRadius: _allowOutsideRadius,
           ),
         );
       }
@@ -2028,6 +2054,7 @@ class _ProductRowState extends State<_ProductRow> {
               ),
               Expanded(flex: 2, child: _padded(_branchMultiSelect())),
               Expanded(flex: 2, child: _padded(_taxMultiSelect())),
+              Expanded(flex: 1, child: _padded(_outsideRadiusCell())),
               Expanded(flex: 1, child: _padded(_statusCell(product))),
               SizedBox(width: 150, child: _actionsCell(product)),
             ],
@@ -2190,6 +2217,25 @@ class _ProductRowState extends State<_ProductRow> {
       ),
     );
   }
+
+  /// Location-eligibility switch. Reflects the saved server value when
+  /// editing (off by default for new products); the draft/save payload
+  /// carries the selection in `allowOrderOutsideBranchRadius`.
+  Widget _outsideRadiusCell() => Tooltip(
+    message: 'Allow orders outside branch radius',
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Switch(
+          value: _allowOutsideRadius,
+          onChanged: (value) => setState(() => _allowOutsideRadius = value),
+        ),
+        const Flexible(
+          child: Text('Outside radius', overflow: TextOverflow.ellipsis),
+        ),
+      ],
+    ),
+  );
 
   Widget _actionsCell(CatalogueProduct? product) => Wrap(
     spacing: 0,

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_navigation.dart';
@@ -8,6 +9,9 @@ import 'package:doodh_direct_mobile/features/deliveries/delivery_controller.dart
 import 'package:doodh_direct_mobile/features/deliveries/delivery_models.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_repository.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
+import 'package:doodh_direct_mobile/features/refund_replacement/refund_replacement_controller.dart';
+import 'package:doodh_direct_mobile/features/refund_replacement/refund_replacement_models.dart'
+    hide DeliveryStatus;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -58,6 +62,19 @@ void main() {
       expect(formatDeliveryDate(date), '07/08/2026');
       expect(formatApiDeliveryDate(date), '2026-08-07');
       expect(const DeliveryNotesRequest().toJson(), {'remarks': null});
+    });
+
+    test('formats delivery timestamps with date and time in India time', () {
+      // UTC inputs keep the expectations independent of the device timezone
+      // running the test: 18:30 UTC is 00:00 IST the next day.
+      expect(
+        formatDeliveryDateTime(DateTime.utc(2026, 8, 7, 18, 30)),
+        '08/08/2026 00:00',
+      );
+      expect(
+        formatDeliveryDateTime(DateTime.utc(2026, 8, 7, 4, 5)),
+        '07/08/2026 09:35',
+      );
     });
   });
 
@@ -203,6 +220,60 @@ void main() {
         'reason': 'Customer not available',
         'remarks': 'No response',
       });
+    });
+
+    test('fails subscription deliveries with proof on the multipart route', () async {
+      String? requestedPath;
+      String? contentType;
+      String? body;
+      final client = MockClient((request) async {
+        requestedPath = request.url.path;
+        contentType = request.headers['Content-Type'];
+        expect(request.headers['Authorization'], 'Bearer delivery-token');
+        body = utf8.decode(request.bodyBytes);
+        return successResponse(deliveryDetailsJson(status: 'Failed'));
+      });
+      final repository = testRepository(client);
+
+      final result = await repository.failWithProof(
+        'delivery-token',
+        'delivery-1',
+        reason: DeliveryFailureReasons.customerNotAvailable,
+        remarks: 'Gate locked',
+        imageBytes: Uint8List.fromList(utf8.encode('fake-jpeg-bytes')),
+        fileName: 'proof.jpg',
+        contentType: 'image/jpeg',
+      );
+
+      expect(result.status, DeliveryStatus.failed);
+      expect(requestedPath, '/api/v1/delivery/delivery-1/fail-with-proof');
+      expect(contentType, startsWith('multipart/form-data;'));
+      expect(body, contains('name="proof"; filename="proof.jpg"'));
+      expect(body!.toLowerCase(), contains('content-type: image/jpeg'));
+      expect(body, contains('name="reason"'));
+      expect(body, contains('Customer not available'));
+      expect(body, contains('name="remarks"'));
+      expect(body, contains('Gate locked'));
+    });
+
+    test('omits remarks from the multipart fail when absent', () async {
+      String? body;
+      final client = MockClient((request) async {
+        body = utf8.decode(request.bodyBytes);
+        return successResponse(deliveryDetailsJson(status: 'Failed'));
+      });
+      final repository = testRepository(client);
+
+      await repository.failWithProof(
+        'delivery-token',
+        'delivery-1',
+        reason: DeliveryFailureReasons.customerNotAvailable,
+        imageBytes: Uint8List.fromList(utf8.encode('fake-jpeg-bytes')),
+        fileName: 'proof.jpg',
+        contentType: 'image/jpeg',
+      );
+
+      expect(body, isNot(contains('name="remarks"')));
     });
 
     test('parses immediate Delivered result from OTP verification', () async {
@@ -639,6 +710,131 @@ void main() {
       expect(find.textContaining('73.85670'), findsNothing);
     });
 
+    testWidgets('doorstep milk test is hidden once the delivery is delivered', (
+      tester,
+    ) async {
+      await _pumpDeliveryScreen(
+        tester,
+        const CustomerDeliveryDetailScreen(deliveryId: 'delivery-1'),
+        DeliveryState(
+          selectedCustomerDelivery: CustomerDelivery.fromJson(
+            customerDeliveryJson(
+              tracking: false,
+              activeOtp: null,
+              status: 'Delivered',
+              completedAt: '2026-08-16T10:30:00.000',
+            ),
+          ),
+        ),
+      );
+
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      // Doorstep decisions happen before handover: once delivered the test
+      // workflow is over, so the entry point is hidden instead of leading
+      // to dead customer actions. Support stays available for
+      // post-delivery refund/replacement requests.
+      expect(find.text('Doorstep milk test'), findsNothing);
+      expect(find.text('Milk test'), findsNothing);
+      expect(find.text('Refund or replacement'), findsOneWidget);
+    });
+
+    testWidgets('doorstep milk test is hidden for failed and cancelled deliveries', (
+      tester,
+    ) async {
+      for (final status in ['Failed', 'Cancelled']) {
+        await _pumpDeliveryScreen(
+          tester,
+          const CustomerDeliveryDetailScreen(deliveryId: 'delivery-1'),
+          DeliveryState(
+            selectedCustomerDelivery: CustomerDelivery.fromJson(
+              customerDeliveryJson(
+                tracking: false,
+                activeOtp: null,
+                status: status,
+                failedAt: status == 'Failed'
+                    ? '2026-08-16T10:30:00.000'
+                    : null,
+                failureReason: status == 'Failed'
+                    ? 'Recipient unavailable'
+                    : null,
+              ),
+            ),
+          ),
+        );
+
+        await tester.drag(find.byType(ListView), const Offset(0, -400));
+        await tester.pumpAndSettle();
+        // The doorstep test workflow ends with the attempt: no milk-test
+        // entry on terminal failure states, while the refund/replacement
+        // support path stays reachable.
+        expect(find.text('Doorstep milk test'), findsNothing);
+        expect(find.text('Milk test'), findsNothing);
+        expect(find.text('Refund or replacement'), findsOneWidget);
+      }
+    });
+
+    testWidgets(
+      'failed delivery prompts the awaiting support-ticket choice',
+      (tester) async {
+        Future<void> pumpFailed({List<RefundReplacementRequest>? tickets}) =>
+            _pumpDeliveryScreen(
+              tester,
+              const CustomerDeliveryDetailScreen(deliveryId: 'delivery-1'),
+              DeliveryState(
+                selectedCustomerDelivery: CustomerDelivery.fromJson(
+                  customerDeliveryJson(
+                    tracking: false,
+                    activeOtp: null,
+                    status: 'Failed',
+                    failedAt: '2026-08-16T10:30:00.000',
+                    failureReason: 'Customer not available',
+                  ),
+                ),
+              ),
+              refundController: _SeededRefundReplacementController(
+                RefundReplacementState(
+                  customerRequests: tickets ?? const [],
+                ),
+              ),
+            );
+
+        // No ticket awaiting choice: the failure banner stands alone with
+        // no action prompt.
+        await pumpFailed();
+        expect(find.text('Delivery failed'), findsOneWidget);
+        expect(find.text('Action required'), findsNothing);
+        expect(
+          find.text(
+            'Please check Support Ticket section and choose your action '
+            'for this order.',
+          ),
+          findsNothing,
+        );
+
+        // Awaiting ticket for this delivery: the prompt appears with a
+        // direct link into the Support Ticket section.
+        await pumpFailed(tickets: [_awaitingChoiceTicket()]);
+        await tester.scrollUntilVisible(
+          find.text(
+            'Please check Support Ticket section and choose your action '
+            'for this order.',
+          ),
+          300,
+        );
+        expect(find.text('Action required'), findsOneWidget);
+        expect(find.text('View ticket'), findsOneWidget);
+
+        // Choice already recorded (locked, waiting on staff approval): no
+        // customer action is required, so no prompt.
+        await pumpFailed(
+          tickets: [_awaitingChoiceTicket(choice: CustomerChoice.refund)],
+        );
+        expect(find.text('Delivery failed'), findsOneWidget);
+        expect(find.text('Action required'), findsNothing);
+      },
+    );
+
     testWidgets('staff actions follow server status and OTP verification', (
       tester,
     ) async {
@@ -780,6 +976,10 @@ void main() {
         controller: controller,
       );
 
+      // The Items section sits above the allocations: scroll them into view.
+      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      await tester.pumpAndSettle();
+
       expect(find.text('Set allocations'), findsNothing);
       expect(find.text('TEST-001'), findsOneWidget);
       expect(find.text('Allocated 2 L'), findsOneWidget);
@@ -808,6 +1008,10 @@ void main() {
         controller: controller,
       );
 
+      // The Items section sits above the allocations: scroll them into view.
+      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      await tester.pumpAndSettle();
+
       expect(find.text('Set allocations'), findsNothing);
       expect(
         find.text('No milk was consumed for this delivery.'),
@@ -835,6 +1039,10 @@ void main() {
         controller.initialState,
         controller: controller,
       );
+
+      // The Items section sits above the allocations: scroll them into view.
+      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      await tester.pumpAndSettle();
 
       await tester.tap(find.text('Set allocations'));
       await tester.pumpAndSettle();
@@ -885,6 +1093,10 @@ void main() {
         controller.initialState,
         controller: controller,
       );
+
+      // The Items section sits above the allocations: scroll them into view.
+      await tester.drag(find.byType(ListView), const Offset(0, -600));
+      await tester.pumpAndSettle();
 
       await tester.tap(find.text('Set allocations'));
       await tester.pumpAndSettle();
@@ -944,6 +1156,59 @@ void main() {
       expect(find.text('Delivery handled by'), findsOneWidget);
       expect(find.text('Not assigned'), findsOneWidget);
     });
+
+    testWidgets('inspection timeline shows date and time for every step', (
+      tester,
+    ) async {
+      await _pumpDeliveryScreen(
+        tester,
+        const DeliveryInspectionScreen(deliveryId: 'delivery-1'),
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              status: 'Failed',
+              failedAt: '2026-08-16T10:30:00.000',
+              failureReason: 'Customer not available',
+              remarks: 'Not picking call',
+            ),
+          ),
+        ),
+      );
+
+        // Expected strings go through the same India-time formatter as the
+        // screen, so the assertions hold on any device timezone while still
+        // proving the reason and the timestamp render together, formatted.
+        final scheduled = formatDeliveryDateTime(
+          DateTime.parse('2026-08-16'),
+        );
+        final assigned = formatDeliveryDateTime(
+          DateTime.parse('2026-08-16T08:00:00.000'),
+        );
+        final failed = formatDeliveryDateTime(
+          DateTime.parse('2026-08-16T10:30:00.000'),
+        );
+        // The timeline lives inside a ListView, so each row is scrolled
+        // into the cache extent before asserting: rows far outside the
+        // viewport are not built yet. Each row is asserted immediately
+        // after scrolling to it, since far rows may unmount again.
+        await tester.scrollUntilVisible(find.text('Scheduled'), 300);
+        expect(find.text('Scheduled'), findsOneWidget);
+        expect(find.text(scheduled), findsOneWidget);
+        await tester.scrollUntilVisible(find.text('Assigned'), 300);
+        expect(find.text('Assigned'), findsOneWidget);
+        expect(find.text(assigned), findsOneWidget);
+        await tester.scrollUntilVisible(find.text('Failed'), 300);
+        expect(find.text('Failed'), findsOneWidget);
+        expect(
+          find.text('Customer not available · $failed'),
+          findsOneWidget,
+        );
+        await tester.scrollUntilVisible(find.text('Not picking call'), 300);
+        expect(find.text('Remarks'), findsOneWidget);
+        expect(find.text('Not picking call'), findsOneWidget);
+        // Raw DateTime.toString() output must never leak into the timeline.
+        expect(find.textContaining('.000'), findsNothing);
+    });
   });
 }
 
@@ -957,20 +1222,25 @@ Map<String, dynamic> locationJson() => {
 Map<String, dynamic> customerDeliveryJson({
   required bool tracking,
   String? activeOtp = '482913',
+  String status = 'OutForDelivery',
+  String? completedAt,
+  String sourceType = 'OneTimeOrder',
+  String? failedAt,
+  String? failureReason,
 }) => {
   'deliveryId': 'delivery-1',
-  'sourceType': 'OneTimeOrder',
+  'sourceType': sourceType,
   'referenceNumber': 'ORD-1001',
-  'status': 'OutForDelivery',
+  'status': status,
   'scheduledDate': '2026-08-16',
   'destinationAddress': '1 Main Street, Pune',
   'assignedEmployeeId': 'employee-1',
   'assignedEmployeeName': 'Delivery Agent',
   'isTrackingActive': tracking,
   'latestLocation': locationJson(),
-  'completedAt': null,
-  'failedAt': null,
-  'failureReason': null,
+  'completedAt': completedAt,
+  'failedAt': failedAt,
+  'failureReason': failureReason,
   'activeOtp': activeOtp,
 };
 
@@ -980,6 +1250,10 @@ Map<String, dynamic> deliveryDetailsJson({
   bool otpVerified = false,
   bool assigned = true,
   List<Map<String, dynamic>> batchAllocations = const [],
+  String? completedAt,
+  String? failedAt,
+  String? failureReason,
+  String? remarks,
 }) => {
   'deliveryId': deliveryId,
   'sourceType': 'OneTimeOrder',
@@ -1003,10 +1277,10 @@ Map<String, dynamic> deliveryDetailsJson({
       : null,
   'arrivedAt': status == 'Arrived' ? '2026-08-16T10:00:00.000' : null,
   'otpVerifiedAt': otpVerified ? '2026-08-16T10:10:00.000' : null,
-  'completedAt': null,
-  'failedAt': null,
-  'failureReason': null,
-  'remarks': null,
+  'completedAt': completedAt,
+  'failedAt': failedAt,
+  'failureReason': failureReason,
+  'remarks': remarks,
   'operationalNotes': null,
   'isTrackingActive': status == 'OutForDelivery',
   'latestLocation': status == 'OutForDelivery' ? locationJson() : null,
@@ -1093,6 +1367,7 @@ Future<void> _pumpDeliveryScreen(
   Widget screen,
   DeliveryState state, {
   DeliveryController? controller,
+  RefundReplacementController? refundController,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -1101,12 +1376,78 @@ Future<void> _pumpDeliveryScreen(
         deliveryControllerProvider.overrideWith(
           () => controller ?? _SeededDeliveryController(state),
         ),
+        if (refundController != null)
+          refundReplacementControllerProvider.overrideWith(
+            () => refundController,
+          ),
       ],
       child: MaterialApp(home: screen),
     ),
   );
   await tester.pumpAndSettle();
 }
+
+/// Seeds the support-ticket controller with a fixed customer list so the
+/// failed-delivery prompt can be tested without network access.
+class _SeededRefundReplacementController extends RefundReplacementController {
+  _SeededRefundReplacementController(this.seed);
+
+  final RefundReplacementState seed;
+
+  bool loadedCustomerList = false;
+
+  @override
+  RefundReplacementState build() => seed;
+
+  @override
+  Future<void> loadCustomerRequests() async {
+    loadedCustomerList = true;
+  }
+}
+
+/// A delivery-fail support ticket for delivery-1. Awaiting-choice with no
+/// recorded choice means the customer still has to act; passing [choice]
+/// simulates the locked state waiting on staff approval instead.
+RefundReplacementRequest _awaitingChoiceTicket({CustomerChoice? choice}) =>
+    RefundReplacementRequest(
+      requestId: 'req-1',
+      requestNumber: 'RR-2026-0001',
+      orderId: null,
+      orderPublicId: null,
+      orderNumber: null,
+      deliveryId: 'delivery-1',
+      deliveryNumber: 'DLV-2001',
+      customerId: 55,
+      customerName: 'Test Customer',
+      customerMobile: '9999999999',
+      branchId: 7,
+      branchCode: 'BR-07',
+      branchName: 'Test Branch',
+      milkTestId: null,
+      milkTestPublicId: null,
+      type: RefundReplacementType.refund,
+      source: RefundReplacementSource.deliveryFailed,
+      status: RefundReplacementStatus.awaitingCustomerChoice,
+      reason: 'Customer not available',
+      remarks: null,
+      submittedAtUtc: DateTime.utc(2026, 8, 16, 9),
+      deadlineUtc: DateTime.utc(2026, 8, 17, 9),
+      decidedByUserId: null,
+      decidedByName: null,
+      decidedAtUtc: null,
+      decisionRemarks: null,
+      completedByUserId: null,
+      completedByName: null,
+      completedAtUtc: null,
+      completionRemarks: null,
+      proofImageRequired: false,
+      images: const [],
+      subscriptionDeliveryPublicId: 'sub-delivery-1',
+      customerChoice: choice,
+      customerChoiceAtUtc: choice == null
+          ? null
+          : DateTime.utc(2026, 8, 16, 12),
+    );
 
 class _AuthenticatedRepository extends AuthRepository {
   @override

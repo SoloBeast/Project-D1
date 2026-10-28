@@ -408,7 +408,7 @@ void main() {
         .toList(growable: false);
     expect(
       previewUrls,
-      contains('http://localhost:5209/api/v1/products/p-1/image'),
+      contains('$apiBaseUrl/api/v1/products/p-1/image'),
     );
 
     // Replacement preview through the same action.

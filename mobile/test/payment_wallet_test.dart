@@ -186,8 +186,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Verification pending'), findsNWidgets(2));
-      expect(find.text('Check status'), findsOneWidget);
-      expect(find.text('Continue Razorpay payment'), findsOneWidget);
       expect(
         find.bySemanticsLabel(
           'Payment status is still being verified. Verification pending. '
@@ -195,6 +193,12 @@ void main() {
         ),
         findsOneWidget,
       );
+      // The persistent bottom nav shortens the body viewport: action buttons
+      // sit below the fold until scrolled into view.
+      await tester.drag(find.byType(ListView), const Offset(0, -500));
+      await tester.pumpAndSettle();
+      expect(find.text('Check status'), findsOneWidget);
+      expect(find.text('Continue Razorpay payment'), findsOneWidget);
     });
 
     testWidgets('expired order payment presents a terminal retry state', (
@@ -219,6 +223,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Payment expired'), findsNWidgets(2));
+      // The persistent bottom nav shortens the body viewport: action buttons
+      // sit below the fold until scrolled into view.
+      await tester.drag(find.byType(ListView), const Offset(0, -500));
+      await tester.pumpAndSettle();
       expect(find.text('Return to order'), findsOneWidget);
       expect(
         find.bySemanticsLabel(
@@ -329,6 +337,9 @@ void main() {
           expect(jsonDecode(request.body), {
             'orderId': 'order-1',
             'method': 'Wallet',
+            // Wallet opt-in defaults OFF; standalone wallet checkout sends it
+            // explicitly so the server never infers intent.
+            'useWalletBalance': false,
           });
           return successResponse(
             paymentJson(method: 'Wallet', status: 'Success'),
@@ -1246,6 +1257,8 @@ class _InsufficientWalletPaymentRepository extends PaymentRepository {
     required String orderId,
     required PaymentMethod method,
     required String idempotencyKey,
+    bool useWalletBalance = false,
+    double? expectedPayableAmount,
   }) async {
     expect(token, 'customer-token');
     expect(orderId, 'order-1');
@@ -1374,6 +1387,9 @@ class _WalletTopUpRepository extends WalletRepository {
     loadCalls++;
     return [WalletTransaction.fromJson(walletTransactionJson())];
   }
+
+  @override
+  Future<List<WithdrawalRequest>> getWithdrawals(String token) async => [];
 }
 
 class _NetworkFailurePaymentRepository extends PaymentRepository {
@@ -1393,5 +1409,7 @@ class _NetworkFailurePaymentRepository extends PaymentRepository {
     required String orderId,
     required PaymentMethod method,
     required String idempotencyKey,
+    bool useWalletBalance = false,
+    double? expectedPayableAmount,
   }) => throw http.ClientException('offline');
 }

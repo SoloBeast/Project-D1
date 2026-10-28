@@ -64,8 +64,15 @@ public sealed class CustomerRefundReplacementController(
             await refundReplacementService.GetEligibilityAsync(
                 RequireRefundReplacementActor(), deliveryId, cancellationToken)));
 
+    /// <summary>
+    /// Stage 2.1: JSON submission carries no evidence, so the service rejects
+    /// it whenever the authoritative evidence rule requires a photo. Photo
+    /// tickets must use the multipart submission below, which binds validated
+    /// evidence atomically with the ticket.
+    /// </summary>
     [HttpPost]
     [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementRequestOwn)]
+    [Consumes("application/json")]
     [ProducesResponseType(typeof(ApiResponse<RefundReplacementRequestResult>), StatusCodes.Status200OK)]
     public async Task<ActionResult<ApiResponse<RefundReplacementRequestResult>>> Submit(
         Guid deliveryId,
@@ -76,6 +83,64 @@ public sealed class CustomerRefundReplacementController(
                 RequireRefundReplacementActor(),
                 request with { DeliveryId = deliveryId },
                 cancellationToken)));
+
+    /// <summary>
+    /// Stage 2.1: multipart submission binding optional proof evidence to the
+    /// ticket in a single atomic transaction. Field values are advisory only:
+    /// ownership, delivery state, source and the evidence requirement are all
+    /// re-derived server-side, and the file is validated exactly like a
+    /// post-creation upload.
+    /// </summary>
+    [HttpPost]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementRequestOwn)]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(RefundReplacementController.MaximumTransportUploadSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = RefundReplacementController.MaximumTransportUploadSize)]
+    [ProducesResponseType(typeof(ApiResponse<RefundReplacementRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<RefundReplacementRequestResult>>> SubmitMultipart(
+        Guid deliveryId,
+        [FromForm] SubmitRefundReplacementForm request,
+        CancellationToken cancellationToken)
+    {
+        if (!Enum.TryParse<RefundReplacementType>(request.Type, ignoreCase: true, out var type))
+        {
+            throw new ValidationAppException("The request type is invalid.", "type");
+        }
+
+        Guid? milkTestId = null;
+        if (!string.IsNullOrWhiteSpace(request.MilkTestId))
+        {
+            if (!Guid.TryParse(request.MilkTestId, out var parsedMilkTestId))
+            {
+                throw new ValidationAppException("The doorstep test reference is invalid.", "milkTestId");
+            }
+
+            milkTestId = parsedMilkTestId;
+        }
+
+        SubmitRefundReplacementImage? image = null;
+        if (request.Image is not null)
+        {
+            await using var content = request.Image.OpenReadStream();
+            image = new SubmitRefundReplacementImage(
+                content,
+                request.Image.FileName,
+                request.Image.ContentType,
+                request.Image.Length);
+            var result = await refundReplacementService.SubmitAsync(
+                RequireRefundReplacementActor(),
+                new SubmitRefundReplacementRequest(deliveryId, type, request.Reason ?? string.Empty, request.Remarks, milkTestId),
+                cancellationToken,
+                image);
+            return Ok(ApiResponse<RefundReplacementRequestResult>.Ok(result));
+        }
+
+        return Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
+            await refundReplacementService.SubmitAsync(
+                RequireRefundReplacementActor(),
+                new SubmitRefundReplacementRequest(deliveryId, type, request.Reason ?? string.Empty, request.Remarks, milkTestId),
+                cancellationToken)));
+    }
 }
 
 /// <summary>
@@ -139,7 +204,7 @@ public sealed class CustomerRefundReplacementListController(
 public sealed class RefundReplacementController(
     IRefundReplacementService refundReplacementService) : RefundReplacementControllerBase
 {
-    private const long MaximumTransportUploadSize = 10L * 1024L * 1024L;
+    internal const long MaximumTransportUploadSize = 10L * 1024L * 1024L;
 
     [HttpGet]
     [Authorize(Policy = AuthorizationPolicyNames.AnyRefundReplacementRequestView)]
@@ -198,6 +263,41 @@ public sealed class RefundReplacementController(
             await refundReplacementService.RejectAsync(
                 RequireRefundReplacementActor(), requestId, request, cancellationToken)));
 
+    /// <summary>
+    /// Legacy remediation: atomically supersedes an approved, order-backed
+    /// Replacement ticket (terminal <c>Superseded</c> status) and creates
+    /// exactly one linked Pending Refund ticket for the same delivery.
+    /// Issues no wallet credit and creates no financial refund record; the
+    /// new ticket follows the standard approval and settlement workflow.
+    /// Idempotent: retrying returns the existing pair.
+    /// </summary>
+    [HttpPost("{requestId:guid}/remediate")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementManageBranch)]
+    [ProducesResponseType(typeof(ApiResponse<RemediateLegacyReplacementResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<RemediateLegacyReplacementResult>>> Remediate(
+        Guid requestId,
+        [FromBody] RemediateLegacyReplacementRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<RemediateLegacyReplacementResult>.Ok(
+            await refundReplacementService.RemediateLegacyReplacementAsync(
+                RequireRefundReplacementActor(), requestId, request, cancellationToken)));
+
+    /// <summary>
+    /// Stage 1: read-only preview of an order-backed Refund ticket's proposed
+    /// wallet settlement. The <c>applyDeduction</c> query flag selects the
+    /// percentage shown (shared configuration or zero). Never mutates state.
+    /// </summary>
+    [HttpGet("{requestId:guid}/order-refund-preview")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementManageBranch)]
+    [ProducesResponseType(typeof(ApiResponse<OrderRefundPreviewResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<OrderRefundPreviewResult>>> PreviewOrderRefund(
+        Guid requestId,
+        [FromQuery] bool applyDeduction,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<OrderRefundPreviewResult>.Ok(
+            await refundReplacementService.PreviewOrderRefundAsync(
+                RequireRefundReplacementActor(), requestId, applyDeduction, cancellationToken)));
+
     [HttpPost("{requestId:guid}/complete")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementManageBranch)]
     [ProducesResponseType(typeof(ApiResponse<RefundReplacementRequestResult>), StatusCodes.Status200OK)]
@@ -207,6 +307,41 @@ public sealed class RefundReplacementController(
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
             await refundReplacementService.CompleteAsync(
+                RequireRefundReplacementActor(), requestId, request, cancellationToken)));
+
+    /// <summary>
+    /// Stage 2: confirms that a manual bank transfer was actually made.
+    /// Records the bank transfer reference (UTR) and settles the reserved
+    /// payment allocations exactly once. Replaying a confirmation for an
+    /// already-completed ticket returns the confirmed result without
+    /// duplicate settlement.
+    /// </summary>
+    [HttpPost("{requestId:guid}/confirm-manual-bank-transfer")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementManageBranch)]
+    [ProducesResponseType(typeof(ApiResponse<RefundReplacementRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<RefundReplacementRequestResult>>> ConfirmManualBankTransfer(
+        Guid requestId,
+        [FromBody] ConfirmManualBankTransferRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
+            await refundReplacementService.ConfirmManualBankTransferAsync(
+                RequireRefundReplacementActor(), requestId, request, cancellationToken)));
+
+    /// <summary>
+    /// Stage 2: explicitly releases a manual-bank reservation before any
+    /// transfer reached the bank (e.g. wrong beneficiary details). Requires
+    /// a nonblank reason and is audited. The ticket moves to terminal
+    /// Rejected; funds are never released automatically.
+    /// </summary>
+    [HttpPost("{requestId:guid}/release-manual-bank-transfer")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementManageBranch)]
+    [ProducesResponseType(typeof(ApiResponse<RefundReplacementRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<RefundReplacementRequestResult>>> ReleaseManualBankTransfer(
+        Guid requestId,
+        [FromBody] ReleaseManualBankTransferRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
+            await refundReplacementService.ReleaseManualBankTransferAsync(
                 RequireRefundReplacementActor(), requestId, request, cancellationToken)));
 
     [HttpPost("{requestId:guid}/images")]
@@ -254,5 +389,14 @@ public sealed class RefundReplacementController(
 
 public sealed class RefundReplacementImageUploadForm
 {
+    public IFormFile? Image { get; init; }
+}
+
+public sealed class SubmitRefundReplacementForm
+{
+    public string? Type { get; init; }
+    public string? Reason { get; init; }
+    public string? Remarks { get; init; }
+    public string? MilkTestId { get; init; }
     public IFormFile? Image { get; init; }
 }

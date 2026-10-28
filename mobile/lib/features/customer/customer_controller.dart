@@ -17,6 +17,7 @@ class CustomerState {
   const CustomerState({
     this.profile,
     this.addresses = const <CustomerAddress>[],
+    this.bankDetail,
     this.isLoading = false,
     this.isSaving = false,
     this.errorMessage,
@@ -25,6 +26,7 @@ class CustomerState {
 
   final CustomerProfile? profile;
   final List<CustomerAddress> addresses;
+  final CustomerBankDetail? bankDetail;
   final bool isLoading;
   final bool isSaving;
   final String? errorMessage;
@@ -33,14 +35,17 @@ class CustomerState {
   CustomerState copyWith({
     CustomerProfile? profile,
     List<CustomerAddress>? addresses,
+    CustomerBankDetail? bankDetail,
     bool? isLoading,
     bool? isSaving,
     String? errorMessage,
     Map<String, String>? fieldErrors,
     bool clearError = false,
+    bool clearBankDetail = false,
   }) => CustomerState(
     profile: profile ?? this.profile,
     addresses: addresses ?? this.addresses,
+    bankDetail: clearBankDetail ? null : bankDetail ?? this.bankDetail,
     isLoading: isLoading ?? this.isLoading,
     isSaving: isSaving ?? this.isSaving,
     errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
@@ -68,10 +73,12 @@ class CustomerController extends Notifier<CustomerState> {
       final results = await Future.wait([
         _repository.getProfile(token),
         _repository.getAddresses(token),
+        _repository.getBankDetail(token),
       ]);
       state = state.copyWith(
         profile: results[0] as CustomerProfile,
         addresses: results[1] as List<CustomerAddress>,
+        bankDetail: results[2] as CustomerBankDetail?,
         isLoading: false,
       );
     } on ApiException catch (error) {
@@ -105,6 +112,31 @@ class CustomerController extends Notifier<CustomerState> {
         isSaving: false,
         errorMessage:
             'Unable to save your profile. Check your connection and try again.',
+      );
+    }
+    return false;
+  }
+
+  Future<bool> saveBankDetail(BankDetailDraft draft) async {
+    final token = _token;
+    if (token == null) return false;
+
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      final bankDetail = await _repository.saveBankDetail(token, draft);
+      state = state.copyWith(bankDetail: bankDetail, isSaving: false);
+      return true;
+    } on ApiException catch (error) {
+      state = state.copyWith(
+        isSaving: false,
+        errorMessage: error.message,
+        fieldErrors: _fieldErrors(error),
+      );
+    } on Object {
+      state = state.copyWith(
+        isSaving: false,
+        errorMessage:
+            'Unable to save bank details. Check your connection and try again.',
       );
     }
     return false;

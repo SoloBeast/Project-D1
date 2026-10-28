@@ -1028,16 +1028,36 @@ public sealed class NumberSeriesServiceTests
         await seed.SeedAsync(CancellationToken.None);
         await seed.SeedAsync(CancellationToken.None);
 
-        // CUSTOMER, ORDER@MAIN, DELIVERY, and REFUNDREPLACEMENT — order numbers are
-        // scoped per active branch, and refund/replacement requests get their own series.
-        Assert.Equal(4, await db.NumberSeries.CountAsync());
+        // CUSTOMER, ORDER@MAIN, SUB@MAIN, DELIVERY, REFUNDREPLACEMENT,
+        // VACATIONREFUND, WITHDRAWAL, and REFUNDBANKEXPORT — order and
+        // subscription numbers are scoped per active branch, and
+        // refund/replacement, end-of-subscription vacation-refund, wallet-
+        // withdrawal, plus manual-bank export-batch requests get their own
+        // series.
+        Assert.Equal(8, await db.NumberSeries.CountAsync());
         Assert.Contains(await db.NumberSeries.Select(x => x.Code).ToListAsync(), code => code == "CUSTOMER");
         Assert.Contains(await db.NumberSeries.Select(x => x.Code).ToListAsync(), code => code == "ORDER");
+        Assert.Contains(
+            await db.NumberSeries.Where(x => x.ScopeKey == "MAIN").Select(x => x.Code).ToListAsync(),
+            code => code == "SUB"
+        );
         Assert.DoesNotContain("BRANCH", await db.NumberSeries.Select(x => x.Code).ToListAsync());
         Assert.Contains(await db.NumberSeries.Select(x => x.Code).ToListAsync(), code => code == "DELIVERY");
         Assert.Contains(
             await db.NumberSeries.Select(x => x.Code).ToListAsync(),
             code => code == "REFUNDREPLACEMENT"
+        );
+        Assert.Contains(
+            await db.NumberSeries.Select(x => x.Code).ToListAsync(),
+            code => code == "VACATIONREFUND"
+        );
+        Assert.Contains(
+            await db.NumberSeries.Select(x => x.Code).ToListAsync(),
+            code => code == "WITHDRAWAL"
+        );
+        Assert.Contains(
+            await db.NumberSeries.Select(x => x.Code).ToListAsync(),
+            code => code == "REFUNDBANKEXPORT"
         );
     }
 
@@ -1060,8 +1080,10 @@ public sealed class NumberSeriesServiceTests
         Assert.Equal("MAIN", order.ScopeKey);
         Assert.Equal(NumberSeriesResetPolicy.FinancialYear, order.ResetPolicy);
         Assert.Equal("DEL/{NUMBER:000000}", series["DELIVERY"].Template);
+        Assert.Equal("RBE/{NUMBER:000000}", series["REFUNDBANKEXPORT"].Template);
         Assert.Equal(NumberSeriesResetPolicy.Never, series["CUSTOMER"].ResetPolicy);
         Assert.Equal(NumberSeriesResetPolicy.Never, series["DELIVERY"].ResetPolicy);
+        Assert.Equal(NumberSeriesResetPolicy.Never, series["REFUNDBANKEXPORT"].ResetPolicy);
         Assert.All(series.Values, item => Assert.True(item.IsActive));
     }
 

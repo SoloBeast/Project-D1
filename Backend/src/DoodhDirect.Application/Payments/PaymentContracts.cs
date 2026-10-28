@@ -4,7 +4,23 @@ namespace DoodhDirect.Application.Payments;
 
 public sealed record CreatePaymentRequest(
     Guid OrderId,
-    PaymentMethod Method);
+    PaymentMethod Method,
+    bool UseWalletBalance = false,
+    decimal? ExpectedPayableAmount = null);
+
+/// <summary>
+/// Server-authoritative wallet-first split plan. The client states only
+/// whether it wants the wallet applied; every amount here is computed by the
+/// server from the frozen payable amount and the actual wallet balance.
+/// </summary>
+public sealed record PaymentPlanResult(
+    Guid? PaymentGroupId,
+    decimal PayableAmount,
+    decimal WalletApplied,
+    decimal RazorpayAmount,
+    bool UsesWallet,
+    PaymentResult Payment,
+    IReadOnlyList<PaymentResult> Components);
 
 public sealed record VerifyPaymentRequest(
     Guid PaymentId,
@@ -21,6 +37,7 @@ public sealed record RefundPaymentRequest(
 
 public sealed record PaymentResult(
     Guid PublicId,
+    Guid? PaymentGroupId,
     Guid? OrderId,
     string? OrderNumber,
     PaymentMethod Method,
@@ -171,6 +188,28 @@ public interface IPaymentService
         string idempotencyKey,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Wallet-first split plan for an order. Reuses the order path's frozen
+    /// payable amount, transaction and evidence protocol.
+    /// </summary>
+    Task<PaymentPlanResult> CreateOrderPlanAsync(
+        long customerId,
+        Guid orderId,
+        bool useWalletBalance,
+        string idempotencyKey,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Wallet-first split plan for a subscription's initial purchase.
+    /// </summary>
+    Task<PaymentPlanResult> CreateSubscriptionPlanAsync(
+        long customerId,
+        long subscriptionId,
+        bool useWalletBalance,
+        string idempotencyKey,
+        CancellationToken cancellationToken,
+        bool expirePriorAttempts = false);
+
     Task<PaymentResult> RetrySubscriptionAsync(
         long customerId,
         Guid subscriptionId,
@@ -241,6 +280,7 @@ public static class PaymentMappings
         string? gatewayKeyId = null,
         string? provider = null) => new(
         payment.PublicId,
+        payment.PaymentGroupId,
         payment.Order?.PublicId,
         payment.Order?.OrderNumber,
         payment.Method,

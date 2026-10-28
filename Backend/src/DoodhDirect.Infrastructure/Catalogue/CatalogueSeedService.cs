@@ -58,6 +58,10 @@ public sealed class CatalogueSeedService(
             await numberSeriesSeedService.EnsureScopedOrderSeriesAsync(
                 branch.Code,
                 cancellationToken);
+            // Same guarantee for the branch-scoped SUBSCRIPTION series.
+            await numberSeriesSeedService.EnsureScopedSubscriptionSeriesAsync(
+                branch.Code,
+                cancellationToken);
 
             var product = await dbContext.Products
                 .SingleOrDefaultAsync(item => item.Sku == FreshBuffaloMilkSku, cancellationToken);

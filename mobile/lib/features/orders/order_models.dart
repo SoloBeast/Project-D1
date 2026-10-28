@@ -290,6 +290,110 @@ class OrderChargeLine {
       : '${percentage.toStringAsFixed(2)}%';
 }
 
+class OrderCancellationRefundInfo {
+  const OrderCancellationRefundInfo({
+    required this.grossBasis,
+    required this.deductionPercentage,
+    required this.deductionAmount,
+    required this.refundedAmount,
+    required this.status,
+  });
+
+  factory OrderCancellationRefundInfo.fromJson(Map<String, dynamic> json) =>
+      OrderCancellationRefundInfo(
+        grossBasis: (json['grossBasis'] as num).toDouble(),
+        deductionPercentage: (json['deductionPercentage'] as num).toDouble(),
+        deductionAmount: (json['deductionAmount'] as num).toDouble(),
+        refundedAmount: (json['refundedAmount'] as num).toDouble(),
+        status: json['status'] as String,
+      );
+
+  final double grossBasis;
+  final double deductionPercentage;
+  final double deductionAmount;
+  final double refundedAmount;
+  final String status;
+}
+
+class OrderCancellationInfo {
+  const OrderCancellationInfo({
+    required this.reasonCode,
+    this.comment,
+    required this.cancelledByUserId,
+    required this.cancelledAt,
+    this.refund,
+  });
+
+  factory OrderCancellationInfo.fromJson(Map<String, dynamic> json) =>
+      OrderCancellationInfo(
+        reasonCode: json['reasonCode'] as String,
+        comment: json['comment'] as String?,
+        cancelledByUserId: (json['cancelledByUserId'] as num).toInt(),
+        cancelledAt: DateTime.parse(json['cancelledAt'] as String),
+        refund: json['refund'] == null
+            ? null
+            : OrderCancellationRefundInfo.fromJson(
+                json['refund'] as Map<String, dynamic>,
+              ),
+      );
+
+  final String reasonCode;
+  final String? comment;
+  final int cancelledByUserId;
+  final DateTime cancelledAt;
+  final OrderCancellationRefundInfo? refund;
+}
+
+class CancelOrderPreview {
+  const CancelOrderPreview({
+    required this.canCancel,
+    this.blockReason,
+    this.deliveryStatus,
+    required this.pickupOccurred,
+    required this.deductionPercentage,
+    required this.grossBasis,
+    required this.deductionAmount,
+    required this.estimatedRefund,
+    required this.eligiblePaidAmount,
+    required this.requiresConfirmation,
+  });
+
+  factory CancelOrderPreview.fromJson(Map<String, dynamic> json) =>
+      CancelOrderPreview(
+        canCancel: json['canCancel'] as bool,
+        blockReason: json['blockReason'] as String?,
+        deliveryStatus: json['deliveryStatus'] as String?,
+        pickupOccurred: json['pickupOccurred'] as bool? ?? false,
+        deductionPercentage:
+            (json['deductionPercentage'] as num? ?? 0).toDouble(),
+        grossBasis: (json['grossBasis'] as num? ?? 0).toDouble(),
+        deductionAmount: (json['deductionAmount'] as num? ?? 0).toDouble(),
+        estimatedRefund: (json['estimatedRefund'] as num? ?? 0).toDouble(),
+        eligiblePaidAmount: (json['eligiblePaidAmount'] as num? ?? 0).toDouble(),
+        requiresConfirmation:
+            json['requiresConfirmation'] as bool? ?? false,
+      );
+
+  final bool canCancel;
+  final String? blockReason;
+  final String? deliveryStatus;
+  final bool pickupOccurred;
+  final double deductionPercentage;
+  final double grossBasis;
+  final double deductionAmount;
+  final double estimatedRefund;
+  final double eligiblePaidAmount;
+  final bool requiresConfirmation;
+}
+
+const orderCancellationReasons = <String>[
+  'OrderedByMistake',
+  'ChangedMind',
+  'DuplicateOrder',
+  'DeliveryTimeNoLongerSuitable',
+  'Other',
+];
+
 class OrderSummary {
   const OrderSummary({
     required this.publicId,
@@ -313,6 +417,7 @@ class OrderSummary {
     required this.deliveryPublicId,
     required this.deliveryReferenceNumber,
     required this.deliveryStatus,
+    this.cancellation,
   });
 
   factory OrderSummary.fromJson(Map<String, dynamic> json) => OrderSummary(
@@ -347,6 +452,11 @@ class OrderSummary {
     deliveryPublicId: json['deliveryPublicId'] as String?,
     deliveryReferenceNumber: json['deliveryReferenceNumber'] as String?,
     deliveryStatus: json['deliveryStatus'] as String?,
+    cancellation: json['cancellation'] == null
+        ? null
+        : OrderCancellationInfo.fromJson(
+            json['cancellation'] as Map<String, dynamic>,
+          ),
   );
 
   final String publicId;
@@ -370,8 +480,17 @@ class OrderSummary {
   final String? deliveryPublicId;
   final String? deliveryReferenceNumber;
   final String? deliveryStatus;
+  final OrderCancellationInfo? cancellation;
 
-  bool get canCancel => status.toLowerCase() == 'confirmed';
+  bool get canCancel {
+    final normalized = status.toLowerCase();
+    // Mirrors the server: cancellation stays possible after pickup while the
+    // order is still Assigned / OutForDelivery; Delivered / Failed /
+    // Cancelled route to the status/help path instead.
+    return normalized == 'confirmed' ||
+        normalized == 'assigned' ||
+        normalized == 'outfordelivery';
+  }
   String get formattedTotal => '₹${payableAmount.toStringAsFixed(2)}';
   String get itemSummary => items
       .map((item) => '${item.productName} × ${formatQuantity(item.quantity)}')

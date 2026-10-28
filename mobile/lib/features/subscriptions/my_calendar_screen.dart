@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart'
@@ -38,6 +39,11 @@ class MyCalendarScreen extends ConsumerStatefulWidget {
 }
 
 class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
+  DateTime _dateOnly(DateTime value) {
+    final india = indiaWallClock(value);
+    return DateTime(india.year, india.month, india.day);
+  }
+
   /// The month the grid displays (any day within the month).
   late DateTime _visibleMonth;
 
@@ -53,14 +59,11 @@ class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
   @override
   void initState() {
     super.initState();
-    final today = _dateOnly(DateTime.now());
+    final today = _dateOnly(indiaNow());
     _visibleMonth = DateTime(today.year, today.month);
     _selectedDate = today;
     Future.microtask(_refresh);
   }
-
-  DateTime _dateOnly(DateTime value) =>
-      DateTime(value.year, value.month, value.day);
 
   Future<void> _refresh() async {
     // Materialized deliveries + orders (Home controllers; deduped by
@@ -105,7 +108,7 @@ class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
   }
 
   void _goToToday() {
-    final today = _dateOnly(DateTime.now());
+    final today = _dateOnly(indiaNow());
     setState(() {
       _visibleMonth = DateTime(today.year, today.month);
       _selectedDate = today;
@@ -128,7 +131,7 @@ class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
         delivery.errorMessage != null ||
         subscription.errorMessage != null;
 
-    final today = _dateOnly(DateTime.now());
+    final today = _dateOnly(indiaNow());
     final composed = _composeCalendar(
       deliveries: delivery.customerDeliveries,
       occurrencesBySubscription: _occurrencesBySubscription,
@@ -138,6 +141,9 @@ class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
 
     return Scaffold(
       backgroundColor: DoodhColors.cream,
+      bottomNavigationBar: const CustomerBottomNavigation(
+        currentPath: '/my-calendar',
+      ),
       appBar: AppBar(
         title: const Text('My Calendar'),
         actions: [
@@ -195,6 +201,7 @@ class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
                       color: DoodhColors.upcomingBlue,
                       label: 'Upcoming',
                     ),
+                    _LegendDot(color: DoodhColors.amber, label: 'Past due'),
                     _LegendDot(color: DoodhColors.coral, label: 'Failed'),
                     _LegendDot(color: DoodhColors.muted, label: 'No Delivery'),
                   ],
@@ -234,11 +241,16 @@ class _MyCalendarScreenState extends ConsumerState<MyCalendarScreen> {
 // Composition layer — view models over existing domain models only
 // ---------------------------------------------------------------------------
 
-/// Composed grid state. D1-D slice 7 adds [failed] (the original failed
-/// occurrence stays visible on its date with an accurate status) and
-/// [cancelled] (a voided pre-pickup operational delivery renders honestly
-/// instead of as Upcoming or Unknown).
-enum _CalendarState { vacationSkipped, delivered, upcoming, failed, cancelled }
+/// Composed grid state. A scheduled occurrence past its India-local date is
+/// shown as [pastDue], not Upcoming; that presentation does not assert failure.
+enum _CalendarState {
+  vacationSkipped,
+  delivered,
+  pastDue,
+  upcoming,
+  failed,
+  cancelled,
+}
 
 /// One composed entry for a date. Holds references to the REAL underlying
 /// records — the screen never fabricates delivery data.
@@ -251,28 +263,39 @@ class _CalendarEntry {
     this.owner,
   });
 
-  /// A real Delivery record (authoritative for status). [order] carries the
-  /// order enrichment (items) when the reference matches a loaded order.
-  /// Delivered shows only on backend-confirmed delivery; failed and
-  /// cancelled operational deliveries keep their own terminal states.
+  /// A real Delivery record (authoritative for its operational status). [order]
+  /// carries order enrichment when the reference matches a loaded order. The
+  /// calendar marks an overdue subscription date separately without changing
+  /// the underlying delivery status.
   factory _CalendarEntry.fromDelivery(
     CustomerDelivery delivery,
     OrderSummary? order,
-  ) => _CalendarEntry._(
-    state: switch (delivery.status) {
+  ) {
+    final terminalState = switch (delivery.status) {
       DeliveryStatus.delivered => _CalendarState.delivered,
       DeliveryStatus.failed => _CalendarState.failed,
       DeliveryStatus.cancelled => _CalendarState.cancelled,
-      _ => _CalendarState.upcoming,
-    },
-    delivery: delivery,
-    order: order,
-  );
+      _ => null,
+    };
+    final isPastDueSubscription =
+        delivery.sourceType == DeliverySourceType.subscriptionOccurrence &&
+        delivery.isPastDue;
+    return _CalendarEntry._(
+      state:
+          terminalState ??
+          (isPastDueSubscription
+              ? _CalendarState.pastDue
+              : _CalendarState.upcoming),
+      delivery: delivery,
+      order: order,
+    );
+  }
 
-  /// A subscription occurrence with no Delivery: scheduled → Upcoming (this
-  /// is how an approved replacement renders on its date until the backend
-  /// advances it), failed → Failed (the original failure stays visible even
-  /// when no operational Delivery row exists, e.g. milk-test rejections),
+  /// A subscription occurrence with no Delivery: scheduled → Upcoming or
+  /// Past due according to its India-local date (an approved replacement also
+  /// remains scheduled until the backend advances it), failed → Failed (the
+  /// original failure stays visible even when no operational Delivery row exists,
+  /// e.g. milk-test rejections),
   /// skipped/cancelled → Vacation/Skipped. [owner] is the subscription the
   /// calendar was loaded for (provenance), used for product identity.
   /// Delivered occurrences are intentionally not composed here: their
@@ -284,9 +307,10 @@ class _CalendarEntry {
   ) => _CalendarEntry._(
     state: switch (occurrence.status) {
       SubscriptionDeliveryStatus.skipped ||
-      SubscriptionDeliveryStatus.cancelled =>
-        _CalendarState.vacationSkipped,
+      SubscriptionDeliveryStatus.cancelled => _CalendarState.vacationSkipped,
       SubscriptionDeliveryStatus.failed => _CalendarState.failed,
+      SubscriptionDeliveryStatus.scheduled =>
+        occurrence.isPastDue ? _CalendarState.pastDue : _CalendarState.upcoming,
       _ => _CalendarState.upcoming,
     },
     occurrence: occurrence,
@@ -314,7 +338,10 @@ Map<DateTime, List<_CalendarEntry>> _composeCalendar({
   required List<SubscriptionDetails> subscriptions,
   required List<OrderSummary> orders,
 }) {
-  DateTime day(DateTime value) => DateTime(value.year, value.month, value.day);
+  DateTime day(DateTime value) {
+    final india = indiaWallClock(value);
+    return DateTime(india.year, india.month, india.day);
+  }
 
   final ordersByNumber = <String, OrderSummary>{
     for (final order in orders) order.orderNumber: order,
@@ -348,37 +375,39 @@ Map<DateTime, List<_CalendarEntry>> _composeCalendar({
           occurrence.status == SubscriptionDeliveryStatus.cancelled;
       final isScheduled =
           occurrence.status == SubscriptionDeliveryStatus.scheduled;
-      // D1-D slice 7: failed occurrences stay visible (the original
-      // failure's date keeps its Failed status). Delivered occurrences are
-      // skipped — their materialized Delivery row (source 1) is
-      // authoritative and rendering both would duplicate the date.
-      final isFailed =
-          occurrence.status == SubscriptionDeliveryStatus.failed;
+      // Failed occurrences stay visible (the original failure's date keeps
+      // its Failed status). Delivered occurrences are skipped — their
+      // materialized Delivery row (source 1) is authoritative and rendering
+      // both would duplicate the date.
+      final isFailed = occurrence.status == SubscriptionDeliveryStatus.failed;
       if (!isSkipped && !isScheduled && !isFailed) continue;
 
-      final date = day(occurrence.scheduledDate);
+      final scheduledDate = indiaWallClock(occurrence.scheduledDate);
+      final date = day(scheduledDate);
       final dateEntries = byDate[date] ?? const <_CalendarEntry>[];
       // A scheduled occurrence is suppressed ONLY by ITS OWN materialized
-      // Delivery — matched via the backend's deterministic reference
-      // `SUB-{subscriptionPublicId:N}-{yyyyMMdd}` (DeliveryService, where
-      // {N} is the GUID without dashes). Another subscription's Delivery on
-      // the same date must never hide it.
-      final materializedRefs = dateEntries
-          .where((item) => item.delivery != null)
-          .map((item) => item.delivery!.referenceNumber.toLowerCase())
+      // Delivery — matched on the explicit subscription id + occurrence
+      // date from the API contract, never on reference text. Another
+      // subscription's Delivery on the same date must never hide it.
+      final materializedKeys = dateEntries
+          .where(
+            (item) =>
+                item.delivery != null &&
+                item.delivery!.sourceType ==
+                    DeliverySourceType.subscriptionOccurrence &&
+                item.delivery!.subscriptionId != null,
+          )
+          .map(
+            (item) =>
+                '${item.delivery!.subscriptionId}|${day(item.delivery!.scheduledDate)}',
+          )
           .toSet();
-      final stamp =
-          '${occurrence.scheduledDate.year.toString().padLeft(4, '0')}'
-          '${occurrence.scheduledDate.month.toString().padLeft(2, '0')}'
-          '${occurrence.scheduledDate.day.toString().padLeft(2, '0')}';
-      final ownDeliveryReference =
-          'sub-${entry.key.replaceAll('-', '')}-$stamp';
+      final ownKey = '${entry.key}|$date';
       // A scheduled OR failed occurrence is suppressed ONLY by ITS OWN
       // materialized Delivery — the Delivery row then carries the date's
       // status (Upcoming in-flight, Failed after staff confirm the
       // failure). Skipped occurrences never have a Delivery.
-      if ((isScheduled || isFailed) &&
-          materializedRefs.contains(ownDeliveryReference)) {
+      if ((isScheduled || isFailed) && materializedKeys.contains(ownKey)) {
         continue;
       }
 
@@ -387,10 +416,7 @@ Map<DateTime, List<_CalendarEntry>> _composeCalendar({
       // A scheduled occurrence is only ever suppressed by ITS OWN materialized
       // Delivery (checked above via the deterministic reference number).
 
-      add(
-        occurrence.scheduledDate,
-        _CalendarEntry.fromOccurrence(occurrence, owner),
-      );
+      add(scheduledDate, _CalendarEntry.fromOccurrence(occurrence, owner));
     }
   }
   return byDate;
@@ -401,6 +427,7 @@ Color _stateDotColor(_CalendarState? state, {required bool selected}) {
   return switch (state) {
     _CalendarState.vacationSkipped => DoodhColors.coral,
     _CalendarState.delivered => DoodhColors.deliveredGreen,
+    _CalendarState.pastDue => DoodhColors.amber,
     _CalendarState.upcoming => DoodhColors.upcomingBlue,
     _CalendarState.failed => DoodhColors.coral,
     _CalendarState.cancelled => DoodhColors.muted,
@@ -411,6 +438,7 @@ Color _stateDotColor(_CalendarState? state, {required bool selected}) {
 String _stateLegend(_CalendarState? state) => switch (state) {
   _CalendarState.vacationSkipped => 'Vacation',
   _CalendarState.delivered => 'Delivered',
+  _CalendarState.pastDue => 'Past due',
   _CalendarState.upcoming => 'Upcoming',
   _CalendarState.failed => 'Failed',
   _CalendarState.cancelled => 'Cancelled',
@@ -629,14 +657,14 @@ class _MonthCard extends StatelessWidget {
       (item) => item.state == _CalendarState.vacationSkipped,
     )) {
       state = _CalendarState.vacationSkipped;
-    } else if (dayEntries.any(
-      (item) => item.state == _CalendarState.failed,
-    )) {
+    } else if (dayEntries.any((item) => item.state == _CalendarState.failed)) {
       state = _CalendarState.failed;
     } else if (dayEntries.any(
       (item) => item.state == _CalendarState.delivered,
     )) {
       state = _CalendarState.delivered;
+    } else if (dayEntries.any((item) => item.state == _CalendarState.pastDue)) {
+      state = _CalendarState.pastDue;
     } else if (dayEntries.any(
       (item) => item.state == _CalendarState.upcoming,
     )) {
@@ -874,7 +902,7 @@ class _DeliveryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final title = order == null || order!.items.isEmpty
-        ? '${delivery.sourceType.label} · ${delivery.referenceNumber}'
+        ? '${delivery.sourceType.label} · ${delivery.trackingReference}'
         : order!.items
               .map(
                 (item) =>
@@ -884,7 +912,7 @@ class _DeliveryRow extends StatelessWidget {
     return DoodhCard(
       color: Colors.white,
       semanticLabel:
-          '${delivery.sourceType.label} delivery ${delivery.referenceNumber}, ${delivery.status.label}',
+          '${delivery.sourceType.label} delivery ${delivery.trackingReference}, ${delivery.status.label}',
       onTap: () => context.push('/deliveries/${delivery.deliveryId}'),
       child: Row(
         children: [
@@ -930,7 +958,8 @@ class _DeliveryRow extends StatelessWidget {
 }
 
 /// Subscription occurrence WITHOUT a Delivery row (future scheduled →
-/// Upcoming; skipped/cancelled → Vacation/Skipped). Product identity comes
+/// Upcoming; past scheduled → Past due; skipped/cancelled → Vacation/Skipped).
+/// Product identity comes
 /// from the owning subscription (calendar provenance) — never invented.
 class _OccurrenceRow extends StatelessWidget {
   const _OccurrenceRow({required this.occurrence, required this.owner});
@@ -944,6 +973,7 @@ class _OccurrenceRow extends StatelessWidget {
         occurrence.status == SubscriptionDeliveryStatus.skipped ||
         occurrence.status == SubscriptionDeliveryStatus.cancelled;
     final isFailed = occurrence.status == SubscriptionDeliveryStatus.failed;
+    final isPastDue = occurrence.isPastDue;
     // D1-D slice 7.2: replacement occurrences render on their own scheduled
     // date with an explicit Replacement delivery label. The original failed
     // occurrence stays visible as its own Failed row on its own date.
@@ -955,6 +985,8 @@ class _OccurrenceRow extends StatelessWidget {
               ? 'vacation or skipped'
               : isFailed
               ? 'failed'
+              : isPastDue
+              ? 'past due'
               : isReplacement
               ? 'replacement'
               : 'upcoming'} '
@@ -998,20 +1030,19 @@ class _OccurrenceRow extends StatelessWidget {
                 ),
                 const SizedBox(height: DoodhSpacing.xs),
                 DoodhStatusPill(
-                  // Legend language: a scheduled occurrence without a Delivery
-                  // is 'Upcoming' — or 'Replacement delivery' when the backend
-                  // flags it as a re-delivery replacement; skipped/cancelled
-                  // is 'Vacation / Skipped'; a failed occurrence without a
-                  // Delivery keeps 'Failed'. Real Delivery rows keep their
-                  // actual status labels.
+                  // Scheduled occurrences are Upcoming until their date passes;
+                  // replacements keep their explicit label. Skipped/cancelled
+                  // stays Vacation / Skipped, and failures remain Failed.
                   label: isSkipped
                       ? 'Vacation / Skipped'
                       : isFailed
                       ? 'Failed'
+                      : isPastDue
+                      ? 'Past due'
                       : isReplacement
                       ? 'Replacement delivery'
                       : 'Upcoming',
-                  tone: isSkipped
+                  tone: isSkipped || isPastDue
                       ? DoodhStatusTone.warning
                       : isFailed
                       ? DoodhStatusTone.error

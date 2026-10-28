@@ -1,8 +1,11 @@
+import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
 import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
+import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import 'wallet_controller.dart';
 import 'wallet_models.dart';
@@ -68,6 +71,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                             wallet: wallet,
                             busy: state.isSaving,
                             onAddMoney: () => _showTopUpDialog(context),
+                            onWithdraw: () => _showWithdrawFlow(context),
                           ),
                           const SizedBox(height: DoodhSpacing.md),
                           const DoodhInfoBanner(
@@ -80,6 +84,13 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                           if (state.errorMessage != null) ...[
                             const SizedBox(height: DoodhSpacing.md),
                             DoodhErrorBanner(message: state.errorMessage!),
+                          ],
+                          if (state.withdrawals.isNotEmpty) ...[
+                            const SizedBox(height: DoodhSpacing.lg),
+                            const DoodhSectionHeader(title: 'Withdrawals'),
+                            const SizedBox(height: DoodhSpacing.sm),
+                            for (final withdrawal in state.withdrawals)
+                              _WithdrawalTile(withdrawal: withdrawal),
                           ],
                           const SizedBox(height: DoodhSpacing.lg),
                           const DoodhSectionHeader(title: 'Transactions'),
@@ -100,6 +111,88 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
               ),
             ),
     );
+  }
+
+  /// Withdrawal entry point. Re-reads the authoritative bank-details state
+  /// on every tap: missing details block submission with the exact
+  /// requested message plus a Profile action, while check failures show a
+  /// retryable error and change nothing.
+  Future<void> _showWithdrawFlow(BuildContext context) async {
+    final notifier = ref.read(walletControllerProvider.notifier);
+    final balance = ref.read(walletControllerProvider).wallet?.balance ?? 0;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    CustomerBankDetail? bankDetail;
+    String? loadError;
+    try {
+      bankDetail = await notifier.fetchBankDetail();
+    } on ApiException catch (error) {
+      loadError = error.message;
+    } on Object {
+      loadError =
+          'Unable to reach DoodhDirect. Check your connection and try again.';
+    }
+    if (!context.mounted) return;
+    Navigator.of(context).pop();
+
+    if (loadError != null) {
+      final retry = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => _BankDetailErrorDialog(
+          message: loadError!,
+        ),
+      );
+      if (retry == true && context.mounted) _showWithdrawFlow(context);
+      return;
+    }
+    if (bankDetail == null) {
+      final opened = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => const _MissingBankDetailsDialog(),
+      );
+      if (opened == true && context.mounted) {
+        context.push('/customer/bank-detail');
+      }
+      return;
+    }
+
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => _WithdrawDialog(
+        bankDetail: bankDetail!,
+        balance: balance,
+      ),
+    );
+    if (amount == null || amount <= 0 || !context.mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => _WithdrawConfirmDialog(
+        bankDetail: bankDetail!,
+        amount: amount,
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    final navigator = Navigator.of(context);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    final message = await notifier.submitWithdrawal(amount);
+    if (!context.mounted) return;
+    navigator.pop();
+    if (message == null) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
   }
 
   Future<void> _showTopUpDialog(BuildContext context) async {
@@ -226,11 +319,13 @@ class _BalancePanel extends StatelessWidget {
     required this.wallet,
     required this.busy,
     required this.onAddMoney,
+    required this.onWithdraw,
   });
 
   final WalletDetails wallet;
   final bool busy;
   final VoidCallback onAddMoney;
+  final VoidCallback onWithdraw;
 
   @override
   Widget build(BuildContext context) {
@@ -286,6 +381,17 @@ class _BalancePanel extends StatelessWidget {
             style: FilledButton.styleFrom(
               backgroundColor: DoodhColors.mint,
               foregroundColor: DoodhColors.tealDark,
+              minimumSize: const Size(double.infinity, 48),
+            ),
+          ),
+          const SizedBox(height: DoodhSpacing.sm),
+          OutlinedButton.icon(
+            onPressed: busy ? null : onWithdraw,
+            icon: const Icon(Icons.north_east),
+            label: const Text('Withdraw'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: const BorderSide(color: Colors.white70),
               minimumSize: const Size(double.infinity, 48),
             ),
           ),
@@ -383,6 +489,276 @@ class _TransactionTile extends StatelessWidget {
               transaction.formattedAmount,
               style: theme.textTheme.titleMedium?.copyWith(
                 color: credit ? DoodhColors.successForeground : DoodhColors.ink,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown when the authoritative bank-details check fails. No financial
+/// change is made; the customer can retry the check.
+class _BankDetailErrorDialog extends StatelessWidget {
+  const _BankDetailErrorDialog({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Could not check bank details'),
+    content: Text(message),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context, false),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, true),
+        child: const Text('Retry'),
+      ),
+    ],
+  );
+}
+
+/// Shown when no bank details are saved. Uses the exact requested message
+/// and offers a direct action into the Profile Bank Details section.
+class _MissingBankDetailsDialog extends StatelessWidget {
+  const _MissingBankDetailsDialog();
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Bank details required'),
+    content: const Text(
+      'Please check the bank details on profile section before withdraw request.',
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context, false),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, true),
+        child: const Text('Open bank details'),
+      ),
+    ],
+  );
+}
+
+/// Amount entry for a withdrawal. Repeats the bank-details reminder and
+/// shows the masked destination plus the live available balance so the
+/// customer can verify where the money is going. Client validation only:
+/// the backend revalidates amount, balance, and bank details on submit.
+class _WithdrawDialog extends StatefulWidget {
+  const _WithdrawDialog({required this.bankDetail, required this.balance});
+
+  final CustomerBankDetail bankDetail;
+  final double balance;
+
+  @override
+  State<_WithdrawDialog> createState() => _WithdrawDialogState();
+}
+
+class _WithdrawDialogState extends State<_WithdrawDialog> {
+  final _controller = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('Withdraw to bank'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Please check the bank details on profile section before withdraw request.',
+            ),
+            const SizedBox(height: DoodhSpacing.md),
+            DoodhCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.bankDetail.bankName,
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(widget.bankDetail.maskedAccountNumber),
+                  Text(
+                    'IFSC ${widget.bankDetail.ifsc}',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: DoodhSpacing.md),
+            Text(
+              'Available balance: ₹${widget.balance.toStringAsFixed(2)}',
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: DoodhSpacing.sm),
+            DoodhField(
+              label: 'Amount',
+              controller: _controller,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              prefixIcon: const Padding(
+                padding: EdgeInsets.only(
+                  left: DoodhSpacing.md,
+                  right: DoodhSpacing.sm,
+                ),
+                child: Text('₹'),
+              ),
+              validator: (value) =>
+                  validateWithdrawalAmount(value, widget.balance),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (!_formKey.currentState!.validate()) return;
+            Navigator.pop(context, double.parse(_controller.text.trim()));
+          },
+          child: const Text('Continue'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Explicit confirmation before the withdrawal request is submitted.
+class _WithdrawConfirmDialog extends StatelessWidget {
+  const _WithdrawConfirmDialog({required this.bankDetail, required this.amount});
+
+  final CustomerBankDetail bankDetail;
+  final double amount;
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Confirm withdrawal'),
+    content: Text(
+      'Withdraw ₹${amount.toStringAsFixed(2)} to ${bankDetail.bankName} '
+      '${bankDetail.maskedAccountNumber}? The request will stay pending '
+      'until our team completes the bank transfer.',
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context, false),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, true),
+        child: const Text('Confirm withdrawal'),
+      ),
+    ],
+  );
+}
+
+/// A single withdrawal request with its workflow status and masked
+/// destination. Read-only.
+class _WithdrawalTile extends StatelessWidget {
+  const _WithdrawalTile({required this.withdrawal});
+
+  final WithdrawalRequest withdrawal;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tone = switch (withdrawal.status) {
+      WithdrawalStatus.pending => DoodhStatusTone.warning,
+      WithdrawalStatus.completed => DoodhStatusTone.success,
+      WithdrawalStatus.rejected => DoodhStatusTone.neutral,
+    };
+    return Padding(
+      padding: const EdgeInsets.only(bottom: DoodhSpacing.sm),
+      child: DoodhCard(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: const BoxDecoration(
+                color: DoodhColors.neutralSurface,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.north_east,
+                size: 20,
+                color: DoodhColors.neutralForeground,
+              ),
+            ),
+            const SizedBox(width: DoodhSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    withdrawal.requestNumber,
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: DoodhSpacing.xs),
+                  Text(
+                    withdrawal.maskedDestination,
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  Wrap(
+                    spacing: DoodhSpacing.sm,
+                    runSpacing: DoodhSpacing.xs,
+                    children: [
+                      DoodhStatusPill(
+                        label: withdrawal.statusLabel,
+                        tone: tone,
+                      ),
+                    ],
+                  ),
+                  if (withdrawal.isCompleted &&
+                      withdrawal.transferReference != null &&
+                      withdrawal.transferReference!.isNotEmpty) ...[
+                    const SizedBox(height: DoodhSpacing.xs),
+                    Text(
+                      'UTR: ${withdrawal.transferReference}',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
+                  if (withdrawal.decisionRemarks != null &&
+                      withdrawal.decisionRemarks!.isNotEmpty) ...[
+                    const SizedBox(height: DoodhSpacing.xs),
+                    Text(
+                      withdrawal.decisionRemarks!,
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: DoodhSpacing.sm),
+            Text(
+              '-${withdrawal.formattedAmount}',
+              style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
             ),

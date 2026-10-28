@@ -81,6 +81,28 @@ public sealed class CustomerController(
         return Ok(ApiResponse<object>.Ok(new { }, "Address deactivated."));
     }
 
+    [HttpGet("bank-detail")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.ProfileReadOwn)]
+    [ProducesResponseType(typeof(ApiResponse<CustomerBankDetailResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<CustomerBankDetailResult?>>> GetBankDetail(CancellationToken cancellationToken) =>
+        Ok(ApiResponse<CustomerBankDetailResult?>.Ok(
+            await customerService.GetBankDetailAsync(RequireUserId(), cancellationToken)));
+
+    [HttpPut("bank-detail")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.ProfileUpdateOwn)]
+    [ProducesResponseType(typeof(ApiResponse<CustomerBankDetailResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<CustomerBankDetailResult>>> SaveBankDetail(
+        [FromBody] CustomerBankDetailApiRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await customerService.SaveBankDetailAsync(
+            RequireUserId(),
+            new UpsertCustomerBankDetailRequest(
+                request.AccountHolderName, request.BankName, request.AccountNumber, request.Ifsc),
+            cancellationToken);
+        return Ok(ApiResponse<CustomerBankDetailResult>.Ok(result, "Bank details saved."));
+    }
+
     [HttpGet("address-lookup/reverse")]
     [Authorize(Policy = "permission:" + AuthorizationCodes.ProfileUpdateOwn)]
     [ProducesResponseType(typeof(ApiResponse<AddressLookupResult?>), StatusCodes.Status200OK)]
@@ -101,6 +123,12 @@ public sealed class CustomerController(
             : throw new UnauthorizedAppException();
     }
 }
+
+public sealed record CustomerBankDetailApiRequest(
+    [Required, MaxLength(100)] string AccountHolderName,
+    [Required, MaxLength(100)] string BankName,
+    [MaxLength(18)] string? AccountNumber,
+    [Required, MaxLength(11)] string Ifsc);
 
 public sealed record UpdateCustomerProfileApiRequest(
     [MaxLength(100)] string? FirstName,

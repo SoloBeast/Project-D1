@@ -60,6 +60,29 @@ class CustomerRepository {
     return CustomerAddress.fromJson(response['data'] as Map<String, dynamic>);
   }
 
+  Future<CustomerBankDetail?> getBankDetail(String token) async {
+    final response = await api.get(
+      '/api/v1/customers/me/bank-detail',
+      accessToken: token,
+    );
+    final data = response['data'];
+    return data is Map<String, dynamic>
+        ? CustomerBankDetail.fromJson(data)
+        : null;
+  }
+
+  Future<CustomerBankDetail> saveBankDetail(
+    String token,
+    BankDetailDraft request,
+  ) async {
+    final response = await api.put(
+      '/api/v1/customers/me/bank-detail',
+      body: request.toJson(),
+      accessToken: token,
+    );
+    return CustomerBankDetail.fromJson(response['data'] as Map<String, dynamic>);
+  }
+
   Future<void> deactivateAddress(String token, String addressId) async {
     await api.delete(
       '/api/v1/customers/me/addresses/$addressId',

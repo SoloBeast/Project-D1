@@ -17,8 +17,12 @@ public sealed class NumberSeriesSeedService(DoodhDirectDbContext dbContext)
 {
     public const string CustomerCode = "CUSTOMER";
     public const string OrderCode = "ORDER";
+    public const string SubscriptionCode = "SUB";
     public const string DeliveryCode = "DELIVERY";
     public const string RefundReplacementCode = "REFUNDREPLACEMENT";
+    public const string VacationRefundCode = "VACATIONREFUND";
+    public const string WithdrawalCode = "WITHDRAWAL";
+    public const string RefundBankExportCode = "REFUNDBANKEXPORT";
 
     public async Task SeedAsync(CancellationToken cancellationToken)
     {
@@ -49,6 +53,8 @@ public sealed class NumberSeriesSeedService(DoodhDirectDbContext dbContext)
 
             await EnsureScopedOrderSeriesForAllBranchesAsync(cancellationToken);
 
+            await EnsureScopedSubscriptionSeriesForAllBranchesAsync(cancellationToken);
+
             await UpgradeLegacyScopedOrderSeriesAsync(cancellationToken);
 
             await EnsureSeriesAsync(
@@ -61,6 +67,24 @@ public sealed class NumberSeriesSeedService(DoodhDirectDbContext dbContext)
                 RefundReplacementCode,
                 "Customer refund/replacement request numbers",
                 "RR/{NUMBER:000000}",
+                cancellationToken);
+
+            await EnsureSeriesAsync(
+                VacationRefundCode,
+                "End-of-subscription vacation-refund request numbers",
+                "VR/{NUMBER:000000}",
+                cancellationToken);
+
+            await EnsureSeriesAsync(
+                WithdrawalCode,
+                "Customer wallet withdrawal request numbers",
+                "WD/{NUMBER:000000}",
+                cancellationToken);
+
+            await EnsureSeriesAsync(
+                RefundBankExportCode,
+                "Manual-bank refund export batch numbers",
+                "RBE/{NUMBER:000000}",
                 cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);
@@ -110,6 +134,65 @@ public sealed class NumberSeriesSeedService(DoodhDirectDbContext dbContext)
             cancellationToken,
             scopeKey,
             NumberSeriesResetPolicy.FinancialYear);
+    }
+
+    /// <summary>
+    /// Ensures the scoped SUBSCRIPTION series for <paramref name="branchCode"/>
+    /// exists. Public so branch-creating services can guarantee a scoped
+    /// series at creation time. Idempotent — a live counter is never reset or
+    /// mutated. Subscription document numbers render the branch scope and the
+    /// Indian financial year (e.g. SUB/DB0001/26-27/000001); like the legacy
+    /// SUB_DB0001/SUB_DB0002 rows (code <c>SUB_&lt;scope&gt;</c>) the counter
+    /// never resets. Branches already covered by a scope-suffixed legacy row
+    /// are left untouched — the allocator's documented suffix fallback
+    /// resolves those — so no existing row is shadowed or reconfigured.
+    /// </summary>
+    public async Task EnsureScopedSubscriptionSeriesAsync(
+        string branchCode,
+        CancellationToken cancellationToken)
+    {
+        var scopeKey = NormalizeScope(branchCode);
+        if (scopeKey.Length == 0)
+        {
+            return;
+        }
+
+        var covered = await dbContext.NumberSeries
+            .AnyAsync(
+                item => (item.Code == SubscriptionCode && item.ScopeKey == scopeKey)
+                    || (item.Code == SubscriptionCode + "_" + scopeKey && item.ScopeKey == scopeKey),
+                cancellationToken);
+        if (covered)
+        {
+            return;
+        }
+
+        await EnsureSeriesAsync(
+            SubscriptionCode,
+            $"Subscription document numbers for branch {scopeKey}",
+            $"SUB/{scopeKey}/{{FY}}/{{NUMBER:000000}}",
+            cancellationToken,
+            scopeKey,
+            NumberSeriesResetPolicy.Never);
+    }
+
+    /// <summary>
+    /// Seeds one SUBSCRIPTION series per active branch that is not already
+    /// covered by an exact or scope-suffixed legacy row.
+    /// </summary>
+    private async Task EnsureScopedSubscriptionSeriesForAllBranchesAsync(
+        CancellationToken cancellationToken)
+    {
+        var activeBranchCodes = await dbContext.Branches
+            .Where(branch => branch.IsActive)
+            .Select(branch => branch.Code)
+            .OrderBy(code => code)
+            .ToListAsync(cancellationToken);
+
+        foreach (var branchCode in activeBranchCodes)
+        {
+            await EnsureScopedSubscriptionSeriesAsync(branchCode, cancellationToken);
+        }
     }
 
     /// <summary>

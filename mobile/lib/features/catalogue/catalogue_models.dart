@@ -114,6 +114,7 @@ class CatalogueProduct {
     required this.branchAvailability,
     this.imageUrl,
     this.applicableCharges = const [],
+    this.allowOrderOutsideBranchRadius = false,
   });
 
   factory CatalogueProduct.fromJson(Map<String, dynamic> json) =>
@@ -128,6 +129,8 @@ class CatalogueProduct {
         unitOfMeasure: json['unitOfMeasure'] as String,
         price: (json['price'] as num).toDouble(),
         isActive: json['isActive'] as bool,
+        allowOrderOutsideBranchRadius:
+            json['allowOrderOutsideBranchRadius'] as bool? ?? false,
         imageUrl: json['imageUrl'] as String?,
         branchAvailability: (json['branchAvailability'] as List<dynamic>)
             .map(
@@ -157,6 +160,7 @@ class CatalogueProduct {
     'unitOfMeasure': unitOfMeasure,
     'price': price,
     'isActive': isActive,
+    'allowOrderOutsideBranchRadius': allowOrderOutsideBranchRadius,
     'imageUrl': imageUrl,
     'branchAvailability': branchAvailability
         .map((item) => item.toJson())
@@ -172,6 +176,11 @@ class CatalogueProduct {
   final double price;
   final bool isActive;
   final List<BranchAvailability> branchAvailability;
+
+  /// Location eligibility: when true the product may be ordered for delivery
+  /// outside every branch service radius. Authoritative server flag;
+  /// defaults to false for payloads that predate the field.
+  final bool allowOrderOutsideBranchRadius;
 
   /// Optional product imagery. Additive and nullable: the API does not send it
   /// today, so callers MUST render a branded fallback when this is `null` or
@@ -243,6 +252,7 @@ class ProductDraft {
     required this.price,
     this.branchIds = const [],
     this.chargeIds = const [],
+    this.allowOrderOutsideBranchRadius = false,
   });
 
   factory ProductDraft.fromProduct(CatalogueProduct product) => ProductDraft(
@@ -258,6 +268,7 @@ class ProductDraft {
     chargeIds: product.applicableCharges
         .map((charge) => charge.chargeId)
         .toList(growable: false),
+    allowOrderOutsideBranchRadius: product.allowOrderOutsideBranchRadius,
   );
 
   final String sku;
@@ -278,6 +289,10 @@ class ProductDraft {
   /// (including kept inactive assignments) must always be sent.
   final List<String> chargeIds;
 
+  /// Location eligibility sent as `allowOrderOutsideBranchRadius` on
+  /// create/update. Defaults to false (inside-radius-only).
+  final bool allowOrderOutsideBranchRadius;
+
   Map<String, dynamic> toJson() => {
     'sku': sku.trim(),
     'name': name.trim(),
@@ -287,6 +302,7 @@ class ProductDraft {
     'price': price,
     'branchIds': branchIds,
     'applicableChargeIds': chargeIds,
+    'allowOrderOutsideBranchRadius': allowOrderOutsideBranchRadius,
   };
 }
 

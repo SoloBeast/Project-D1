@@ -181,8 +181,16 @@ public sealed class DeliveryFailTimeoutProcessor(
             return null;
         }
 
-        var deductionPercentage = ticket.DeliveryFailDeductionPercentageSnapshot;
-        if (deductionPercentage is null)
+        decimal deductionPercentage;
+        try
+        {
+            deductionPercentage = DeliveryFailRefund.EffectiveDeductionPercentage(
+                ticket.Source,
+                ticket.SubscriptionDeliveryId,
+                ticket.AppliedDeductionPercentage,
+                ticket.DeliveryFailDeductionPercentageSnapshot);
+        }
+        catch (ConflictException)
         {
             logger.LogError(
                 "Delivery-fail timeout cannot resolve ticket {RequestNumber}: the deduction snapshot is missing.",
@@ -209,7 +217,7 @@ public sealed class DeliveryFailTimeoutProcessor(
         var amounts = DeliveryFailRefund.Calculate(
             subscription.PayableAmount,
             subscription.TotalEntitlement,
-            deductionPercentage.Value,
+            deductionPercentage,
             payment.Amount,
             payment.RefundedAmount);
         var gross = amounts.Gross;
@@ -242,7 +250,7 @@ public sealed class DeliveryFailTimeoutProcessor(
                 paymentOptions.Value.Currency,
                 final,
                 idempotencyKey,
-                $"Delivery-fail auto-refund {ticket.RequestNumber} for delivery {deliveryNumber}",
+                $"Delivery-fail auto-refund {ticket.RequestNumber} for subscription {subscription.SubscriptionNumber ?? deliveryNumber}",
                 now,
                 cancellationToken);
             DeliveryFailRefund.RecordRefund(
@@ -313,7 +321,7 @@ public sealed class DeliveryFailTimeoutProcessor(
                 ticket.RequestNumber,
                 DeliveryNumber = deliveryNumber,
                 GrossRefund = gross,
-                DeductionPercentage = deductionPercentage.Value,
+                DeductionPercentage = deductionPercentage,
                 DeductionAmount = deduction,
                 WalletCredit = final,
                 SubscriptionPayable = subscription.PayableAmount,
@@ -339,7 +347,7 @@ public sealed class DeliveryFailTimeoutProcessor(
                 ["requestNumber"] = ticket.RequestNumber,
                 ["deliveryNumber"] = deliveryNumber,
                 ["grossRefund"] = gross.ToString("0.00", CultureInfo.InvariantCulture),
-                ["deductionPercentage"] = deductionPercentage.Value.ToString("0.##", CultureInfo.InvariantCulture),
+                ["deductionPercentage"] = deductionPercentage.ToString("0.##", CultureInfo.InvariantCulture),
                 ["deductionAmount"] = deduction.ToString("0.00", CultureInfo.InvariantCulture),
                 ["walletCredit"] = final.ToString("0.00", CultureInfo.InvariantCulture),
                 ["message"] =
@@ -388,7 +396,7 @@ public sealed class DeliveryFailTimeoutProcessor(
             ticket.RequestNumber,
             deliveryNumber,
             gross,
-            deductionPercentage.Value,
+            deductionPercentage,
             deduction,
             final);
     }

@@ -286,7 +286,7 @@ public sealed class RefundReplacementChoiceTests
         // for the same value stays idempotent, anything else is rejected.
         await service.ApproveAsync(
             new RefundReplacementActor(harness.Manager.Id, new HashSet<long> { harness.Branch.Id }, true),
-            requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            requestId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         var same = await service.ChooseAsync(
             CustomerActor(harness), requestId,
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);

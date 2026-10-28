@@ -7,6 +7,7 @@ using DoodhDirect.Application.Identity;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Identity;
+using DoodhDirect.Domain.Notifications;
 using DoodhDirect.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -138,6 +139,17 @@ public sealed class AuthenticationService(
 
         var now = timeProvider.Now;
         await RevokeSessionAsync(session, now, "USER_LOGOUT", cancellationToken);
+        // The session is bound to the same stable installation identifier as the
+        // notification device registry (SHA-256 of the client device id), so the
+        // logged-out installation stops receiving this user's pushes. Other
+        // devices belonging to the same user are never touched here.
+        var device = await dbContext.UserDevices.SingleOrDefaultAsync(
+            x => x.UserId == userId && x.DeviceIdentifierHash == session.DeviceIdentifierHash,
+            cancellationToken);
+        if (device is not null && device.IsActive)
+        {
+            device.Invalidate(now);
+        }
         await WriteAuditAsync(userId, "AUTH_LOGOUT", "UserSession", session.PublicId.ToString(), null, null, "User logout", cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
     }

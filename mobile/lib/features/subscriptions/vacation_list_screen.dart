@@ -214,6 +214,9 @@ class _VacationListScreenState extends ConsumerState<VacationListScreen> {
 
     return Scaffold(
       backgroundColor: DoodhColors.cream,
+      bottomNavigationBar: const CustomerBottomNavigation(
+        currentPath: '/subscriptions/vacations',
+      ),
       appBar: AppBar(
         title: const Text('My Vacations'),
         actions: [

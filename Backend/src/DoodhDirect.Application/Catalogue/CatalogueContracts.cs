@@ -38,6 +38,7 @@ public sealed record ProductResult(
     string UnitOfMeasure,
     decimal Price,
     bool IsActive,
+    bool AllowOrderOutsideBranchRadius,
     // Customer-facing image URL (null when no image is configured). Never a
     // storage key or server filesystem path.
     string? ImageUrl,
@@ -59,7 +60,10 @@ public sealed record UpsertProductRequest(
     IReadOnlyList<Guid> BranchIds,
     // Optional item-level Tax & Charges assignment (charge public ids). Null is
     // treated as "no charges" for backwards compatibility with existing callers.
-    IReadOnlyList<Guid>? ApplicableChargeIds = null);
+    IReadOnlyList<Guid>? ApplicableChargeIds = null,
+    // Optional location eligibility: when true the product may be ordered for
+    // delivery outside every branch radius. Null preserves the current value.
+    bool? AllowOrderOutsideBranchRadius = null);
 
 public sealed record SetProductBranchAvailabilityRequest(
     Guid BranchId,
@@ -155,6 +159,7 @@ public static class CatalogueMappings
         product.UnitOfMeasure,
         product.Price,
         product.IsActive,
+        product.AllowOrderOutsideBranchRadius,
         product.ProductImages.Count > 0
             ? $"/api/v1/products/{product.PublicId}/image"
             : null,

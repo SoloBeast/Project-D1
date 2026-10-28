@@ -6,6 +6,7 @@ import 'package:doodh_direct_mobile/features/auth/otp_onboarding_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/otp_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/security_screens.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
+import 'package:doodh_direct_mobile/features/bank_exports/bank_export_screens.dart';
 import 'package:doodh_direct_mobile/features/branding/admin_branding_screen.dart';
 import 'package:doodh_direct_mobile/features/branding/branding_gate.dart';
 import 'package:doodh_direct_mobile/features/branding/branding_splash.dart';
@@ -15,8 +16,10 @@ import 'package:doodh_direct_mobile/features/customer/customer_screens.dart';
 import 'package:doodh_direct_mobile/features/cameras/camera_screens.dart';
 import 'package:doodh_direct_mobile/features/branches/branch_models.dart';
 import 'package:doodh_direct_mobile/features/branches/branch_screens.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_models.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
 import 'package:doodh_direct_mobile/features/refund_replacement/refund_replacement_screens.dart';
+import 'package:doodh_direct_mobile/features/refund_replacement/staff_vacation_refund_screens.dart';
 import 'package:doodh_direct_mobile/features/refund_replacement_config/refund_replacement_config_screen.dart';
 import 'package:doodh_direct_mobile/features/employees/employee_models.dart';
 import 'package:doodh_direct_mobile/features/employees/employee_screens.dart';
@@ -252,6 +255,10 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const CustomerProfileEditScreen(),
       ),
       GoRoute(
+        path: '/customer/bank-detail',
+        builder: (context, state) => const CustomerBankDetailEditScreen(),
+      ),
+      GoRoute(
         path: '/customer/addresses/new',
         builder: (context, state) => const CustomerAddressEditScreen(),
       ),
@@ -341,7 +348,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/subscriptions/new',
-        builder: (context, state) => const SubscriptionSetupScreen(),
+        builder: (context, state) => SubscriptionSetupScreen(
+          initialProductId: _subscriptionNewProductId(state.extra),
+        ),
       ),
       GoRoute(
         path: '/subscriptions/:subscriptionId',
@@ -518,7 +527,10 @@ final routerProvider = Provider<GoRouter>((ref) {
           final deliveryId = _requiredPathParameter(state, 'deliveryId');
           return deliveryId == null
               ? const _RouteErrorScreen(resource: 'delivery')
-              : CustomerMilkTestScreen(deliveryId: deliveryId);
+              : CustomerMilkTestScreen(
+                  deliveryId: deliveryId,
+                  sourceType: _deliverySourceFromQuery(state),
+                );
         },
       ),
       GoRoute(
@@ -531,6 +543,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               : CustomerRefundReplacementScreen(
                   deliveryId: deliveryId,
                   milkTestId: milkTestId,
+                  sourceType: _deliverySourceFromQuery(state),
                 );
         },
       ),
@@ -558,12 +571,39 @@ final routerProvider = Provider<GoRouter>((ref) {
         },
       ),
       GoRoute(
+        path: '/finance/bank-exports',
+        builder: (context, state) => const BankExportListScreen(),
+      ),
+      GoRoute(
+        path: '/finance/bank-exports/:batchId',
+        builder: (context, state) {
+          final batchId = _requiredPathParameter(state, 'batchId');
+          return batchId == null
+              ? const _RouteErrorScreen(resource: 'export batch')
+              : BankExportDetailScreen(batchId: batchId);
+        },
+      ),
+      GoRoute(
         path: '/staff/refund-replacements/:requestId',
         builder: (context, state) {
           final requestId = _requiredPathParameter(state, 'requestId');
           return requestId == null
               ? const _RouteErrorScreen(resource: 'refund/replacement request')
               : StaffRefundReplacementDetailScreen(requestId: requestId);
+        },
+      ),
+      GoRoute(
+        path: '/staff/vacation-refunds',
+        builder: (context, state) =>
+            const StaffVacationRefundListScreen(),
+      ),
+      GoRoute(
+        path: '/staff/vacation-refunds/:requestId',
+        builder: (context, state) {
+          final requestId = _requiredPathParameter(state, 'requestId');
+          return requestId == null
+              ? const _RouteErrorScreen(resource: 'vacation-refund request')
+              : StaffVacationRefundDetailScreen(requestId: requestId);
         },
       ),
       GoRoute(
@@ -643,6 +683,19 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/dairy/dashboard',
         builder: (context, state) => const DairyDashboardScreen(),
+      ),
+      // Per-dairy dashboard entry from the home screen: lands directly on
+      // that dairy's dashboard with no branch-selection step.
+      GoRoute(
+        path: '/dairy/branch/:branchId/dashboard',
+        builder: (context, state) {
+          final branchId = int.tryParse(
+            _requiredPathParameter(state, 'branchId') ?? '',
+          );
+          return branchId == null
+              ? const _RouteErrorScreen(resource: 'dairy branch')
+              : DairyDashboardScreen(branchId: branchId);
+        },
       ),
       GoRoute(
         path: '/dairy/branch/:branchId/production/new',
@@ -725,6 +778,42 @@ final routerProvider = Provider<GoRouter>((ref) {
 String? _requiredPathParameter(GoRouterState state, String name) {
   final value = state.pathParameters[name]?.trim();
   return value == null || value.isEmpty ? null : value;
+}
+
+/// Authoritative delivery source carried as the `source` query parameter
+/// (the `sourceType` value from the deliveries API). Unknown or absent values
+/// return null so the refund/replacement screen fails safe to refund-only
+/// instead of offering an unsupported Replacement option.
+DeliverySourceType? _deliverySourceFromQuery(GoRouterState state) {
+  final value = state.uri.queryParameters['source']?.trim();
+  if (value == null || value.isEmpty) return null;
+  final parsed = DeliverySourceType.fromApi(value);
+  return parsed == DeliverySourceType.unknown ? null : parsed;
+}
+
+/// Product preselected on the New subscription screen when the customer
+/// tapped Subscribe on a product card. Accepts the product itself, a
+/// `{'product': ...}` payload, or a raw product-id string; anything else
+/// (including absent) returns null so the screen falls back to the first
+/// available product.
+String? _subscriptionNewProductId(Object? extra) {
+  if (extra is CatalogueProduct) return extra.publicId;
+  if (extra is String) {
+    final trimmed = extra.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+  if (extra is Map<String, dynamic>) {
+    final product = extra['product'];
+    if (product is CatalogueProduct) return product.publicId;
+    if (product is String && product.trim().isNotEmpty) {
+      return product.trim();
+    }
+    final productId = extra['productId'];
+    if (productId is String && productId.trim().isNotEmpty) {
+      return productId.trim();
+    }
+  }
+  return null;
 }
 
 /// Parses an optional `yyyy-MM-dd` query parameter (e.g. the prefilled From

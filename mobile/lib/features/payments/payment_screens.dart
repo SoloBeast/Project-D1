@@ -59,6 +59,9 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
     final walletState = ref.watch(walletControllerProvider);
     final order = _order;
     return Scaffold(
+      bottomNavigationBar: CustomerBottomNavigation(
+        currentPath: '/orders/${widget.orderId}/payment',
+      ),
       appBar: AppBar(title: const Text('Payment')),
       body: order == null
           ? orderState.isLoading
@@ -123,8 +126,7 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                 if (paymentState.capabilities.isEmpty &&
                     paymentState.errorMessage == null)
                   const LinearProgressIndicator(),
-                if (paymentState.selectedMethod == PaymentMethod.wallet &&
-                    walletState.wallet != null)
+                if (walletState.wallet != null)
                   Card(
                     color: DoodhColors.mint,
                     child: ListTile(
@@ -139,6 +141,47 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                           fontWeight: FontWeight.w800,
                           color: DoodhColors.tealDark,
                         ),
+                      ),
+                    ),
+                  ),
+                SwitchListTile(
+                  value: paymentState.useWalletBalance,
+                  onChanged: paymentState.isLoading
+                      ? null
+                      : (value) => ref
+                          .read(paymentControllerProvider.notifier)
+                          .setUseWalletBalance(value),
+                  title: const Text('Use wallet balance'),
+                  subtitle: Text(
+                    paymentState.useWalletBalance
+                        ? 'Wallet funds are applied first; the rest goes through Razorpay.'
+                        : 'Off — the full amount will be charged through Razorpay.',
+                  ),
+                ),
+                if (paymentState.plan != null)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Server-confirmed breakdown',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Payable: ${paymentState.plan!.formattedPayable}',
+                          ),
+                          Text(
+                            'Wallet applied: ${paymentState.plan!.formattedWallet}',
+                          ),
+                          Text(
+                            paymentState.plan!.needsRazorpay
+                                ? 'Remaining via Razorpay: ${paymentState.plan!.formattedRazorpay}'
+                                : 'Wallet covers the full amount — no Razorpay step.',
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -183,15 +226,17 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                   onPressed: paymentState.isLoading
                       ? null
                       : () async {
-                          final created = await ref
+                          final plan = await ref
                               .read(paymentControllerProvider.notifier)
-                              .createForOrder(order.publicId);
-                          if (!context.mounted || !created) return;
+                              .createPlanForOrder(order.publicId);
+                          if (!context.mounted || plan == null) return;
 
                           final payment = ref
                               .read(paymentControllerProvider)
                               .payment;
                           if (payment == null) return;
+                          // Wallet-only plans complete without Razorpay; the
+                          // result screen reflects only backend-confirmed state.
                           if (payment.usesRazorpay &&
                               payment.status.isPending) {
                             await ref
@@ -314,6 +359,9 @@ class _PaymentResultScreenState extends ConsumerState<PaymentResultScreen> {
       });
     }
     return Scaffold(
+      bottomNavigationBar: const CustomerBottomNavigation(
+        currentPath: '/orders',
+      ),
       appBar: AppBar(
         title: Text(
           payment?.status.isSuccessful == true &&

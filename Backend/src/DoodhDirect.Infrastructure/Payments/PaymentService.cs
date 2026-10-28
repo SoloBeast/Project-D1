@@ -132,8 +132,11 @@ public sealed class PaymentService(
                     payment.Succeed(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
                 }
 
-                await ConfirmTargetAsync(payment, now, cancellationToken, recovered);
-                AddPaymentOutcomeEvents(payment);
+                var planConfirmed = await ConfirmPlanOrTargetAsync(payment, now, cancellationToken, recovered);
+                if (!planConfirmed || !payment.PaymentGroupId.HasValue)
+                {
+                    AddPaymentOutcomeEvents(payment);
+                }
             }
             else
             {
@@ -150,7 +153,7 @@ public sealed class PaymentService(
                     payment.Expire(now);
                 }
 
-                FailTarget(payment);
+                await FailPlanOrTargetAsync(payment, cancellationToken);
                 AddPaymentOutcomeEvents(payment);
             }
 
@@ -165,6 +168,24 @@ public sealed class PaymentService(
         CancellationToken cancellationToken)
     {
         ValidateIdempotencyKey(idempotencyKey);
+        if (request.UseWalletBalance && request.Method == PaymentMethod.Razorpay)
+        {
+            var routed = await CreatePlanCoreAsync(
+                customerId,
+                request.OrderId,
+                subscriptionPublicId: null,
+                useWalletBalance: true,
+                idempotencyKey.Trim(),
+                cancellationToken);
+            var routedResult = await ToPlanResultAsync(routed, cancellationToken);
+            if (request.ExpectedPayableAmount.HasValue &&
+                request.ExpectedPayableAmount.Value != routedResult.PayableAmount)
+            {
+                throw new ConflictException("The checkout total changed. Please refresh and try again.");
+            }
+
+            return routedResult.Payment;
+        }
         var existing = await PaymentQuery().SingleOrDefaultAsync(
             x => x.CustomerId == customerId && x.IdempotencyKey == idempotencyKey.Trim(),
             cancellationToken);
@@ -195,7 +216,7 @@ public sealed class PaymentService(
             .Where(x => x.OrderId == order.Id)
             .ToListAsync(cancellationToken);
         await EnsurePreviousAttemptsSafeAsync(orderPayments, cancellationToken);
-        EnsureNoActivePayment(orderPayments, "order");
+        EnsureNoActivePayment(WithoutAbandonedPlanComponents(orderPayments), "order");
         var attemptEvidence = CaptureAttemptEvidence(orderPayments);
 
         var payment = new Payment(
@@ -218,7 +239,7 @@ public sealed class PaymentService(
                     dbContext.Payments.Where(x => x.OrderId == order.Id),
                     attemptEvidence,
                     cancellationToken);
-                EnsureNoActivePayment(currentPayments, "order");
+                EnsureNoActivePayment(WithoutAbandonedPlanComponents(currentPayments), "order");
                 await dbContext.SaveChangesAsync(cancellationToken);
                 payment.MarkWalletPending();
                 await walletService.DebitOrderAsync(
@@ -244,7 +265,7 @@ public sealed class PaymentService(
                     dbContext.Payments.Where(x => x.OrderId == order.Id),
                     attemptEvidence,
                     cancellationToken);
-                EnsureNoActivePayment(currentPayments, "order");
+                EnsureNoActivePayment(WithoutAbandonedPlanComponents(currentPayments), "order");
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
             var selectedGateway = await GatewayForAsync(payment.Method, cancellationToken);
@@ -318,7 +339,7 @@ public sealed class PaymentService(
             .Where(x => x.SubscriptionId == subscription.Id)
             .ToListAsync(cancellationToken);
         await EnsurePreviousAttemptsSafeAsync(subscriptionPayments, cancellationToken);
-        EnsureNoActivePayment(subscriptionPayments, "subscription");
+        EnsureNoActivePayment(WithoutAbandonedPlanComponents(subscriptionPayments), "subscription");
         var attemptEvidence = CaptureAttemptEvidence(subscriptionPayments);
 
         var payment = Payment.CreateForSubscription(
@@ -341,7 +362,7 @@ public sealed class PaymentService(
                     dbContext.Payments.Where(x => x.SubscriptionId == subscription.Id),
                     attemptEvidence,
                     cancellationToken);
-                EnsureNoActivePayment(currentPayments, "subscription");
+                EnsureNoActivePayment(WithoutAbandonedPlanComponents(currentPayments), "subscription");
                 await dbContext.SaveChangesAsync(cancellationToken);
                 payment.MarkWalletPending();
                 await walletService.DebitSubscriptionAsync(
@@ -367,7 +388,7 @@ public sealed class PaymentService(
                     dbContext.Payments.Where(x => x.SubscriptionId == subscription.Id),
                     attemptEvidence,
                     cancellationToken);
-                EnsureNoActivePayment(currentPayments, "subscription");
+                EnsureNoActivePayment(WithoutAbandonedPlanComponents(currentPayments), "subscription");
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
             var selectedGateway = await GatewayForAsync(payment.Method, cancellationToken);
@@ -424,8 +445,10 @@ public sealed class PaymentService(
             return existing.ToResult(await PublicKeyForAsync(existing.Method, cancellationToken), ProviderFor(existing.Method));
         }
 
+        // Stage 1 employee self-ordering: active employees may top up their own
+        // wallet exactly like customers. Inactive accounts stay rejected here.
         var customerExists = await dbContext.Users.AnyAsync(
-            x => x.Id == customerId && x.IsActive && x.UserType == DoodhDirect.Domain.Identity.UserType.Customer,
+            x => x.Id == customerId && x.IsActive && (x.UserType == DoodhDirect.Domain.Identity.UserType.Customer || x.UserType == DoodhDirect.Domain.Identity.UserType.Employee),
             cancellationToken);
         if (!customerExists)
         {
@@ -516,7 +539,7 @@ public sealed class PaymentService(
             .Where(x => x.SubscriptionId == subscription.Id)
             .ToListAsync(cancellationToken);
         await EnsurePreviousAttemptsSafeAsync(subscriptionPayments, cancellationToken);
-        EnsureNoCompletedPayment(subscriptionPayments, "subscription");
+        EnsureNoCompletedPayment(WithoutAbandonedPlanComponents(subscriptionPayments), "subscription");
         var attemptEvidence = CaptureAttemptEvidence(subscriptionPayments);
 
         var payment = Payment.CreateForSubscription(
@@ -537,7 +560,7 @@ public sealed class PaymentService(
                 dbContext.Payments.Where(x => x.SubscriptionId == subscription.Id),
                 attemptEvidence,
                 cancellationToken);
-            EnsureNoCompletedPayment(currentPayments, "subscription");
+            EnsureNoCompletedPayment(WithoutAbandonedPlanComponents(currentPayments), "subscription");
             foreach (var activePayment in currentPayments.Where(x =>
                 x.Status == PaymentStatus.Initiated || x.Status == PaymentStatus.Pending))
             {
@@ -606,6 +629,102 @@ public sealed class PaymentService(
 
         await LoadPaymentNavigationsAsync(payment, cancellationToken);
         return payment.ToResult(await PublicKeyForAsync(payment.Method, cancellationToken), ProviderFor(payment.Method));
+    }
+
+    /// <summary>
+    /// Wallet-first split plan for a one-time order. The client states only
+    /// <paramref name="useWalletBalance"/>; the payable total comes from the
+    /// frozen order amount and every component amount is server-computed.
+    /// With wallet usage off (or an empty wallet) this behaves exactly like a
+    /// Razorpay-only <see cref="CreateAsync"/> call.
+    /// </summary>
+    public async Task<PaymentPlanResult> CreateOrderPlanAsync(
+        long customerId,
+        Guid orderId,
+        bool useWalletBalance,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        ValidateIdempotencyKey(idempotencyKey);
+        var plan = await CreatePlanCoreAsync(
+            customerId,
+            orderId,
+            subscriptionPublicId: null,
+            useWalletBalance,
+            idempotencyKey.Trim(),
+            cancellationToken);
+        return await ToPlanResultAsync(plan, cancellationToken);
+    }
+
+    /// <summary>
+    /// Wallet-first split plan for a prepaid subscription's initial purchase
+    /// (or a retry when <paramref name="expirePriorAttempts"/> expires
+    /// still-active prior attempts and releases their held wallet legs first,
+    /// mirroring the legacy retry replacement protocol).
+    /// </summary>
+    public async Task<PaymentPlanResult> CreateSubscriptionPlanAsync(
+        long customerId,
+        long subscriptionId,
+        bool useWalletBalance,
+        string idempotencyKey,
+        CancellationToken cancellationToken,
+        bool expirePriorAttempts = false)
+    {
+        ValidateIdempotencyKey(idempotencyKey);
+        if (expirePriorAttempts)
+        {
+            await ExpirePriorSubscriptionAttemptsAsync(customerId, subscriptionId, cancellationToken);
+        }
+
+        var plan = await CreatePlanCoreAsync(
+            customerId,
+            orderPublicId: null,
+            subscriptionPublicId: null,
+            useWalletBalance,
+            idempotencyKey.Trim(),
+            cancellationToken,
+            subscriptionIdOverride: subscriptionId);
+        return await ToPlanResultAsync(plan, cancellationToken);
+    }
+
+    private async Task ExpirePriorSubscriptionAttemptsAsync(
+        long customerId,
+        long subscriptionId,
+        CancellationToken cancellationToken)
+    {
+        await ExecuteSerializableAsync(async () =>
+        {
+            var target = await dbContext.Subscriptions.SingleOrDefaultAsync(
+                x => x.Id == subscriptionId && x.CustomerId == customerId,
+                cancellationToken)
+                ?? throw new NotFoundException("The subscription was not found.");
+            EnsureSubscriptionCanStartPayment(target, allowFailed: true);
+            var priors = await dbContext.Payments
+                .Include(x => x.Refunds)
+                .Where(x => x.SubscriptionId == target.Id)
+                .ToListAsync(cancellationToken);
+            EnsureNoCompletedPayment(WithoutAbandonedPlanComponents(priors), "subscription");
+            var now = timeProvider.Now;
+            foreach (var active in priors.Where(x =>
+                x.Status == PaymentStatus.Initiated || x.Status == PaymentStatus.Pending))
+            {
+                active.Expire(now);
+                AddPaymentOutcomeEvents(active, target);
+            }
+            foreach (var groupId in priors
+                .Where(x => x.PaymentGroupId.HasValue)
+                .Select(x => x.PaymentGroupId!.Value)
+                .Distinct()
+                .ToList())
+            {
+                await ReleasePlanWalletAsync(groupId, customerId, cancellationToken);
+            }
+            if (target.Status == SubscriptionStatus.PaymentFailed)
+            {
+                target.RetryPayment();
+            }
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
     }
 
     public async Task<PaymentResult> VerifyAsync(
@@ -687,6 +806,7 @@ public sealed class PaymentService(
             }
 
             var now = timeProvider.Now;
+            var planPurchaseConfirmed = false;
             if (resolution.Outcome == PaymentReconciliationOutcome.Captured)
             {
                 var recover = payment.Status == PaymentStatus.Expired;
@@ -699,19 +819,22 @@ public sealed class PaymentService(
                     payment.Succeed(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
                 }
 
-                await ConfirmTargetAsync(payment, now, cancellationToken, recover);
+                planPurchaseConfirmed = await ConfirmPlanOrTargetAsync(payment, now, cancellationToken, recover);
             }
             else if (payment.Status == PaymentStatus.Pending)
             {
                 payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", resolution.Status.Status, now);
-                FailTarget(payment);
+                await FailPlanOrTargetAsync(payment, cancellationToken);
             }
             else
             {
                 throw new BusinessRuleException("The payment was not captured and is already expired.");
             }
 
-            AddPaymentOutcomeEvents(payment);
+            if (!planPurchaseConfirmed || !payment.PaymentGroupId.HasValue)
+            {
+                AddPaymentOutcomeEvents(payment);
+            }
             await dbContext.SaveChangesAsync(cancellationToken);
         }, cancellationToken);
 
@@ -876,8 +999,11 @@ public sealed class PaymentService(
                         now);
                 }
 
-                await ConfirmTargetAsync(payment, now, cancellationToken, recovered);
-                AddPaymentOutcomeEvents(payment);
+                var planConfirmed = await ConfirmPlanOrTargetAsync(payment, now, cancellationToken, recovered);
+                if (!planConfirmed || !payment.PaymentGroupId.HasValue)
+                {
+                    AddPaymentOutcomeEvents(payment);
+                }
             }
             else if (payment.Status == PaymentStatus.Expired)
             {
@@ -887,6 +1013,7 @@ public sealed class PaymentService(
             else
             {
                 payment.Cancel(now);
+                await ReleasePlanWalletIfGroupedAsync(payment, cancellationToken);
             }
 
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -1089,8 +1216,11 @@ public sealed class PaymentService(
                     payment.Succeed(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
                 }
 
-                await ConfirmTargetAsync(payment, now, cancellationToken, recovered);
-                AddPaymentOutcomeEvents(payment);
+                var planConfirmed = await ConfirmPlanOrTargetAsync(payment, now, cancellationToken, recovered);
+                if (!planConfirmed || !payment.PaymentGroupId.HasValue)
+                {
+                    AddPaymentOutcomeEvents(payment);
+                }
                 await dbContext.SaveChangesAsync(cancellationToken);
             }, cancellationToken);
         }
@@ -1295,14 +1425,17 @@ public sealed class PaymentService(
                 payment.Succeed(resolution.Status.GatewayPaymentId, resolution.Status.Status, now);
             }
 
-            await ConfirmTargetAsync(payment, now, cancellationToken, recover);
-            AddPaymentOutcomeEvents(payment);
+            var planConfirmed = await ConfirmPlanOrTargetAsync(payment, now, cancellationToken, recover);
+            if (!planConfirmed || !payment.PaymentGroupId.HasValue)
+            {
+                AddPaymentOutcomeEvents(payment);
+            }
         }
         else if (resolution.Outcome == PaymentReconciliationOutcome.DefinitivelyNotCaptured &&
                  payment.Status == PaymentStatus.Pending)
         {
             payment.Fail("GATEWAY_PAYMENT_FAILED", "The gateway reported a terminal payment failure.", resolution.Status.Status, timeProvider.Now);
-            FailTarget(payment);
+            await FailPlanOrTargetAsync(payment, cancellationToken);
             AddPaymentOutcomeEvents(payment);
         }
         else if (resolution.Outcome is PaymentReconciliationOutcome.Pending or PaymentReconciliationOutcome.Ambiguous)
@@ -1518,6 +1651,525 @@ public sealed class PaymentService(
         throw new InvalidOperationException("The payment has no payable target.");
     }
 
+    /// <summary>
+    /// Wallet-first split-plan core shared by order and subscription targets.
+    /// One of <paramref name="orderPublicId"/> or
+    /// <paramref name="subscriptionIdOverride"/> must identify the target.
+    /// All amounts are server-computed from the frozen payable total and the
+    /// actual wallet balance. The database transaction never spans gateway I/O.
+    /// </summary>
+    private async Task<SplitPlan> CreatePlanCoreAsync(
+        long customerId,
+        Guid? orderPublicId,
+        Guid? subscriptionPublicId,
+        bool useWalletBalance,
+        string planKey,
+        CancellationToken cancellationToken,
+        long? subscriptionIdOverride = null)
+    {
+        Order? order = null;
+        Domain.Subscriptions.Subscription? subscription = null;
+        if (orderPublicId.HasValue)
+        {
+            order = await dbContext.Orders.SingleOrDefaultAsync(
+                x => x.PublicId == orderPublicId.Value && x.CustomerId == customerId,
+                cancellationToken)
+                ?? throw new NotFoundException("The order was not found.");
+        }
+        else if (subscriptionIdOverride.HasValue)
+        {
+            subscription = await dbContext.Subscriptions.SingleOrDefaultAsync(
+                x => x.Id == subscriptionIdOverride.Value && x.CustomerId == customerId,
+                cancellationToken)
+                ?? throw new NotFoundException("The subscription was not found.");
+        }
+        else
+        {
+            throw new ValidationAppException("A payment target is required.");
+        }
+
+        var walletKey = $"{planKey}:wallet";
+        var razorpayKey = $"{planKey}:razorpay";
+        var wantedKeys = new[] { planKey, walletKey, razorpayKey };
+        var existing = await PaymentQuery()
+            .Where(x => x.CustomerId == customerId && wantedKeys.Contains(x.IdempotencyKey))
+            .ToListAsync(cancellationToken);
+        if (existing.Count > 0)
+        {
+            return ResolvePlanReplay(order?.PublicId, subscription?.PublicId, existing);
+        }
+
+        decimal total;
+        if (order is not null)
+        {
+            if (order.Status != OrderStatus.PendingPayment)
+            {
+                throw new BusinessRuleException($"An order in status '{order.Status}' cannot start a payment.");
+            }
+            if (order.PayableAmount <= 0)
+            {
+                throw new BusinessRuleException("The order does not have a positive payable amount.");
+            }
+            total = order.PayableAmount;
+        }
+        else
+        {
+            if (subscription!.Status != SubscriptionStatus.PaymentPending)
+            {
+                throw new BusinessRuleException(
+                    $"A subscription in status '{subscription.Status}' cannot start a payment.");
+            }
+            if (subscription.PayableAmount <= 0)
+            {
+                throw new BusinessRuleException("The subscription does not have a positive payable amount.");
+            }
+            total = subscription.PayableAmount;
+        }
+
+        var balance = await dbContext.Wallets
+            .AsNoTracking()
+            .Where(x => x.CustomerId == customerId)
+            .Select(x => (decimal?)x.Balance)
+            .SingleOrDefaultAsync(cancellationToken) ?? 0m;
+        var walletApplied = useWalletBalance ? decimal.Min(balance, total) : 0m;
+        var razorpayAmount = total - walletApplied;
+        if (razorpayAmount > 0 && razorpayAmount < 1.00m)
+        {
+            throw new WalletRemainderBelowGatewayMinimumException(
+                walletApplied,
+                razorpayAmount,
+                total,
+                1.00m,
+                options.Currency);
+        }
+
+        IQueryable<Payment> targetPayments = order is not null
+            ? dbContext.Payments.Where(x => x.OrderId == order.Id)
+            : dbContext.Payments.Where(x => x.SubscriptionId == subscription!.Id);
+        var priorPayments = await targetPayments.ToListAsync(cancellationToken);
+        await EnsurePreviousAttemptsSafeAsync(priorPayments, cancellationToken);
+        EnsureNoActivePayment(WithoutAbandonedPlanComponents(priorPayments), order is not null ? "order" : "subscription");
+        var attemptEvidence = CaptureAttemptEvidence(priorPayments);
+
+        var groupId = Guid.NewGuid();
+        var expiresAt = timeProvider.Now.AddMinutes(options.PaymentExpiryMinutes);
+        Payment? walletRow = null;
+        Payment? razorpayRow = null;
+        await ExecuteSerializableAsync(async () =>
+        {
+            if (order is not null)
+            {
+                await dbContext.Entry(order).ReloadAsync(cancellationToken);
+                EnsureOrderCanStartPayment(order);
+            }
+            else
+            {
+                await dbContext.Entry(subscription!).ReloadAsync(cancellationToken);
+                EnsureSubscriptionCanStartPayment(subscription!, allowFailed: false);
+            }
+            var currentPayments = await RevalidateAttemptEvidenceAsync(
+                order is not null
+                    ? dbContext.Payments.Where(x => x.OrderId == order.Id)
+                    : dbContext.Payments.Where(x => x.SubscriptionId == subscription!.Id),
+                attemptEvidence,
+                cancellationToken);
+            EnsureNoActivePayment(WithoutAbandonedPlanComponents(currentPayments), order is not null ? "order" : "subscription");
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var now = timeProvider.Now;
+            if (walletApplied > 0)
+            {
+                walletRow = order is not null
+                    ? new Payment(order.Id, customerId, PaymentMethod.Wallet, walletApplied, options.Currency, walletKey, expiresAt)
+                    : Payment.CreateForSubscription(subscription!.Id, customerId, PaymentMethod.Wallet, walletApplied, options.Currency, walletKey, expiresAt);
+                walletRow.AssignGroup(groupId);
+                dbContext.Payments.Add(walletRow);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                walletRow.MarkWalletPending();
+                if (order is not null)
+                {
+                    await walletService.DebitOrderAsync(customerId, order.Id, walletRow.Id, walletRow.Amount, $"payment:{walletRow.PublicId:N}", cancellationToken);
+                }
+                else
+                {
+                    await walletService.DebitSubscriptionAsync(customerId, subscription!.Id, walletRow.Id, walletRow.Amount, $"payment:{walletRow.PublicId:N}", cancellationToken);
+                }
+                walletRow.Succeed(null, "wallet_debited", timeProvider.Now);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+
+            if (razorpayAmount >= 1.00m)
+            {
+                razorpayRow = order is not null
+                    ? new Payment(order.Id, customerId, PaymentMethod.Razorpay, razorpayAmount, options.Currency, razorpayKey, expiresAt)
+                    : Payment.CreateForSubscription(subscription!.Id, customerId, PaymentMethod.Razorpay, razorpayAmount, options.Currency, razorpayKey, expiresAt);
+                razorpayRow.AssignGroup(groupId);
+                dbContext.Payments.Add(razorpayRow);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+
+            if (razorpayRow is null)
+            {
+                // Wallet-only completion mutates the purchase target (order
+                // confirmation / subscription activation) and stages outcome
+                // events. Persist them here inside the serializable attempt
+                // so the committed state — never just in-memory state — is
+                // what later reads and the API response observe.
+                await TryCompletePlanAsync(groupId, timeProvider.Now, cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+        }, cancellationToken);
+
+        if (razorpayRow is not null)
+        {
+            var selectedGateway = await GatewayForAsync(PaymentMethod.Razorpay, cancellationToken);
+            GatewayOrderResult gatewayOrder;
+            try
+            {
+                gatewayOrder = await selectedGateway.CreateOrderAsync(
+                    new GatewayOrderRequest(
+                        razorpayRow.PublicId,
+                        order is not null ? order.OrderNumber : $"SUB-{subscription!.PublicId:N}",
+                        ToMinorUnits(razorpayRow.Amount),
+                        razorpayRow.Currency,
+                        ToUtc(razorpayRow.ExpiresAt)),
+                    cancellationToken);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+            {
+                await ExecuteSerializableAsync(async () =>
+                {
+                    await ReloadPaymentAndTargetAsync(razorpayRow!, cancellationToken);
+                    razorpayRow!.Fail("GATEWAY_ORDER_FAILED", exception.Message, null, timeProvider.Now);
+                    await FailPlanOrTargetAsync(razorpayRow!, cancellationToken);
+                    AddPaymentOutcomeEvents(razorpayRow!);
+                    await dbContext.SaveChangesAsync(cancellationToken);
+                }, cancellationToken);
+                throw new BusinessRuleException("The payment gateway could not create the payment order.");
+            }
+
+            EnsureGatewayFinancials(razorpayRow, gatewayOrder.AmountMinor, gatewayOrder.Currency);
+            razorpayRow.AttachGatewayOrder(gatewayOrder.GatewayOrderId, gatewayOrder.Status);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        return await LoadPlanAsync(groupId, walletRow, razorpayRow, cancellationToken);
+    }
+
+    private static SplitPlan ResolvePlanReplay(
+        Guid? orderPublicId,
+        Guid? subscriptionPublicId,
+        IReadOnlyList<Payment> existing)
+    {
+        foreach (var row in existing)
+        {
+            if (orderPublicId.HasValue && row.Order?.PublicId != orderPublicId.Value)
+            {
+                throw new ConflictException("The idempotency key is already associated with a different payment request.");
+            }
+            if (subscriptionPublicId.HasValue && row.Subscription?.PublicId != subscriptionPublicId.Value)
+            {
+                throw new ConflictException("The idempotency key is already associated with a different payment request.");
+            }
+        }
+
+        var groups = existing
+            .Where(x => x.PaymentGroupId.HasValue)
+            .Select(x => x.PaymentGroupId!.Value)
+            .Distinct()
+            .ToList();
+        if (groups.Count > 1 || (groups.Count == 1 && existing.Any(x => !x.PaymentGroupId.HasValue)))
+        {
+            throw new ConflictException("The idempotency key is already associated with a different payment request.");
+        }
+
+        var walletRows = existing.Where(x => x.Method == PaymentMethod.Wallet).ToList();
+        var gatewayRows = existing.Where(x => x.Method is PaymentMethod.Razorpay or PaymentMethod.Development).ToList();
+        if (walletRows.Count > 1 || gatewayRows.Count > 1 || walletRows.Count + gatewayRows.Count != existing.Count)
+        {
+            throw new ConflictException("The idempotency key is already associated with a different payment request.");
+        }
+
+        return new SplitPlan(groups.SingleOrDefault(), walletRows.SingleOrDefault(), gatewayRows.SingleOrDefault());
+    }
+
+    private async Task<SplitPlan> LoadPlanAsync(
+        Guid groupId,
+        Payment? walletRow,
+        Payment? razorpayRow,
+        CancellationToken cancellationToken)
+    {
+        if (walletRow is not null) await LoadPaymentNavigationsAsync(walletRow, cancellationToken);
+        if (razorpayRow is not null) await LoadPaymentNavigationsAsync(razorpayRow, cancellationToken);
+        return new SplitPlan(groupId, walletRow, razorpayRow);
+    }
+
+    private async Task<PaymentPlanResult> ToPlanResultAsync(SplitPlan plan, CancellationToken cancellationToken)
+    {
+        PaymentResult? walletResult = null;
+        PaymentResult? razorpayResult = null;
+        if (plan.WalletRow is not null)
+        {
+            await LoadPaymentNavigationsAsync(plan.WalletRow, cancellationToken);
+            walletResult = plan.WalletRow.ToResult(null, ProviderFor(PaymentMethod.Wallet));
+        }
+        if (plan.RazorpayRow is not null)
+        {
+            await LoadPaymentNavigationsAsync(plan.RazorpayRow, cancellationToken);
+            var gatewayKey = await PublicKeyForAsync(plan.RazorpayRow.Method, cancellationToken);
+            razorpayResult = plan.RazorpayRow.ToResult(gatewayKey, ProviderFor(plan.RazorpayRow.Method));
+        }
+
+        var components = new List<PaymentResult>();
+        if (walletResult is not null) components.Add(walletResult);
+        if (razorpayResult is not null) components.Add(razorpayResult);
+        var total = components.Sum(x => x.Amount);
+        var walletApplied = walletResult?.Amount ?? 0m;
+        var primary = razorpayResult ?? walletResult
+            ?? throw new InvalidOperationException("The payment plan has no components.");
+        return new PaymentPlanResult(
+            plan.GroupId == Guid.Empty ? null : plan.GroupId,
+            total,
+            walletApplied,
+            total - walletApplied,
+            walletResult is not null,
+            primary,
+            components);
+    }
+
+    /// <summary>
+    /// Plan-aware confirmation: a grouped purchase is paid only when every
+    /// component succeeded and the amounts reconcile with the frozen total.
+    /// Returns true when the target was (or already is) confirmed.
+    /// </summary>
+    private async Task<bool> TryCompletePlanAsync(
+        Guid groupId,
+        DateTime indiaLocalNow,
+        CancellationToken cancellationToken)
+    {
+        var rows = await dbContext.Payments
+            .Include(x => x.Order)
+            .Include(x => x.Subscription)
+            .Where(x => x.PaymentGroupId == groupId)
+            .ToListAsync(cancellationToken);
+        if (rows.Count == 0) return false;
+        var first = rows[0];
+        if (rows.Any(x => x.OrderId != first.OrderId || x.SubscriptionId != first.SubscriptionId || x.CustomerId != first.CustomerId))
+        {
+            throw new ConflictException("The split payment plan references inconsistent targets.");
+        }
+        if (rows.Any(x => x.Status != PaymentStatus.Success)) return false;
+        var total = first.Order?.PayableAmount
+            ?? first.Subscription?.PayableAmount
+            ?? throw new InvalidOperationException("The payment plan has no payable target.");
+        if (rows.Sum(x => x.Amount) != total)
+        {
+            throw new ConflictException("The split payment components do not reconcile with the payable amount.");
+        }
+
+        if (first.Order is not null)
+        {
+            if (first.Order.Status != OrderStatus.PendingPayment) return true;
+            await ConfirmTargetAsync(first, indiaLocalNow, cancellationToken);
+        }
+        else if (first.Subscription is not null)
+        {
+            if (first.Subscription.Status != SubscriptionStatus.PaymentPending) return true;
+            await ConfirmTargetAsync(first, indiaLocalNow, cancellationToken);
+        }
+        else
+        {
+            return false;
+        }
+
+        // Exactly-once outcome events: the first row carries the full
+        // outcome (including subscription activation); every other
+        // succeeded component gets its own payment event. Callers skip
+        // their own AddPaymentOutcomeEvents when the plan confirmed, so no
+        // payment key is ever inserted twice.
+        AddPaymentOutcomeEvents(first);
+        foreach (var sibling in rows.Where(x =>
+            x.Id != first.Id && x.Status == PaymentStatus.Success))
+        {
+            AddPlanComponentSuccessEvent(sibling);
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Per-component success event for a split-plan sibling. Carries only
+    /// the payment event (unique per payment row); subscription activation
+    /// is emitted once via the first row's full outcome event.
+    /// </summary>
+    private void AddPlanComponentSuccessEvent(Payment payment)
+    {
+        var deepLink = payment.Order is not null
+            ? $"/orders/{payment.Order.PublicId}"
+            : payment.Subscription is not null
+                ? $"/subscriptions/{payment.Subscription.PublicId}"
+                : $"/payments/{payment.PublicId}";
+        notificationEventWriter.Add(new NotificationEventRequest(
+            payment.CustomerId,
+            NotificationEventTypes.PaymentSucceeded,
+            $"payment:{payment.PublicId:N}:succeeded",
+            new Dictionary<string, string>
+            {
+                ["amount"] = payment.Amount.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture),
+                ["currency"] = payment.Currency,
+                ["method"] = payment.Method.ToString(),
+                ["paymentId"] = payment.PublicId.ToString(),
+                ["message"] = $"Your payment of {payment.Currency} {payment.Amount:0.00} was successful."
+            },
+            deepLink,
+            payment.VerifiedAt));
+    }
+
+    /// <summary>
+    /// Confirmation that respects split plans: grouped rows confirm only via
+    /// <see cref="TryCompletePlanAsync"/>; standalone rows keep legacy behavior.
+    /// The caller must already be inside the plan's serializable transaction
+    /// with reloaded state.
+    /// </summary>
+    /// <summary>
+    /// Returns true when the purchase is fully confirmed (now or previously).
+    /// When a grouped plan confirms, every component's outcome event is
+    /// emitted inside <see cref="TryCompletePlanAsync"/> and the caller must
+    /// skip its own <see cref="AddPaymentOutcomeEvents"/> to avoid inserting
+    /// the same payment event key twice.
+    /// </summary>
+    private async Task<bool> ConfirmPlanOrTargetAsync(
+        Payment payment,
+        DateTime indiaLocalNow,
+        CancellationToken cancellationToken,
+        bool recoverCaptured = false)
+    {
+        if (!payment.PaymentGroupId.HasValue)
+        {
+            await ConfirmTargetAsync(payment, indiaLocalNow, cancellationToken, recoverCaptured);
+            return true;
+        }
+
+        if (recoverCaptured)
+        {
+            var rows = await dbContext.Payments
+                .Where(x => x.PaymentGroupId == payment.PaymentGroupId.Value)
+                .ToListAsync(cancellationToken);
+            if (rows.All(x => x.Status == PaymentStatus.Success))
+            {
+                return await TryCompletePlanAsync(payment.PaymentGroupId.Value, indiaLocalNow, cancellationToken);
+            }
+
+            return false;
+        }
+
+        return await TryCompletePlanAsync(payment.PaymentGroupId.Value, indiaLocalNow, cancellationToken);
+    }
+
+    /// <summary>
+    /// Failure handling that respects split plans: when a grouped gateway leg
+    /// reaches a definitive non-captured terminal state, the held wallet
+    /// contribution is restored exactly once before the target fails. The
+    /// caller must have already moved the gateway row terminal in-transaction.
+    /// </summary>
+    private async Task FailPlanOrTargetAsync(Payment payment, CancellationToken cancellationToken)
+    {
+        if (!payment.PaymentGroupId.HasValue)
+        {
+            FailTarget(payment);
+            return;
+        }
+
+        await ReleasePlanWalletAsync(payment.PaymentGroupId.Value, payment.CustomerId, cancellationToken);
+        await ReloadPaymentAndTargetAsync(payment, cancellationToken);
+        FailTarget(payment);
+    }
+
+    /// <summary>
+    /// Releases the held wallet contribution of a grouped plan without failing
+    /// the target (used when the customer cancels the gateway leg: the plan is
+    /// abandoned but the order stays payable for a fresh attempt).
+    /// </summary>
+    private async Task ReleasePlanWalletIfGroupedAsync(Payment payment, CancellationToken cancellationToken)
+    {
+        if (!payment.PaymentGroupId.HasValue) return;
+        await ReleasePlanWalletAsync(payment.PaymentGroupId.Value, payment.CustomerId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Restores a split plan's wallet contribution through the existing refund
+    /// ledger (full component refund to wallet). Idempotent: the release
+    /// refund and ledger rows carry the stable group-derived key, so replays
+    /// reuse committed records and never duplicate money movement.
+    /// </summary>
+    private async Task<bool> ReleasePlanWalletAsync(
+        Guid groupId,
+        long requestedByUserId,
+        CancellationToken cancellationToken)
+    {
+        var walletRow = await dbContext.Payments
+            .Include(x => x.Order)
+            .Include(x => x.Subscription)
+            .Include(x => x.Refunds)
+            .SingleOrDefaultAsync(
+                x => x.PaymentGroupId == groupId && x.Method == PaymentMethod.Wallet,
+                cancellationToken);
+        if (walletRow is null || walletRow.Status != PaymentStatus.Success) return false;
+
+        var releaseKey = $"split-release:{groupId:N}";
+        var existingRefund = walletRow.Refunds.SingleOrDefault(x => x.IdempotencyKey == releaseKey);
+        if (existingRefund is not null)
+        {
+            return existingRefund.Status == RefundStatus.Succeeded;
+        }
+
+        var now = timeProvider.Now;
+        var refund = walletRow.StartRefund(
+            walletRow.Amount,
+            "Split-plan gateway leg failed; wallet contribution restored.",
+            releaseKey,
+            requestedByUserId);
+        if (walletRow.OrderId is long orderId)
+        {
+            await walletService.CreditRefundAsync(
+                walletRow.CustomerId,
+                orderId,
+                walletRow.Id,
+                walletRow.Amount,
+                $"{releaseKey}:wallet",
+                cancellationToken);
+        }
+        else if (walletRow.SubscriptionId is long subscriptionId)
+        {
+            await walletService.CreditSubscriptionRefundAsync(
+                walletRow.CustomerId,
+                subscriptionId,
+                walletRow.Id,
+                walletRow.Amount,
+                $"{releaseKey}:wallet",
+                cancellationToken);
+        }
+        else
+        {
+            throw new InvalidOperationException("The split-plan wallet payment has no payable target.");
+        }
+
+        refund.Succeed(now);
+        walletRow.CompleteRefund(walletRow.Amount);
+        WriteRefundAudit(
+            walletRow,
+            refund,
+            requestedByUserId,
+            new RefundPaymentRequest(
+                walletRow.Amount,
+                "Split-plan gateway leg failed; wallet contribution restored.",
+                releaseKey,
+                null,
+                null));
+        return true;
+    }
+
+    private sealed record SplitPlan(Guid? GroupId, Payment? WalletRow, Payment? RazorpayRow);
+
     private void WriteRefundAudit(
         Payment payment,
         Refund refund,
@@ -1571,6 +2223,13 @@ public sealed class PaymentService(
             {
                 continue;
             }
+            if (string.IsNullOrWhiteSpace(payment.GatewayOrderId))
+            {
+                // Never submitted to the gateway (the gateway order was never
+                // attached): no capture is possible through this row, so there
+                // is nothing to reconcile before a fresh attempt.
+                continue;
+            }
 
             var resolution = await ResolveGatewayPaymentAsync(
                 payment,
@@ -1578,8 +2237,7 @@ public sealed class PaymentService(
                 cancellationToken);
             if (resolution.Outcome != PaymentReconciliationOutcome.DefinitivelyNotCaptured)
             {
-                throw new ConflictException(
-                    "A previous Razorpay payment is captured or cannot be proven not captured.");
+                throw new SplitPlanOutcomeAmbiguousException();
             }
         }
     }
@@ -1611,6 +2269,43 @@ public sealed class PaymentService(
         return currentPayments;
     }
 
+    /// <summary>
+    /// Fresh attempts must not be blocked by split plans that are already
+    /// over: every component reached a terminal state that holds no funds
+    /// (Failed/Cancelled/Expired gateway legs plus fully released — Refunded
+    /// — wallet legs). Any group still holding funds (Success,
+    /// RefundPending, PartiallyRefunded) or awaiting a gateway outcome
+    /// (Initiated/Pending) keeps blocking, as do standalone refunded
+    /// payments, whose existing refund semantics are preserved.
+    /// </summary>
+    private static IReadOnlyList<Payment> WithoutAbandonedPlanComponents(
+        IReadOnlyList<Payment> payments)
+    {
+        if (payments.All(x => !x.PaymentGroupId.HasValue))
+        {
+            return payments;
+        }
+
+        var abandoned = payments
+            .Where(x => x.PaymentGroupId.HasValue)
+            .GroupBy(x => x.PaymentGroupId!.Value)
+            .Where(group => group.All(x => x.Status is
+                PaymentStatus.Failed or
+                PaymentStatus.Cancelled or
+                PaymentStatus.Expired or
+                PaymentStatus.Refunded))
+            .Select(group => group.Key)
+            .ToHashSet();
+        if (abandoned.Count == 0)
+        {
+            return payments;
+        }
+
+        return payments
+            .Where(x => !x.PaymentGroupId.HasValue || !abandoned.Contains(x.PaymentGroupId.Value))
+            .ToList();
+    }
+
     private static void EnsureNoActivePayment(
         IReadOnlyList<Payment> payments,
         string targetName)
@@ -1627,6 +2322,7 @@ public sealed class PaymentService(
         IReadOnlyList<Payment> payments,
         string targetName)
     {
+        EnsureNoLiveSplitPlanAttempt(payments, targetName);
         if (payments.Any(x => x.Status is
             PaymentStatus.Success or
             PaymentStatus.RefundPending or
@@ -1634,6 +2330,29 @@ public sealed class PaymentService(
             PaymentStatus.Refunded))
         {
             throw new ConflictException($"The {targetName} already has a completed payment.");
+        }
+    }
+
+    /// <summary>
+    /// A split-plan group with a succeeded component and a still-live gateway
+    /// leg is an in-progress attempt, not a completed purchase: report it
+    /// accurately instead of claiming a completed payment. Fully released
+    /// groups (Failed/Cancelled/Expired/Refunded legs) are filtered by
+    /// <see cref="WithoutAbandonedPlanComponents"/> before this runs, so
+    /// definitively failed plans remain retryable here.
+    /// </summary>
+    private static void EnsureNoLiveSplitPlanAttempt(
+        IReadOnlyList<Payment> payments,
+        string targetName)
+    {
+        var live = payments
+            .Where(x => x.PaymentGroupId.HasValue)
+            .GroupBy(x => x.PaymentGroupId!.Value)
+            .Any(group => group.Any(x => x.Status == PaymentStatus.Success) &&
+                group.Any(x => x.Status is PaymentStatus.Initiated or PaymentStatus.Pending));
+        if (live)
+        {
+            throw new SplitPlanAttemptInProgressException(targetName);
         }
     }
 
@@ -1661,6 +2380,7 @@ public sealed class PaymentService(
 
     private sealed record PaymentAttemptEvidence(
         Guid PublicId,
+        Guid? PaymentGroupId,
         PaymentMethod Method,
         PaymentStatus Status,
         decimal Amount,
@@ -1670,6 +2390,7 @@ public sealed class PaymentService(
     {
         public static PaymentAttemptEvidence From(Payment payment) => new(
             payment.PublicId,
+            payment.PaymentGroupId,
             payment.Method,
             payment.Status,
             payment.Amount,

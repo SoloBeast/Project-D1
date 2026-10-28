@@ -112,6 +112,8 @@ public sealed class GuestAuthorizationTests : IClassFixture<FoundationApiFactory
         { typeof(CustomerController), nameof(CustomerController.UpdateAddress), AuthorizationCodes.ProfileUpdateOwn },
         { typeof(CustomerController), nameof(CustomerController.DeactivateAddress), AuthorizationCodes.ProfileUpdateOwn },
         { typeof(CustomerController), nameof(CustomerController.ReverseGeocode), AuthorizationCodes.ProfileUpdateOwn },
+        { typeof(CustomerController), nameof(CustomerController.GetBankDetail), AuthorizationCodes.ProfileReadOwn },
+        { typeof(CustomerController), nameof(CustomerController.SaveBankDetail), AuthorizationCodes.ProfileUpdateOwn },
         // Subscriptions
         { typeof(SubscriptionsController), nameof(SubscriptionsController.Create), AuthorizationCodes.SubscriptionsCreateOwn },
         { typeof(SubscriptionsController), nameof(SubscriptionsController.GetMine), AuthorizationCodes.SubscriptionsReadOwn },
@@ -135,7 +137,15 @@ public sealed class GuestAuthorizationTests : IClassFixture<FoundationApiFactory
         // Wallet
         { typeof(WalletController), nameof(WalletController.Get), AuthorizationCodes.WalletReadOwn },
         { typeof(WalletController), nameof(WalletController.GetTransactions), AuthorizationCodes.WalletReadOwn },
+        { typeof(WalletController), nameof(WalletController.SubmitWithdrawal), AuthorizationCodes.WalletWithdrawOwn },
+        { typeof(WalletController), nameof(WalletController.ListWithdrawals), AuthorizationCodes.WalletWithdrawOwn },
+        { typeof(WalletController), nameof(WalletController.GetWithdrawal), AuthorizationCodes.WalletWithdrawOwn },
         { typeof(WalletAdministrationController), nameof(WalletAdministrationController.Adjust), AuthorizationCodes.WalletAdjust },
+        { typeof(WithdrawalAdministrationController), nameof(WithdrawalAdministrationController.List), AuthorizationCodes.WithdrawalsProcess },
+        { typeof(WithdrawalAdministrationController), nameof(WithdrawalAdministrationController.Get), AuthorizationCodes.WithdrawalsProcess },
+        { typeof(WithdrawalAdministrationController), nameof(WithdrawalAdministrationController.GetBankDetail), AuthorizationCodes.WithdrawalsProcess },
+        { typeof(WithdrawalAdministrationController), nameof(WithdrawalAdministrationController.Complete), AuthorizationCodes.WithdrawalsProcess },
+        { typeof(WithdrawalAdministrationController), nameof(WithdrawalAdministrationController.Reject), AuthorizationCodes.WithdrawalsProcess },
         // Deliveries (customer)
         { typeof(CustomerDeliveriesController), nameof(CustomerDeliveriesController.GetMine), AuthorizationCodes.DeliveriesReadOwn },
         { typeof(CustomerDeliveriesController), nameof(CustomerDeliveriesController.Get), AuthorizationCodes.DeliveriesReadOwn },
@@ -357,6 +367,7 @@ public sealed class GuestAuthorizationTests : IClassFixture<FoundationApiFactory
         ("GET", "/api/v1/notifications/unread-count"),
         ("POST", $"/api/v1/notifications/{Id}/read"),
         ("POST", "/api/v1/devices"),
+        ("POST", "/api/v1/devices/test-device/deactivate"),
         ("GET", "/api/v1/notification-preferences"),
         ("PATCH", "/api/v1/notification-preferences"),
         // Cameras (public-named but still authenticated)

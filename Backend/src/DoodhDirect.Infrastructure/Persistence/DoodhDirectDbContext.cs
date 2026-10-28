@@ -40,6 +40,8 @@ public sealed class DoodhDirectDbContext(
     public DbSet<BrandingAsset> BrandingAssets => Set<BrandingAsset>();
     public DbSet<CustomerProfile> CustomerProfiles => Set<CustomerProfile>();
     public DbSet<CustomerAddress> CustomerAddresses => Set<CustomerAddress>();
+    public DbSet<CustomerBankDetail> CustomerBankDetails => Set<CustomerBankDetail>();
+    public DbSet<CompanyBankDetail> CompanyBankDetails => Set<CompanyBankDetail>();
     public DbSet<ProductCategory> ProductCategories => Set<ProductCategory>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Branch> Branches => Set<Branch>();
@@ -49,16 +51,19 @@ public sealed class DoodhDirectDbContext(
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<OrderCharge> OrderCharges => Set<OrderCharge>();
+    public DbSet<OrderCancellation> OrderCancellations => Set<OrderCancellation>();
     public DbSet<Charge> Charges => Set<Charge>();
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<PaymentWebhook> PaymentWebhooks => Set<PaymentWebhook>();
     public DbSet<Refund> Refunds => Set<Refund>();
     public DbSet<Wallet> Wallets => Set<Wallet>();
     public DbSet<WalletTransaction> WalletTransactions => Set<WalletTransaction>();
+    public DbSet<WithdrawalRequest> WithdrawalRequests => Set<WithdrawalRequest>();
     public DbSet<Subscription> Subscriptions => Set<Subscription>();
     public DbSet<SubscriptionSchedule> SubscriptionSchedules => Set<SubscriptionSchedule>();
     public DbSet<SubscriptionDelivery> SubscriptionDeliveries => Set<SubscriptionDelivery>();
     public DbSet<SubscriptionCharge> SubscriptionCharges => Set<SubscriptionCharge>();
+    public DbSet<SubscriptionCancelRefundOccurrence> SubscriptionCancelRefundOccurrences => Set<SubscriptionCancelRefundOccurrence>();
     public DbSet<Delivery> Deliveries => Set<Delivery>();
     public DbSet<DeliveryAssignment> DeliveryAssignments => Set<DeliveryAssignment>();
     public DbSet<DeliveryBatchAllocation> DeliveryBatchAllocations => Set<DeliveryBatchAllocation>();
@@ -70,6 +75,11 @@ public sealed class DoodhDirectDbContext(
     public DbSet<MilkTestImage> MilkTestImages => Set<MilkTestImage>();
     public DbSet<RefundReplacementRequest> RefundReplacementRequests => Set<RefundReplacementRequest>();
     public DbSet<RefundReplacementImage> RefundReplacementImages => Set<RefundReplacementImage>();
+    public DbSet<RefundBankExportBatch> RefundBankExportBatches => Set<RefundBankExportBatch>();
+    public DbSet<RefundBankExportItem> RefundBankExportItems => Set<RefundBankExportItem>();
+    public DbSet<RefundBankExportItemReservation> RefundBankExportItemReservations => Set<RefundBankExportItemReservation>();
+    public DbSet<VacationRefundRequest> VacationRefundRequests => Set<VacationRefundRequest>();
+    public DbSet<VacationRefundOccurrence> VacationRefundOccurrences => Set<VacationRefundOccurrence>();
     public DbSet<Camera> Cameras => Set<Camera>();
     public DbSet<CameraStream> CameraStreams => Set<CameraStream>();
     public DbSet<NotificationEvent> NotificationEvents => Set<NotificationEvent>();
@@ -102,6 +112,8 @@ public sealed class DoodhDirectDbContext(
         ConfigureBrandingAsset(modelBuilder, usesSqlite);
         ConfigureCustomerProfile(modelBuilder);
         ConfigureCustomerAddress(modelBuilder);
+        ConfigureCustomerBankDetail(modelBuilder);
+        ConfigureCompanyBankDetail(modelBuilder);
         ConfigureProductCategory(modelBuilder);
         ConfigureProduct(modelBuilder);
         ConfigureBranch(modelBuilder, usesSqlite);
@@ -109,6 +121,7 @@ public sealed class DoodhDirectDbContext(
         ConfigureProductCharge(modelBuilder);
         ConfigureProductImage(modelBuilder, usesSqlite);
         ConfigureOrder(modelBuilder, usesSqlite);
+        ConfigureOrderCancellation(modelBuilder);
         ConfigureOrderItem(modelBuilder);
         ConfigureOrderCharge(modelBuilder);
         ConfigureCharge(modelBuilder);
@@ -117,10 +130,12 @@ public sealed class DoodhDirectDbContext(
         ConfigureRefund(modelBuilder);
         ConfigureWallet(modelBuilder, usesSqlite);
         ConfigureWalletTransaction(modelBuilder);
+        ConfigureWithdrawalRequest(modelBuilder);
         ConfigureSubscription(modelBuilder);
         ConfigureSubscriptionSchedule(modelBuilder);
         ConfigureSubscriptionDelivery(modelBuilder);
         ConfigureSubscriptionCharge(modelBuilder);
+        ConfigureSubscriptionCancelRefundOccurrence(modelBuilder);
         ConfigureDelivery(modelBuilder, usesSqlite);
         ConfigureDeliveryAssignment(modelBuilder);
         ConfigureDeliveryBatchAllocation(modelBuilder, usesSqlite);
@@ -132,6 +147,9 @@ public sealed class DoodhDirectDbContext(
         ConfigureMilkTestImage(modelBuilder, usesSqlite);
         ConfigureRefundReplacementRequest(modelBuilder, usesSqlite);
         ConfigureRefundReplacementImage(modelBuilder, usesSqlite);
+        ConfigureRefundBankExport(modelBuilder, usesSqlite);
+        ConfigureVacationRefundRequest(modelBuilder, usesSqlite);
+        ConfigureVacationRefundOccurrence(modelBuilder, usesSqlite);
         ConfigureCamera(modelBuilder, usesSqlite);
         ConfigureCameraStream(modelBuilder);
         ConfigureNotificationEvent(modelBuilder);
@@ -433,6 +451,38 @@ public sealed class DoodhDirectDbContext(
         entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
     }
 
+    private static void ConfigureCustomerBankDetail(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<CustomerBankDetail>();
+        entity.ToTable("CustomerBankDetail");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.HasIndex(x => x.UserId).IsUnique();
+        entity.Property(x => x.AccountHolderName).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.BankName).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.ProtectedAccountNumber).HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.AccountLast4).HasMaxLength(10).IsRequired();
+        entity.Property(x => x.Ifsc).HasMaxLength(11).IsRequired();
+        entity.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureCompanyBankDetail(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<CompanyBankDetail>();
+        entity.ToTable("CompanyBankDetail");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.SingletonGuard).IsRequired();
+        entity.HasIndex(x => x.SingletonGuard).IsUnique();
+        entity.Property(x => x.AccountHolderName).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.BankName).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.ProtectedAccountNumber).HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.AccountLast4).HasMaxLength(10).IsRequired();
+        entity.Property(x => x.Ifsc).HasMaxLength(11).IsRequired();
+    }
+
     private static void ConfigureProductCategory(ModelBuilder modelBuilder)
     {
         var entity = modelBuilder.Entity<ProductCategory>();
@@ -463,6 +513,7 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.Description).HasMaxLength(2000);
         entity.Property(x => x.UnitOfMeasure).HasMaxLength(20).IsRequired();
         entity.Property(x => x.Price).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.AllowOrderOutsideBranchRadius).HasColumnName("AllowOrderOutsideBranchRadius").IsRequired().HasDefaultValue(false);
         entity.HasIndex(x => x.Sku).IsUnique();
         entity.HasIndex(x => new { x.CategoryId, x.IsActive, x.Name });
         entity.HasOne(x => x.Category).WithMany(x => x.Products).HasForeignKey(x => x.CategoryId).OnDelete(DeleteBehavior.Restrict);
@@ -592,6 +643,23 @@ public sealed class DoodhDirectDbContext(
         entity.HasOne(x => x.Branch).WithMany().HasForeignKey(x => x.BranchId).OnDelete(DeleteBehavior.Restrict);
     }
 
+    private static void ConfigureOrderCancellation(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<OrderCancellation>();
+        entity.ToTable("OrderCancellation");
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.ReasonCode).HasMaxLength(40).IsRequired();
+        entity.Property(x => x.Comment).HasMaxLength(500);
+        entity.Property(x => x.CancelledAt).HasColumnName("CancelledAtUtc").IsRequired();
+        entity.Property(x => x.AppliedDeductionPercentage).HasPrecision(5, 2);
+        entity.Property(x => x.DeductionAmount).HasPrecision(18, 2);
+        entity.Property(x => x.RefundAmount).HasPrecision(18, 2);
+        entity.Property(x => x.GrossBasis).HasPrecision(18, 2);
+        entity.HasIndex(x => x.OrderId).IsUnique();
+        entity.HasOne(x => x.Order).WithOne(x => x.Cancellation).HasForeignKey<OrderCancellation>(x => x.OrderId).OnDelete(DeleteBehavior.Cascade);
+    }
+
     private static void ConfigureOrderCharge(ModelBuilder modelBuilder)
     {
         var entity = modelBuilder.Entity<OrderCharge>();
@@ -707,6 +775,8 @@ public sealed class DoodhDirectDbContext(
         entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
         entity.HasIndex(x => new { x.CustomerId, x.CreatedAt, x.Id });
         entity.HasIndex(x => new { x.Status, x.CreatedAt, x.Id });
+        entity.HasIndex(x => x.PaymentGroupId).HasFilter("[PaymentGroupId] IS NOT NULL");
+        entity.HasIndex(x => new { x.PaymentGroupId, x.Method }).IsUnique().HasFilter("[PaymentGroupId] IS NOT NULL");
         entity.HasIndex(x => x.OrderId).HasFilter("[OrderId] IS NOT NULL");
         entity.HasIndex(x => x.SubscriptionId).HasFilter("[SubscriptionId] IS NOT NULL");
         entity.HasIndex(x => x.GatewayOrderId).IsUnique().HasFilter("[GatewayOrderId] IS NOT NULL");
@@ -816,6 +886,36 @@ public sealed class DoodhDirectDbContext(
         entity.HasOne(x => x.PerformedByUser).WithMany().HasForeignKey(x => x.PerformedByUserId).OnDelete(DeleteBehavior.Restrict);
     }
 
+    private static void ConfigureWithdrawalRequest(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<WithdrawalRequest>();
+        entity.ToTable("WithdrawalRequest", table =>
+        {
+            table.HasCheckConstraint("CK_WithdrawalRequest_Amount", "[Amount] > 0");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.RequestNumber).HasMaxLength(40).IsRequired();
+        entity.Property(x => x.Amount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+        entity.Property(x => x.AccountHolderNameSnapshot).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.BankNameSnapshot).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.IfscSnapshot).HasMaxLength(11).IsRequired();
+        entity.Property(x => x.AccountLast4Snapshot).HasMaxLength(10).IsRequired();
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.DecisionRemarks).HasMaxLength(1000);
+        entity.Property(x => x.TransferReference).HasMaxLength(100);
+        entity.Property(x => x.DecidedAt).HasColumnName("DecidedAtUtc");
+        entity.HasIndex(x => x.RequestNumber).IsUnique();
+        entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
+        entity.HasIndex(x => new { x.Status, x.CreatedAt });
+        entity.HasOne(x => x.Customer).WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.BankDetail).WithMany().HasForeignKey(x => x.BankDetailId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.DecidedByUser).WithMany().HasForeignKey(x => x.DecidedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
     private static void ConfigureSubscription(ModelBuilder modelBuilder)
     {
         var entity = modelBuilder.Entity<Subscription>();
@@ -823,6 +923,7 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.PausedAt).HasColumnName("PausedAtUtc");
         entity.Property(x => x.CancelledAt).HasColumnName("CancelledAtUtc");
         entity.Property(x => x.CompletedAt).HasColumnName("CompletedAtUtc");
+        entity.Property(x => x.VacationRefundProcessedAt).HasColumnName("VacationRefundProcessedAtUtc");
         entity.ToTable("Subscription", table =>
         {
             table.HasCheckConstraint("CK_Subscription_Dates", "[EndDate] >= [StartDate]");
@@ -848,6 +949,8 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.BranchCodeSnapshot).HasMaxLength(50).IsRequired();
         entity.Property(x => x.BranchNameSnapshot).HasMaxLength(200).IsRequired();
         entity.Property(x => x.AddressSnapshot).HasMaxLength(2000).IsRequired();
+        entity.Property(x => x.SubscriptionNumber).HasMaxLength(100);
+        entity.HasIndex(x => x.SubscriptionNumber).IsUnique().HasFilter("[SubscriptionNumber] IS NOT NULL");
         entity.HasIndex(x => new { x.CustomerId, x.IdempotencyKey }).IsUnique();
         entity.HasIndex(x => new { x.CustomerId, x.Status, x.CreatedAt });
         entity.HasIndex(x => new { x.BranchId, x.Status, x.StartDate });
@@ -888,6 +991,8 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.AddressSnapshot).HasMaxLength(2000).IsRequired();
         entity.HasIndex(x => new { x.SubscriptionId, x.ScheduledDate }).IsUnique();
         entity.HasIndex(x => new { x.Status, x.ScheduledDate });
+        entity.Property(x => x.SkipCause).HasConversion<string>().HasMaxLength(20).IsRequired(false);
+        entity.HasIndex(x => x.SkipCause).HasFilter("[SkipCause] IS NOT NULL");
         entity.Property(x => x.IsReplacement).IsRequired().HasDefaultValue(false);
         entity.Property(x => x.ReplacesSubscriptionDeliveryId).IsRequired(false);
         entity.Property(x => x.RefundReplacementRequestId).IsRequired(false);
@@ -924,6 +1029,25 @@ public sealed class DoodhDirectDbContext(
             .WithMany(x => x.Charges)
             .HasForeignKey(x => x.SubscriptionId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureSubscriptionCancelRefundOccurrence(ModelBuilder modelBuilder)
+    {
+        var entity = modelBuilder.Entity<SubscriptionCancelRefundOccurrence>();
+        entity.ToTable("SubscriptionCancelRefundOccurrence", table =>
+        {
+            table.HasCheckConstraint("CK_SubscriptionCancelRefundOccurrence_Allocation", "[AllocationAmount] >= 0");
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.AllocationAmount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.WalletIdempotencyKey).HasMaxLength(100).IsRequired();
+        entity.Property(x => x.CreatedAt).HasColumnName("CreatedAtUtc").IsRequired();
+        entity.HasIndex(x => x.SubscriptionId);
+        entity.HasIndex(x => x.SubscriptionDeliveryId).IsUnique();
+        entity.HasIndex(x => x.WalletIdempotencyKey).IsUnique();
+        entity.HasOne(x => x.Subscription).WithMany().HasForeignKey(x => x.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(x => x.SubscriptionDelivery).WithMany().HasForeignKey(x => x.SubscriptionDeliveryId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureDelivery(ModelBuilder modelBuilder, bool usesSqlite)
@@ -1251,7 +1375,8 @@ public sealed class DoodhDirectDbContext(
                     "([Status] = 'Rejected' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
                     "([Status] = 'Completed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL) OR " +
                     "([Status] = 'Failed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL) OR " +
-                    "([Status] = 'Cancelled' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL)");
+                    "([Status] = 'Cancelled' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL) OR " +
+                    "([Status] = 'Superseded' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [RemediatedByUserId] IS NOT NULL AND [RemediatedAtUtc] IS NOT NULL AND [RemediationReason] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL)");
                 table.HasCheckConstraint(
                     "CK_RefundReplacementRequest_TimestampOrder",
                     "([DeadlineUtc] IS NULL OR [DeadlineUtc] > [SubmittedAtUtc]) AND " +
@@ -1297,7 +1422,39 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.FailedAt).HasColumnName("FailedAtUtc");
         entity.Property(x => x.DeliveryFailWindowHoursSnapshot);
         entity.Property(x => x.DeliveryFailDeductionPercentageSnapshot).HasPrecision(5, 2);
+        // Stage 1: order-backed Refund deduction decision snapshot. Nullable so
+        // historical and non-order tickets keep null; waiver flag defaults false.
+        entity.Property(x => x.AppliedDeductionPercentage).HasPrecision(5, 2);
+        entity.Property(x => x.DeductionWaived).HasDefaultValue(false);
+        entity.Property(x => x.DeductionWaiverReason).HasMaxLength(1000);
+        // Stage 2: explicit settlement method. Unspecified preserves legacy
+        // wallet behavior for pre-existing rows (migration default 0).
+        entity.Property(x => x.SettlementMethod).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.ManualBankHolderNameSnapshot).HasMaxLength(100);
+        entity.Property(x => x.ManualBankNameSnapshot).HasMaxLength(100);
+        entity.Property(x => x.ManualBankIfscSnapshot).HasMaxLength(11);
+        entity.Property(x => x.ManualBankAccountLast4Snapshot).HasMaxLength(10);
+        entity.Property(x => x.ManualBankProtectedAccountNumber).HasMaxLength(2000);
+        entity.Property(x => x.ManualBankReservedAmount).HasPrecision(18, 2);
+        entity.Property(x => x.ManualBankReservedCurrency).HasMaxLength(3);
+        entity.Property(x => x.ManualBankVoidedAt).HasColumnName("ManualBankVoidedAtUtc");
+        entity.Property(x => x.ManualBankVoidReason).HasMaxLength(1000);
         entity.Property(x => x.FailureReasonSnapshot).HasMaxLength(120);
+        // Legacy remediation: actor/timestamp/reason for a Superseded ticket.
+        // Plain columns (no user navigation); the lifecycle CHECK above keeps
+        // Completed* null so no fulfillment or refund is implied.
+        entity.Property(x => x.RemediatedByUserId);
+        entity.Property(x => x.RemediatedAt).HasColumnName("RemediatedAtUtc");
+        entity.Property(x => x.RemediationReason).HasMaxLength(1000);
+        // Legacy remediation: structured link from a replacement Refund
+        // ticket to the superseded legacy ticket. Restrict protects the
+        // legacy row; the unique filtered index allows at most one Refund
+        // ticket per superseded request so retries cannot duplicate.
+        entity.Property(x => x.SupersedesRequestId);
+        entity.HasIndex(x => x.SupersedesRequestId)
+            .IsUnique()
+            .HasFilter("[SupersedesRequestId] IS NOT NULL");
+        entity.HasOne(x => x.SupersedesRequest).WithMany(x => x.RemediationRefunds).HasForeignKey(x => x.SupersedesRequestId).OnDelete(DeleteBehavior.Restrict);
         entity.HasIndex(x => x.DeliveryId)
             .IsUnique()
             .HasFilter("[Status] IN ('Pending', 'Approved', 'AwaitingCustomerChoice')");
@@ -1344,6 +1501,190 @@ public sealed class DoodhDirectDbContext(
         entity.HasIndex(x => new { x.RequestId, x.UploadedAt });
         entity.HasOne(x => x.Request).WithMany(x => x.Images).HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Restrict);
         entity.HasOne(x => x.UploadedByUser).WithMany().HasForeignKey(x => x.UploadedByUserId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureRefundBankExport(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var batch = modelBuilder.Entity<RefundBankExportBatch>();
+        batch.ToTable("RefundBankExportBatch", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint(
+                    "CK_RefundBankExportBatch_Lifecycle",
+                    "([Status] = 'Claimed' AND [GeneratedAtUtc] IS NULL AND [SubmittedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Generated' AND [GeneratedAtUtc] IS NOT NULL AND [SubmittedAtUtc] IS NULL AND [ClosedAtUtc] IS NULL AND [VoidedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Submitted' AND [GeneratedAtUtc] IS NOT NULL AND [SubmittedAtUtc] IS NOT NULL AND [ClosedAtUtc] IS NULL AND [VoidedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Closed' AND [ClosedAtUtc] IS NOT NULL AND [VoidedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Voided' AND [VoidedAtUtc] IS NOT NULL)");
+            }
+        });
+        batch.HasKey(x => x.Id);
+        batch.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(batch);
+        batch.Property(x => x.BatchNumber).HasMaxLength(40).IsRequired();
+        batch.HasIndex(x => x.BatchNumber).IsUnique();
+        batch.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        batch.Property(x => x.SourceAccountHolderName).HasMaxLength(100).IsRequired();
+        batch.Property(x => x.SourceBankName).HasMaxLength(100).IsRequired();
+        batch.Property(x => x.SourceProtectedAccountNumber).HasMaxLength(2000).IsRequired();
+        batch.Property(x => x.SourceAccountLast4).HasMaxLength(10).IsRequired();
+        batch.Property(x => x.SourceIfsc).HasMaxLength(11).IsRequired();
+        batch.Property(x => x.GeneratedAt).HasColumnName("GeneratedAtUtc");
+        batch.Property(x => x.SubmittedAt).HasColumnName("SubmittedAtUtc");
+        batch.Property(x => x.ClosedAt).HasColumnName("ClosedAtUtc");
+        batch.Property(x => x.VoidedAt).HasColumnName("VoidedAtUtc");
+        batch.Property(x => x.VoidReason).HasMaxLength(1000);
+        var batchRowVersion = batch.Property(x => x.RowVersion);
+        if (usesSqlite)
+        {
+            batchRowVersion.IsConcurrencyToken().ValueGeneratedNever();
+        }
+        else
+        {
+            batchRowVersion.IsRowVersion();
+        }
+
+        var item = modelBuilder.Entity<RefundBankExportItem>();
+        item.ToTable("RefundBankExportItem", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_RefundBankExportItem_Amount", "[Amount] > 0");
+            }
+        });
+        item.HasKey(x => x.Id);
+        item.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(item);
+        item.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        item.Property(x => x.RequestNumber).HasMaxLength(40).IsRequired();
+        item.Property(x => x.OrderNumber).HasMaxLength(40);
+        item.Property(x => x.CustomerDisplayName).HasMaxLength(200).IsRequired();
+        item.Property(x => x.Amount).HasPrecision(18, 2).IsRequired();
+        item.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+        item.Property(x => x.BeneficiaryAccountHolderName).HasMaxLength(100).IsRequired();
+        item.Property(x => x.BeneficiaryBankName).HasMaxLength(100).IsRequired();
+        item.Property(x => x.BeneficiaryProtectedAccountNumber).HasMaxLength(2000).IsRequired();
+        item.Property(x => x.BeneficiaryAccountLast4).HasMaxLength(10).IsRequired();
+        item.Property(x => x.BeneficiaryIfsc).HasMaxLength(11).IsRequired();
+        item.Property(x => x.SourceAccountHolderName).HasMaxLength(100).IsRequired();
+        item.Property(x => x.SourceBankName).HasMaxLength(100).IsRequired();
+        item.Property(x => x.SourceProtectedAccountNumber).HasMaxLength(2000).IsRequired();
+        item.Property(x => x.SourceAccountLast4).HasMaxLength(10).IsRequired();
+        item.Property(x => x.SourceIfsc).HasMaxLength(11).IsRequired();
+        item.Property(x => x.ClaimedAt).HasColumnName("ClaimedAtUtc").IsRequired();
+        item.Property(x => x.GeneratedAt).HasColumnName("GeneratedAtUtc");
+        item.Property(x => x.SubmittedAt).HasColumnName("SubmittedAtUtc");
+        item.Property(x => x.PaidAt).HasColumnName("PaidAtUtc");
+        item.Property(x => x.TransferReference).HasMaxLength(100);
+        item.Property(x => x.FailureReason).HasMaxLength(1000);
+        item.Property(x => x.FailedAt).HasColumnName("FailedAtUtc");
+        item.Property(x => x.VoidReason).HasMaxLength(1000);
+        item.Property(x => x.VoidedAt).HasColumnName("VoidedAtUtc");
+        item.Property(x => x.ReleaseReason).HasMaxLength(1000);
+        item.Property(x => x.ReleasedAt).HasColumnName("ReleasedAtUtc");
+        var itemRowVersion = item.Property(x => x.RowVersion);
+        if (usesSqlite)
+        {
+            itemRowVersion.IsConcurrencyToken().ValueGeneratedNever();
+        }
+        else
+        {
+            itemRowVersion.IsRowVersion();
+        }
+
+        item.HasIndex(x => x.BatchId);
+        item.HasIndex(x => x.TicketId)
+            .IsUnique()
+            .HasFilter("[Status] IN ('Claimed', 'Generated', 'Submitted')");
+        item.HasIndex(x => x.RequestNumber);
+        item.HasOne<RefundBankExportBatch>().WithMany().HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
+        item.HasOne<RefundReplacementRequest>().WithMany().HasForeignKey(x => x.TicketId).OnDelete(DeleteBehavior.Restrict);
+
+        var link = modelBuilder.Entity<RefundBankExportItemReservation>();
+        link.ToTable("RefundBankExportItemReservation");
+        link.HasKey(x => new { x.ItemId, x.RefundId });
+        link.Property(x => x.Amount).HasPrecision(18, 2).IsRequired();
+        link.HasOne<RefundBankExportItem>().WithMany().HasForeignKey(x => x.ItemId).OnDelete(DeleteBehavior.Restrict);
+        link.HasOne<Refund>().WithMany().HasForeignKey(x => x.RefundId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureVacationRefundRequest(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<VacationRefundRequest>();
+        entity.ToTable("VacationRefundRequest", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint(
+                    "CK_VacationRefundRequest_Lifecycle",
+                    "([Status] = 'Pending' AND [DecidedByUserId] IS NULL AND [DecidedAtUtc] IS NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Approved' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Rejected' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NULL AND [CompletedAtUtc] IS NULL) OR " +
+                    "([Status] = 'Completed' AND [DecidedByUserId] IS NOT NULL AND [DecidedAtUtc] IS NOT NULL AND [CompletedByUserId] IS NOT NULL AND [CompletedAtUtc] IS NOT NULL)");
+                table.HasCheckConstraint(
+                    "CK_VacationRefundRequest_Amounts",
+                    "[GrossPerOccurrence] > 0 AND [TotalAmount] > 0 AND [OccurrenceCount] > 0 AND " +
+                    "[PayableAmountSnapshot] > 0 AND [TotalEntitlementSnapshot] > 0 AND " +
+                    "[DeductionPercentage] = 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        ConfigurePublicEntity(entity);
+        entity.Property(x => x.RequestNumber).HasMaxLength(40).IsRequired();
+        entity.HasIndex(x => x.RequestNumber).IsUnique();
+        // One logical consolidated request per subscription: concurrent runs
+        // contend here so exactly one request is created per subscription.
+        entity.HasIndex(x => x.SubscriptionId).IsUnique();
+        entity.HasIndex(x => new { x.CustomerId, x.Status });
+        entity.HasIndex(x => new { x.BranchId, x.Status });
+        entity.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        entity.Property(x => x.Reason).HasMaxLength(200).IsRequired();
+        entity.Property(x => x.DeductionPercentage).HasPrecision(5, 2).IsRequired();
+        entity.Property(x => x.GrossPerOccurrence).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.TotalAmount).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.PayableAmountSnapshot).HasPrecision(18, 2).IsRequired();
+        entity.Property(x => x.Currency).HasMaxLength(10).IsRequired();
+        entity.Property(x => x.CalculationBasisJson).HasMaxLength(20000).IsRequired();
+        entity.Property(x => x.SubmittedAt).HasColumnName("SubmittedAtUtc").IsRequired();
+        entity.Property(x => x.DecidedAt).HasColumnName("DecidedAtUtc");
+        entity.Property(x => x.DecisionRemarks).HasMaxLength(1000);
+        entity.Property(x => x.CompletedAt).HasColumnName("CompletedAtUtc");
+        entity.Property(x => x.CompletionRemarks).HasMaxLength(1000);
+        var rowVersion = entity.Property(x => x.RowVersion);
+        if (usesSqlite)
+        {
+            rowVersion.IsConcurrencyToken().ValueGeneratedNever();
+        }
+        else
+        {
+            rowVersion.IsRowVersion();
+        }
+        entity.HasOne(x => x.Subscription).WithMany().HasForeignKey(x => x.SubscriptionId).OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureVacationRefundOccurrence(ModelBuilder modelBuilder, bool usesSqlite)
+    {
+        var entity = modelBuilder.Entity<VacationRefundOccurrence>();
+        entity.ToTable("VacationRefundOccurrence", table =>
+        {
+            if (!usesSqlite)
+            {
+                table.HasCheckConstraint("CK_VacationRefundOccurrence_Allocation", "[AllocationAmount] >= 0");
+            }
+        });
+        entity.HasKey(x => x.Id);
+        entity.Property(x => x.Id).UseIdentityColumn();
+        entity.Property(x => x.ScheduledDate).HasColumnType("date").IsRequired();
+        entity.Property(x => x.Quantity).HasPrecision(18, 3).IsRequired();
+        entity.Property(x => x.AllocationAmount).HasPrecision(18, 2).IsRequired();
+        entity.HasIndex(x => x.VacationRefundRequestId);
+        // An occurrence belongs to at most one vacation-refund request ever:
+        // conflicting requests cannot overlap on the same occurrence.
+        entity.HasIndex(x => x.SubscriptionDeliveryId).IsUnique();
+        entity.HasOne(x => x.VacationRefundRequest).WithMany(x => x.Occurrences).HasForeignKey(x => x.VacationRefundRequestId).OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(x => x.SubscriptionDelivery).WithMany().HasForeignKey(x => x.SubscriptionDeliveryId).OnDelete(DeleteBehavior.Restrict);
     }
 
     private static void ConfigureSystemConfiguration(ModelBuilder modelBuilder)

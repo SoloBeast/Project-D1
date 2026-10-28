@@ -7,6 +7,36 @@ namespace DoodhDirect.Infrastructure.Identity;
 
 public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
 {
+    /// <summary>
+    /// Stage 1 employee self-ordering plus Stage 2 own-resource support access:
+    /// own-identity permissions granted to every employee role. All of these
+    /// scope to the authenticated user's own rows (customerId/userId taken
+    /// from the JWT, never from client input), so an employee can order, pay,
+    /// manage subscriptions, track their own deliveries, and raise support
+    /// tickets for themselves without gaining access to any other customer's
+    /// data, branch-wide ticket/delivery views, or any administrative API.
+    /// </summary>
+    private static readonly string[] EmployeeSelfServicePermissions =
+    [
+        AuthorizationCodes.OrdersCreateOwn,
+        AuthorizationCodes.OrdersReadOwn,
+        AuthorizationCodes.OrdersCancelOwn,
+        AuthorizationCodes.SubscriptionsCreateOwn,
+        AuthorizationCodes.SubscriptionsReadOwn,
+        AuthorizationCodes.SubscriptionsManageOwn,
+        AuthorizationCodes.PaymentsCreateOwn,
+        AuthorizationCodes.PaymentsReadOwn,
+        AuthorizationCodes.WalletReadOwn,
+        AuthorizationCodes.WalletTopUpOwn,
+        AuthorizationCodes.WalletWithdrawOwn,
+        AuthorizationCodes.DeliveriesReadOwn,
+        AuthorizationCodes.MilkTestsRequestOwn,
+        AuthorizationCodes.MilkTestsReadOwn,
+        AuthorizationCodes.MilkTestsDecideOwn,
+        AuthorizationCodes.RefundReplacementRequestOwn,
+        AuthorizationCodes.RefundReplacementReadOwn,
+    ];
+
     private static readonly IReadOnlyDictionary<string, string[]> RolePermissions =
         new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
@@ -29,6 +59,7 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.PaymentsReadOwn,
                 AuthorizationCodes.WalletReadOwn,
                 AuthorizationCodes.WalletTopUpOwn,
+                AuthorizationCodes.WalletWithdrawOwn,
                 AuthorizationCodes.RefundReplacementRequestOwn,
                 AuthorizationCodes.RefundReplacementReadOwn,
                 AuthorizationCodes.CamerasViewPublic
@@ -41,7 +72,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.BranchAccess,
                 AuthorizationCodes.DeliveriesOperateAssigned,
                 AuthorizationCodes.DeliveriesTrackAssigned,
-                AuthorizationCodes.MilkTestsOperateAssigned
+                AuthorizationCodes.MilkTestsOperateAssigned,
+                ..EmployeeSelfServicePermissions,
             ],
             [AuthorizationCodes.DairyManager] =
             [
@@ -64,7 +96,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.ReportsExport,
                 AuthorizationCodes.RefundReplacementReadBranch,
                 AuthorizationCodes.RefundReplacementManageBranch,
-                AuthorizationCodes.SetupRefundReplacementRead
+                AuthorizationCodes.SetupRefundReplacementRead,
+                ..EmployeeSelfServicePermissions,
             ],
             [AuthorizationCodes.DeliveryManager] =
             [
@@ -79,7 +112,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.ReportsOperationsRead,
                 AuthorizationCodes.ReportsMilkTestsRead,
                 AuthorizationCodes.ReportsExport,
-                AuthorizationCodes.RefundReplacementReadBranch
+                AuthorizationCodes.RefundReplacementReadBranch,
+                ..EmployeeSelfServicePermissions,
             ],
             [AuthorizationCodes.CustomerSupport] =
             [
@@ -95,7 +129,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.ReportsAdministrationRead,
                 AuthorizationCodes.RefundReplacementReadBranch,
                 AuthorizationCodes.RefundReplacementManageBranch,
-                AuthorizationCodes.SetupRefundReplacementRead
+                AuthorizationCodes.SetupRefundReplacementRead,
+                ..EmployeeSelfServicePermissions,
             ],
             [AuthorizationCodes.Accountant] =
             [
@@ -107,10 +142,13 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.OrdersRead,
                 AuthorizationCodes.PaymentsRefund,
                 AuthorizationCodes.WalletAdjust,
+                AuthorizationCodes.WithdrawalsProcess,
                 AuthorizationCodes.ReportsDashboardRead,
                 AuthorizationCodes.ReportsAdministrationRead,
                 AuthorizationCodes.ReportsFinancialRead,
-                AuthorizationCodes.ReportsExport
+                AuthorizationCodes.ReportsExport,
+                AuthorizationCodes.RefundBankExport,
+                ..EmployeeSelfServicePermissions,
             ],
             [AuthorizationCodes.SystemAdmin] =
             [
@@ -127,6 +165,7 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.CatalogueRead,
                 AuthorizationCodes.CatalogueManage,
                 AuthorizationCodes.OrdersRead,
+                AuthorizationCodes.OrdersReadBranch,
                 AuthorizationCodes.DairyRead,
                 AuthorizationCodes.DairyManage,
                 AuthorizationCodes.CamerasRead,
@@ -137,6 +176,7 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.DeliveriesAssignBranch,
                 AuthorizationCodes.PaymentsRefund,
                 AuthorizationCodes.WalletAdjust,
+                AuthorizationCodes.WithdrawalsProcess,
                 AuthorizationCodes.ReportsDashboardRead,
                 AuthorizationCodes.ReportsAdministrationRead,
                 AuthorizationCodes.ReportsFinancialRead,
@@ -158,6 +198,8 @@ public sealed class IdentitySeedService(DoodhDirectDbContext dbContext)
                 AuthorizationCodes.SetupRefundReplacementManage,
                 AuthorizationCodes.SetupBrandingRead,
                 AuthorizationCodes.SetupBrandingManage,
+                AuthorizationCodes.SetupCompanyBankRead,
+                AuthorizationCodes.SetupCompanyBankManage,
                 AuthorizationCodes.RefundReplacementRequestOwn,
                 AuthorizationCodes.RefundReplacementReadOwn,
                 AuthorizationCodes.RefundReplacementReadBranch,

@@ -47,7 +47,7 @@ public sealed class RefundReplacementStaffRefundResolutionTests
             CustomerActor(harness), secondId,
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         var completed = await service.CompleteAsync(
             StaffActor(harness), secondId,
             new DecideRefundReplacementRequest("Refund verified and paid"),
@@ -135,7 +135,7 @@ public sealed class RefundReplacementStaffRefundResolutionTests
             CustomerActor(harness), requestId,
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         var completed = await service.CompleteAsync(
             StaffActor(harness), requestId,
@@ -152,6 +152,125 @@ public sealed class RefundReplacementStaffRefundResolutionTests
     }
 
     [Fact]
+    public async Task Approve_SubscriptionFailRefund_WithoutDecision_IsRejected()
+    {
+        // Stage 3: approving a subscription failed-delivery Refund without
+        // support's explicit deduction decision is rejected — the deduction
+        // must never default silently, mirroring the order-backed flow.
+        await using var harness = await CreateHarnessAsync();
+        await FailAsync(harness);
+        var requestId = await harness.Db.RefundReplacementRequests.AsNoTracking()
+            .Select(x => x.PublicId).SingleAsync();
+        var service = CreateRefundService(harness);
+        await service.ChooseAsync(
+            CustomerActor(harness), requestId,
+            new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
+
+        var error = await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet),
+            CancellationToken.None));
+
+        Assert.Contains("deduction decision", error.Message, StringComparison.OrdinalIgnoreCase);
+        harness.Db.ChangeTracker.Clear();
+        Assert.Equal(
+            RefundReplacementStatus.AwaitingCustomerChoice,
+            (await harness.Db.RefundReplacementRequests.AsNoTracking().SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task Approve_SubscriptionFailRefund_Apply_RecordsFrozenSnapshot()
+    {
+        // Applying reuses the percentage frozen when the failure was
+        // recorded (10% in this harness), identical to the automatic timeout
+        // path — never the live configuration value.
+        await using var harness = await CreateHarnessAsync();
+        await FailAsync(harness);
+        var requestId = await harness.Db.RefundReplacementRequests.AsNoTracking()
+            .Select(x => x.PublicId).SingleAsync();
+        var service = CreateRefundService(harness);
+        await service.ChooseAsync(
+            CustomerActor(harness), requestId,
+            new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
+
+        var approved = await service.ApproveAsync(
+            StaffActor(harness), requestId,
+            new ApproveRefundReplacementRequest("Customer fault confirmed", ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet),
+            CancellationToken.None);
+
+        Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
+        Assert.Equal(10m, approved.AppliedDeductionPercentage);
+        Assert.False(approved.DeductionWaived);
+        Assert.Null(approved.DeductionWaiverReason);
+        var stored = await harness.Db.RefundReplacementRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(10m, stored.AppliedDeductionPercentage);
+        Assert.False(stored.DeductionWaived);
+        // Approval alone moves no money.
+        Assert.Equal(0, await harness.Db.WalletTransactions.AsNoTracking().CountAsync());
+        Assert.Equal(0, await harness.Db.Refunds.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task Approve_SubscriptionFailRefund_Waive_RequiresReason()
+    {
+        await using var harness = await CreateHarnessAsync();
+        await FailAsync(harness);
+        var requestId = await harness.Db.RefundReplacementRequests.AsNoTracking()
+            .Select(x => x.PublicId).SingleAsync();
+        var service = CreateRefundService(harness);
+        await service.ChooseAsync(
+            CustomerActor(harness), requestId,
+            new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
+
+        await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
+            StaffActor(harness), requestId,
+            new ApproveRefundReplacementRequest(null, ApplyDeduction: false, SettlementMethod: RefundSettlementMethod.Wallet),
+            CancellationToken.None));
+        await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
+            StaffActor(harness), requestId,
+            new ApproveRefundReplacementRequest(null, ApplyDeduction: false, WaiverReason: "  ", SettlementMethod: RefundSettlementMethod.Wallet),
+            CancellationToken.None));
+        harness.Db.ChangeTracker.Clear();
+        Assert.Equal(
+            RefundReplacementStatus.AwaitingCustomerChoice,
+            (await harness.Db.RefundReplacementRequests.AsNoTracking().SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task StaffCompletion_WaivedSubscriptionRefund_CreditsFullShare()
+    {
+        // A waived deduction settles the full frozen share: payable 160 / 2
+        // = 80 gross with zero deduction, unlike the 72 on the applied path.
+        await using var harness = await CreateHarnessAsync();
+        await FailAsync(harness);
+        await SeedSubscriptionPaymentAsync(harness);
+        var requestId = await harness.Db.RefundReplacementRequests.AsNoTracking()
+            .Select(x => x.PublicId).SingleAsync();
+        var service = CreateRefundService(harness);
+        await service.ChooseAsync(
+            CustomerActor(harness), requestId,
+            new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
+        var approved = await service.ApproveAsync(
+            StaffActor(harness), requestId,
+            new ApproveRefundReplacementRequest(null, ApplyDeduction: false, WaiverReason: "Dairy fault confirmed", SettlementMethod: RefundSettlementMethod.Wallet),
+            CancellationToken.None);
+
+        Assert.Equal(0m, approved.AppliedDeductionPercentage);
+        Assert.True(approved.DeductionWaived);
+        Assert.Equal("Dairy fault confirmed", approved.DeductionWaiverReason);
+
+        var completed = await service.CompleteAsync(
+            StaffActor(harness), requestId,
+            new DecideRefundReplacementRequest("Refund verified and paid"),
+            CancellationToken.None);
+
+        Assert.Equal(RefundReplacementStatus.Completed, completed.Status);
+        Assert.Equal(80m, (await harness.Db.WalletTransactions.AsNoTracking().SingleAsync()).Amount);
+        Assert.Equal(80m, (await harness.Db.Refunds.AsNoTracking().SingleAsync()).Amount);
+        var stored = await harness.Db.RefundReplacementRequests.AsNoTracking().SingleAsync();
+        Assert.True(stored.DeductionWaived);
+    }
+
+    [Fact]
     public async Task StaffCompletion_WithoutCompatiblePayment_ThrowsAndLeavesBothApproved()
     {
         // No successful subscription payment: the completion itself rolls
@@ -165,7 +284,7 @@ public sealed class RefundReplacementStaffRefundResolutionTests
             CustomerActor(harness), secondId,
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         var error = await Assert.ThrowsAsync<ConflictException>(() => service.CompleteAsync(
             StaffActor(harness), secondId,
@@ -202,7 +321,7 @@ public sealed class RefundReplacementStaffRefundResolutionTests
             CustomerActor(harness), secondId,
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         await service.CompleteAsync(
             StaffActor(harness), secondId,
             new DecideRefundReplacementRequest("Refund verified and paid"),
@@ -238,7 +357,7 @@ public sealed class RefundReplacementStaffRefundResolutionTests
             CustomerActor(harness), secondId,
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         await service.CompleteAsync(
             StaffActor(harness), secondId,
             new DecideRefundReplacementRequest("Refund verified and paid"),
@@ -273,7 +392,7 @@ public sealed class RefundReplacementStaffRefundResolutionTests
             CustomerActor(harness), secondId,
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         await service.CompleteAsync(
             StaffActor(harness), secondId,
             new DecideRefundReplacementRequest("Refund verified and paid"),
@@ -395,7 +514,7 @@ public sealed class RefundReplacementStaffRefundResolutionTests
             CustomerActor(harness), requestId,
             new ChooseRefundReplacementRequest(CustomerChoice.ReDelivery), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         harness.Db.ChangeTracker.Clear();
         return requestId;
     }

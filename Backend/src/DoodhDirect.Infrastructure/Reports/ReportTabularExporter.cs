@@ -46,6 +46,34 @@ internal static class ReportTabularExporter
         return encoding.GetPreamble().Concat(encoding.GetBytes(builder.ToString())).ToArray();
     }
 
+    /// <summary>
+    /// Stage 3: generic UTF-8 (BOM) CSV from explicit headers and string
+    /// cells. Reuses the same quoting and spreadsheet-formula protection as
+    /// module exports so bank-transfer files do not introduce a second CSV
+    /// engine. Values are never altered — quoting only — so regeneration
+    /// from immutable snapshots yields byte-identical downloads.
+    /// </summary>
+    public static byte[] CsvTable(string[] headers, IEnumerable<IReadOnlyList<string?>> rows)
+    {
+        ArgumentNullException.ThrowIfNull(headers);
+        ArgumentNullException.ThrowIfNull(rows);
+
+        var builder = new StringBuilder()
+            .AppendLine(string.Join(',', headers.Select(x => EscapeCsv(x ?? string.Empty))));
+
+        foreach (var row in rows)
+        {
+            builder.AppendLine(string.Join(
+                ',',
+                row.Select(value => EscapeCsv(
+                    FormatText(value ?? string.Empty),
+                    protectFormula: true))));
+        }
+
+        var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+        return encoding.GetPreamble().Concat(encoding.GetBytes(builder.ToString())).ToArray();
+    }
+
     public static byte[] Xlsx(ReportModule module, IReadOnlyCollection<object> rows)
     {
         var properties = Properties(module);
@@ -90,7 +118,8 @@ internal static class ReportTabularExporter
         return value.Contains(',', StringComparison.Ordinal) ||
                value.Contains('"') ||
                value.Contains('\r') ||
-               value.Contains('\n')
+               value.Contains('\n') ||
+               value.Contains('\t')
             ? $"\"{value.Replace("\"", "\"\"")}\""
             : value;
     }

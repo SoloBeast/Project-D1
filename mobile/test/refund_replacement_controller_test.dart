@@ -67,6 +67,59 @@ void main() {
       expect(state.isSaving, isFalse);
     });
 
+    test('submitRequest with image bytes uses the atomic submitWithImage call',
+        () async {
+      final repository = _FakeRefundReplacementRepository();
+      final container = await authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller =
+          container.read(refundReplacementControllerProvider.notifier);
+      final bytes = Uint8List.fromList(const [0xff, 0xd8, 0xff]);
+
+      expect(
+        await controller.submitRequest(
+          'delivery-1',
+          type: RefundReplacementType.refund,
+          reason: 'Milk was sour',
+          imageBytes: bytes,
+          imageFileName: 'proof.jpg',
+          imageContentType: 'image/jpeg',
+        ),
+        isTrue,
+      );
+      expect(repository.usedSubmitWithImage, isTrue);
+      expect(repository.submittedImageBytes, bytes);
+      expect(repository.submittedImageFileName, 'proof.jpg');
+      expect(repository.submittedImageContentType, 'image/jpeg');
+      expect(
+        container
+            .read(refundReplacementControllerProvider)
+            .selectedCustomerRequest
+            ?.requestId,
+        'req-1',
+      );
+    });
+
+    test('submitRequest without image bytes uses the plain JSON submit',
+        () async {
+      final repository = _FakeRefundReplacementRepository();
+      final container = await authenticatedContainer(repository);
+      addTearDown(container.dispose);
+      final controller =
+          container.read(refundReplacementControllerProvider.notifier);
+
+      expect(
+        await controller.submitRequest(
+          'delivery-1',
+          type: RefundReplacementType.refund,
+          reason: 'Never received the milk',
+        ),
+        isTrue,
+      );
+      expect(repository.usedSubmitWithImage, isFalse);
+      expect(repository.submittedReason, 'Never received the milk');
+    });
+
     test('loads the customer list and a single request', () async {
       final repository = _FakeRefundReplacementRepository();
       final container = await authenticatedContainer(repository);
@@ -240,8 +293,16 @@ class _FakeRefundReplacementRepository extends RefundReplacementRepository {
   RefundReplacementType? submittedType;
   String? submittedReason;
   String? submittedMilkTestId;
+  bool usedSubmitWithImage = false;
+  Uint8List? submittedImageBytes;
+  String? submittedImageFileName;
+  String? submittedImageContentType;
   String? decidedAction;
   String? decidedRequestId;
+  bool? lastApplyDeduction;
+  String? lastSettlementMethod;
+  String? lastWaiverReason;
+  String? lastRemarks;
 
   @override
   Future<RefundReplacementEligibility> getEligibility(
@@ -265,6 +326,29 @@ class _FakeRefundReplacementRepository extends RefundReplacementRepository {
     submittedType = type;
     submittedReason = reason;
     submittedMilkTestId = milkTestId;
+    return request();
+  }
+
+  @override
+  Future<RefundReplacementRequest> submitWithImage(
+    String token,
+    String deliveryId, {
+    required RefundReplacementType type,
+    required String reason,
+    String? remarks,
+    String? milkTestId,
+    required Uint8List imageBytes,
+    required String fileName,
+    required String contentType,
+  }) async {
+    lastToken = token;
+    usedSubmitWithImage = true;
+    submittedType = type;
+    submittedReason = reason;
+    submittedMilkTestId = milkTestId;
+    submittedImageBytes = imageBytes;
+    submittedImageFileName = fileName;
+    submittedImageContentType = contentType;
     return request();
   }
 
@@ -325,10 +409,17 @@ class _FakeRefundReplacementRepository extends RefundReplacementRepository {
     String requestId, {
     String? remarks,
     DateTime? replacementDate,
+    bool? applyDeduction,
+    String? waiverReason,
+    String? settlementMethod,
   }) async {
     lastToken = token;
     decidedAction = 'approve';
     decidedRequestId = requestId;
+    lastApplyDeduction = applyDeduction;
+    lastWaiverReason = waiverReason;
+    lastSettlementMethod = settlementMethod;
+    lastRemarks = remarks;
     return request(status: RefundReplacementStatus.approved);
   }
 

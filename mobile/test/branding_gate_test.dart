@@ -240,6 +240,44 @@ void main() {
     },
   );
 
+  testWidgets('customer bottom nav offers Orders instead of Products', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      seed: _stateWithAnimation(),
+      child: const CustomerShell(
+        currentPath: '/home',
+        title: 'Home',
+        child: SizedBox.shrink(),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('Orders'), findsOneWidget);
+    expect(find.text('Products'), findsNothing);
+    expect(tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex, 0);
+  });
+
+  testWidgets('customer bottom nav highlights Orders on order routes', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      seed: _stateWithAnimation(),
+      child: const CustomerShell(
+        currentPath: '/orders/order-1',
+        title: 'Orders',
+        child: SizedBox.shrink(),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex, 1);
+  });
+
   testWidgets('customer shell header shows the uploaded logo', (tester) async {
     await _pump(
       tester,

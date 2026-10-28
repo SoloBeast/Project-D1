@@ -1,3 +1,5 @@
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
+
 class DeliveryFailureReasons {
   static const customerNotAvailable = 'Customer not available';
   static const addressNotFound = 'Address not found';
@@ -148,6 +150,18 @@ class CustomerDelivery {
     required this.status,
     required this.scheduledDate,
     required this.destinationAddress,
+    // Explicit subscription linkage (backend CustomerDeliveryResult):
+    // clients must use these instead of parsing the SUB-{guid}-{date}
+    // reference text. Null for one-time order deliveries and for
+    // synthetic pre-materialization rows built client-side.
+    this.subscriptionDeliveryId,
+    this.subscriptionId,
+    this.subscriptionNumber,
+    this.subscriptionSlot,
+    this.quantity,
+    this.orderSummary,
+    this.subscriptionProductName,
+    this.subscriptionUnitOfMeasure,
     required this.assignedEmployeeId,
     required this.assignedEmployeeName,
     required this.isTrackingActive,
@@ -173,6 +187,24 @@ class CustomerDelivery {
         failedAt: _date(json['failedAt']),
         failureReason: json['failureReason'] as String?,
         activeOtp: json['activeOtp'] as String?,
+        subscriptionDeliveryId: json['subscriptionDeliveryId'] as String?,
+        subscriptionId: json['subscriptionId'] as String?,
+        subscriptionNumber: json['subscriptionNumber'] as String?,
+        subscriptionSlot: json['subscriptionSlot'] == null
+            ? null
+            : SubscriptionDeliverySlot.fromApi(
+                json['subscriptionSlot'] as String,
+              ),
+        quantity: (json['quantity'] as num?)?.toDouble(),
+        orderSummary: json['orderSummary'] == null
+            ? null
+            : DeliveryOrderSummary.fromJson(
+                json['orderSummary'] as Map<String, dynamic>,
+              ),
+        subscriptionProductName:
+            json['subscriptionProductName'] as String?,
+        subscriptionUnitOfMeasure:
+            json['subscriptionUnitOfMeasure'] as String?,
       );
   final String deliveryId;
   final DeliverySourceType sourceType;
@@ -188,6 +220,49 @@ class CustomerDelivery {
   final DateTime? failedAt;
   final String? failureReason;
   final String? activeOtp;
+  final String? subscriptionDeliveryId;
+  final String? subscriptionId;
+  final String? subscriptionNumber;
+  final SubscriptionDeliverySlot? subscriptionSlot;
+  final double? quantity;
+  final DeliveryOrderSummary? orderSummary;
+  final String? subscriptionProductName;
+  final String? subscriptionUnitOfMeasure;
+
+  /// An unresolved subscription delivery whose India-local scheduled date has
+  /// passed. This is a presentation state only; the backend's operational
+  /// status remains authoritative until staff records an outcome.
+  bool get isPastDue {
+    if (sourceType != DeliverySourceType.subscriptionOccurrence ||
+        status == DeliveryStatus.delivered ||
+        status == DeliveryStatus.failed ||
+        status == DeliveryStatus.cancelled) {
+      return false;
+    }
+    final date = scheduledDate.isUtc
+        ? toIndiaTime(scheduledDate)
+        : scheduledDate;
+    final today = indiaNow();
+    return DateTime(date.year, date.month, date.day).isBefore(
+      DateTime(today.year, today.month, today.day),
+    );
+  }
+
+  /// Customer-visible tracking reference: the persisted subscription
+  /// document number plus the occurrence date for subscription
+  /// occurrences. Falls back to the operational reference number when no
+  /// document number is known (one-time orders, historical rows, synthetic
+  /// pre-materialization rows). The operational reference stays the
+  /// internal correlation key and is never parsed for identity.
+  String get trackingReference {
+    final number = subscriptionNumber;
+    if (sourceType == DeliverySourceType.subscriptionOccurrence &&
+        number != null &&
+        number.isNotEmpty) {
+      return '$number · ${formatDeliveryDate(scheduledDate)}';
+    }
+    return referenceNumber;
+  }
 }
 
 class DeliveryOrderSummary {
@@ -329,6 +404,11 @@ class DeliveryDetails {
     required this.subscriptionSlot,
     required this.quantity,
     required this.orderSummary,
+    required this.subscriptionId,
+    required this.subscriptionNumber,
+    required this.subscriptionDeliveryId,
+    required this.subscriptionProductName,
+    required this.subscriptionUnitOfMeasure,
     required this.isTrackingActive,
     required this.latestLocation,
     required this.assignments,
@@ -372,6 +452,12 @@ class DeliveryDetails {
             : DeliveryOrderSummary.fromJson(
                 json['orderSummary'] as Map<String, dynamic>,
               ),
+        subscriptionId: json['subscriptionId'] as String?,
+        subscriptionNumber: json['subscriptionNumber'] as String?,
+        subscriptionDeliveryId: json['subscriptionDeliveryId'] as String?,
+        subscriptionProductName: json['subscriptionProductName'] as String?,
+        subscriptionUnitOfMeasure:
+            json['subscriptionUnitOfMeasure'] as String?,
         isTrackingActive: json['isTrackingActive'] as bool,
         latestLocation: _location(json['latestLocation']),
         assignments: (json['assignments'] as List<dynamic>? ?? const [])
@@ -412,10 +498,60 @@ class DeliveryDetails {
   final SubscriptionDeliverySlot? subscriptionSlot;
   final double? quantity;
   final DeliveryOrderSummary? orderSummary;
+  final String? subscriptionId;
+  final String? subscriptionNumber;
+  final String? subscriptionDeliveryId;
+  final String? subscriptionProductName;
+  final String? subscriptionUnitOfMeasure;
   final bool isTrackingActive;
   final DeliveryLocation? latestLocation;
   final List<DeliveryAssignment> assignments;
   final List<DeliveryBatchAllocation> batchAllocations;
+}
+
+/// A past-due scheduled subscription occurrence that was never
+/// operationalized: no delivery row exists, so the visit was never
+/// attempted. Returned by the branch missed-occurrences endpoint for
+/// manager confirmation. [estimatedRefundAmount] is the live per-delivery
+/// gross share (frozen payable share including incorporated charges); the
+/// ticket freezes it at confirmation time subject to payment limits.
+class MissedOccurrence {
+  const MissedOccurrence({
+    required this.occurrenceId,
+    required this.subscriptionId,
+    required this.subscriptionNumber,
+    required this.scheduledDate,
+    required this.daysOverdue,
+    required this.branchId,
+    required this.branchName,
+    required this.customerId,
+    required this.customerName,
+    required this.estimatedRefundAmount,
+  });
+  factory MissedOccurrence.fromJson(Map<String, dynamic> json) =>
+      MissedOccurrence(
+        occurrenceId: json['occurrenceId'] as String,
+        subscriptionId: json['subscriptionId'] as String,
+        subscriptionNumber: json['subscriptionNumber'] as String? ?? '',
+        scheduledDate: DateTime.parse(json['scheduledDate'] as String),
+        daysOverdue: (json['daysOverdue'] as num).toInt(),
+        branchId: (json['branchId'] as num).toInt(),
+        branchName: json['branchName'] as String? ?? '',
+        customerId: json['customerId'] as String,
+        customerName: json['customerName'] as String? ?? '',
+        estimatedRefundAmount:
+            (json['estimatedRefundAmount'] as num).toDouble(),
+      );
+  final String occurrenceId;
+  final String subscriptionId;
+  final String subscriptionNumber;
+  final DateTime scheduledDate;
+  final int daysOverdue;
+  final int branchId;
+  final String branchName;
+  final String customerId;
+  final String customerName;
+  final double estimatedRefundAmount;
 }
 
 class DeliveryEmployee {
@@ -480,6 +616,16 @@ DateTime? _date(Object? value) =>
 String formatDeliveryDate(DateTime value) =>
     '${value.day.toString().padLeft(2, '0')}/'
     '${value.month.toString().padLeft(2, '0')}/${value.year}';
+
+/// Formats a delivery timestamp as DD/MM/YYYY HH:mm in India time, matching
+/// the refund/replacement ticket convention. Used for every timeline step so
+/// staff and customers see the date and time of each recorded event.
+String formatDeliveryDateTime(DateTime value) {
+  final local = toIndiaTime(value);
+  String two(int number) => number.toString().padLeft(2, '0');
+  return '${two(local.day)}/${two(local.month)}/${local.year} '
+      '${two(local.hour)}:${two(local.minute)}';
+}
 
 String formatApiDeliveryDate(DateTime value) =>
     '${value.year.toString().padLeft(4, '0')}-'

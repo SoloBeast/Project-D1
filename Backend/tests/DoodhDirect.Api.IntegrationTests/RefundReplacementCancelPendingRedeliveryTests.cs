@@ -248,7 +248,7 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
         var choiceService = CreateChoiceService(harness);
         await ChooseReDeliveryAsync(choiceService, harness, requestId);
         await choiceService.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         await SeedSubscriptionPaymentAsync(harness, PaymentMethod.Wallet);
 
         var deliveryId = await MaterializeReplacementAsync(harness);
@@ -320,7 +320,7 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
         var choiceService = CreateChoiceService(harness);
         await ChooseReDeliveryAsync(choiceService, harness, seed.RequestPublicId);
         await choiceService.ApproveAsync(
-            StaffActor(harness), seed.RequestPublicId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), seed.RequestPublicId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         await CancelService(harness).CancelAsync(
             harness.Customer.Id, seed.SubscriptionPublicId, CancellationToken.None);
@@ -490,11 +490,11 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
         await ChooseReDeliveryAsync(choiceService, harness, secondId);
 
         await choiceService.ApproveAsync(
-            StaffActor(harness), firstId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), firstId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         await choiceService.ApproveAsync(
             StaffActor(harness),
             secondId,
-            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 20)),
+            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 20), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
         await SeedSubscriptionPaymentAsync(harness, PaymentMethod.Wallet);
 
@@ -635,7 +635,7 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
     {
         await ChooseReDeliveryAsync(service, harness, requestId);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
     }
 
     private static RefundReplacementService CreateChoiceService(
@@ -653,7 +653,8 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
         new FixedBranchAllocationService(harness.Branch),
         new NotSupportedPaymentService(),
         harness.TimeProvider,
-        new TestNotificationEventWriter(harness.Db, harness.TimeProvider));
+        new TestNotificationEventWriter(harness.Db, harness.TimeProvider),
+        new NumberSeriesService(harness.Db, harness.TimeProvider));
 
     private static async Task<Guid> MaterializeReplacementAsync(
         DeliveryServiceTests.DeliveryHarness harness)
@@ -746,6 +747,17 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
             RefundReplacementStatus.AwaitingCustomerChoice);
         ticket.AssignRequestNumber($"RR/CXL/{suffix}");
         db.RefundReplacementRequests.Add(ticket);
+        await db.SaveChangesAsync();
+        // Stage 2 conditional evidence: subscription tickets carry the
+        // staff-captured proof (mandatory at fail time in the real flow).
+        ticket.AddImage(new RefundReplacementImage(
+            ticket.Id,
+            $"test/cancel/{suffix}/proof.jpg",
+            "proof.jpg",
+            "image/jpeg",
+            5,
+            staff.Id,
+            now));
 
         var payment = Payment.CreateForSubscription(
             subscription.Id, customer.Id, PaymentMethod.Wallet,
@@ -786,6 +798,10 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
             throw new NotSupportedException("Cancellation tests never create payments.");
         public Task<PaymentResult> RetrySubscriptionAsync(long c, Guid s, PaymentMethod m, string k, CancellationToken t) =>
             throw new NotSupportedException("Cancellation tests never retry payments.");
+        public Task<PaymentPlanResult> CreateOrderPlanAsync(long c, Guid o, bool u, string k, CancellationToken t) =>
+            throw new NotSupportedException("Cancellation tests never create payment plans.");
+        public Task<PaymentPlanResult> CreateSubscriptionPlanAsync(long c, long s, bool u, string k, CancellationToken t, bool e = false) =>
+            throw new NotSupportedException("Cancellation tests never create payment plans.");
         public Task<PaymentResult> CreateWalletTopUpAsync(long c, decimal a, string k, CancellationToken t) =>
             throw new NotSupportedException("Cancellation tests never top up.");
         public Task<PaymentResult> VerifyAsync(long c, VerifyPaymentRequest r, CancellationToken t) =>
@@ -848,7 +864,8 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
                 new StaticBranchAllocationService(db),
                 new NotSupportedPaymentService(),
                 time,
-                new TestNotificationEventWriter(db, time));
+                new TestNotificationEventWriter(db, time),
+                new NumberSeriesService(db, time));
         }
 
         public static async Task<SqlCancelHarness> CreateAsync()
@@ -933,6 +950,15 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
             ticket.AssignRequestNumber("RR/TEST/000001");
             db.RefundReplacementRequests.Add(ticket);
             await db.SaveChangesAsync();
+            ticket.AddImage(new RefundReplacementImage(
+                ticket.Id,
+                "test/cancel/sql-proof.jpg",
+                "proof.jpg",
+                "image/jpeg",
+                5,
+                staff.Id,
+                now));
+            await db.SaveChangesAsync();
 
             ticket.RecordCustomerChoice(CustomerChoice.ReDelivery, now);
             await db.SaveChangesAsync();
@@ -946,7 +972,7 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
                 new TestNotificationEventWriter(db, time));
             var staffActor = new RefundReplacementActor(staff.Id, new HashSet<long> { branch.Id }, true);
             await choiceService.ApproveAsync(
-                staffActor, ticket.PublicId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+                staffActor, ticket.PublicId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
             var payment = Payment.CreateForSubscription(
                 subscription.Id, customer.Id, PaymentMethod.Wallet,

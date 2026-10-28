@@ -160,6 +160,7 @@ void main() {
           'price': 80.25,
           'branchIds': ['branch-1', 'branch-2'],
           'applicableChargeIds': <String>[],
+          'allowOrderOutsideBranchRadius': false,
         });
         return http.Response(
           jsonEncode({'success': true, 'data': productJson(), 'errors': []}),

@@ -229,6 +229,99 @@ class AddressLookup {
   final double longitude;
 }
 
+class CustomerBankDetail {
+  const CustomerBankDetail({
+    required this.publicId,
+    required this.accountHolderName,
+    required this.bankName,
+    required this.maskedAccountNumber,
+    required this.accountLast4,
+    required this.ifsc,
+    required this.isComplete,
+  });
+
+  factory CustomerBankDetail.fromJson(Map<String, dynamic> json) =>
+      CustomerBankDetail(
+        publicId: json['publicId'] as String,
+        accountHolderName: json['accountHolderName'] as String,
+        bankName: json['bankName'] as String,
+        maskedAccountNumber: json['maskedAccountNumber'] as String,
+        accountLast4: json['accountLast4'] as String,
+        ifsc: json['ifsc'] as String,
+        isComplete: json['isComplete'] as bool? ?? true,
+      );
+
+  final String publicId;
+  final String accountHolderName;
+  final String bankName;
+  final String maskedAccountNumber;
+  final String accountLast4;
+  final String ifsc;
+  final bool isComplete;
+}
+
+class BankDetailDraft {
+  const BankDetailDraft({
+    required this.accountHolderName,
+    required this.bankName,
+    this.accountNumber,
+    required this.ifsc,
+  });
+
+  final String accountHolderName;
+  final String bankName;
+  final String? accountNumber;
+  final String ifsc;
+
+  Map<String, dynamic> toJson() => {
+    'accountHolderName': accountHolderName.trim(),
+    'bankName': bankName.trim(),
+    'accountNumber': _optional(accountNumber),
+    'ifsc': ifsc.trim().toUpperCase(),
+  };
+}
+
+String? validateAccountHolderName(String? value) {
+  final normalized = value?.trim() ?? '';
+  if (normalized.isEmpty) return 'Account holder name is required.';
+  if (normalized.length > 100) {
+    return 'Account holder name must be at most 100 characters.';
+  }
+  return null;
+}
+
+String? validateBankName(String? value) {
+  final normalized = value?.trim() ?? '';
+  if (normalized.isEmpty) return 'Bank name is required.';
+  if (normalized.length > 100) {
+    return 'Bank name must be at most 100 characters.';
+  }
+  return null;
+}
+
+final RegExp _bankAccountPattern = RegExp(r'^[0-9]{9,18}$');
+final RegExp _ifscPattern = RegExp(r'^[A-Z]{4}0[A-Z0-9]{6}$');
+
+String? validateBankAccountNumber(String? value, {required bool isRequired}) {
+  final normalized = value?.trim() ?? '';
+  if (normalized.isEmpty) {
+    return isRequired ? 'Account number is required.' : null;
+  }
+  if (!_bankAccountPattern.hasMatch(normalized)) {
+    return 'Account number must be 9 to 18 digits.';
+  }
+  return null;
+}
+
+String? validateIfsc(String? value) {
+  final normalized = value?.trim().toUpperCase() ?? '';
+  if (normalized.isEmpty) return 'IFSC is required.';
+  if (!_ifscPattern.hasMatch(normalized)) {
+    return 'IFSC must look like ABCD0123456.';
+  }
+  return null;
+}
+
 String? _optional(String? value) {
   final normalized = value?.trim();
   return normalized == null || normalized.isEmpty ? null : normalized;

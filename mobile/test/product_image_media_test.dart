@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/core/network/media_url.dart';
 import 'package:doodh_direct_mobile/core/widgets/product_widgets.dart';
+import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -171,15 +172,16 @@ void main() {
     test(
       'resolves a relative product image path against the configured API base URL',
       () {
-        // Default compile-time base (DOOHDIRECT_API_URL): http://localhost:5209
+        // Platform-aware default base (DOOHDIRECT_API_URL override wins;
+        // Android resolves to the emulator host loopback).
         expect(
           resolveMediaUrl('/api/v1/products/p-1/image'),
-          'http://localhost:5209/api/v1/products/p-1/image',
+          '$apiBaseUrl/api/v1/products/p-1/image',
         );
         // Whitespace around the relative path is tolerated.
         expect(
           resolveMediaUrl('  /api/v1/products/p-1/image  '),
-          'http://localhost:5209/api/v1/products/p-1/image',
+          '$apiBaseUrl/api/v1/products/p-1/image',
         );
       },
     );
@@ -202,7 +204,7 @@ void main() {
         expect(image.image, isA<NetworkImage>());
         expect(
           (image.image as NetworkImage).url,
-          'http://localhost:5209/api/v1/products/p-1/image',
+          '$apiBaseUrl/api/v1/products/p-1/image',
         );
       },
     );

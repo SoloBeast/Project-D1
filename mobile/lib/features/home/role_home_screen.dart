@@ -9,6 +9,7 @@ import 'package:doodh_direct_mobile/features/catalogue/catalogue_product_card.da
 import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_controller.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_models.dart';
+import 'package:doodh_direct_mobile/features/orders/cancel_order_dialog.dart';
 import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
 import 'package:doodh_direct_mobile/features/orders/order_models.dart';
 import 'package:doodh_direct_mobile/features/subscriptions/subscription_controller.dart';
@@ -18,6 +19,7 @@ import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/branding/doodh_brand_mark.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/notifications/notification_controller.dart';
+import 'package:doodh_direct_mobile/features/notifications/permission_onboarding.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -56,27 +58,34 @@ class RoleHomeScreen extends ConsumerWidget {
           const _SignOutButton(),
         ],
       ),
-      body: switch (role) {
-        UserRole.customer => const _CustomerHomeActions(),
-        UserRole.delivery => _DeliveryHomeActions(
-          roles: user?.roles ?? const [],
-          permissions: user?.permissions ?? const [],
-          branchIds: user?.branchIds ?? const [],
-          branchDetails: user?.branchDetails ?? const [],
-        ),
-        UserRole.dairy => const _DairyHomeActions(),
-        UserRole.owner || UserRole.admin => _AdminHomeActions(
-          permissions: user?.permissions ?? const [],
-          branchIds: user?.branchIds ?? const [],
-          branchDetails: user?.branchDetails ?? const [],
-        ),
-        UserRole.support => const _SupportHomeActions(),
-        UserRole.accountant => const StatePanel(
-          icon: Icons.account_balance_outlined,
-          title: 'Accounting workspace ready',
-          message: 'Accounting workflows remain outside the Identity and RBAC phase.',
-        ),
-      },
+      // The onboarding host presents the once-per-install notification
+      // rationale on the first authenticated home visit; it renders nothing.
+      body: Stack(
+        children: [
+          switch (role) {
+            UserRole.customer => const _CustomerHomeActions(),
+            UserRole.delivery => _DeliveryHomeActions(
+              roles: user?.roles ?? const [],
+              permissions: user?.permissions ?? const [],
+              branchIds: user?.branchIds ?? const [],
+              branchDetails: user?.branchDetails ?? const [],
+            ),
+            UserRole.dairy => const _DairyHomeActions(),
+            UserRole.owner || UserRole.admin => _AdminHomeActions(
+              permissions: user?.permissions ?? const [],
+              branchIds: user?.branchIds ?? const [],
+              branchDetails: user?.branchDetails ?? const [],
+            ),
+            UserRole.support => _SupportHomeActions(
+              permissions: user?.permissions ?? const [],
+            ),
+            UserRole.accountant => _AccountantHomeActions(
+              permissions: user?.permissions ?? const [],
+            ),
+          },
+          const PermissionOnboardingHost(),
+        ],
+      ),
     );
   }
 }
@@ -210,40 +219,48 @@ class _CustomerHomeActionsState extends ConsumerState<_CustomerHomeActions> {
   void _openCatalogue() => context.push('/catalogue');
 
   @override
-  Widget build(BuildContext context) => CustomerShell(
-    currentPath: '/home',
-    // Brand row + tagline on the left of the app bar's title row, with the
-    // header trio — Wallet → Cart → Notification (notification last) —
-    // grouped on the right (business ask).
-    header: const _CustomerHomeHeader(),
-    child: DoodhPage(
-      child: RefreshIndicator(
-        onRefresh: _loadHomeData,
-        child: ListView(
-          key: const ValueKey('customer-home-scroll'),
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: [
-            DoodhSearchBar(
-              key: const ValueKey('home-search'),
-              hint: 'Search milk, paneer, ghee…',
-              onChanged: (value) => ref
-                  .read(catalogueControllerProvider.notifier)
-                  .setSearchQuery(value),
-              onSubmitted: (_) => _openCatalogue(),
+  // The onboarding host presents the once-per-install notification
+  // rationale on the first authenticated home visit; it renders nothing.
+  @override
+  Widget build(BuildContext context) => Stack(
+    children: [
+      CustomerShell(
+        currentPath: '/home',
+        // Brand row + tagline on the left of the app bar's title row, with the
+        // header trio — Wallet → Cart → Notification (notification last) —
+        // grouped on the right (business ask).
+        header: const _CustomerHomeHeader(),
+        child: DoodhPage(
+          child: RefreshIndicator(
+            onRefresh: _loadHomeData,
+            child: ListView(
+              key: const ValueKey('customer-home-scroll'),
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                DoodhSearchBar(
+                  key: const ValueKey('home-search'),
+                  hint: 'Search milk, paneer, ghee…',
+                  onChanged: (value) => ref
+                      .read(catalogueControllerProvider.notifier)
+                      .setSearchQuery(value),
+                  onSubmitted: (_) => _openCatalogue(),
+                ),
+                const SizedBox(height: DoodhSpacing.lg),
+                const _MyDeliveries(),
+                // Business ask: "Upcoming Deliveries" is its own section card —
+                // sharing the tan My-Deliveries card read as one crowded block.
+                const SizedBox(height: DoodhSpacing.lg),
+                const UpcomingDeliveriesSection(),
+                _HomeCategoryDiscovery(onBrowseCatalogue: _openCatalogue),
+                _HomeProductDiscovery(onBrowseCatalogue: _openCatalogue),
+                const SizedBox(height: DoodhSpacing.xl),
+              ],
             ),
-            const SizedBox(height: DoodhSpacing.lg),
-            const _MyDeliveries(),
-            // Business ask: "Upcoming Deliveries" is its own section card —
-            // sharing the tan My-Deliveries card read as one crowded block.
-            const SizedBox(height: DoodhSpacing.lg),
-            const UpcomingDeliveriesSection(),
-            _HomeCategoryDiscovery(onBrowseCatalogue: _openCatalogue),
-            _HomeProductDiscovery(onBrowseCatalogue: _openCatalogue),
-            const SizedBox(height: DoodhSpacing.xl),
-          ],
+          ),
         ),
       ),
-    ),
+      const PermissionOnboardingHost(),
+    ],
   );
 }
 
@@ -403,6 +420,18 @@ class _MyDeliveriesState extends ConsumerState<_MyDeliveries> {
   /// number; the dates themselves stay dynamically generated.
   static const int visibleDays = 7;
 
+  /// Retry just the Home delivery inputs (customer deliveries +
+  /// subscriptions + customer-wide calendars) so the banner is actionable
+  /// without requiring a full pull-to-refresh of the whole Home screen.
+  Future<void> _retryDeliveryStatus() async {
+    await Future.wait([
+      ref.read(deliveryControllerProvider.notifier).loadCustomerDeliveries(),
+      ref.read(subscriptionControllerProvider.notifier).loadSubscriptions(),
+    ]);
+    if (!mounted) return;
+    await ref.read(subscriptionControllerProvider.notifier).loadAllCalendars();
+  }
+
   @override
   Widget build(BuildContext context) {
     final delivery = ref.watch(deliveryControllerProvider);
@@ -521,9 +550,41 @@ class _MyDeliveriesState extends ConsumerState<_MyDeliveries> {
           if (loading)
             const LinearProgressIndicator(minHeight: 3)
           else if (unavailable)
-            const DoodhStatusPill(
-              label: 'Unable to refresh delivery status',
-              tone: DoodhStatusTone.warning,
+            Builder(
+              builder: (context) {
+                final details = [
+                  delivery.errorMessage,
+                  subscription.errorMessage,
+                ].whereType<String>().toSet().join('\n');
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const DoodhStatusPill(
+                      label: 'Unable to refresh delivery status',
+                      tone: DoodhStatusTone.warning,
+                    ),
+                    if (details.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        details,
+                        key: const ValueKey('delivery-status-error-detail'),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        key: const ValueKey('delivery-status-retry'),
+                        onPressed: _retryDeliveryStatus,
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('Retry'),
+                      ),
+                    ),
+                  ],
+                );
+              },
             )
           else
             const Wrap(
@@ -575,8 +636,8 @@ class _UpcomingDeliveryLine {
   /// reference number).
   final OrderSummary? order;
 
-  /// Set for subscription occurrences (matched by the deterministic
-  /// `SUB-{subscriptionPublicId:N}-{yyyyMMdd}` reference).
+  /// Set for subscription occurrences (matched by the explicit
+  /// `subscriptionId` linkage from the API contract).
   final SubscriptionDetails? subscription;
 
   /// Set when the line came from the subscription calendar (pre-materialized
@@ -626,6 +687,7 @@ class _UpcomingDeliveryLine {
   bool get canSkip =>
       occurrence != null &&
       occurrence!.canSkip &&
+      !occurrence!.isPastDue &&
       subscription?.status.canUpdate == true;
 
   static String _formatQuantity(double value) => value == value.roundToDouble()
@@ -696,45 +758,43 @@ class UpcomingDeliveriesSection extends ConsumerWidget {
           };
 
     final lines = <_UpcomingDeliveryLine>[];
-    final seenReferences = <String>{};
+    // Dedupe key pairing a materialized Delivery with its subscription
+    // occurrence: explicit subscription id + occurrence date. Never derived
+    // by parsing reference text.
+    final seenOccurrences = <String>{};
+    String occurrenceKey(String ownerPublicId, DateTime date) {
+      final day = _indiaDateOf(date);
+      return '$ownerPublicId|${day.year}-${day.month}-${day.day}';
+    }
 
     // Source 1 — materialized Delivery rows (created by the dairy manager's
     // "Materialize" run). These carry tracking and lifecycle actions.
     for (final item in delivery.customerDeliveries) {
       final date = _indiaDateOf(item.scheduledDate);
-      // Upcoming = today onward, before any terminal state.
-      if (date.isBefore(todayDate)) continue;
-      // Terminal deliveries never render as upcoming: delivered, failed,
-      // and D1-D voided (cancelled) rows are history, not scheduled work.
-      if (item.status == DeliveryStatus.delivered ||
+      final isTerminal =
+          item.status == DeliveryStatus.delivered ||
           item.status == DeliveryStatus.failed ||
-          item.status == DeliveryStatus.cancelled) {
-        continue;
-      }
+          item.status == DeliveryStatus.cancelled;
+      final isPastDueSubscription = item.isPastDue;
+      // Old one-time-order rows stay out of the upcoming section. A
+      // subscription delivery with no recorded outcome stays visible as Past
+      // due until staff resolves it, rather than disappearing as history.
+      if (date.isBefore(todayDate) && !isPastDueSubscription) continue;
+      if (isTerminal) continue;
 
       final order = ordersByDeliveryReference[item.referenceNumber];
-      SubscriptionDetails? subscription;
+      // Explicit subscription linkage from the API contract: a row that
+      // cannot be resolved renders without subscription enrichment instead
+      // of crashing the section.
+      final subscription = item.subscriptionId == null
+          ? null
+          : subscriptionsByPublicId[item.subscriptionId];
       if (item.sourceType == DeliverySourceType.subscriptionOccurrence &&
-          item.referenceNumber.length > 'SUB-'.length) {
-        // SUB-{publicId:N}-{yyyyMMdd} — the GUID is the first 32 chars.
-        // A malformed reference must never crash the section: the row
-        // renders without subscription enrichment instead.
-        final raw = item.referenceNumber
-            .substring('SUB-'.length)
-            .split('-')
-            .first;
-        if (raw.length == 32) {
-          final dashed = <String>[
-            raw.substring(0, 8),
-            raw.substring(8, 12),
-            raw.substring(12, 16),
-            raw.substring(16, 20),
-            raw.substring(20, 32),
-          ].join('-');
-          subscription = subscriptionsByPublicId[dashed];
-        }
+          item.subscriptionId != null) {
+        seenOccurrences.add(
+          occurrenceKey(item.subscriptionId!, item.scheduledDate),
+        );
       }
-      seenReferences.add(item.referenceNumber);
       lines.add(
         _UpcomingDeliveryLine(
           delivery: item,
@@ -756,22 +816,31 @@ class UpcomingDeliveriesSection extends ConsumerWidget {
       for (final item in ownerEntry.value) {
         if (item.status != SubscriptionDeliveryStatus.scheduled) continue;
         final date = _indiaDateOf(item.scheduledDate);
-        if (date.isBefore(todayDate)) continue;
-        // C# Guid "N" format (DeliveryService) is lowercase hex — keep the
-        // publicId exactly as serialized so pre-materialized Delivery rows
-        // dedupe against these occurrences instead of doubling up.
-        final reference =
-            'SUB-${ownerEntry.key.replaceAll('-', '')}-'
-            '${date.year.toString().padLeft(4, '0')}'
-            '${date.month.toString().padLeft(2, '0')}'
-            '${date.day.toString().padLeft(2, '0')}';
-        if (seenReferences.contains(reference)) continue;
+        // Past scheduled occurrences remain visible until the backend records
+        // a terminal outcome; do not silently drop them from customer views.
+        // Suppressed only by its OWN materialized Delivery (matched on the
+        // explicit owner id + date, never on reference text).
+        if (seenOccurrences.contains(
+          occurrenceKey(ownerEntry.key, item.scheduledDate),
+        )) {
+          continue;
+        }
+        // Customer-visible tracking reference: the persisted subscription
+        // document number plus the occurrence date where known.
+        final ownerNumber = owner?.subscriptionNumber;
+        final reference = ownerNumber == null || ownerNumber.isEmpty
+            ? item.publicId
+            : '$ownerNumber · ${date.day.toString().padLeft(2, '0')}/'
+                  '${date.month.toString().padLeft(2, '0')}/${date.year}';
         lines.add(
           _UpcomingDeliveryLine(
             delivery: CustomerDelivery(
               deliveryId: 'occurrence-${item.publicId}',
               sourceType: DeliverySourceType.subscriptionOccurrence,
               referenceNumber: reference,
+              subscriptionDeliveryId: item.publicId,
+              subscriptionId: ownerEntry.key,
+              subscriptionNumber: ownerNumber,
               status: DeliveryStatus.readyForAssignment,
               scheduledDate: item.scheduledDate,
               destinationAddress: item.address,
@@ -914,15 +983,103 @@ class _UpcomingDeliveryCard extends ConsumerWidget {
   Future<void> _cancel(BuildContext context, WidgetRef ref) async {
     final order = line.order;
     final subscription = line.subscription;
+    final messenger = ScaffoldMessenger.of(context);
+    if (order != null) {
+      final controller = ref.read(orderControllerProvider.notifier);
+      final preview = await controller.previewCancel(order.publicId);
+      if (!context.mounted) return;
+      if (preview == null) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              ref.read(orderControllerProvider).errorMessage ??
+                  'Could not load cancellation details.',
+            ),
+          ),
+        );
+        return;
+      }
+      if (!preview.canCancel) {
+        await showCancelOrderDialog(context, preview: preview);
+        return;
+      }
+      String? reasonCode;
+      String? comment;
+      bool confirmed = false;
+      String? serverError;
+      var current = preview;
+      while (context.mounted) {
+        final input = await showCancelOrderDialog(
+          context,
+          initialReasonCode: reasonCode,
+          initialComment: comment,
+          initialConfirmed: confirmed,
+          preview: current,
+          serverError: serverError,
+        );
+        if (input == null || !context.mounted) return;
+        reasonCode = input.reasonCode;
+        comment = input.comment;
+        confirmed = input.confirmed;
+        final ok = await controller.cancel(
+          order.publicId,
+          reasonCode: reasonCode,
+          comment: comment,
+          confirmed: current.pickupOccurred ? confirmed : false,
+          confirmedDeductionPercentage: current.pickupOccurred
+              ? current.deductionPercentage
+              : null,
+          confirmedRefundAmount: current.pickupOccurred
+              ? current.estimatedRefund
+              : null,
+        );
+        if (!context.mounted) return;
+        if (ok) {
+          final refund = ref
+              .read(orderControllerProvider)
+              .selectedOrder
+              ?.cancellation
+              ?.refund;
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(
+                refund != null && refund.refundedAmount > 0
+                    ? 'Order cancelled. \u20B9${refund.refundedAmount.toStringAsFixed(2)} credited to your wallet.'
+                    : 'Order cancelled.',
+              ),
+            ),
+          );
+          return;
+        }
+        final message =
+            ref.read(orderControllerProvider).errorMessage ??
+            'Could not cancel the order.';
+        final stale =
+            message.toLowerCase().contains('changed since the preview') ||
+            message.toLowerCase().contains('refresh the preview');
+        if (stale) {
+          final refreshed = await controller.previewCancel(order.publicId);
+          if (!context.mounted) return;
+          if (refreshed == null) {
+            messenger.showSnackBar(SnackBar(content: Text(message)));
+            return;
+          }
+          current = refreshed;
+          confirmed = false;
+          serverError = 'The cancellation terms changed. Review the updated deduction and confirm again.';
+          continue;
+        }
+        serverError = message;
+      }
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Cancel this delivery?'),
         content: Text(
-          order != null
-              ? 'The whole order ${order.orderNumber} will be cancelled.'
-              : 'The subscription ${subscription?.productName ?? ''} will be '
-                    'cancelled — not just this date.',
+          'The subscription ${subscription?.productName ?? ''} will be '
+          'cancelled — not just this date.',
         ),
         actions: [
           TextButton(
@@ -938,19 +1095,7 @@ class _UpcomingDeliveryCard extends ConsumerWidget {
     );
     if (confirmed != true || !context.mounted) return;
 
-    final messenger = ScaffoldMessenger.of(context);
-    if (order != null) {
-      final ok = await ref
-          .read(orderControllerProvider.notifier)
-          .cancel(order.publicId);
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            ok ? 'Order cancelled.' : 'Could not cancel the order.',
-          ),
-        ),
-      );
-    } else if (subscription != null) {
+    if (subscription != null) {
       final ok = await ref
           .read(subscriptionControllerProvider.notifier)
           .cancel(subscription.publicId);
@@ -1023,8 +1168,18 @@ class _UpcomingDeliveryCard extends ConsumerWidget {
                 const SizedBox(height: DoodhSpacing.xs),
                 // Compact status: short label, no long delivery jargon.
                 DoodhStatusPill(
-                  label: isSubscription ? 'Confirmed' : delivery.status.label,
-                  tone: DoodhStatusTone.success,
+                  label:
+                      line.occurrence?.isPastDue == true ||
+                          (isSubscription && delivery.isPastDue)
+                      ? 'Past due'
+                      : isSubscription
+                      ? 'Confirmed'
+                      : delivery.status.label,
+                  tone:
+                      line.occurrence?.isPastDue == true ||
+                          (isSubscription && delivery.isPastDue)
+                      ? DoodhStatusTone.warning
+                      : DoodhStatusTone.success,
                 ),
                 const SizedBox(height: DoodhSpacing.xs),
                 Row(
@@ -1035,9 +1190,8 @@ class _UpcomingDeliveryCard extends ConsumerWidget {
                         key: ValueKey(
                           'home-upcoming-modify-${delivery.deliveryId}',
                         ),
-                        onPressed: () => context.push(
-                          '/orders/${line.order!.publicId}',
-                        ),
+                        onPressed: () =>
+                            context.push('/orders/${line.order!.publicId}'),
                         child: const Text('Modify'),
                       ),
                     if (line.canSkip)
@@ -1155,37 +1309,50 @@ class _DeliveryDateTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final today = _dateOnly(DateTime.now()) == date;
+    final today = _dateOnly(indiaNow()) == date;
     CustomerDelivery? customerDelivery;
     for (final item in deliveries) {
-      if (_dateOnly(item.scheduledDate) == date) {
+      if (UpcomingDeliveriesSection._indiaDateOf(item.scheduledDate) == date) {
         customerDelivery = item;
         break;
       }
     }
     SubscriptionDelivery? subscriptionDelivery;
     for (final item in calendar) {
-      if (_dateOnly(item.scheduledDate) == date) {
+      if (UpcomingDeliveriesSection._indiaDateOf(item.scheduledDate) == date) {
         subscriptionDelivery = item;
         break;
       }
     }
-    final status =
-        customerDelivery?.status.label ?? subscriptionDelivery?.status.label;
+    final status = customerDelivery != null
+        ? (customerDelivery.isPastDue
+              ? 'Past due'
+              : customerDelivery.status.label)
+        : (subscriptionDelivery?.isPastDue == true
+              ? 'Past due'
+              : subscriptionDelivery?.status.label);
     final label = status ?? (enabled ? 'No Delivery' : 'Status unavailable');
     // Reference language: the tile carries a colored status dot (paired with
     // the text label for semantics — never colour alone).
     final dotColor = customerDelivery != null
-        ? _deliveryDotColor(customerDelivery.status)
+        ? (label == 'Past due'
+              ? DoodhColors.amber
+              : _deliveryDotColor(customerDelivery.status))
         : subscriptionDelivery != null
-        ? _subscriptionDotColor(subscriptionDelivery.status)
+        ? (subscriptionDelivery.isPastDue
+              ? DoodhColors.amber
+              : _subscriptionDotColor(subscriptionDelivery.status))
         : enabled
         ? DoodhColors.muted
         : DoodhColors.muted.withValues(alpha: 0.4);
     final dotIcon = customerDelivery != null
-        ? _deliveryStatusIcon(customerDelivery.status)
+        ? (label == 'Past due'
+              ? Icons.warning_amber_rounded
+              : _deliveryStatusIcon(customerDelivery.status))
         : subscriptionDelivery != null
-        ? _subscriptionStatusIcon(subscriptionDelivery.status)
+        ? (subscriptionDelivery.isPastDue
+              ? Icons.warning_amber_rounded
+              : _subscriptionStatusIcon(subscriptionDelivery.status))
         : Icons.circle_outlined;
     return Semantics(
       label: '${_weekday(date)}, ${date.day}, $label${today ? ', today' : ''}',
@@ -1313,25 +1480,30 @@ class _DateDeliveriesSheet extends ConsumerWidget {
 
     // D1-D slice 7: an occurrence that already materialized into a real
     // Delivery row renders exactly once — the Delivery row is authoritative
-    // for status, so its own occurrence is suppressed. Matching reuses the
-    // backend's deterministic reference `SUB-{subscriptionPublicId:N}-
-    // {yyyyMMdd}` (C# Guid "N" format is lowercase hex). Occurrences whose
-    // owner cannot be resolved keep rendering rather than vanishing.
-    final deliveryReferences = <String>{
-      for (final item in dayDeliveries) item.referenceNumber.toLowerCase(),
+    // for status, so its own occurrence is suppressed. Matching uses the
+    // explicit subscription id + occurrence date from the API contract,
+    // never reference-text parsing. Occurrences whose owner cannot be
+    // resolved keep rendering rather than vanishing.
+    String dayKey(String ownerPublicId, DateTime date) {
+      final day = _dateOnly(date);
+      return '$ownerPublicId|${day.year}-${day.month}-${day.day}';
+    }
+
+    final materializedOccurrences = <String>{
+      for (final item in dayDeliveries)
+        if (item.sourceType == DeliverySourceType.subscriptionOccurrence &&
+            item.subscriptionId != null)
+          dayKey(item.subscriptionId!, item.scheduledDate),
     };
-    final visibleOccurrences = dayOccurrences.where((occurrence) {
-      final owner = ownerOf(occurrence);
-      if (owner == null) return true;
-      final date = occurrence.scheduledDate;
-      final stamp =
-          '${date.year.toString().padLeft(4, '0')}'
-          '${date.month.toString().padLeft(2, '0')}'
-          '${date.day.toString().padLeft(2, '0')}';
-      final ownReference =
-          'sub-${owner.publicId.replaceAll('-', '')}-$stamp';
-      return !deliveryReferences.contains(ownReference);
-    }).toList(growable: false);
+    final visibleOccurrences = dayOccurrences
+        .where((occurrence) {
+          final owner = ownerOf(occurrence);
+          if (owner == null) return true;
+          return !materializedOccurrences.contains(
+            dayKey(owner.publicId, occurrence.scheduledDate),
+          );
+        })
+        .toList(growable: false);
 
     Widget occurrenceRow(SubscriptionDelivery occurrence) {
       final owner = ownerOf(occurrence);
@@ -1474,12 +1646,12 @@ class _DateSubscriptionRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final subscriptionState = ref.watch(subscriptionControllerProvider);
-    // Skip stays available only for ordinary Scheduled occurrences whose
-    // owning subscription is active — mirroring the subscriptions screen;
-    // re-delivery replacements never offer Skip and the backend remains
-    // authoritative for every skip.
+    // Skip stays available only for ordinary upcoming Scheduled occurrences
+    // whose owning subscription is active. Past-due rows remain visible for
+    // status but cannot be skipped; replacements also require staff handling.
     final canSkip =
         delivery.canSkip &&
+        !delivery.isPastDue &&
         owner != null &&
         owner!.status == SubscriptionStatus.active;
     final isReplacement = delivery.isReplacement;
@@ -1534,10 +1706,14 @@ class _DateSubscriptionRow extends ConsumerWidget {
                 // date with an explicit Replacement delivery label; the
                 // original failed occurrence stays visible on its own date.
                 DoodhStatusPill(
-                  label: isReplacement
+                  label: delivery.isPastDue
+                      ? 'Past due'
+                      : isReplacement
                       ? 'Replacement delivery'
                       : delivery.status.label,
-                  tone: isReplacement
+                  tone: delivery.isPastDue
+                      ? DoodhStatusTone.warning
+                      : isReplacement
                       ? DoodhStatusTone.success
                       : _subscriptionStatusTone(delivery.status),
                 ),
@@ -1611,7 +1787,7 @@ class _DateDeliveryRow extends StatelessWidget {
   Widget build(BuildContext context) => DoodhCard(
     color: Colors.white,
     semanticLabel:
-        '${delivery.sourceType.label} delivery ${delivery.referenceNumber}, '
+        '${delivery.sourceType.label} delivery ${delivery.trackingReference}, '
         '${delivery.status.label}',
     onTap: () => context.push('/deliveries/${delivery.deliveryId}'),
     child: Row(
@@ -1630,7 +1806,7 @@ class _DateDeliveryRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '${delivery.sourceType.label} · ${delivery.referenceNumber}',
+                '${delivery.sourceType.label} · ${delivery.trackingReference}',
                 style: Theme.of(context).textTheme.titleSmall,
               ),
               const SizedBox(height: 2),
@@ -1849,7 +2025,8 @@ class _HomeProductDiscovery extends ConsumerWidget {
                 cartQuantity: cartQuantities[product.publicId],
                 onOpen: () =>
                     context.push('/catalogue/products/${product.publicId}'),
-                onSubscribe: () => context.push('/subscriptions/new'),
+                onSubscribe: () =>
+                    context.push('/subscriptions/new', extra: product),
                 onAddToCart: () => _addProductToCart(ref, product),
               ),
           ],
@@ -1918,13 +2095,59 @@ class _DeliveryHomeActions extends StatelessWidget {
             title: 'No branch assigned',
             message: 'A branch assignment is required to manage deliveries.',
           ),
+        SelfOrderingSection(permissions: permissions),
+      ],
+    );
+  }
+}
+
+/// Stage 1 employee self-ordering: single entry to the personal ordering
+/// experience for employee workspaces. Rendered only when the session
+/// carries the own-identity ordering permission. The catalogue, checkout
+/// and cart reached from here are the existing customer-facing screens
+/// operating on the employee's own identity (own token) — staff
+/// administration stays separate and untouched.
+class SelfOrderingSection extends StatelessWidget {
+  const SelfOrderingSection({super.key, required this.permissions});
+
+  final List<String> permissions;
+
+  bool get _canSelfOrder => permissions.contains('ORDERS.CREATE_OWN');
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_canSelfOrder) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 16),
+        Text(
+          'Personal ordering',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Order milk for yourself — kept separate from staff duties.',
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.storefront_outlined),
+            title: const Text('Order for yourself'),
+            subtitle: const Text('Browse the catalogue and check out'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/catalogue'),
+          ),
+        ),
       ],
     );
   }
 }
 
 class _SupportHomeActions extends StatelessWidget {
-  const _SupportHomeActions();
+  const _SupportHomeActions({required this.permissions});
+
+  final List<String> permissions;
 
   @override
   Widget build(BuildContext context) {
@@ -1951,9 +2174,58 @@ class _SupportHomeActions extends StatelessWidget {
             onTap: () => context.push('/staff/refund-replacements'),
           ),
         ),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.beach_access_outlined),
+            title: const Text('Vacation refunds'),
+            subtitle: const Text(
+              'Review end-of-subscription vacation refunds, approve, reject, or complete them',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/staff/vacation-refunds'),
+          ),
+        ),
+        SelfOrderingSection(permissions: permissions),
       ],
     );
   }
+}
+
+class _AccountantHomeActions extends StatelessWidget {
+  const _AccountantHomeActions({required this.permissions});
+
+  final List<String> permissions;
+
+  bool get _canExport => permissions.contains('REFUNDS.BANK_EXPORT');
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: DoodhSpacing.pagePadding,
+    children: [
+      const StatePanel(
+        icon: Icons.account_balance_outlined,
+        title: 'Accounting workspace ready',
+        message:
+            'Accounting workflows remain outside the Identity and RBAC phase.',
+      ),
+      if (_canExport) ...[
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.account_balance_outlined),
+            title: const Text('Bank transfer exports'),
+            subtitle: const Text(
+              'Claim manual-bank refunds, download the bank file, and confirm transfers',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push('/finance/bank-exports'),
+          ),
+        ),
+      ],
+      SelfOrderingSection(permissions: permissions),
+    ],
+  );
 }
 
 class _DairyHomeActions extends ConsumerWidget {
@@ -1964,7 +2236,12 @@ class _DairyHomeActions extends ConsumerWidget {
     final user = ref.watch(sessionControllerProvider).session?.user;
     final branchIds = user?.branchIds ?? const <int>[];
     final branchId = branchIds.isEmpty ? null : branchIds.first;
-    final branchName = branchId == null ? null : user?.branchName(branchId);
+    String dairyName(int id) {
+      final name = user?.branchName(id);
+      if (name != null && name.isNotEmpty) return name;
+      return 'Branch $id';
+    }
+
     return ListView(
       padding: DoodhSpacing.pagePadding,
       children: [
@@ -1984,20 +2261,23 @@ class _DairyHomeActions extends ConsumerWidget {
             message: 'A branch assignment is required to manage dairy operations and deliveries.',
           )
         else ...[
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.agriculture_outlined),
-              title: Text(
-                '${branchName ?? 'Branch $branchId'} dairy dashboard',
+          // One dashboard card per assigned dairy: managers with multiple
+          // dairies pick the dairy here on the home screen and land
+          // directly on its dashboard — no selection step afterwards.
+          for (final dairyId in branchIds) ...[
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.agriculture_outlined),
+                title: Text('${dairyName(dairyId)} dairy dashboard'),
+                subtitle: const Text(
+                  'Production, batches, availability, and usage',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/dairy/branch/$dairyId/dashboard'),
               ),
-              subtitle: const Text(
-                'Production, batches, availability, and usage',
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/dairy/dashboard'),
             ),
-          ),
-          const SizedBox(height: 12),
+            const SizedBox(height: 12),
+          ],
           Card(
             child: ListTile(
               leading: const Icon(Icons.local_shipping_outlined),
@@ -2023,7 +2303,20 @@ class _DairyHomeActions extends ConsumerWidget {
                   context.push('/staff/refund-replacements?branchId=$branchId'),
             ),
           ),
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.beach_access_outlined),
+              title: const Text('Vacation refunds'),
+              subtitle: const Text(
+                'Review end-of-subscription vacation refunds, approve, reject, or complete them',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push('/staff/vacation-refunds'),
+            ),
+          ),
         ],
+        SelfOrderingSection(permissions: user?.permissions ?? const []),
       ],
     );
   }
@@ -2229,6 +2522,15 @@ class _AdminHomeActions extends ConsumerWidget {
                         ? '/staff/refund-replacements'
                         : '/staff/refund-replacements?branchId=${branchIds.first}',
                   ),
+                ),
+              if (_canReadRefundReplacements)
+                _AdminTileData(
+                  icon: Icons.beach_access_outlined,
+                  label: 'Vacation refunds',
+                  subtitle: branchIds.isEmpty
+                      ? 'Review end-of-subscription vacation refunds'
+                      : 'Review vacation refunds for ${branchDisplayName(branchDetails, branchIds.first)}',
+                  onTap: () => context.push('/staff/vacation-refunds'),
                 ),
               if (branchIds.isNotEmpty)
                 _AdminTileData(
@@ -2444,8 +2746,6 @@ class _GuestHomeScreenState extends ConsumerState<GuestHomeScreen> {
                 onSubmitted: (_) => _openCatalogue(),
               ),
               const SizedBox(height: DoodhSpacing.md),
-              const _GuestLoginPromptCard(),
-              _HomeCategoryDiscovery(onBrowseCatalogue: _openCatalogue),
               _HomeProductDiscovery(onBrowseCatalogue: _openCatalogue),
               const SizedBox(height: 24),
             ],
@@ -2484,39 +2784,5 @@ class _GuestGreetingHeader extends StatelessWidget {
         'are ready to order.',
       ),
     ],
-  );
-}
-
-class _GuestLoginPromptCard extends StatelessWidget {
-  const _GuestLoginPromptCard();
-
-  @override
-  Widget build(BuildContext context) => Card(
-    child: Padding(
-      padding: DoodhSpacing.cardPadding,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Sign in for orders, payments and more',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Your cart is saved on this device and will be there after you '
-            'sign in.',
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              FilledButton(
-                onPressed: () => context.go('/login'),
-                child: const Text('Sign in'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    ),
   );
 }

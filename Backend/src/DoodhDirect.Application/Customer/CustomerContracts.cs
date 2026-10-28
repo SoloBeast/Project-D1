@@ -52,8 +52,33 @@ public sealed record UpsertCustomerAddressRequest(
     decimal? Longitude,
     bool IsDefault);
 
+/// <summary>
+/// Customer bank details for wallet withdrawals. Reads are masked: the full
+/// account number is never returned. Updates accept a full account number
+/// and re-encrypt it; omitting the account number keeps the stored one.
+/// </summary>
+public sealed record CustomerBankDetailResult(
+    Guid PublicId,
+    string AccountHolderName,
+    string BankName,
+    string MaskedAccountNumber,
+    string AccountLast4,
+    string Ifsc,
+    bool IsComplete,
+    DateTime CreatedAt,
+    DateTime UpdatedAt);
+
+public sealed record UpsertCustomerBankDetailRequest(
+    string AccountHolderName,
+    string BankName,
+    string? AccountNumber,
+    string Ifsc);
+
 public interface ICustomerService
 {
+    Task<CustomerBankDetailResult?> GetBankDetailAsync(long userId, CancellationToken cancellationToken);
+    Task<CustomerBankDetailResult> SaveBankDetailAsync(long userId, UpsertCustomerBankDetailRequest request, CancellationToken cancellationToken);
+    Task<CustomerBankDetailResult?> GetBankDetailByCustomerIdAsync(Guid customerId, CancellationToken cancellationToken);
     Task<CustomerProfileResult> GetProfileAsync(long userId, CancellationToken cancellationToken);
     Task<CustomerProfileResult> UpdateProfileAsync(long userId, UpdateCustomerProfileRequest request, CancellationToken cancellationToken);
     Task<IReadOnlyList<CustomerAddressResult>> GetAddressesAsync(long userId, CancellationToken cancellationToken);

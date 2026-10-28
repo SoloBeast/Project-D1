@@ -55,7 +55,7 @@ public sealed class RefundReplacementExplicitRefundTests
 
         // Approval alone moves no money and creates no replacement.
         var approved = await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
         Assert.False(approved.IsRefundOnly);
         Assert.Equal(0, await harness.Db.WalletTransactions.AsNoTracking().CountAsync());
@@ -110,7 +110,7 @@ public sealed class RefundReplacementExplicitRefundTests
             CustomerActor(harness), requestId,
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         await service.CompleteAsync(
             StaffActor(harness), requestId,
             new DecideRefundReplacementRequest("Refund verified and paid"),
@@ -175,7 +175,7 @@ public sealed class RefundReplacementExplicitRefundTests
             CustomerActor(harness), requestId,
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         var completed = await service.CompleteAsync(
             StaffActor(harness), requestId,
             new DecideRefundReplacementRequest("capped"),
@@ -198,7 +198,7 @@ public sealed class RefundReplacementExplicitRefundTests
             CustomerActor(harness), requestId,
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         // No covering payment: completion fails before any write; Approved is
         // retained for repair and retry — never a false success.
@@ -278,7 +278,7 @@ public sealed class RefundReplacementExplicitRefundTests
         // Approving a refund-only remedy with no recorded choice would strand
         // it (Approved is invisible to the timeout worker and uncompletable).
         await Assert.ThrowsAsync<ConflictException>(() => service.ApproveAsync(
-            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null), CancellationToken.None));
+            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None));
         Assert.Equal(
             RefundReplacementStatus.AwaitingCustomerChoice,
             (await harness.Db.RefundReplacementRequests.AsNoTracking()
@@ -329,7 +329,7 @@ public sealed class RefundReplacementExplicitRefundTests
         var service = CreateRefundService(harness);
 
         var approved = await service.ApproveAsync(
-            StaffActor(harness), ticketId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), ticketId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
         Assert.False(approved.IsRefundOnly);
 
@@ -358,7 +358,7 @@ public sealed class RefundReplacementExplicitRefundTests
         var ticketId = await SeedOneTimeTicketAsync(harness);
         var service = CreateRefundService(harness);
         await service.ApproveAsync(
-            StaffActor(harness), ticketId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), ticketId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         await Assert.ThrowsAsync<ConflictException>(() => service.CompleteAsync(
             StaffActor(harness), ticketId,
@@ -515,7 +515,7 @@ public sealed class RefundReplacementExplicitRefundTests
             CustomerActor(harness), requestId,
             new ChooseRefundReplacementRequest(CustomerChoice.ReDelivery), CancellationToken.None);
         await service.ApproveAsync(
-            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         harness.Db.ChangeTracker.Clear();
         return requestId;
     }
@@ -615,6 +615,17 @@ public sealed class RefundReplacementExplicitRefundTests
             now.AddHours(48));
         ticket.AssignRequestNumber("RR-ONETIME-1");
         db.RefundReplacementRequests.Add(ticket);
+        await db.SaveChangesAsync();
+        // Stage 2 conditional evidence: delivered-product claims carry the
+        // customer's proof photo so staff approval can proceed.
+        ticket.AddImage(new RefundReplacementImage(
+            ticket.Id,
+            "test/explicit/proof.jpg",
+            "proof.jpg",
+            "image/jpeg",
+            5,
+            harness.Customer.Id,
+            now));
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
         return ticket.PublicId;
@@ -762,6 +773,18 @@ public sealed class RefundReplacementExplicitRefundTests
             ticket.AssignRequestNumber("RR/TEST/000001");
             db.RefundReplacementRequests.Add(ticket);
             await db.SaveChangesAsync();
+            // Stage 2 conditional evidence: subscription tickets always carry
+            // the staff-captured proof (mandatory at fail time in the real
+            // flow) so the setup approval can proceed.
+            ticket.AddImage(new RefundReplacementImage(
+                ticket.Id,
+                "test/explicit/sql-proof.jpg",
+                "proof.jpg",
+                "image/jpeg",
+                5,
+                staff.Id,
+                now));
+            await db.SaveChangesAsync();
 
             var harness = new SqlExplicitRefundHarness(
                 builder.ConnectionString, ticket.PublicId, staff.Id, branch.Id);
@@ -777,7 +800,7 @@ public sealed class RefundReplacementExplicitRefundTests
             await setupService.ApproveAsync(
                 harness.StaffActor,
                 ticket.PublicId,
-                new ApproveRefundReplacementRequest(null),
+                new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet),
                 CancellationToken.None);
             await db.DisposeAsync();
             return harness;

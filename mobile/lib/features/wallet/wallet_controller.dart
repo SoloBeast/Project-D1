@@ -1,5 +1,6 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
+import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_controller.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_gateway_contract.dart';
@@ -20,6 +21,7 @@ class WalletState {
   const WalletState({
     this.wallet,
     this.transactions = const <WalletTransaction>[],
+    this.withdrawals = const <WithdrawalRequest>[],
     this.isLoading = false,
     this.isSaving = false,
     this.errorMessage,
@@ -27,6 +29,7 @@ class WalletState {
 
   final WalletDetails? wallet;
   final List<WalletTransaction> transactions;
+  final List<WithdrawalRequest> withdrawals;
   final bool isLoading;
   final bool isSaving;
   final String? errorMessage;
@@ -34,6 +37,7 @@ class WalletState {
   WalletState copyWith({
     WalletDetails? wallet,
     List<WalletTransaction>? transactions,
+    List<WithdrawalRequest>? withdrawals,
     bool? isLoading,
     bool? isSaving,
     String? errorMessage,
@@ -41,6 +45,7 @@ class WalletState {
   }) => WalletState(
     wallet: wallet ?? this.wallet,
     transactions: transactions ?? this.transactions,
+    withdrawals: withdrawals ?? this.withdrawals,
     isLoading: isLoading ?? this.isLoading,
     isSaving: isSaving ?? this.isSaving,
     errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
@@ -171,6 +176,42 @@ class WalletController extends Notifier<WalletState> {
     state = state.copyWith(isSaving: false, errorMessage: gatewayMessage);
   }
 
+  /// Re-reads the authoritative bank-details state from the server. Throws
+  /// [ApiException] when the check itself fails so the UI can show a
+  /// retryable error instead of silently allowing withdrawal.
+  Future<CustomerBankDetail?> fetchBankDetail() async {
+    final token = _token;
+    if (token == null) return null;
+    return _repository.getBankDetail(token);
+  }
+
+  /// Submits a withdrawal request after the UI has verified bank details,
+  /// amount, and explicit confirmation. The backend revalidates everything.
+  /// Returns a user-facing message describing the outcome.
+  Future<String?> submitWithdrawal(double amount) async {
+    final token = _token;
+    if (token == null || amount <= 0 || state.isSaving) return null;
+
+    state = state.copyWith(isSaving: true, clearError: true);
+    try {
+      final key = 'wallet-withdrawal-${DateTime.now().microsecondsSinceEpoch}';
+      final request = await _repository.submitWithdrawal(
+        token: token,
+        amount: amount,
+        idempotencyKey: key,
+      );
+      await load();
+      state = state.copyWith(isSaving: false);
+      return 'Withdrawal request ${request.requestNumber} is pending review.';
+    } on ApiException catch (error) {
+      state = state.copyWith(isSaving: false, errorMessage: error.message);
+      return error.message;
+    } on Object {
+      state = state.copyWith(isSaving: false, errorMessage: _offlineMessage);
+      return _offlineMessage;
+    }
+  }
+
   Future<void> load() async {
     final token = _token;
     if (token == null) return;
@@ -180,10 +221,12 @@ class WalletController extends Notifier<WalletState> {
       final results = await Future.wait([
         _repository.get(token),
         _repository.getTransactions(token),
+        _repository.getWithdrawals(token),
       ]);
       state = state.copyWith(
         wallet: results[0] as WalletDetails,
         transactions: results[1] as List<WalletTransaction>,
+        withdrawals: results[2] as List<WithdrawalRequest>,
         isLoading: false,
       );
     } on ApiException catch (error) {

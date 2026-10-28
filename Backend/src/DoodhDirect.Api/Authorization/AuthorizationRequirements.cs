@@ -31,6 +31,10 @@ public static class AuthorizationPolicyNames
     public const string AnyRefundReplacementRequestContent =
         AnyPermissionPrefix + AuthorizationCodes.RefundReplacementReadOwn + "," + AuthorizationCodes.RefundReplacementReadBranch + "," + AuthorizationCodes.RefundReplacementManageBranch;
 
+    public const string AnyStaffOrderRead =
+        AnyPermissionPrefix + AuthorizationCodes.OrdersReadBranch + "," +
+        AuthorizationCodes.OrdersRead;
+
     internal static bool TryGetPermission(string policyName, out string permission)
     {
         if (policyName.StartsWith(PermissionPrefix, StringComparison.OrdinalIgnoreCase))

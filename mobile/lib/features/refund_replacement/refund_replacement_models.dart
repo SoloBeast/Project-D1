@@ -28,6 +28,11 @@ enum RefundReplacementStatus {
   // Never a successful fulfillment (completed) nor a replacement failure
   // (failed); the two cancellation/failure refunds stay distinguishable.
   cancelled,
+  // Legacy remediation: an approved, order-backed Replacement ticket for a
+  // one-time order was replaced by a supported Refund ticket. Terminal, but
+  // never a fulfillment (completed), a delivery failure (failed), a refund
+  // settlement, or a rejection — the linked Refund ticket carries the remedy.
+  superseded,
   unknown;
 
   static RefundReplacementStatus parse(Object? value) => switch (value) {
@@ -39,6 +44,7 @@ enum RefundReplacementStatus {
     'Completed' || 'completed' => completed,
     'Failed' || 'failed' => failed,
     'Cancelled' || 'cancelled' => cancelled,
+    'Superseded' || 'superseded' => superseded,
     _ => unknown,
   };
 
@@ -50,6 +56,7 @@ enum RefundReplacementStatus {
     completed => 'Completed',
     failed => 'Closed without delivery',
     cancelled => 'Cancelled (refunded)',
+    superseded => 'Superseded by Refund',
     unknown => 'Unknown',
   };
 
@@ -57,7 +64,8 @@ enum RefundReplacementStatus {
       this == RefundReplacementStatus.rejected ||
       this == RefundReplacementStatus.completed ||
       this == RefundReplacementStatus.failed ||
-      this == RefundReplacementStatus.cancelled;
+      this == RefundReplacementStatus.cancelled ||
+      this == RefundReplacementStatus.superseded;
 
   bool get isAwaitingChoice => this == awaitingCustomerChoice;
 }
@@ -87,6 +95,67 @@ enum CustomerChoice {
     refund => 'Refund',
     reDelivery => 'ReDelivery',
     unknown => 'Refund',
+  };
+}
+
+/// Stage 2: explicit persisted settlement method for a Refund ticket.
+/// [unspecified] covers legacy tickets and non-refund shapes (established
+/// wallet behavior). New Refund-shaped approvals designate [wallet] or
+/// [manualBankTransfer] explicitly; the backend rejects a missing choice.
+enum RefundSettlementMethod {
+  unspecified,
+  wallet,
+  manualBankTransfer,
+  unknown;
+
+  static RefundSettlementMethod parse(Object? value) => switch (value) {
+    'Wallet' || 'wallet' => wallet,
+    'ManualBankTransfer' || 'manualBankTransfer' => manualBankTransfer,
+    null || 'Unspecified' || 'unspecified' => unspecified,
+    _ => unknown,
+  };
+
+  String get label => switch (this) {
+    wallet => 'Wallet refund',
+    manualBankTransfer => 'Manual bank transfer',
+    unspecified => 'Not specified',
+    unknown => 'Unknown',
+  };
+
+  String get wireValue => switch (this) {
+    wallet => 'Wallet',
+    manualBankTransfer => 'ManualBankTransfer',
+    unspecified => 'Unspecified',
+    unknown => 'Unspecified',
+  };
+}
+
+/// The linked delivery's current status, projected from the authoritative
+/// persisted Delivery record by the ticket read APIs. Staff UI gating only:
+/// remediation eligibility requires [failed], and any other value —
+/// including [unknown] for missing/unrecognized payloads — fails closed.
+/// The backend revalidates inside its own transaction at execution time.
+enum DeliveryStatus {
+  readyForAssignment,
+  assigned,
+  pickedUp,
+  outForDelivery,
+  arrived,
+  delivered,
+  failed,
+  cancelled,
+  unknown;
+
+  static DeliveryStatus parse(Object? value) => switch (value) {
+    'ReadyForAssignment' || 'readyForAssignment' => readyForAssignment,
+    'Assigned' || 'assigned' => assigned,
+    'PickedUp' || 'pickedUp' => pickedUp,
+    'OutForDelivery' || 'outForDelivery' => outForDelivery,
+    'Arrived' || 'arrived' => arrived,
+    'Delivered' || 'delivered' => delivered,
+    'Failed' || 'failed' => failed,
+    'Cancelled' || 'cancelled' => cancelled,
+    _ => unknown,
   };
 }
 
@@ -123,6 +192,7 @@ class RefundReplacementEligibility {
     required this.hasActiveRequest,
     required this.proofImageRequired,
     required this.isMilkTestRejectedFlow,
+    this.isFailedDeliveryWithoutProduct = false,
   });
 
   factory RefundReplacementEligibility.fromJson(Map<String, dynamic> json) =>
@@ -135,6 +205,8 @@ class RefundReplacementEligibility {
         proofImageRequired: json['proofImageRequired'] as bool? ?? false,
         isMilkTestRejectedFlow:
             json['isMilkTestRejectedFlow'] as bool? ?? false,
+        isFailedDeliveryWithoutProduct:
+            json['isFailedDeliveryWithoutProduct'] as bool? ?? false,
       );
 
   final bool isEligible;
@@ -144,6 +216,10 @@ class RefundReplacementEligibility {
   final bool hasActiveRequest;
   final bool proofImageRequired;
   final bool isMilkTestRejectedFlow;
+  /// Stage 2: server-authoritative flag — the linked delivery is confirmed
+  /// failed with no product received, so no photo is required. The UI only
+  /// renders this answer; it never computes it.
+  final bool isFailedDeliveryWithoutProduct;
 }
 
 class RefundReplacementImage {
@@ -220,6 +296,52 @@ class RefundReplacementRequest {
     // re-delivery replacement, so Refund is the only remedy and rejection
     // is refused. Defaults to false for older payloads.
     this.isRefundOnly = false,
+    // Stage 1/2: support's frozen applied deduction percentage for an
+    // order-backed Refund ticket (shared Admin Centre value, or zero when
+    // waived). Null until decided and for non-order tickets.
+    this.appliedDeductionPercentage,
+    // Stage 1/2: true when support waived the customer-fault deduction.
+    this.deductionWaived = false,
+    // Stage 1/2: required reason when the deduction was waived.
+    this.deductionWaiverReason,
+    // Legacy remediation: on a replacement Refund ticket, the request
+    // number of the superseded legacy ticket. Null on every other ticket.
+    this.supersedesRequestNumber,
+    // Legacy remediation: public id of the superseded legacy ticket, used
+    // for authorized navigation to the legacy detail. Null otherwise.
+    this.supersedesRequestPublicId,
+    // Legacy remediation: on a superseded legacy ticket, the request
+    // number of the replacement Refund ticket raised for the same
+    // delivery. The detail API exposes the number only (no public id),
+    // so it is displayed as text, never as a deep link. Null otherwise.
+    this.supersededByRequestNumber,
+    // Stage 2.1: the linked delivery's authoritative status. Null when
+    // the payload predates the contract; eligibility fails closed.
+    this.deliveryStatus,
+    // Stage 3: the deduction percentage frozen when the delivery failure
+    // was recorded (Admin Centre value at that time). Drives the staff
+    // apply/waive prompt and the customer refund disclosure. Null for
+    // non-delivery-fail tickets and older payloads.
+    this.deliveryFailDeductionPercentageSnapshot,
+    // Stage 2: explicit settlement method. Defaults to unspecified for
+    // legacy payloads (established wallet behavior).
+    this.settlementMethod = RefundSettlementMethod.unspecified,
+    // Stage 2: frozen manual-bank transfer amount/currency. Null except
+    // on ManualBankTransfer tickets.
+    this.reservedAmount,
+    this.reservedCurrency,
+    // Stage 2: masked beneficiary snapshot (never the full account
+    // number). Null except on ManualBankTransfer tickets.
+    this.beneficiaryHolderName,
+    this.beneficiaryBankName,
+    this.beneficiaryIfsc,
+    this.beneficiaryAccountLast4,
+    // Employee-origin policy: true when the authoritative owning account
+    // is a non-customer (employee/owner/administrator) account.
+    // Server-derived, never sent by the client; staff UI gating only —
+    // execution revalidates inside the backend service guard. Defaults to
+    // false for older payloads.
+    this.isEmployeeOriginated = false,
   });
 
   factory RefundReplacementRequest.fromJson(Map<String, dynamic> json) =>
@@ -280,6 +402,34 @@ class RefundReplacementRequest {
         replacementDeliveryNumber:
             json['replacementDeliveryNumber'] as String?,
         isRefundOnly: (json['isRefundOnly'] as bool?) ?? false,
+        appliedDeductionPercentage:
+            (json['appliedDeductionPercentage'] as num?)?.toDouble(),
+        deductionWaived: (json['deductionWaived'] as bool?) ?? false,
+        deductionWaiverReason: json['deductionWaiverReason'] as String?,
+        supersedesRequestNumber:
+            json['supersedesRequestNumber'] as String?,
+        supersedesRequestPublicId:
+            json['supersedesRequestPublicId'] as String?,
+        supersededByRequestNumber:
+            json['supersededByRequestNumber'] as String?,
+        deliveryFailDeductionPercentageSnapshot:
+            (json['deliveryFailDeductionPercentageSnapshot'] as num?)
+                ?.toDouble(),
+        settlementMethod: RefundSettlementMethod.parse(
+          json['settlementMethod'],
+        ),
+        reservedAmount: (json['reservedAmount'] as num?)?.toDouble(),
+        reservedCurrency: json['reservedCurrency'] as String?,
+        beneficiaryHolderName: json['beneficiaryHolderName'] as String?,
+        beneficiaryBankName: json['beneficiaryBankName'] as String?,
+        beneficiaryIfsc: json['beneficiaryIfsc'] as String?,
+        beneficiaryAccountLast4:
+            json['beneficiaryAccountLast4'] as String?,
+        isEmployeeOriginated:
+            (json['isEmployeeOriginated'] as bool?) ?? false,
+        deliveryStatus: json['deliveryStatus'] == null
+            ? null
+            : DeliveryStatus.parse(json['deliveryStatus']),
       );
 
   final String requestId;
@@ -331,6 +481,28 @@ class RefundReplacementRequest {
   final DateTime? replacementDate;
   final String? replacementDeliveryNumber;
   final bool isRefundOnly;
+  final double? appliedDeductionPercentage;
+  final bool deductionWaived;
+  final String? deductionWaiverReason;
+  final String? supersedesRequestNumber;
+  final String? supersedesRequestPublicId;
+  final String? supersededByRequestNumber;
+  final DeliveryStatus? deliveryStatus;
+  final double? deliveryFailDeductionPercentageSnapshot;
+  final RefundSettlementMethod settlementMethod;
+  final double? reservedAmount;
+  final String? reservedCurrency;
+  final String? beneficiaryHolderName;
+  final String? beneficiaryBankName;
+  final String? beneficiaryIfsc;
+  final String? beneficiaryAccountLast4;
+  final bool isEmployeeOriginated;
+
+  /// True when this Refund ticket is designated for manual bank transfer:
+  /// completion is disabled — payment happens through the bank-transfer
+  /// confirmation, never through wallet settlement.
+  bool get isManualBankTransfer =>
+      settlementMethod == RefundSettlementMethod.manualBankTransfer;
 
   /// True while the ticket awaits the customer's Refund / Re-Delivery choice.
   bool get isAwaitingChoice =>
@@ -356,10 +528,62 @@ class RefundReplacementRequest {
       subscriptionDeliveryPublicId != null;
 
   /// True for one-time order-backed tickets (no subscription occurrence).
-  /// Completing these records the out-of-system settlement only — no
-  /// in-system wallet credit or refund row is created (backend locked).
+  /// Stage 2: completing an approved order Refund settles the frozen refund
+  /// to the customer's wallet through the backend's authoritative
+  /// settlement — approval alone moves no money.
   bool get isOneTimeOrderTicket =>
       subscriptionDeliveryPublicId == null && orderId != null;
+
+  /// True for order-backed Refund tickets: the only remedy the backend
+  /// supports for one-time orders. Replacement/re-delivery is never offered
+  /// here — the server rejects it.
+  bool get isOrderRefundTicket =>
+      isOneTimeOrderTicket && type == RefundReplacementType.refund;
+
+  /// True for subscription failed-delivery Refund tickets (any choice
+  /// state). Used for the pre-choice customer disclosure of the frozen
+  /// deduction percentage. The backend revalidates every precondition —
+  /// the UI only surfaces the frozen snapshot, never computes money.
+  bool get isSubscriptionDeliveryFailTicket =>
+      !isOneTimeOrderTicket &&
+      subscriptionDeliveryPublicId != null &&
+      source == RefundReplacementSource.deliveryFailed &&
+      type == RefundReplacementType.refund;
+
+  /// True for subscription failed-delivery tickets with the customer's
+  /// Refund choice recorded. Stage 3: approving these requires support's
+  /// explicit apply/waive customer-fault deduction decision (mirroring the
+  /// order flow). The backend revalidates every precondition.
+  bool get isSubscriptionDeliveryFailRefund =>
+      isSubscriptionDeliveryFailTicket &&
+      customerChoice == CustomerChoice.refund;
+
+  /// True when this ticket was closed by legacy remediation: the
+  /// unsupported one-time Replacement request was replaced by a supported
+  /// Refund request. Terminal — but never a fulfillment, a refund
+  /// settlement, or a rejection. The linked Refund ticket (named by
+  /// [supersededByRequestNumber]) carries the remedy.
+  bool get isSuperseded =>
+      status == RefundReplacementStatus.superseded;
+
+  /// True when this ticket is the Refund half of a remediation pair: it
+  /// names the superseded legacy ticket via [supersedesRequestNumber].
+  bool get isRemediationRefund => supersedesRequestNumber != null;
+
+  /// True when the staff remediation action may be offered for this ticket,
+  /// verified only from authoritative API fields: order-backed, an approved
+  /// Replacement, not already superseded, and the linked delivery's
+  /// authoritative status is Failed. A missing or unrecognized delivery
+  /// status fails closed (no action). The backend still revalidates every
+  /// precondition inside its own transaction — it returns 409 when the
+  /// ticket no longer qualifies, and the UI reloads state instead of
+  /// retrying blindly.
+  bool get isLegacyRemediationEligible =>
+      !isSuperseded &&
+      status == RefundReplacementStatus.approved &&
+      type == RefundReplacementType.replacement &&
+      orderPublicId != null &&
+      deliveryStatus == DeliveryStatus.failed;
 
   /// True when the persisted choice window has passed without a choice.
   /// Advisory only; the backend deadline is authoritative and D1-C owns
@@ -401,6 +625,15 @@ class RefundReplacementListItem {
     required this.imageCount,
     this.customerChoice,
     this.customerChoiceAtUtc,
+    // Legacy remediation: on a replacement Refund row, the request number
+    // of the superseded legacy ticket. Null on every other row.
+    this.supersedesRequestNumber,
+    // Stage 2.1: the linked delivery's authoritative status. Null when
+    // the payload predates the contract; eligibility fails closed.
+    this.deliveryStatus,
+    // Employee-origin policy indicator for list rows. Server-derived;
+    // staff UI gating only. Defaults to false for older payloads.
+    this.isEmployeeOriginated = false,
   });
 
   factory RefundReplacementListItem.fromJson(Map<String, dynamic> json) =>
@@ -439,6 +672,13 @@ class RefundReplacementListItem {
           'customerChoiceAt',
           'customerChoiceAtUtc',
         ),
+        supersedesRequestNumber:
+            json['supersedesRequestNumber'] as String?,
+        deliveryStatus: json['deliveryStatus'] == null
+            ? null
+            : DeliveryStatus.parse(json['deliveryStatus']),
+        isEmployeeOriginated:
+            (json['isEmployeeOriginated'] as bool?) ?? false,
       );
 
   final String requestId;
@@ -467,6 +707,40 @@ class RefundReplacementListItem {
   final int imageCount;
   final CustomerChoice? customerChoice;
   final DateTime? customerChoiceAtUtc;
+  final String? supersedesRequestNumber;
+  final DeliveryStatus? deliveryStatus;
+  final bool isEmployeeOriginated;
+
+  /// True when this row was closed by legacy remediation.
+  bool get isSuperseded =>
+      status == RefundReplacementStatus.superseded;
+
+  /// True when this row is the Refund half of a remediation pair.
+  bool get isRemediationRefund => supersedesRequestNumber != null;
+}
+
+/// Legacy remediation result: the superseded legacy ticket paired with the
+/// newly created linked Pending Refund ticket. The Refund ticket carries no
+/// settlement — it follows the standard Apply/Waive approval and
+/// wallet-settlement workflow. Idempotent retries return the existing pair.
+class RemediationPair {
+  const RemediationPair({
+    required this.legacyTicket,
+    required this.refundTicket,
+  });
+
+  factory RemediationPair.fromJson(Map<String, dynamic> json) =>
+      RemediationPair(
+        legacyTicket: RefundReplacementRequest.fromJson(
+          json['legacyTicket'] as Map<String, dynamic>,
+        ),
+        refundTicket: RefundReplacementRequest.fromJson(
+          json['refundTicket'] as Map<String, dynamic>,
+        ),
+      );
+
+  final RefundReplacementRequest legacyTicket;
+  final RefundReplacementRequest refundTicket;
 }
 
 class RefundReplacementPage {
@@ -520,6 +794,56 @@ List<RefundReplacementImage> _images(Object? value) =>
         .cast<Map<String, dynamic>>()
         .map(RefundReplacementImage.fromJson)
         .toList(growable: false);
+
+/// Stage 2: read-only preview of an order-backed Refund ticket's proposed
+/// wallet settlement. Every value is server-authoritative; the UI renders
+/// them verbatim and never computes money itself. Advisory only — approval
+/// snapshots the applied percentage and settlement revalidates inside its
+/// own transaction.
+class OrderRefundPreview {
+  const OrderRefundPreview({
+    required this.requestId,
+    required this.requestNumber,
+    required this.orderPublicId,
+    required this.orderNumber,
+    required this.grossBasis,
+    required this.appliedPercentage,
+    required this.deductionAmount,
+    required this.eligiblePaid,
+    required this.proposedRefund,
+    required this.currency,
+  });
+
+  factory OrderRefundPreview.fromJson(Map<String, dynamic> json) =>
+      OrderRefundPreview(
+        requestId: json['requestId'] as String,
+        requestNumber: json['requestNumber'] as String,
+        orderPublicId: json['orderPublicId'] as String,
+        orderNumber: json['orderNumber'] as String,
+        grossBasis: (json['grossBasis'] as num).toDouble(),
+        appliedPercentage: (json['appliedPercentage'] as num).toDouble(),
+        deductionAmount: (json['deductionAmount'] as num).toDouble(),
+        eligiblePaid: (json['eligiblePaid'] as num).toDouble(),
+        proposedRefund: (json['proposedRefund'] as num).toDouble(),
+        currency: json['currency'] as String,
+      );
+
+  final String requestId;
+  final String requestNumber;
+  final String orderPublicId;
+  final String orderNumber;
+  final double grossBasis;
+  final double appliedPercentage;
+  final double deductionAmount;
+  final double eligiblePaid;
+  final double proposedRefund;
+  final String currency;
+
+  /// True when no wallet refund can succeed: nothing eligible was paid
+  /// (unpaid/COD or fully refunded) or the deduction covers the basis.
+  /// Advisory — the backend revalidates at settlement.
+  bool get hasNoRefund => proposedRefund <= 0 || eligiblePaid <= 0;
+}
 
 /// D1-D: the server-proposed next eligible replacement date for a re-delivery
 /// ticket awaiting staff approval. Advisory only; approval re-validates inside

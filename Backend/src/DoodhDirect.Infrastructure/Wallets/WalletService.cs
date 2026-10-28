@@ -350,10 +350,16 @@ public sealed class WalletService(
         return wallet;
     }
 
+    /// <summary>
+    /// Stage 1 employee self-ordering: an active customer or an active employee
+    /// may hold a self-ordering wallet. Employees order against their own user id
+    /// exactly like customers; inactive or deactivated accounts are rejected here
+    /// so ordering stops even for previously issued tokens.
+    /// </summary>
     private async Task EnsureCustomerAsync(long customerId, CancellationToken cancellationToken)
     {
         if (customerId <= 0 || !await dbContext.Users.AnyAsync(
-                x => x.Id == customerId && x.IsActive && x.UserType == UserType.Customer,
+                x => x.Id == customerId && x.IsActive && (x.UserType == UserType.Customer || x.UserType == UserType.Employee),
                 cancellationToken))
         {
             throw new NotFoundException("The customer was not found.");
@@ -362,7 +368,7 @@ public sealed class WalletService(
 
     private async Task<long> ResolveCustomerIdAsync(Guid customerId, CancellationToken cancellationToken) =>
         await dbContext.Users
-            .Where(x => x.PublicId == customerId && x.IsActive && x.UserType == UserType.Customer)
+            .Where(x => x.PublicId == customerId && x.IsActive && (x.UserType == UserType.Customer || x.UserType == UserType.Employee))
             .Select(x => (long?)x.Id)
             .SingleOrDefaultAsync(cancellationToken)
         ?? throw new NotFoundException("The customer was not found.");

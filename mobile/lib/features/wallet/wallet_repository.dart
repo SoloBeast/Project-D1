@@ -1,5 +1,6 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 
+import '../customer/customer_models.dart';
 import '../payments/payment_models.dart';
 import 'wallet_models.dart';
 
@@ -22,6 +23,44 @@ class WalletRepository {
         .cast<Map<String, dynamic>>()
         .map(WalletTransaction.fromJson)
         .toList(growable: false);
+  }
+
+  Future<CustomerBankDetail?> getBankDetail(String token) async {
+    final response = await api.get(
+      '/api/v1/customers/me/bank-detail',
+      accessToken: token,
+    );
+    final data = response['data'];
+    return data is Map<String, dynamic>
+        ? CustomerBankDetail.fromJson(data)
+        : null;
+  }
+
+  Future<List<WithdrawalRequest>> getWithdrawals(String token) async {
+    final response = await api.get(
+      '/api/v1/wallet/withdrawals',
+      accessToken: token,
+    );
+    return (response['data'] as List<dynamic>? ?? const <dynamic>[])
+        .cast<Map<String, dynamic>>()
+        .map(WithdrawalRequest.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<WithdrawalRequest> submitWithdrawal({
+    required String token,
+    required double amount,
+    required String idempotencyKey,
+  }) async {
+    final response = await api.post(
+      '/api/v1/wallet/withdrawals',
+      body: <String, dynamic>{'amount': amount},
+      accessToken: token,
+      extraHeaders: <String, String>{'Idempotency-Key': idempotencyKey},
+    );
+    return WithdrawalRequest.fromJson(
+      response['data'] as Map<String, dynamic>,
+    );
   }
 
   Future<PaymentDetails> topUp({

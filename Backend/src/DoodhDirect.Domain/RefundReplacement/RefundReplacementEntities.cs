@@ -24,6 +24,23 @@ public enum CustomerChoice
     ReDelivery
 }
 
+/// <summary>
+/// Stage 2: explicit persisted settlement method for a Refund ticket.
+/// <see cref="Unspecified"/> is the legacy value: every ticket approved
+/// before the manual-bank path existed keeps today's wallet behavior and
+/// is never silently converted. New Refund-shaped approvals must designate
+/// <see cref="Wallet"/> or <see cref="ManualBankTransfer"/> explicitly;
+/// designation is exactly-once (see <c>DesignateWalletSettlement</c> /
+/// <c>DesignateManualBankSettlement</c>). Non-refund ticket types never
+/// carry a method.
+/// </summary>
+public enum RefundSettlementMethod
+{
+    Unspecified = 0,
+    Wallet = 1,
+    ManualBankTransfer = 2
+}
+
 public enum RefundReplacementStatus
 {
     Pending,
@@ -58,7 +75,19 @@ public enum RefundReplacementStatus
     /// ticket never blocks new requests and is ignored by the timeout
     /// worker exactly like every other terminal status.
     /// </summary>
-    Cancelled
+    Cancelled,
+    /// <summary>
+    /// Legacy remediation: terminal supersede resolution. An approved,
+    /// order-backed Replacement ticket for a one-time order — a remedy with
+    /// no fulfillment workflow — has been superseded by a new supported
+    /// Refund ticket. No fulfillment or refund is implied by this status:
+    /// <see cref="Completed"/> keeps meaning the remedy itself succeeded,
+    /// <see cref="Failed"/> keeps meaning the replacement was attempted
+    /// and failed. A <c>Superseded</c> ticket never blocks new requests and
+    /// is ignored by the timeout worker exactly like every other terminal
+    /// status.
+    /// </summary>
+    Superseded
 }
 
 /// <summary>
@@ -99,7 +128,8 @@ public sealed class RefundReplacementRequest : AuditableEntity
         int? deliveryFailWindowHoursSnapshot = null,
         decimal? deliveryFailDeductionPercentageSnapshot = null,
         string? failureReasonSnapshot = null,
-        RefundReplacementStatus initialStatus = RefundReplacementStatus.Pending)
+        RefundReplacementStatus initialStatus = RefundReplacementStatus.Pending,
+        bool noServiceProvided = false)
     {
         if (orderId is <= 0) throw new ArgumentOutOfRangeException(nameof(orderId));
         if (subscriptionDeliveryId is <= 0) throw new ArgumentOutOfRangeException(nameof(subscriptionDeliveryId));
@@ -132,7 +162,10 @@ public sealed class RefundReplacementRequest : AuditableEntity
         }
         if (subscriptionDeliveryId.HasValue)
         {
-            if (failedAt is null)
+            // A customer post-delivery complaint concerns a delivered
+            // occurrence — no failure ever happened, so no failure timestamp
+            // exists. Failure-origin tickets still require one.
+            if (failedAt is null && source != RefundReplacementSource.CustomerPostDelivery)
             {
                 throw new ArgumentException(
                     "A failure timestamp is required for subscription-delivery tickets.",
@@ -200,6 +233,7 @@ public sealed class RefundReplacementRequest : AuditableEntity
         DeliveryFailDeductionPercentageSnapshot = deliveryFailDeductionPercentageSnapshot is null
             ? null
             : decimal.Round(deliveryFailDeductionPercentageSnapshot.Value, 2, MidpointRounding.AwayFromZero);
+        NoServiceProvided = noServiceProvided;
         FailureReasonSnapshot = string.IsNullOrWhiteSpace(failureReasonSnapshot)
             ? null
             : failureReasonSnapshot.Trim();
@@ -240,18 +274,132 @@ public sealed class RefundReplacementRequest : AuditableEntity
     public int? DeliveryFailWindowHoursSnapshot { get; private set; }
     public decimal? DeliveryFailDeductionPercentageSnapshot { get; private set; }
     public string? FailureReasonSnapshot { get; private set; }
+    /// <summary>
+    /// Stage 1: support's explicit customer-fault deduction decision for an
+    /// order-backed Refund ticket. The frozen applied percentage (the shared
+    /// Admin Centre percentage when applied, zero when waived). Null until
+    /// the decision is recorded at approval; historical and non-order tickets
+    /// keep null. Later configuration changes never alter a frozen value.
+    /// </summary>
+    public decimal? AppliedDeductionPercentage { get; private set; }
+    /// <summary>
+    /// Stage 1: true when support waived the customer-fault deduction.
+    /// </summary>
+    public bool DeductionWaived { get; private set; }
+    /// <summary>
+    /// Stage 1: required nonblank reason when the deduction was waived.
+    /// </summary>
+    public string? DeductionWaiverReason { get; private set; }
+    /// <summary>
+    /// Stage 2: explicit settlement method. Unspecified until support
+    /// designates one at approval; legacy tickets keep Unspecified forever
+    /// and settle through the established wallet behavior. Exactly-once:
+    /// see <see cref="DesignateWalletSettlement"/> and
+    /// <see cref="DesignateManualBankSettlement"/>.
+    /// </summary>
+    public RefundSettlementMethod SettlementMethod { get; private set; } = RefundSettlementMethod.Unspecified;
+    /// <summary>
+    /// Stage 2: frozen beneficiary snapshot for a ManualBankTransfer ticket.
+    /// Captured atomically with the settlement designation at approval from
+    /// the customer's saved bank details; later profile edits cannot alter
+    /// it. The full account number is stored only in DataProtection-
+    /// encrypted form under the dedicated refund-beneficiary purpose; reads
+    /// below always use the masked last-4 form.
+    /// </summary>
+    public string? ManualBankHolderNameSnapshot { get; private set; }
+    public string? ManualBankNameSnapshot { get; private set; }
+    public string? ManualBankIfscSnapshot { get; private set; }
+    public string? ManualBankAccountLast4Snapshot { get; private set; }
+    public string? ManualBankProtectedAccountNumber { get; private set; }
+    /// <summary>
+    /// Stage 2: authoritative frozen transfer amount and currency for a
+    /// ManualBankTransfer ticket, computed with the established refund
+    /// formula at approval and reserved atomically against the covering
+    /// payments. Immutable once designated; <c>null</c> for every other
+    /// ticket shape.
+    /// </summary>
+    public decimal? ManualBankReservedAmount { get; private set; }
+    public string? ManualBankReservedCurrency { get; private set; }
+    /// <summary>
+    /// Stage 2: explicit void metadata for a ManualBankTransfer reservation
+    /// released before any transfer reached the bank. Set only by
+    /// <see cref="VoidManualBankTransfer"/>; the ticket moves to the
+    /// terminal <c>Rejected</c> status while the original approval identity
+    /// is preserved. Never set when a transfer may have reached the bank.
+    /// </summary>
+    public long? ManualBankVoidedByUserId { get; private set; }
+    public DateTime? ManualBankVoidedAt { get; private set; }
+    public string? ManualBankVoidReason { get; private set; }
     public long? DecidedByUserId { get; private set; }
     public DateTime? DecidedAt { get; private set; }
     public string? DecisionRemarks { get; private set; }
+    /// <summary>
+    /// Legacy remediation: the staff member who superseded this unsupported
+    /// Replacement ticket. Set only by <see cref="MarkSuperseded"/>; the
+    /// original <see cref="DecidedByUserId"/> approval identity is preserved.
+    /// </summary>
+    public long? RemediatedByUserId { get; private set; }
+    /// <summary>
+    /// Legacy remediation: when the ticket was superseded. Null except on
+    /// <see cref="RefundReplacementStatus.Superseded"/> tickets.
+    /// </summary>
+    public DateTime? RemediatedAt { get; private set; }
+    /// <summary>
+    /// Legacy remediation: the required nonblank business reason recorded
+    /// when the ticket was superseded.
+    /// </summary>
+    public string? RemediationReason { get; private set; }
+    /// <summary>
+    /// Legacy remediation: on the replacement Refund ticket, the legacy
+    /// ticket it supersedes. Null on every other ticket. Backed by a unique
+    /// filtered index so retries cannot create a second Refund ticket for
+    /// one superseded request.
+    /// </summary>
+    public long? SupersedesRequestId { get; private set; }
+    public RefundReplacementRequest? SupersedesRequest { get; private set; }
+    /// <summary>
+    /// Legacy remediation: refund tickets created by superseding this ticket.
+    /// At most one row exists, enforced by the unique filtered index.
+    /// </summary>
+    public ICollection<RefundReplacementRequest> RemediationRefunds { get; private set; } = [];
     public long? CompletedByUserId { get; private set; }
     public DateTime? CompletedAt { get; private set; }
     public string? CompletionRemarks { get; private set; }
 
     /// <summary>
-    /// Requests opened from a milk-test rejection are exempt from the proof
-    /// image requirement (the milk test itself is the evidence).
+    /// <summary>
+    /// Confirmed no-service failure: branch management recorded a past-due
+    /// subscription occurrence as missed before any operational delivery
+    /// existed, so no visit was ever attempted and no service was provided.
+    /// The deduction snapshot is frozen at zero for these tickets and no
+    /// ordinary customer-fault deduction applies. Immutable once recorded.
     /// </summary>
-    public bool ProofImageRequired => Source != RefundReplacementSource.MilkTestRejected;
+    public bool NoServiceProvided { get; private set; }
+
+    /// Stage 2 conditional evidence: a ticket is exempt from the proof image
+    /// requirement when it was opened from a rejected doorstep milk test (the
+    /// test itself is the evidence), when the authoritative linked delivery
+    /// confirms a failed delivery with no product received (a Failed delivery
+    /// with a failure timestamp and no completion — a photograph of a product
+    /// the customer never received must not be required), or when management
+    /// confirmed that no service was provided at all (the unattempted visit
+    /// was never operationalized, so there is no doorstep or package to
+    /// photograph — the manager attestation plus audit trail is the
+    /// evidence). Every other ticket — notably delivered-product quality,
+    /// contamination, or visible-damage claims — requires a photo. The
+    /// exemption derives only from server-persisted facts (source, order
+    /// link, delivery status, the frozen no-service distinction); client
+    /// input can never influence it. Attempted subscription-delivery failures
+    /// keep their staff-captured proof path unchanged. A null (not yet
+    /// loaded) delivery fails safe to required.
+    /// </summary>
+    public bool ProofImageRequired =>
+        Source != RefundReplacementSource.MilkTestRejected && !IsFailedDeliveryWithoutProduct && !NoServiceProvided;
+
+    private bool IsFailedDeliveryWithoutProduct =>
+        OrderId.HasValue
+        && SubscriptionDeliveryId is null
+        && Delivery is { Status: DeliveryStatus.Failed, FailedAt: not null, CompletedAt: null };
 
     public Order? Order { get; private set; }
     public SubscriptionDelivery? SubscriptionDelivery { get; private set; }
@@ -303,6 +451,168 @@ public sealed class RefundReplacementRequest : AuditableEntity
         }
 
         Images.Remove(image);
+    }
+
+    /// <summary>
+    /// Stage 1/3: records support's explicit apply/waive deduction decision on
+    /// an order-backed or subscription-delivery Refund ticket. Must be called
+    /// while Pending (order flow) or while the customer's Refund choice is
+    /// recorded (subscription delivery-fail flow), before <see cref="Approve"/>.
+    /// Applying snapshots the given percentage; waiving snapshots zero and
+    /// requires a nonblank reason. Never inferred from delivery failure state.
+    /// </summary>
+    public void RecordDeductionDecision(bool applyDeduction, decimal percentage, string? waiverReason)
+    {
+        if (!OrderId.HasValue && !SubscriptionDeliveryId.HasValue)
+        {
+            throw new InvalidOperationException("A deduction decision applies only to order-backed or subscription-delivery tickets.");
+        }
+        if (Type != RefundReplacementType.Refund)
+        {
+            throw new InvalidOperationException("A deduction decision applies only to refund tickets.");
+        }
+        if (Status != RefundReplacementStatus.Pending
+            && Status != RefundReplacementStatus.AwaitingCustomerChoice)
+        {
+            throw new InvalidOperationException("The deduction decision can only be recorded on a pending request or one with the customer's choice recorded.");
+        }
+        if (AppliedDeductionPercentage.HasValue)
+        {
+            throw new InvalidOperationException("The deduction decision has already been recorded.");
+        }
+        if (applyDeduction)
+        {
+            if (percentage < 0 || percentage > 100)
+            {
+                throw new ArgumentOutOfRangeException(nameof(percentage));
+            }
+            AppliedDeductionPercentage = decimal.Round(percentage, 2, MidpointRounding.AwayFromZero);
+            DeductionWaived = false;
+            DeductionWaiverReason = null;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(waiverReason))
+            {
+                throw new ArgumentException("A waiver reason is required when waiving the deduction.", nameof(waiverReason));
+            }
+            if (waiverReason.Trim().Length > 1000)
+            {
+                throw new ArgumentException("The waiver reason cannot exceed 1000 characters.", nameof(waiverReason));
+            }
+            AppliedDeductionPercentage = 0m;
+            DeductionWaived = true;
+            DeductionWaiverReason = waiverReason.Trim();
+        }
+    }
+
+    /// <summary>
+    /// Stage 2: designates the established wallet settlement for a Refund
+    /// ticket. Exactly-once: requires a Refund type, a pre-decision status
+    /// and no prior designation. Called inside the approval transaction;
+    /// legacy tickets (never designated) keep the same behavior through
+    /// the <c>Unspecified</c> default.
+    /// </summary>
+    public void DesignateWalletSettlement()
+    {
+        EnsureDesignatable();
+        SettlementMethod = RefundSettlementMethod.Wallet;
+    }
+
+    /// <summary>
+    /// Stage 2: designates manual bank transfer for a Refund ticket and
+    /// freezes the beneficiary snapshot plus the authoritative reserved
+    /// amount/currency atomically. Exactly-once with the same guards as
+    /// <see cref="DesignateWalletSettlement"/>. The caller reserves the
+    /// amount against the covering payments in the same transaction; this
+    /// method only freezes the ticket-side record. The protected account
+    /// number must already be encrypted with the dedicated
+    /// refund-beneficiary Data Protection purpose.
+    /// </summary>
+    public void DesignateManualBankSettlement(
+        string accountHolderName,
+        string bankName,
+        string ifsc,
+        string accountLast4,
+        string protectedAccountNumber,
+        decimal reservedAmount,
+        string reservedCurrency)
+    {
+        EnsureDesignatable();
+        ManualBankHolderNameSnapshot = Required(accountHolderName, nameof(accountHolderName));
+        ManualBankNameSnapshot = Required(bankName, nameof(bankName));
+        ManualBankIfscSnapshot = Required(ifsc, nameof(ifsc));
+        ManualBankAccountLast4Snapshot = Required(accountLast4, nameof(accountLast4));
+        ManualBankProtectedAccountNumber = Required(protectedAccountNumber, nameof(protectedAccountNumber));
+        if (reservedAmount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(reservedAmount));
+        }
+        ManualBankReservedAmount = decimal.Round(reservedAmount, 2, MidpointRounding.AwayFromZero);
+        if (ManualBankReservedAmount != reservedAmount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(reservedAmount));
+        }
+        ManualBankReservedCurrency = Required(reservedCurrency, nameof(reservedCurrency)).ToUpperInvariant();
+        SettlementMethod = RefundSettlementMethod.ManualBankTransfer;
+    }
+
+    /// <summary>
+    /// Stage 2: explicitly voids a ManualBankTransfer reservation before any
+    /// transfer reached the bank. Allowed only from an Approved manual-bank
+    /// ticket; the ticket moves to terminal <c>Rejected</c> while the
+    /// original approval identity is preserved (the database lifecycle check
+    /// for <c>Rejected</c> is satisfied: decided columns set, completed
+    /// columns null). The caller fails the pending reservation refund rows
+    /// and restores the payments in the same transaction. Never call while
+    /// transfer outcome is uncertain or after settlement.
+    /// </summary>
+    public void VoidManualBankTransfer(long voidedByUserId, DateTime voidedAt, string voidReason)
+    {
+        if (voidedByUserId <= 0) throw new ArgumentOutOfRangeException(nameof(voidedByUserId));
+        EnsureIndiaLocal(voidedAt, nameof(voidedAt));
+        if (string.IsNullOrWhiteSpace(voidReason))
+        {
+            throw new ArgumentException("A void reason is required to release a manual bank transfer.", nameof(voidReason));
+        }
+        if (voidReason.Trim().Length > 1000)
+        {
+            throw new ArgumentException("The void reason cannot exceed 1000 characters.", nameof(voidReason));
+        }
+        if (Status != RefundReplacementStatus.Approved)
+        {
+            throw new InvalidOperationException("Only an approved manual bank transfer can be voided.");
+        }
+        if (SettlementMethod != RefundSettlementMethod.ManualBankTransfer)
+        {
+            throw new InvalidOperationException("Only a manual bank transfer can be voided.");
+        }
+        if (ManualBankVoidedByUserId.HasValue)
+        {
+            throw new InvalidOperationException("The manual bank transfer has already been voided.");
+        }
+
+        ManualBankVoidedByUserId = voidedByUserId;
+        ManualBankVoidedAt = voidedAt;
+        ManualBankVoidReason = voidReason.Trim();
+        Status = RefundReplacementStatus.Rejected;
+    }
+
+    private void EnsureDesignatable()
+    {
+        if (Type != RefundReplacementType.Refund)
+        {
+            throw new InvalidOperationException("A settlement method applies only to refund tickets.");
+        }
+        if (Status != RefundReplacementStatus.Pending
+            && Status != RefundReplacementStatus.AwaitingCustomerChoice)
+        {
+            throw new InvalidOperationException("The settlement method can only be designated on a pending request or one with the customer's choice recorded.");
+        }
+        if (SettlementMethod != RefundSettlementMethod.Unspecified)
+        {
+            throw new InvalidOperationException("The settlement method has already been designated.");
+        }
     }
 
     public void Approve(long decidedByUserId, DateTime decidedAt, string? remarks)
@@ -392,6 +702,83 @@ public sealed class RefundReplacementRequest : AuditableEntity
         CompletedAt = resolvedAt;
         CompletionRemarks = Optional(remarks);
         Status = RefundReplacementStatus.Cancelled;
+    }
+
+    /// <summary>
+    /// Legacy remediation: supersedes an approved, order-backed Replacement
+    /// ticket for a one-time order, which has no fulfillment workflow, so a
+    /// supported Refund ticket can be raised for the same delivery. Allowed
+    /// only from <see cref="RefundReplacementStatus.Approved"/> on an
+    /// order-backed Replacement ticket. The original <c>Type</c>,
+    /// <c>Source</c>, approval identity/timestamp and evidence are preserved;
+    /// <c>CompletedBy*</c> stay null so no fulfillment or refund is implied.
+    /// Requires a nonblank remediation reason plus the remediating actor and
+    /// timestamp.
+    /// </summary>
+    public void MarkSuperseded(
+        long remediatedByUserId,
+        DateTime remediatedAt,
+        string remediationReason)
+    {
+        if (remediatedByUserId <= 0) throw new ArgumentOutOfRangeException(nameof(remediatedByUserId));
+        EnsureIndiaLocal(remediatedAt, nameof(remediatedAt));
+        if (string.IsNullOrWhiteSpace(remediationReason))
+        {
+            throw new ArgumentException("A remediation reason is required to supersede a ticket.", nameof(remediationReason));
+        }
+        if (remediationReason.Trim().Length > 1000)
+        {
+            throw new ArgumentException("The remediation reason cannot exceed 1000 characters.", nameof(remediationReason));
+        }
+        if (Status != RefundReplacementStatus.Approved)
+        {
+            throw new InvalidOperationException("Only an approved request can be superseded.");
+        }
+        if (!OrderId.HasValue || SubscriptionDeliveryId.HasValue)
+        {
+            throw new InvalidOperationException("Only an order-backed request can be superseded.");
+        }
+        if (Type != RefundReplacementType.Replacement)
+        {
+            throw new InvalidOperationException("Only a replacement request can be superseded.");
+        }
+        if (RemediatedByUserId.HasValue)
+        {
+            throw new InvalidOperationException("The request has already been superseded.");
+        }
+
+        RemediatedByUserId = remediatedByUserId;
+        RemediatedAt = remediatedAt;
+        RemediationReason = remediationReason.Trim();
+        Status = RefundReplacementStatus.Superseded;
+    }
+
+    /// <summary>
+    /// Legacy remediation: links a replacement Refund ticket to the legacy
+    /// ticket it supersedes. Allowed only on a pending, order-backed Refund
+    /// ticket that is not already linked.
+    /// </summary>
+    public void RecordRemediationLink(long supersedesRequestId)
+    {
+        if (supersedesRequestId <= 0) throw new ArgumentOutOfRangeException(nameof(supersedesRequestId));
+        if (!OrderId.HasValue)
+        {
+            throw new InvalidOperationException("A remediation link applies only to order-backed tickets.");
+        }
+        if (Type != RefundReplacementType.Refund)
+        {
+            throw new InvalidOperationException("A remediation link applies only to refund tickets.");
+        }
+        if (Status != RefundReplacementStatus.Pending)
+        {
+            throw new InvalidOperationException("The remediation link can only be recorded on a pending request.");
+        }
+        if (SupersedesRequestId.HasValue)
+        {
+            throw new InvalidOperationException("The remediation link has already been recorded.");
+        }
+
+        SupersedesRequestId = supersedesRequestId;
     }
 
     /// <summary>

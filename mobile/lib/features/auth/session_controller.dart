@@ -279,7 +279,19 @@ class SessionController extends Notifier<SessionState> {
     }
   }
 
-  Future<void> signOut() async {
+  Future<void>? _signOutInFlight;
+
+  /// Signs out once at a time: concurrent calls share the in-flight sign-out
+  /// so duplicate logout/deactivation requests and session races cannot occur.
+  Future<void> signOut() {
+    final inFlight = _signOutInFlight;
+    if (inFlight != null) return inFlight;
+    final operation = _signOut();
+    _signOutInFlight = operation;
+    return operation.whenComplete(() => _signOutInFlight = null);
+  }
+
+  Future<void> _signOut() async {
     final current = state.session;
     state = const SessionState.unauthenticated();
     if (current == null) return;

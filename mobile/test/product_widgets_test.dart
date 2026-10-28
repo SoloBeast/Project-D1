@@ -69,7 +69,9 @@ void main() {
         findsOneWidget,
       );
       expect(find.byType(DoodhPriceTag), findsOneWidget);
-      expect(find.text('Available now'), findsOneWidget);
+      // Available products carry no availability badge.
+      expect(find.text('Available now'), findsNothing);
+      expect(find.text('Out of stock'), findsNothing);
 
       await tester.tap(find.text('Add to cart'));
       await tester.tap(find.text('Subscribe'));

@@ -23,6 +23,31 @@ enum PushPermissionStatus {
   provisional,
 }
 
+/// Background/terminated message entry point for firebase_messaging.
+///
+/// Must stay top-level with the `vm:entry-point` pragma so the native host
+/// can invoke it in a background isolate. The server sends
+/// `notification` + `data` payloads, so the OS renders the system tray
+/// notification itself; this handler only ensures the Firebase app is
+/// initialized in the isolate and then returns. The inbox remains the source
+/// of truth: it refreshes when the app resumes or the notification is tapped
+/// via the existing `onMessage` / `getInitialMessage` / `onMessageOpenedApp`
+/// flows. Navigation and mark-read always run in the main isolate through
+/// the validated deep-link allowlist — never here. Logs nothing identifying
+/// (no device tokens; [RemoteMessage] carries none).
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  try {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp();
+    }
+  } on Object {
+    // Firebase unconfigured on this installation: the OS cannot display
+    // anything for us, and there is no authenticated context to refresh.
+    // Swallow so a background wake never crashes the isolate.
+  }
+}
+
 abstract interface class PushNotificationGateway {
   Stream<String> get tokenRefreshes;
   Stream<String> get openedDeepLinks;
@@ -59,6 +84,13 @@ class FirebasePushNotificationGateway implements PushNotificationGateway {
       ? FirebaseMessaging.onMessage.map<void>((_) {})
       : const Stream.empty();
 
+  /// Foreground policy: Firebase messages received while the app is open
+  /// only trigger a silent inbox refresh (see the controller's
+  /// `foregroundMessages` subscription). No heads-up banner is shown: the
+  /// inbox is the source of truth, and a foreground banner would risk a
+  /// duplicate user-visible notification next to the inbox row. The OS
+  /// renders the tray notification itself when the app is backgrounded or
+  /// terminated because the server sends `notification` + `data` payloads.
   @override
   Future<bool> initialize() async {
     if (_initialized) return true;
@@ -66,7 +98,12 @@ class FirebasePushNotificationGateway implements PushNotificationGateway {
     if (kIsWeb && !_hasWebConfiguration) return false;
 
     try {
-      await Firebase.initializeApp(options: kIsWeb ? _webOptions : null);
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(options: kIsWeb ? _webOptions : null);
+      }
+      FirebaseMessaging.onBackgroundMessage(
+        firebaseMessagingBackgroundHandler,
+      );
       _initialized = true;
       return true;
     } on Object {

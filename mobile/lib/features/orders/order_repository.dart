@@ -51,9 +51,39 @@ class OrderRepository {
     return OrderSummary.fromJson(response['data'] as Map<String, dynamic>);
   }
 
-  Future<OrderSummary> cancel(String token, String orderId) async {
+  Future<CancelOrderPreview> previewCancel(String token, String orderId) async {
+    final response = await api.post(
+      '/api/v1/orders/$orderId/cancel-preview',
+      accessToken: token,
+    );
+    return CancelOrderPreview.fromJson(
+      response['data'] as Map<String, dynamic>,
+    );
+  }
+
+  Future<OrderSummary> cancel(
+    String token,
+    String orderId, {
+    String? reasonCode,
+    String? comment,
+    bool confirmed = false,
+    double? confirmedDeductionPercentage,
+    double? confirmedRefundAmount,
+  }) async {
+    final body = <String, dynamic>{
+      'reasonCode': reasonCode,
+      'comment': comment,
+      'confirmed': confirmed,
+    };
+    if (confirmedDeductionPercentage != null) {
+      body['confirmedDeductionPercentage'] = confirmedDeductionPercentage;
+    }
+    if (confirmedRefundAmount != null) {
+      body['confirmedRefundAmount'] = confirmedRefundAmount;
+    }
     final response = await api.post(
       '/api/v1/orders/$orderId/cancel',
+      body: body,
       accessToken: token,
     );
     return OrderSummary.fromJson(response['data'] as Map<String, dynamic>);

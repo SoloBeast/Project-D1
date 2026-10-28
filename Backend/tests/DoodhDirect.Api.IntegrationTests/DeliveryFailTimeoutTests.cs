@@ -168,7 +168,7 @@ public sealed class DeliveryFailTimeoutTests
             new ChooseRefundReplacementRequest(CustomerChoice.Refund), CancellationToken.None);
         await service.ApproveAsync(
             new RefundReplacementActor(harness.Manager.Id, new HashSet<long> { harness.Branch.Id }, true),
-            requestId, new ApproveRefundReplacementRequest(null), CancellationToken.None);
+            requestId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
         harness.Clock.Advance(TimeSpan.FromHours(25));
 
         var outcome = await TimeoutProcessor(harness).ProcessExpiredTicketsAsync(CancellationToken.None);

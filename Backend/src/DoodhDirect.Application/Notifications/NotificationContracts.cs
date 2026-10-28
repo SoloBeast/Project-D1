@@ -66,6 +66,44 @@ public static class NotificationEventTypes
     public const string RedeliveryFailedResolved = "REFUND_REPLACEMENT_REDELIVERY_FAILED_RESOLVED";
     public const string RefundReplacementDecided = "REFUND_REPLACEMENT_DECIDED";
     public const string RefundReplacementCompleted = "REFUND_REPLACEMENT_COMPLETED";
+    /// <summary>
+    /// End-of-subscription vacation refund: a consolidated request was
+    /// created for review. This is a request — never a completed refund.
+    /// </summary>
+    public const string VacationRefundRequested = "VACATION_REFUND_REQUESTED";
+    /// <summary>
+    /// End-of-subscription vacation refund: support approved the request.
+    /// Still not a completed refund — no wallet credit has moved.
+    /// </summary>
+    public const string VacationRefundApproved = "VACATION_REFUND_APPROVED";
+    /// <summary>
+    /// End-of-subscription vacation refund: the authorized settlement
+    /// completed and the frozen total was credited to the wallet.
+    /// </summary>
+    public const string VacationRefundCompleted = "VACATION_REFUND_COMPLETED";
+    /// <summary>
+    /// Legacy remediation: an unsupported legacy Replacement ticket was
+    /// superseded and exactly one linked Pending Refund ticket was raised
+    /// for the same delivery. One deterministic event per remediation pair
+    /// (key contains the legacy ticket reference). Explains that Refund is
+    /// the supported remedy for one-time orders.
+    /// </summary>
+    public const string LegacyReplacementSuperseded = "REFUND_REPLACEMENT_LEGACY_SUPERSEDED";
+    /// <summary>
+    /// Subscription cancellation unused-prepaid refund: eligible future
+    /// occurrences were cancelled and the frozen 0%-deduction total was
+    /// credited to the wallet. One deterministic event per subscription
+    /// (key contains the subscription reference).
+    /// </summary>
+    public const string SubscriptionCancelRefunded = "SUBSCRIPTION_CANCEL_REFUNDED";
+    /// <summary>
+    /// O2/O3: a one-time order was cancelled and the frozen settlement
+    /// (full refund before pickup, configured-deduction remainder after
+    /// pickup) was credited to the wallet. One deterministic event per
+    /// order (key contains the order reference). No-refund cancellations
+    /// (unpaid orders) emit no event.
+    /// </summary>
+    public const string OrderCancelRefunded = "ORDER_CANCEL_REFUNDED";
 
     public static IReadOnlySet<string> Critical { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -118,7 +156,13 @@ public static class NotificationEventTypes
         RefundReplacementCancelRefunded,
         RedeliveryFailedResolved,
         RefundReplacementDecided,
-        RefundReplacementCompleted
+        RefundReplacementCompleted,
+        VacationRefundRequested,
+        VacationRefundApproved,
+        VacationRefundCompleted,
+        LegacyReplacementSuperseded,
+        SubscriptionCancelRefunded,
+        OrderCancelRefunded
     ];
 
     public static bool IsCritical(string eventType) =>
@@ -251,6 +295,11 @@ public interface INotificationService
     Task<UserDeviceResult> RegisterDeviceAsync(
         NotificationActor actor,
         RegisterDeviceRequest request,
+        CancellationToken cancellationToken);
+
+    Task<UserDeviceResult> DeactivateDeviceAsync(
+        NotificationActor actor,
+        string deviceIdentifier,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyCollection<NotificationPreferenceResult>> GetPreferencesAsync(

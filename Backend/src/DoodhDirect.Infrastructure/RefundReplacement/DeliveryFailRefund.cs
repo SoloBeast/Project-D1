@@ -49,6 +49,29 @@ internal static class DeliveryFailRefund
         $"delivery-fail:{ticketPublicId:N}:refund";
 
     /// <summary>
+    /// Authoritative test-failure rule: a subscription-delivery ticket whose
+    /// source is <see cref="RefundReplacementSource.MilkTestRejected"/> is the
+    /// specifically classified failed-test case and must refund the full
+    /// eligible per-delivery share with no deduction. All other sources keep
+    /// their recorded deduction (staff decision or frozen snapshot).
+    /// </summary>
+    public static decimal EffectiveDeductionPercentage(
+        RefundReplacementSource source,
+        long? subscriptionDeliveryId,
+        decimal? appliedDeductionPercentage,
+        decimal? deductionSnapshot)
+    {
+        if (source == RefundReplacementSource.MilkTestRejected && subscriptionDeliveryId.HasValue)
+        {
+            return 0m;
+        }
+
+        return appliedDeductionPercentage
+            ?? deductionSnapshot
+            ?? throw new ConflictException("The refund cannot be completed: the ticket has no frozen deduction. Resolve it with staff support first.");
+    }
+
+    /// <summary>
     /// Frozen D1-C refund math. Pure: reads only frozen snapshots and the
     /// payment's persisted counters.
     /// </summary>

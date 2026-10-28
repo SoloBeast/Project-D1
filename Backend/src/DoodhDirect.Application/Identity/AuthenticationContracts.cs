@@ -222,7 +222,9 @@ public static class AuthorizationCodes
     public const string MilkTestsReadBranch = "MILK_TESTS.READ_BRANCH";
     public const string WalletReadOwn = "WALLET.READ_OWN";
     public const string WalletTopUpOwn = "WALLET.TOPUP_OWN";
+    public const string WalletWithdrawOwn = "WALLET.WITHDRAW_OWN";
     public const string WalletAdjust = "WALLET.ADJUST";
+    public const string WithdrawalsProcess = "WALLET.WITHDRAWALS.PROCESS";
     public const string DairyRead = "DAIRY.READ";
     public const string DairyManage = "DAIRY.MANAGE";
     public const string CamerasViewPublic = "CAMERAS.VIEW_PUBLIC";
@@ -251,6 +253,9 @@ public static class AuthorizationCodes
     public const string SetupRefundReplacementManage = "SETUP.REFUND_REPLACEMENT.MANAGE";
     public const string SetupBrandingRead = "SETUP.BRANDING.READ";
     public const string SetupBrandingManage = "SETUP.BRANDING.MANAGE";
+    public const string SetupCompanyBankRead = "SETUP.COMPANY_BANK.READ";
+    public const string SetupCompanyBankManage = "SETUP.COMPANY_BANK.MANAGE";
+    public const string RefundBankExport = "REFUNDS.BANK_EXPORT";
     public const string RefundReplacementRequestOwn = "REFUND_REPLACEMENT.REQUEST_OWN";
     public const string RefundReplacementReadOwn = "REFUND_REPLACEMENT.READ_OWN";
     public const string RefundReplacementReadBranch = "REFUND_REPLACEMENT.READ_BRANCH";
@@ -323,7 +328,9 @@ public static class AuthorizationCodes
         [MilkTestsReadBranch] = "Read doorstep milk tests within assigned branches",
         [WalletReadOwn] = "Read own wallet and ledger",
         [WalletTopUpOwn] = "Top up own wallet through a verified payment",
+        [WalletWithdrawOwn] = "Request withdrawals from own wallet to own bank account",
         [WalletAdjust] = "Adjust customer wallets",
+        [WithdrawalsProcess] = "Process customer wallet withdrawal requests",
         [DairyRead] = "Read branch dairy operations",
         [DairyManage] = "Record branch dairy production and usage",
         [CamerasViewPublic] = "View active public dairy cameras",
@@ -348,6 +355,9 @@ public static class AuthorizationCodes
         [SetupOtpProviderManage] = "Configure and test the OTP provider",
         [SetupIntegrationsRead] = "View integration configuration and status",
         [SetupIntegrationsManage] = "Configure and test integrations",
+        [SetupCompanyBankRead] = "View company bank details (masked)",
+        [SetupCompanyBankManage] = "Create and update company bank details",
+        [RefundBankExport] = "Generate and download refund bank-transfer files and record transfer results",
         [SetupRefundReplacementRead] = "View refund/replacement request window configuration",
         [SetupRefundReplacementManage] = "Configure refund/replacement request window",
         [SetupBrandingRead] = "View application branding",

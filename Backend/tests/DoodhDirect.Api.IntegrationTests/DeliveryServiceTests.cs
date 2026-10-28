@@ -133,6 +133,120 @@ public sealed class DeliveryServiceTests
     }
 
     [Fact]
+    public async Task VacationSkippedOccurrence_NeverGeneratesOrListsAssignableDelivery()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+
+        // Vacation outcome for a future subscription occurrence: committed
+        // Skipped with the vacation cause (day-after-tomorrow stays eligible
+        // under the 24h cutoff at the harness's 09:30 now). The one-time
+        // order is out of scope and stays eligible.
+        var targetDate = harness.Today.AddDays(2);
+        var trackedSubscription = await harness.Db.Subscriptions
+            .Include(x => x.Deliveries)
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        trackedSubscription.AddDelivery(targetDate);
+        await harness.Db.SaveChangesAsync();
+        var occurrence = await harness.Db.SubscriptionDeliveries
+            .SingleAsync(x => x.ScheduledDate == targetDate);
+        trackedSubscription.Skip(
+            occurrence,
+            harness.TimeProvider.Now,
+            TimeSpan.FromHours(24),
+            SubscriptionSkipCause.Vacation);
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+
+        var materialized = await harness.Service.MaterializeEligibleAsync(
+            harness.ManagerActor,
+            targetDate,
+            CancellationToken.None);
+        Assert.Equal(1, materialized.OrdersCreated);
+        Assert.Equal(1, materialized.SubscriptionOccurrencesCreated);
+        Assert.Empty(await harness.Db.Deliveries
+            .AsNoTracking()
+            .Where(x => x.SubscriptionDeliveryId == occurrence.Id)
+            .ToListAsync());
+
+        var fetched = await harness.Service.FetchSubscriptionDeliveriesAsync(
+            harness.ManagerActor,
+            targetDate,
+            CancellationToken.None);
+        Assert.Equal(new DeliveryMaterializationResult(0, 0), fetched);
+
+        var assignable = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            targetDate,
+            DeliveryStatus.ReadyForAssignment,
+            null,
+            null,
+            CancellationToken.None);
+        Assert.Empty(assignable);
+
+        // Today's (unskipped) deliveries remain assignable, including the
+        // unrelated one-time order.
+        var todayAssignable = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            harness.Today,
+            DeliveryStatus.ReadyForAssignment,
+            null,
+            null,
+            CancellationToken.None);
+        Assert.Equal(2, todayAssignable.Count);
+        var orderDelivery = Assert.Single(
+            todayAssignable,
+            x => x.SourceType == DeliverySourceType.OneTimeOrder);
+        var assigned = await harness.AssignAsync(orderDelivery.DeliveryId, harness.Staff);
+        Assert.Equal(DeliveryStatus.Assigned, assigned.Status);
+        Assert.Equal(harness.Staff.PublicId, assigned.AssignedEmployeeId);
+    }
+
+    [Fact]
+    public async Task MaterializedDelivery_PreservedForVacationRangeAndNeverDuplicated()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var occurrenceId = await harness.MaterializeSubscriptionAsync();
+
+        // Option (iii): an already-materialized delivery is not auto-cancelled
+        // by a vacation. The occurrence stays Scheduled, the Delivery row
+        // stays assignable, and repeated generation never duplicates it.
+        var repeat = await harness.Service.MaterializeEligibleAsync(
+            harness.ManagerActor,
+            harness.Today,
+            CancellationToken.None);
+        var refetch = await harness.Service.FetchSubscriptionDeliveriesAsync(
+            harness.ManagerActor,
+            harness.Today,
+            CancellationToken.None);
+        Assert.Equal(new DeliveryMaterializationResult(0, 0), repeat);
+        Assert.Equal(new DeliveryMaterializationResult(0, 0), refetch);
+
+        Assert.Single(await harness.Db.Deliveries
+            .AsNoTracking()
+            .Where(x => x.SubscriptionDeliveryId == harness.SubscriptionDelivery.Id)
+            .ToListAsync());
+        Assert.Equal(
+            SubscriptionDeliveryStatus.Scheduled,
+            await harness.Db.SubscriptionDeliveries
+                .AsNoTracking()
+                .Where(x => x.Id == harness.SubscriptionDelivery.Id)
+                .Select(x => x.Status)
+                .SingleAsync());
+
+        var assignable = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            harness.Today,
+            DeliveryStatus.ReadyForAssignment,
+            DeliverySourceType.SubscriptionOccurrence,
+            null,
+            CancellationToken.None);
+        Assert.Equal(occurrenceId, Assert.Single(assignable).DeliveryId);
+    }
+
+    [Fact]
     public async Task MaterializeEligible_WithNoSubscriptionOccurrencesOnlyCreatesOrderDelivery()
     {
         await using var harness = await DeliveryHarness.CreateAsync();
@@ -457,6 +571,187 @@ public sealed class DeliveryServiceTests
         Assert.Equal(SubscriptionDeliverySlot.Morning, subscriptionDelivery.SubscriptionSlot);
         Assert.Equal(1m, subscriptionDelivery.Quantity);
         Assert.Empty(evening);
+    }
+
+    [Fact]
+    public async Task BranchReads_MapsSubscriptionItemAndCanonicalLinkage()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var subscription = await harness.Db.Subscriptions
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        subscription.AssignSubscriptionNumber("SUB/TEST/000001");
+        await harness.Db.SaveChangesAsync();
+        await harness.MaterializeAsync();
+
+        var occurrences = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            null,
+            DeliveryStatus.ReadyForAssignment,
+            DeliverySourceType.SubscriptionOccurrence,
+            null,
+            CancellationToken.None);
+        var delivery = Assert.Single(occurrences);
+        Assert.Equal("Fresh Milk", delivery.SubscriptionProductName);
+        Assert.Equal("litre", delivery.SubscriptionUnitOfMeasure);
+        Assert.Equal(1m, delivery.Quantity);
+        Assert.Equal(harness.Subscription.PublicId, delivery.SubscriptionId);
+        Assert.Equal("SUB/TEST/000001", delivery.SubscriptionNumber);
+        Assert.Equal(harness.SubscriptionDelivery.PublicId, delivery.SubscriptionDeliveryId);
+        Assert.Null(delivery.OrderSummary);
+
+        var oneTime = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            null,
+            DeliveryStatus.ReadyForAssignment,
+            DeliverySourceType.OneTimeOrder,
+            null,
+            CancellationToken.None);
+        var orderDelivery = Assert.Single(oneTime);
+        Assert.NotNull(orderDelivery.OrderSummary);
+        Assert.Equal(["Fresh Milk x 2 litre"], orderDelivery.OrderSummary.Items);
+        Assert.Null(orderDelivery.SubscriptionId);
+        Assert.Null(orderDelivery.SubscriptionNumber);
+        Assert.Null(orderDelivery.SubscriptionDeliveryId);
+        Assert.Null(orderDelivery.SubscriptionProductName);
+        Assert.Null(orderDelivery.SubscriptionUnitOfMeasure);
+    }
+
+    [Fact]
+    public async Task BranchReads_DistinguishesSubscriptionProducts()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var categoryId = await harness.Db.ProductCategories
+            .AsNoTracking()
+            .Where(x => x.Code == "MILK")
+            .Select(x => x.Id)
+            .SingleAsync();
+        var secondProduct = new Product(categoryId, "MILK-002", "Cow Milk", null, "litre", 70m);
+        harness.Db.Products.Add(secondProduct);
+        await harness.Db.SaveChangesAsync();
+        var address = await harness.Db.CustomerAddresses
+            .AsNoTracking()
+            .SingleAsync(x => x.UserId == harness.Customer.Id);
+        var second = new Subscription(
+            harness.Customer.Id,
+            secondProduct.Id,
+            address.Id,
+            harness.Branch.Id,
+            "subscription-delivery-2",
+            harness.Today,
+            harness.Today.AddDays(7),
+            2m,
+            70m,
+            2,
+            secondProduct.Sku,
+            secondProduct.Name,
+            secondProduct.UnitOfMeasure,
+            harness.Branch.Code,
+            harness.Branch.Name,
+            "1 Main Road, Central, Bengaluru, Karnataka 560001");
+        second.AddDelivery(harness.Today);
+        second.Activate(harness.TimeProvider.Now);
+        harness.Db.Subscriptions.Add(second);
+        await harness.Db.SaveChangesAsync();
+        await harness.MaterializeAsync();
+
+        var deliveries = await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            null,
+            DeliveryStatus.ReadyForAssignment,
+            DeliverySourceType.SubscriptionOccurrence,
+            null,
+            CancellationToken.None);
+        Assert.Equal(2, deliveries.Count);
+        var names = deliveries.Select(x => x.SubscriptionProductName).OrderBy(x => x).ToArray();
+        Assert.Equal(["Cow Milk", "Fresh Milk"], names);
+        var cow = Assert.Single(deliveries, x => x.SubscriptionProductName == "Cow Milk");
+        Assert.Equal(2m, cow.Quantity);
+        Assert.Equal("litre", cow.SubscriptionUnitOfMeasure);
+        Assert.Equal(second.PublicId, cow.SubscriptionId);
+    }
+
+    [Fact]
+    public async Task BranchReads_FailedAssignedAndUnassignedRetainItemInformation()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var subscription = await harness.Db.Subscriptions
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        subscription.AssignSubscriptionNumber("SUB/TEST/000001");
+        await harness.Db.SaveChangesAsync();
+        var orderId = await harness.MaterializeOrderAsync();
+        var occurrenceId = await harness.MaterializeSubscriptionAsync();
+        await harness.AssignAsync(orderId, harness.Staff);
+        await harness.AssignAsync(occurrenceId, harness.Staff);
+        await harness.FailSubscriptionAsync(occurrenceId, harness.Staff);
+
+        Task<IReadOnlyList<DeliveryResult>> ReadAsync(DeliveryStatus? status) =>
+            harness.Service.GetForBranchAsync(
+                harness.ManagerActor,
+                harness.Branch.Id,
+                null,
+                status,
+                null,
+                null,
+                CancellationToken.None);
+
+        var failed = Assert.Single(await ReadAsync(DeliveryStatus.Failed));
+        Assert.Equal("Fresh Milk", failed.SubscriptionProductName);
+        Assert.Equal("litre", failed.SubscriptionUnitOfMeasure);
+        Assert.Equal("SUB/TEST/000001", failed.SubscriptionNumber);
+        Assert.Equal(harness.Staff.PublicId, failed.AssignedEmployeeId);
+
+        var assigned = Assert.Single(await ReadAsync(DeliveryStatus.Assigned));
+        Assert.Equal(["Fresh Milk x 2 litre"], assigned.OrderSummary!.Items);
+        Assert.Equal(harness.Staff.PublicId, assigned.AssignedEmployeeId);
+
+        var stillReady = await ReadAsync(DeliveryStatus.ReadyForAssignment);
+        Assert.Empty(stillReady);
+    }
+
+    [Fact]
+    public async Task CustomerAndEmployeeViews_ShareCanonicalSubscriptionReference()
+    {
+        await using var harness = await DeliveryHarness.CreateAsync();
+        var subscription = await harness.Db.Subscriptions
+            .SingleAsync(x => x.Id == harness.Subscription.Id);
+        subscription.AssignSubscriptionNumber("SUB/TEST/000001");
+        await harness.Db.SaveChangesAsync();
+        await harness.MaterializeAsync();
+
+        var employee = Assert.Single(await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            null,
+            DeliveryStatus.ReadyForAssignment,
+            DeliverySourceType.SubscriptionOccurrence,
+            null,
+            CancellationToken.None));
+        var customer = (await harness.Service.GetForCustomerAsync(
+            harness.Customer.Id,
+            CancellationToken.None))
+            .Single(x => x.SourceType == DeliverySourceType.SubscriptionOccurrence);
+
+        Assert.Equal(customer.ReferenceNumber, employee.ReferenceNumber);
+        Assert.Equal(customer.SubscriptionNumber, employee.SubscriptionNumber);
+        Assert.Equal("SUB/TEST/000001", employee.SubscriptionNumber);
+        Assert.Equal(customer.SubscriptionId, employee.SubscriptionId);
+        Assert.Equal(customer.SubscriptionDeliveryId, employee.SubscriptionDeliveryId);
+
+        var oneTimeEmployee = Assert.Single(await harness.Service.GetForBranchAsync(
+            harness.ManagerActor,
+            harness.Branch.Id,
+            null,
+            DeliveryStatus.ReadyForAssignment,
+            DeliverySourceType.OneTimeOrder,
+            null,
+            CancellationToken.None));
+        Assert.Equal(harness.Order.OrderNumber, oneTimeEmployee.ReferenceNumber);
+        Assert.Equal(
+            harness.Order.OrderNumber,
+            oneTimeEmployee.OrderSummary!.OrderNumber);
     }
 
     [Fact]

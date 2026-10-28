@@ -66,6 +66,10 @@ class _CustomerOverviewScreenState
                       addresses: state.addresses,
                       isSaving: state.isSaving,
                     );
+                    final bankDetails = _BankDetailSection(
+                      bankDetail: state.bankDetail,
+                      isSaving: state.isSaving,
+                    );
                     final security = _SecuritySection(user: user);
 
                     // Compact screens stack identity above account management
@@ -78,6 +82,8 @@ class _CustomerOverviewScreenState
                           identity,
                           const SizedBox(height: DoodhSpacing.lg),
                           addresses,
+                          const SizedBox(height: DoodhSpacing.lg),
+                          bankDetails,
                           const SizedBox(height: DoodhSpacing.lg),
                           security,
                         ],
@@ -111,6 +117,8 @@ class _CustomerOverviewScreenState
                                         CrossAxisAlignment.start,
                                     children: [
                                       addresses,
+                                      const SizedBox(height: DoodhSpacing.lg),
+                                      bankDetails,
                                       const SizedBox(height: DoodhSpacing.lg),
                                       security,
                                     ],
@@ -647,6 +655,86 @@ class _AddressCard extends StatelessWidget {
 /// Shared security entry points: the Login & security hub (password, mobile
 /// and email change flows with their OTP verification) and the direct
 /// password action. Routing and auth behaviour are unchanged.
+/// Bank account used for wallet withdrawals. Only the masked account
+/// number is ever displayed; the full number is never fetched.
+class _BankDetailSection extends StatelessWidget {
+  const _BankDetailSection({required this.bankDetail, required this.isSaving});
+
+  final CustomerBankDetail? bankDetail;
+  final bool isSaving;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final detail = bankDetail;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DoodhSectionHeader(
+          title: 'Bank details',
+          action: FilledButton.tonalIcon(
+            onPressed: isSaving
+                ? null
+                : () => context.push('/customer/bank-detail'),
+            icon: const Icon(Icons.account_balance_outlined, size: 18),
+            label: Text(detail == null ? 'Add details' : 'Edit'),
+          ),
+        ),
+        const SizedBox(height: DoodhSpacing.sm),
+        if (detail == null)
+          DoodhActionTile(
+            key: const ValueKey('account-bank-details-entry'),
+            icon: Icons.account_balance_outlined,
+            title: 'Add bank details',
+            subtitle: 'Add your account to request wallet withdrawals.',
+            onTap: () => context.push('/customer/bank-detail'),
+          )
+        else
+          DoodhCard(
+            onTap: isSaving
+                ? null
+                : () => context.push('/customer/bank-detail'),
+            semanticLabel:
+                'Bank details, ${detail.bankName}, ${detail.maskedAccountNumber}',
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const ExcludeSemantics(
+                  child: Icon(
+                    Icons.account_balance_outlined,
+                    size: 22,
+                    color: DoodhColors.muted,
+                  ),
+                ),
+                const SizedBox(width: DoodhSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        detail.bankName,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: DoodhSpacing.xs),
+                      Text(detail.accountHolderName),
+                      Text(detail.maskedAccountNumber),
+                      Text(
+                        'IFSC ${detail.ifsc}',
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 class _SecuritySection extends StatelessWidget {
   const _SecuritySection({required this.user});
 
@@ -756,6 +844,9 @@ class _CustomerProfileEditScreenState
     final saving = ref.watch(customerControllerProvider).isSaving;
     return Scaffold(
       appBar: AppBar(title: const Text('Edit profile')),
+      bottomNavigationBar: const CustomerBottomNavigation(
+        currentPath: '/customer/profile/edit',
+      ),
       body: DoodhPage(
         child: Form(
           key: _formKey,
@@ -839,6 +930,146 @@ class _CustomerProfileEditScreenState
             alternateMobile: _countryKey.currentState?.canonicalValue,
             gender: _gender.text,
             dateOfBirth: _dateOfBirth,
+          ),
+        );
+    if (saved && mounted) context.pop();
+  }
+}
+
+/// Create/update form for the withdrawal bank account. The previously
+/// stored full account number is never returned by the API, so editing
+/// keeps it unless a new one is typed: the field is optional when details
+/// already exist and shows which masked number will be kept.
+class CustomerBankDetailEditScreen extends ConsumerStatefulWidget {
+  const CustomerBankDetailEditScreen({super.key});
+
+  @override
+  ConsumerState<CustomerBankDetailEditScreen> createState() =>
+      _CustomerBankDetailEditScreenState();
+}
+
+class _CustomerBankDetailEditScreenState
+    extends ConsumerState<CustomerBankDetailEditScreen> {
+  late final TextEditingController _holder;
+  late final TextEditingController _bank;
+  late final TextEditingController _account;
+  late final TextEditingController _ifsc;
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void initState() {
+    super.initState();
+    final detail = ref.read(customerControllerProvider).bankDetail;
+    _holder = TextEditingController(text: detail?.accountHolderName ?? '');
+    _bank = TextEditingController(text: detail?.bankName ?? '');
+    _account = TextEditingController();
+    _ifsc = TextEditingController(text: detail?.ifsc ?? '');
+  }
+
+  @override
+  void dispose() {
+    _holder.dispose();
+    _bank.dispose();
+    _account.dispose();
+    _ifsc.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = ref.watch(customerControllerProvider);
+    final saving = controller.isSaving;
+    final existing = controller.bankDetail;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Bank details')),
+      bottomNavigationBar: const CustomerBottomNavigation(
+        currentPath: '/customer/bank-detail',
+      ),
+      body: DoodhPage(
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              DoodhSectionHeader(
+                title: 'Withdrawal account',
+                action: const Icon(Icons.account_balance_outlined),
+              ),
+              const SizedBox(height: DoodhSpacing.md),
+              const DoodhInfoBanner(
+                tone: DoodhTone.info,
+                message:
+                    'Withdrawals are paid to this account after review. Only '
+                    'a masked account number is ever displayed back to you.',
+              ),
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhField(
+                label: 'Account holder name',
+                controller: _holder,
+                errorText: _fieldError('accountHolderName'),
+                validator: validateAccountHolderName,
+              ),
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhField(
+                label: 'Bank name',
+                controller: _bank,
+                errorText: _fieldError('bankName'),
+                validator: validateBankName,
+              ),
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhField(
+                label: 'Account number',
+                controller: _account,
+                keyboardType: TextInputType.number,
+                helperText: existing == null
+                    ? null
+                    : 'Leave blank to keep ${existing.maskedAccountNumber}.',
+                errorText: _fieldError('accountNumber'),
+                validator: (value) => validateBankAccountNumber(
+                  value,
+                  isRequired: existing == null,
+                ),
+              ),
+              const SizedBox(height: DoodhSpacing.md),
+              DoodhField(
+                label: 'IFSC',
+                controller: _ifsc,
+                errorText: _fieldError('ifsc'),
+                validator: validateIfsc,
+              ),
+              if (controller.errorMessage != null) ...[
+                const SizedBox(height: DoodhSpacing.md),
+                DoodhErrorBanner(message: controller.errorMessage!),
+              ],
+              const SizedBox(height: DoodhSpacing.lg),
+              DoodhButton(
+                label: 'Save bank details',
+                icon: Icons.save_outlined,
+                expand: true,
+                busy: saving,
+                onPressed: saving ? null : _save,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String? _fieldError(String field) =>
+      ref.read(customerControllerProvider).fieldErrors[field];
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    final saved = await ref
+        .read(customerControllerProvider.notifier)
+        .saveBankDetail(
+          BankDetailDraft(
+            accountHolderName: _holder.text,
+            bankName: _bank.text,
+            accountNumber: _account.text.trim().isEmpty
+                ? null
+                : _account.text,
+            ifsc: _ifsc.text,
           ),
         );
     if (saved && mounted) context.pop();
@@ -939,6 +1170,9 @@ class _CustomerAddressEditScreenState
               ? 'Add address'
               : 'Edit address',
         ),
+      ),
+      bottomNavigationBar: const CustomerBottomNavigation(
+        currentPath: '/customer/addresses',
       ),
       body: DoodhPage(
         child: Form(

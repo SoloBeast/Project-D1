@@ -1,3 +1,4 @@
+import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/payments/payment_models.dart';
 
@@ -117,6 +118,7 @@ class CreateSubscriptionRequest {
     this.slot = SubscriptionDeliverySlot.morning,
     required this.totalEntitlement,
     required this.paymentMethod,
+    this.useWalletBalance = false,
   });
 
   final String productId;
@@ -127,6 +129,7 @@ class CreateSubscriptionRequest {
   final SubscriptionDeliverySlot slot;
   final int totalEntitlement;
   final PaymentMethod paymentMethod;
+  final bool useWalletBalance;
 
   Map<String, dynamic> toJson() => {
     'productId': productId,
@@ -139,6 +142,7 @@ class CreateSubscriptionRequest {
     'slot': slot.apiValue,
     'totalEntitlement': totalEntitlement,
     'paymentMethod': paymentMethod.apiValue,
+    'useWalletBalance': useWalletBalance,
   };
 }
 
@@ -227,6 +231,20 @@ class SubscriptionDelivery {
   final DateTime? statusChangedAt;
   final bool isReplacement;
 
+  /// A scheduled subscription occurrence whose India-local date has passed
+  /// without a terminal outcome. This is presentation-only; persisted status
+  /// remains Scheduled until the backend records an operational result.
+  bool get isPastDue {
+    if (status != SubscriptionDeliveryStatus.scheduled) return false;
+    final scheduled = indiaWallClock(scheduledDate);
+    final today = indiaNow();
+    return DateTime(
+      scheduled.year,
+      scheduled.month,
+      scheduled.day,
+    ).isBefore(DateTime(today.year, today.month, today.day));
+  }
+
   /// Individual Skip availability. A re-delivery replacement never offers
   /// per-date Skip — the backend rejects it (vacation/skip guards) and
   /// fulfillment requires an explicit operational decision instead.
@@ -260,6 +278,10 @@ class SubscriptionDetails {
     required this.cancelledAt,
     required this.completedAt,
     required this.createdAt,
+    this.cancellationRefund,
+    // Persisted human-readable document number (backend SUB series).
+    // Null for historical rows created before numbering existed.
+    this.subscriptionNumber,
   });
 
   factory SubscriptionDetails.fromJson(Map<String, dynamic> json) =>
@@ -292,6 +314,12 @@ class SubscriptionDetails {
         cancelledAt: _optionalDateTime(json['cancelledAt']),
         completedAt: _optionalDateTime(json['completedAt']),
         createdAt: DateTime.parse(json['createdAt'] as String),
+        subscriptionNumber: json['subscriptionNumber'] as String?,
+        cancellationRefund: json['cancellationRefund'] == null
+            ? null
+            : SubscriptionCancellationRefund.fromJson(
+                json['cancellationRefund'] as Map<String, dynamic>,
+              ),
       );
 
   final String publicId;
@@ -319,6 +347,8 @@ class SubscriptionDetails {
   final DateTime? cancelledAt;
   final DateTime? completedAt;
   final DateTime createdAt;
+  final String? subscriptionNumber;
+  final SubscriptionCancellationRefund? cancellationRefund;
 
   String get formattedQuantity =>
       '${formatQuantity(quantity)} $unitOfMeasure per delivery';
@@ -329,6 +359,29 @@ class SubscriptionDetails {
             '${schedule.dayOfWeek.shortLabel} ${schedule.slot.apiValue}',
       )
       .join(', ');
+  static const _weekdayOrder = <DeliveryWeekday>[
+    DeliveryWeekday.sunday,
+    DeliveryWeekday.monday,
+    DeliveryWeekday.tuesday,
+    DeliveryWeekday.wednesday,
+    DeliveryWeekday.thursday,
+    DeliveryWeekday.friday,
+    DeliveryWeekday.saturday,
+  ];
+  String get deliveryDaysLabel {
+    final days = schedules.map((s) => s.dayOfWeek).toSet().toList()
+      ..sort(
+        (a, b) => _weekdayOrder.indexOf(a).compareTo(_weekdayOrder.indexOf(b)),
+      );
+    return days.map((d) => d.apiValue).join(', ');
+  }
+
+  String get batchLabel {
+    final slots = schedules.map((s) => s.slot.apiValue).toSet().toList()
+      ..sort();
+    return slots.join('/');
+  }
+
   double get entitlementProgress => totalEntitlement == 0
       ? 0
       : (usedEntitlement / totalEntitlement).clamp(0, 1).toDouble();
@@ -350,7 +403,33 @@ class CreateVacationRequest {
   };
 }
 
+class SubscriptionCancellationRefund {
+  const SubscriptionCancellationRefund({
+    required this.eligibleOccurrences,
+    required this.excludedOccurrences,
+    required this.refundedAmount,
+    required this.status,
+  });
+
+  factory SubscriptionCancellationRefund.fromJson(Map<String, dynamic> json) =>
+      SubscriptionCancellationRefund(
+        eligibleOccurrences: (json['eligibleOccurrences'] as num).toInt(),
+        excludedOccurrences: (json['excludedOccurrences'] as num).toInt(),
+        refundedAmount: (json['refundedAmount'] as num).toDouble(),
+        status: json['status'] as String,
+      );
+
+  final int eligibleOccurrences;
+  final int excludedOccurrences;
+  final double refundedAmount;
+  final String status;
+}
+
 /// Why one occurrence inside the vacation range could not be skipped.
+/// Values come from the server (`VacationIneligibleItem.reason`); [detail]
+/// is display-only explainer copy keyed off the actual server reason — it
+/// never invents a cause, and unknown future reasons fall back to
+/// [notScheduled] with no explainer.
 enum VacationIneligibleReason {
   cutoffPassed('Skip cutoff passed'),
   deliveryPrepared('Delivery already being prepared'),
@@ -363,6 +442,16 @@ enum VacationIneligibleReason {
   const VacationIneligibleReason(this.label);
 
   final String label;
+
+  /// Plain-language consequence for the two actionable reasons. Null for
+  /// terminal states that need no action.
+  String? get detail => switch (this) {
+    VacationIneligibleReason.deliveryPrepared =>
+      'Its delivery was already prepared, so it stays scheduled and assignable. '
+          'Contact support if it should not go out.',
+    VacationIneligibleReason.cutoffPassed => 'Its delivery day had already begun. Set vacations before the day starts.',
+    _ => null,
+  };
 
   static VacationIneligibleReason fromApi(String value) =>
       VacationIneligibleReason.values.firstWhere(
@@ -454,6 +543,7 @@ class CreatedSubscription {
   const CreatedSubscription({
     required this.subscription,
     required this.payment,
+    this.paymentPlan,
   });
 
   factory CreatedSubscription.fromJson(Map<String, dynamic> json) =>
@@ -464,10 +554,14 @@ class CreatedSubscription {
         payment: PaymentDetails.fromJson(
           json['payment'] as Map<String, dynamic>,
         ),
+        paymentPlan: json['paymentPlan'] == null
+            ? null
+            : PaymentPlan.fromJson(json['paymentPlan'] as Map<String, dynamic>),
       );
 
   final SubscriptionDetails subscription;
   final PaymentDetails payment;
+  final PaymentPlan? paymentPlan;
 }
 
 String formatApiDate(DateTime value) =>

@@ -528,7 +528,7 @@ public sealed class RefundReplacementHttpSuccessTests
             await using var scope = Scope();
             var refunds = scope.ServiceProvider.GetRequiredService<IRefundReplacementService>();
             await refunds.ApproveAsync(
-                StaffActor(), requestId, new ApproveRefundReplacementRequest(null),
+                StaffActor(), requestId, new ApproveRefundReplacementRequest(null, ApplyDeduction: true, SettlementMethod: RefundSettlementMethod.Wallet),
                 CancellationToken.None);
         }
 
@@ -542,7 +542,7 @@ public sealed class RefundReplacementHttpSuccessTests
             var approved = await refunds.ApproveAsync(
                 StaffActor(),
                 requestId,
-                new ApproveRefundReplacementRequest(null, proposal.ProposedDate),
+                new ApproveRefundReplacementRequest(null, proposal.ProposedDate, SettlementMethod: RefundSettlementMethod.Wallet),
                 CancellationToken.None);
             Assert.Equal(proposal.ProposedDate, approved.ReplacementDate);
             return proposal.ProposedDate;

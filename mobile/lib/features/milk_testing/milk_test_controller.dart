@@ -225,6 +225,7 @@ class MilkTestController extends Notifier<MilkTestState> {
 
   Future<bool> _save(Future<void> Function() operation) async {
     if (_token == null) return false;
+    if (state.isSaving) return false;
     state = state.copyWith(
       isSaving: true,
       isOffline: false,

@@ -5,6 +5,9 @@ import 'package:doodh_direct_mobile/features/auth/register_screen.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_models.dart';
 import 'package:doodh_direct_mobile/features/catalogue/catalogue_repository.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_controller.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_models.dart';
+import 'package:doodh_direct_mobile/features/deliveries/delivery_repository.dart';
 import 'package:doodh_direct_mobile/features/orders/guest_cart_storage.dart';
 import 'package:doodh_direct_mobile/features/orders/order_controller.dart';
 import 'package:doodh_direct_mobile/features/employees/employee_controller.dart';
@@ -31,7 +34,8 @@ void main() {
         '/home',
       );
       expect(find.text('Welcome to DoodhDirect'), findsOneWidget);
-      expect(find.text('Sign in for orders, payments and more'), findsOneWidget);
+      expect(find.text('Sign in for orders, payments and more'), findsNothing);
+      expect(find.text('Shop by category'), findsNothing);
       // Guest home shows the catalogue directly instead of Explore tiles.
       expect(find.text('Explore'), findsNothing);
       expect(find.text('My cart'), findsNothing);
@@ -827,9 +831,11 @@ Future<_GuestRouterHarness> _pumpGuestApp(
   final auth = authOverride ?? _RestoringAuthRepository(restoreResult: null);
   final orders = _RecordingOrderRepository();
   final catalogue = _FakeCatalogueRepository(_product);
+  final deliveries = _EmptyDeliveryRepository();
   final container = ProviderContainer(
     overrides: [
       authRepositoryProvider.overrideWithValue(auth),
+      deliveryRepositoryProvider.overrideWithValue(deliveries),
       guestCartStorageProvider.overrideWithValue(
         GuestCartStorage(storage: storage ?? _FakeFlutterSecureStorage()),
       ),
@@ -859,9 +865,11 @@ Future<_GuestRouterHarness> _pumpAuthenticatedRouterApp(
   final auth = _RestoringAuthRepository(restoreResult: session ?? _session);
   final orders = _RecordingOrderRepository();
   final catalogue = _FakeCatalogueRepository(_product);
+  final deliveries = _EmptyDeliveryRepository();
   final container = ProviderContainer(
     overrides: [
       authRepositoryProvider.overrideWithValue(auth),
+      deliveryRepositoryProvider.overrideWithValue(deliveries),
       guestCartStorageProvider.overrideWithValue(
         GuestCartStorage(storage: _FakeFlutterSecureStorage()),
       ),
@@ -1023,10 +1031,34 @@ class _RecordingOrderRepository extends OrderRepository {
   }
 
   @override
-  Future<OrderSummary> cancel(String token, String orderId) async {
+  Future<CancelOrderPreview> previewCancel(String token, String orderId) async {
+    throw UnimplementedError('not used by router tests');
+  }
+
+  @override
+  Future<OrderSummary> cancel(
+    String token,
+    String orderId, {
+    String? reasonCode,
+    String? comment,
+    bool confirmed = false,
+    double? confirmedDeductionPercentage,
+    double? confirmedRefundAmount,
+  }) async {
     cancelCalls += 1;
     throw UnimplementedError('not used by router tests');
   }
+}
+
+/// Delivery repository returning empty data so screens rendered after
+/// authentication (e.g. the order history with its subscription-deliveries
+/// section) settle cleanly instead of surfacing a network error.
+class _EmptyDeliveryRepository extends DeliveryRepository {
+  _EmptyDeliveryRepository()
+    : super(api: ApiClient(baseUrl: 'https://api.example.test'));
+
+  @override
+  Future<List<CustomerDelivery>> getMine(String token) async => const [];
 }
 
 /// Catalogue repository serving the public storefront methods the catalogue

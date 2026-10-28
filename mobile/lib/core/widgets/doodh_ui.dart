@@ -596,6 +596,7 @@ class DoodhMetricTile extends StatelessWidget {
     required this.label,
     required this.value,
     this.height,
+    this.onTap,
   });
 
   final IconData icon;
@@ -603,10 +604,15 @@ class DoodhMetricTile extends StatelessWidget {
   final String value;
   final double? height;
 
+  /// When non-null the tile becomes tappable (with button semantics and a
+  /// ripple) and invokes [onTap]. Null keeps the tile purely informational.
+  final VoidCallback? onTap;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final tile = Card(
+    final onTap = this.onTap;
+    Widget tile = Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -628,9 +634,17 @@ class DoodhMetricTile extends StatelessWidget {
         ),
       ),
     );
+    if (onTap != null) {
+      tile = InkWell(
+        borderRadius: DoodhRadii.md,
+        onTap: onTap,
+        child: tile,
+      );
+    }
     return Semantics(
       label: '$label: $value',
       container: true,
+      button: onTap != null,
       child: height == null ? tile : SizedBox(height: height, child: tile),
     );
   }

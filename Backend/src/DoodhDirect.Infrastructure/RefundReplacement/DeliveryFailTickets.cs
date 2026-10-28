@@ -96,6 +96,11 @@ public interface IDeliveryFailTicketCreator
     /// it only buffers entities/events/audits — the caller owns SaveChanges and
     /// deletes <see cref="DeliveryFailTicketResult.StoredStorageKey"/> on failure.
     /// Never touches wallet, refund or gateway systems.
+    /// <paramref name="noServiceProvided"/> marks a manager-confirmed miss of an
+    /// occurrence that was never operationalized: no proof image exists (there
+    /// is no doorstep to photograph), the deduction snapshot freezes at zero,
+    /// and the ticket records the persisted no-service distinction. Attempted
+    /// visits keep the ordinary proof and deduction behavior.
     /// </summary>
     Task<DeliveryFailTicketResult> CreateOrReuseAsync(
         Delivery delivery,
@@ -104,7 +109,8 @@ public interface IDeliveryFailTicketCreator
         FailDeliveryProof? proof,
         long actorUserId,
         DateTime now,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        bool noServiceProvided = false);
 }
 
 public sealed class DeliveryFailTicketCreator(
@@ -128,7 +134,8 @@ public sealed class DeliveryFailTicketCreator(
         FailDeliveryProof? proof,
         long actorUserId,
         DateTime now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool noServiceProvided = false)
     {
         ArgumentNullException.ThrowIfNull(delivery);
         if (delivery.SourceType != DeliverySourceType.SubscriptionOccurrence
@@ -143,9 +150,14 @@ public sealed class DeliveryFailTicketCreator(
             throw new BusinessRuleException("The ticket source is not supported for a delivery failure.");
         }
 
-        if (source == RefundReplacementSource.DeliveryFailed && proof is null)
+        if (source == RefundReplacementSource.DeliveryFailed && proof is null && !noServiceProvided)
         {
             throw new ValidationAppException("A proof image is required to fail a subscription delivery.", "proof");
+        }
+
+        if (noServiceProvided && source != RefundReplacementSource.DeliveryFailed)
+        {
+            throw new BusinessRuleException("The no-service distinction applies only to failed-delivery tickets.");
         }
 
         if (source == RefundReplacementSource.DeliveryFailed && proof is not null && proof.FileSize <= 0)
@@ -212,9 +224,10 @@ public sealed class DeliveryFailTicketCreator(
             delivery.SubscriptionDeliveryId,
             failedAt,
             configuration.DeliveryFailWindowHours,
-            configuration.DeliveryFailDeductionPercentage,
+            noServiceProvided ? 0m : configuration.DeliveryFailDeductionPercentage,
             failureReason,
-            RefundReplacementStatus.AwaitingCustomerChoice);
+            RefundReplacementStatus.AwaitingCustomerChoice,
+            noServiceProvided: noServiceProvided);
 
         var requestNumber = await numberSeriesService.GetNextNumberAsync(
             SeriesCode,
@@ -275,7 +288,8 @@ public sealed class DeliveryFailTicketCreator(
                 entity.Deadline,
                 entity.DeliveryFailWindowHoursSnapshot,
                 entity.DeliveryFailDeductionPercentageSnapshot,
-                entity.FailureReasonSnapshot
+                entity.FailureReasonSnapshot,
+                entity.NoServiceProvided
             }),
             null,
             null,

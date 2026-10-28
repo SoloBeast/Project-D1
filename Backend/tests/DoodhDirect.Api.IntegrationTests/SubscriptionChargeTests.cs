@@ -14,6 +14,7 @@ using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Domain.Wallets;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
+using DoodhDirect.Infrastructure.Setup;
 using DoodhDirect.Infrastructure.Subscriptions;
 using DoodhDirect.Infrastructure.Wallets;
 using Microsoft.EntityFrameworkCore;
@@ -715,6 +716,13 @@ public sealed class SubscriptionChargeTests
             }
             await db.SaveChangesAsync();
 
+            // Production parity: subscription creation consumes the
+            // branch-scoped SUB series (BranchService guarantees this for
+            // real branches; harnesses inserting Branch rows directly must
+            // ensure it explicitly).
+            await new NumberSeriesSeedService(db)
+                .EnsureScopedSubscriptionSeriesAsync(branch.Code, CancellationToken.None);
+
             var clock = new TestClock(utcNow ?? new DateTime(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc));
             var timeProvider = new TestIndiaTimeProvider(clock);
             var paymentService = new CapturingSubscriptionPaymentService(db, clock);
@@ -725,7 +733,8 @@ public sealed class SubscriptionChargeTests
                 allocation,
                 paymentService,
                 timeProvider,
-                notificationEventWriter);
+                notificationEventWriter,
+                new NumberSeriesService(db, timeProvider));
             return new SubscriptionChargeHarness(
                 db, customer, product, branch, address, clock, timeProvider, paymentService, service);
         }
@@ -768,6 +777,7 @@ public sealed class SubscriptionChargeTests
                 Guid.NewGuid(),
                 null,
                 null,
+                null,
                 method,
                 method switch
                 {
@@ -802,6 +812,21 @@ public sealed class SubscriptionChargeTests
             PaymentMethod method,
             string idempotencyKey,
             CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<PaymentPlanResult> CreateOrderPlanAsync(
+            long customerId,
+            Guid orderId,
+            bool useWalletBalance,
+            string idempotencyKey,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<PaymentPlanResult> CreateSubscriptionPlanAsync(
+            long customerId,
+            long subscriptionId,
+            bool useWalletBalance,
+            string idempotencyKey,
+            CancellationToken cancellationToken,
+            bool expirePriorAttempts = false) => throw new NotSupportedException();
 
         public Task<PaymentResult> CompleteDevelopmentAsync(
             long customerId,
@@ -1044,6 +1069,8 @@ public sealed class SubscriptionChargePaymentTests
             await db.SaveChangesAsync();
             db.ProductBranches.Add(new ProductBranch(product.Id, branch.Id, true, 100m));
             await db.SaveChangesAsync();
+            await new NumberSeriesSeedService(db)
+                .EnsureScopedSubscriptionSeriesAsync(branch.Code, CancellationToken.None);
 
             var clock = new TestClock(new DateTime(2026, 8, 16, 2, 0, 0, DateTimeKind.Utc));
             var timeProvider = new TestIndiaTimeProvider(clock);
@@ -1059,7 +1086,8 @@ public sealed class SubscriptionChargePaymentTests
             var paymentService = new PaymentService(
                 db, new MockPaymentGateway(paymentOptions), walletService, timeProvider, paymentOptions, notificationEventWriter);
             var service = new SubscriptionService(
-                db, new FixedBranchAllocation(branch), paymentService, timeProvider, notificationEventWriter);
+                db, new FixedBranchAllocation(branch), paymentService, timeProvider, notificationEventWriter,
+                new NumberSeriesService(db, timeProvider));
             return new ChargedSubscriptionPaymentHarness(
                 db, customer, product, branch, address, clock, timeProvider, paymentService, service);
         }

@@ -259,6 +259,7 @@ public sealed class SubscriptionsControllerTests
                     Guid.NewGuid(),
                     null,
                     null,
+                    null,
                     PaymentMethod.Wallet,
                     "Wallet",
                     PaymentStatus.Success,
@@ -387,6 +388,7 @@ public sealed class SubscriptionsControllerTests
 
         private static SubscriptionResult CreateSubscriptionResult() => new(
             Guid.NewGuid(),
+            "SUB/DB0001/26-27/000001",
             SubscriptionStatus.Active,
             Guid.NewGuid(),
             "MILK-1L",

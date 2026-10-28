@@ -23,9 +23,25 @@ public sealed class SubscriptionsController(ISubscriptionService subscriptionSer
         [FromHeader(Name = "Idempotency-Key"), Required, MaxLength(100)] string idempotencyKey,
         CancellationToken cancellationToken)
     {
-        var result = await subscriptionService.CreateAsync(
-            RequireUserId(), request, idempotencyKey, cancellationToken);
-        return StatusCode(StatusCodes.Status201Created, ApiResponse<CreatedSubscriptionResult>.Ok(result));
+        try
+        {
+            var result = await subscriptionService.CreateAsync(
+                RequireUserId(), request, idempotencyKey, cancellationToken);
+            return StatusCode(StatusCodes.Status201Created, ApiResponse<CreatedSubscriptionResult>.Ok(result));
+        }
+        catch (SubscriptionInitialPaymentRejectedException rejected)
+        {
+            // Recoverable rejection: the subscription persists as
+            // PaymentPending and the client receives its ID to retry
+            // without creating a duplicate.
+            return StatusCode(
+                StatusCodes.Status422UnprocessableEntity,
+                new ApiResponse<object>(
+                    false,
+                    new { subscriptionId = rejected.SubscriptionId },
+                    rejected.Message,
+                    [new ApiError(rejected.Code, null, rejected.Message)]));
+        }
     }
 
     [HttpGet]

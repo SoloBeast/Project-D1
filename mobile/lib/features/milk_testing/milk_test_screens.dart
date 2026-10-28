@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../deliveries/delivery_models.dart';
 import 'milk_test_controller.dart';
 import 'milk_test_models.dart';
 
@@ -156,10 +157,15 @@ class CustomerMilkTestScreen extends ConsumerStatefulWidget {
   const CustomerMilkTestScreen({
     super.key,
     required this.deliveryId,
+    this.sourceType,
     this.pickImage,
   });
 
   final String deliveryId;
+  // Authoritative delivery source from the deliveries API, forwarded to the
+  // refund/replacement screen so a rejected test keeps the correct remedy
+  // choices. Null fails safe to refund-only downstream.
+  final DeliverySourceType? sourceType;
   final MilkTestImagePicker? pickImage;
 
   @override
@@ -190,6 +196,9 @@ class _CustomerMilkTestScreenState
         : null;
 
     return Scaffold(
+      bottomNavigationBar: CustomerBottomNavigation(
+        currentPath: '/deliveries/${widget.deliveryId}/milk-test',
+      ),
       appBar: AppBar(title: const Text('Doorstep milk test')),
       body: _MilkTestBodyState(
         state: state,
@@ -347,19 +356,32 @@ class _CustomerMilkTestScreenState
     required bool confirm,
     required CustomerMilkTest test,
   }) async {
+    if (ref.read(milkTestControllerProvider).isSaving) return;
     var remarks = '';
     final decided = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(confirm ? 'Confirm milk test?' : 'Reject milk test?'),
-        content: TextField(
-          onChanged: (value) => remarks = value,
-          maxLength: 500,
-          maxLines: 3,
-          decoration: const InputDecoration(
-            labelText: 'Remarks (optional)',
-            border: OutlineInputBorder(),
-          ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              confirm
+                  ? 'Are you sure you want to accept this milk test result?'
+                  : 'Are you sure you want to reject this milk test result?',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              onChanged: (value) => remarks = value,
+              maxLength: 500,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Remarks (optional)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -375,6 +397,7 @@ class _CustomerMilkTestScreenState
     );
     final value = remarks.trim();
     if (decided != true || !mounted) return;
+    if (ref.read(milkTestControllerProvider).isSaving) return;
 
     final controller = ref.read(milkTestControllerProvider.notifier);
     if (confirm) {
@@ -392,9 +415,12 @@ class _CustomerMilkTestScreenState
       // window. The request is pre-linked to the rejected test and requires no
       // proof image; the backend still re-validates eligibility on submit.
       if (rejected && mounted) {
+        final query = {
+          'milkTestId': test.milkTestId,
+          if (widget.sourceType != null) 'source': widget.sourceType!.name,
+        };
         await context.push(
-          '/deliveries/${test.deliveryId}/refund-replacement'
-          '?milkTestId=${Uri.encodeQueryComponent(test.milkTestId)}',
+          '/deliveries/${test.deliveryId}/refund-replacement?${Uri(queryParameters: query).query}',
         );
       }
     }

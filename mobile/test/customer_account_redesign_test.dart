@@ -566,13 +566,18 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('Rahul Sharma'), findsOneWidget);
       expect(find.text('Delivery addresses'), findsOneWidget);
-      expect(find.text('Security'), findsOneWidget);
       // Both address cards remain built on the tall surface.
       expect(find.bySemanticsLabel('Home, default delivery address'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('address-menu-address-office')),
         findsOneWidget,
       );
+      // The bank-details section stacks between addresses and security;
+      // scrolling reaches the security section below it.
+      expect(find.text('Bank details'), findsOneWidget);
+      await tester.drag(find.byType(ListView), const Offset(0, -900));
+      await tester.pumpAndSettle();
+      expect(find.text('Security'), findsOneWidget);
     });
 
     testWidgets('wide screens use a two-column composition without overflow', (

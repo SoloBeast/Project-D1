@@ -102,6 +102,9 @@ class _AddVacationScreenState extends ConsumerState<AddVacationScreen> {
     final state = ref.watch(subscriptionControllerProvider);
     final body = _result != null ? _buildResult(context, _result!) : _buildForm(context, state);
     return Scaffold(
+      bottomNavigationBar: const CustomerBottomNavigation(
+        currentPath: '/subscriptions/vacation',
+      ),
       appBar: AppBar(
         title: const Text('Add Vacation'),
         actions: [
@@ -279,7 +282,7 @@ class _AddVacationScreenState extends ConsumerState<AddVacationScreen> {
                 const SizedBox(height: DoodhSpacing.sm),
                 for (final item in ineligible)
                   Padding(
-                    padding: const EdgeInsets.only(bottom: DoodhSpacing.xs),
+                    padding: const EdgeInsets.only(bottom: DoodhSpacing.sm),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -292,8 +295,21 @@ class _AddVacationScreenState extends ConsumerState<AddVacationScreen> {
                         ),
                         const SizedBox(width: DoodhSpacing.xs),
                         Expanded(
-                          child: Text(
-                            '${_formatDate(item.date)} · ${item.productName} · ${item.reason.label}',
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${_formatDate(item.date)} · ${item.productName} · ${item.reason.label}',
+                              ),
+                              if (item.reason.detail != null) ...[
+                                const SizedBox(height: 2),
+                                Text(
+                                  item.reason.detail!,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(color: DoodhColors.muted),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                       ],

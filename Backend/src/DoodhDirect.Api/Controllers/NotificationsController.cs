@@ -88,6 +88,22 @@ public sealed class NotificationDevicesController(
                 request,
                 cancellationToken),
             "Notification device registered."));
+
+    // Lifecycle actions use POST under this API's conventions (no DELETE
+    // endpoints exist). Deactivation is idempotent and preserves the device
+    // record and all delivery history.
+    [HttpPost("{deviceIdentifier}/deactivate")]
+    [ProducesResponseType(typeof(ApiResponse<UserDeviceResult>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<ApiResponse<UserDeviceResult>>> Deactivate(
+        string deviceIdentifier,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<UserDeviceResult>.Ok(
+            await notificationService.DeactivateDeviceAsync(
+                RequireNotificationActor(),
+                deviceIdentifier,
+                cancellationToken),
+            "Notification device deactivated."));
 }
 
 [ApiController]

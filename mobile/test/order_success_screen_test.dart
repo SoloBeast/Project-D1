@@ -667,6 +667,10 @@ void main() {
       ),
       findsNothing,
     );
+    // The persistent bottom nav shortens the body viewport: action buttons
+    // sit below the fold until scrolled into view.
+    await tester.drag(find.byType(ListView), const Offset(0, -500));
+    await tester.pumpAndSettle();
     expect(find.text('Check status'), findsOneWidget);
     expect(find.text('Continue Razorpay payment'), findsOneWidget);
   });

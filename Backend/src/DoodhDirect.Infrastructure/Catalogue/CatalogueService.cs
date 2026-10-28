@@ -92,9 +92,9 @@ public sealed class CatalogueService(
         await ExecuteSerializableAsync(async () =>
         {
             var branches = await ResolveBranchesAsync(request.BranchIds, cancellationToken);
-            var charges = await ResolveApplicableChargesAsync(request.ApplicableChargeIds, existingLinks: null, cancellationToken);
-            var product = new Product(category.Id, normalizedSku, request.Name, request.Description, request.UnitOfMeasure, request.Price);
-            dbContext.Products.Add(product);
+            var charges = await ResolveApplicableChargesAsync(request.ApplicableChargeIds, existingLinks: null, cancellationToken);                var product = new Product(category.Id, normalizedSku, request.Name, request.Description, request.UnitOfMeasure, request.Price);
+                ApplyOutsideRadiusFlag(product, request.AllowOrderOutsideBranchRadius);
+                dbContext.Products.Add(product);
             foreach (var branch in branches)
             {
                 // Guarded (not blind Add) so a deadlock-retry re-execution of
@@ -155,8 +155,8 @@ public sealed class CatalogueService(
         await ExecuteSerializableAsync(async () =>
         {
             var branches = await ResolveBranchesAsync(request.BranchIds, cancellationToken);
-            var charges = await ResolveApplicableChargesAsync(request.ApplicableChargeIds, product.ProductCharges, cancellationToken);
-            product.Update(category.Id, normalizedSku, request.Name, request.Description, request.UnitOfMeasure, request.Price);
+            var charges = await ResolveApplicableChargesAsync(request.ApplicableChargeIds, product.ProductCharges, cancellationToken);                product.Update(category.Id, normalizedSku, request.Name, request.Description, request.UnitOfMeasure, request.Price);
+                ApplyOutsideRadiusFlag(product, request.AllowOrderOutsideBranchRadius);
 
             // Capture the linked charges BEFORE replacement mutates the navigation —
             // a removed link's charge details must survive for the unassignment
@@ -652,6 +652,23 @@ public sealed class CatalogueService(
     }
 
     private static string NormalizeCode(string value) => value.Trim().ToUpperInvariant();
+
+    private static void ApplyOutsideRadiusFlag(Product product, bool? allowOutsideBranchRadius)
+    {
+        if (!allowOutsideBranchRadius.HasValue)
+        {
+            return;
+        }
+
+        if (allowOutsideBranchRadius.Value)
+        {
+            product.AllowOutsideBranchRadius();
+        }
+        else
+        {
+            product.DisallowOutsideBranchRadius();
+        }
+    }
 
     private static ProductImageResult ToImageResult(Guid productId, ProductImage image) =>
         new(productId, image.PublicId, image.FileName, image.ContentType, image.FileSize, image.UploadedAt);

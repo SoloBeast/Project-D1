@@ -35,10 +35,37 @@ public sealed class PaymentsController(IPaymentService paymentService) : Control
     {
         var result = await paymentService.CreateAsync(
             RequireUserId(),
-            new CreatePaymentRequest(request.OrderId, request.Method),
+            new CreatePaymentRequest(
+                request.OrderId,
+                request.Method,
+                request.UseWalletBalance,
+                request.ExpectedPayableAmount),
             idempotencyKey,
             cancellationToken);
         return StatusCode(StatusCodes.Status201Created, ApiResponse<PaymentResult>.Ok(result));
+    }
+
+    /// <summary>
+    /// Starts a wallet-first split plan for an order. The client states only
+    /// whether to apply the wallet; every amount is server-computed from the
+    /// frozen order total and the actual wallet balance. With wallet usage
+    /// off this returns a Razorpay-only plan identical to a create call.
+    /// </summary>
+    [HttpPost("create-plan")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.PaymentsCreateOwn)]
+    [ProducesResponseType(typeof(ApiResponse<PaymentPlanResult>), StatusCodes.Status201Created)]
+    public async Task<ActionResult<ApiResponse<PaymentPlanResult>>> CreatePlan(
+        [FromBody] CreatePaymentPlanApiRequest request,
+        [FromHeader(Name = "Idempotency-Key"), Required, MaxLength(100)] string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var result = await paymentService.CreateOrderPlanAsync(
+            RequireUserId(),
+            request.OrderId,
+            request.UseWalletBalance,
+            idempotencyKey,
+            cancellationToken);
+        return StatusCode(StatusCodes.Status201Created, ApiResponse<PaymentPlanResult>.Ok(result));
     }
 
     [HttpPost("verify")]
@@ -157,7 +184,8 @@ public sealed class RazorpayWebhooksController(IPaymentService paymentService) :
 [Produces("application/json")]
 public sealed class WalletController(
     IWalletService walletService,
-    IPaymentService paymentService) : ControllerBase
+    IPaymentService paymentService,
+    IWithdrawalService withdrawalService) : ControllerBase
 {
     [HttpGet]
     [Authorize(Policy = "permission:" + AuthorizationCodes.WalletReadOwn)]
@@ -194,6 +222,45 @@ public sealed class WalletController(
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<IReadOnlyList<WalletTransactionResult>>.Ok(
             await walletService.GetTransactionsAsync(RequireUserId(), cancellationToken)));
+
+    /// <summary>
+    /// Requests a wallet withdrawal to the customer's saved bank account.
+    /// The backend revalidates bank details, authorization, and the live
+    /// balance: the debit happens atomically with request creation and the
+    /// request stays pending until staff confirm the bank transfer.
+    /// </summary>
+    [HttpPost("withdrawals")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.WalletWithdrawOwn)]
+    [ProducesResponseType(typeof(ApiResponse<WithdrawalRequestResult>), StatusCodes.Status201Created)]
+    public async Task<ActionResult<ApiResponse<WithdrawalRequestResult>>> SubmitWithdrawal(
+        [FromBody] CreateWithdrawalApiRequest request,
+        [FromHeader(Name = "Idempotency-Key"), Required, MaxLength(100)] string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var result = await withdrawalService.SubmitAsync(
+            RequireUserId(),
+            new CreateWithdrawalRequest(request.Amount, idempotencyKey),
+            cancellationToken);
+        return StatusCode(StatusCodes.Status201Created, ApiResponse<WithdrawalRequestResult>.Ok(
+            result, $"Withdrawal request {result.RequestNumber} is pending review."));
+    }
+
+    [HttpGet("withdrawals")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.WalletWithdrawOwn)]
+    [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<WithdrawalRequestResult>>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<WithdrawalRequestResult>>>> ListWithdrawals(
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<IReadOnlyList<WithdrawalRequestResult>>.Ok(
+            await withdrawalService.ListForCustomerAsync(RequireUserId(), cancellationToken)));
+
+    [HttpGet("withdrawals/{withdrawalId:guid}")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.WalletWithdrawOwn)]
+    [ProducesResponseType(typeof(ApiResponse<WithdrawalRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<WithdrawalRequestResult>>> GetWithdrawal(
+        Guid withdrawalId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<WithdrawalRequestResult>.Ok(
+            await withdrawalService.GetForCustomerAsync(RequireUserId(), withdrawalId, cancellationToken)));
 
     private long RequireUserId()
     {
@@ -238,9 +305,95 @@ public sealed class WalletAdministrationController(IWalletService walletService)
     }
 }
 
+[ApiController]
+[Route("api/v1/admin/withdrawals")]
+[Tags("Withdrawal administration")]
+[Produces("application/json")]
+public sealed class WithdrawalAdministrationController(IWithdrawalService withdrawalService) : ControllerBase
+{
+    [HttpGet]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.WithdrawalsProcess)]
+    [ProducesResponseType(typeof(ApiResponse<IReadOnlyList<StaffWithdrawalRequestResult>>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<StaffWithdrawalRequestResult>>>> List(
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<IReadOnlyList<StaffWithdrawalRequestResult>>.Ok(
+            await withdrawalService.ListForStaffAsync(cancellationToken)));
+
+    [HttpGet("{withdrawalId:guid}")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.WithdrawalsProcess)]
+    [ProducesResponseType(typeof(ApiResponse<StaffWithdrawalRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<StaffWithdrawalRequestResult>>> Get(
+        Guid withdrawalId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<StaffWithdrawalRequestResult>.Ok(
+            await withdrawalService.GetForStaffAsync(withdrawalId, cancellationToken)));
+
+    /// <summary>
+    /// Returns the full destination bank details for a withdrawal request.
+    /// Restricted to staff holding the withdrawal-processing permission;
+    /// every view is audit-logged and the account number is never logged.
+    /// </summary>
+    [HttpGet("{withdrawalId:guid}/bank-detail")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.WithdrawalsProcess)]
+    [ProducesResponseType(typeof(ApiResponse<WithdrawalBankDetailResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<WithdrawalBankDetailResult>>> GetBankDetail(
+        Guid withdrawalId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<WithdrawalBankDetailResult>.Ok(
+            await withdrawalService.GetBankDetailForStaffAsync(RequireUserId(), withdrawalId, cancellationToken)));
+
+    /// <summary>
+    /// Confirms the bank transfer for a pending withdrawal. Moves no money:
+    /// the wallet was debited atomically at submission. Requires the bank
+    /// transfer reference (UTR) recorded when staff made the transfer.
+    /// </summary>
+    [HttpPost("{withdrawalId:guid}/complete")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.WithdrawalsProcess)]
+    [ProducesResponseType(typeof(ApiResponse<StaffWithdrawalRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<StaffWithdrawalRequestResult>>> Complete(
+        Guid withdrawalId,
+        [FromBody] CompleteWithdrawalApiRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<StaffWithdrawalRequestResult>.Ok(
+            await withdrawalService.CompleteAsync(
+                RequireUserId(),
+                withdrawalId,
+                new CompleteWithdrawalRequest(request.TransferReference, request.Remarks),
+                cancellationToken)));
+
+    /// <summary>
+    /// Rejects a withdrawal and returns the amount to the wallet through a
+    /// compensating reversal credit. Repeating a rejection never credits twice.
+    /// </summary>
+    [HttpPost("{withdrawalId:guid}/reject")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.WithdrawalsProcess)]
+    [ProducesResponseType(typeof(ApiResponse<StaffWithdrawalRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<StaffWithdrawalRequestResult>>> Reject(
+        Guid withdrawalId,
+        [FromBody] DecideWithdrawalApiRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<StaffWithdrawalRequestResult>.Ok(
+            await withdrawalService.RejectAsync(
+                RequireUserId(), withdrawalId, new DecideWithdrawalRequest(request.Remarks), cancellationToken)));
+
+    private long RequireUserId()
+    {
+        var value = User.FindFirstValue("user_id");
+        return long.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var userId)
+            ? userId
+            : throw new UnauthorizedAppException();
+    }
+}
+
 public sealed record CreatePaymentApiRequest(
     Guid OrderId,
-    PaymentMethod Method);
+    PaymentMethod Method,
+    bool UseWalletBalance = false,
+    decimal? ExpectedPayableAmount = null);
+
+public sealed record CreatePaymentPlanApiRequest(
+    Guid OrderId,
+    bool UseWalletBalance = false);
 
 public sealed record VerifyPaymentApiRequest(
     Guid PaymentId,
@@ -258,3 +411,13 @@ public sealed record WalletAdjustmentApiRequest(
 
 public sealed record WalletTopUpApiRequest(
     [Range(typeof(decimal), "0.01", "9999999999.99")] decimal Amount);
+
+public sealed record CreateWithdrawalApiRequest(
+    [Range(typeof(decimal), "0.01", "9999999999.99")] decimal Amount);
+
+public sealed record DecideWithdrawalApiRequest(
+    [MaxLength(1000)] string? Remarks);
+
+public sealed record CompleteWithdrawalApiRequest(
+    [Required, MinLength(6), MaxLength(100)] string TransferReference,
+    [MaxLength(1000)] string? Remarks);

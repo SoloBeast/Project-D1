@@ -26,6 +26,17 @@ public enum SubscriptionDeliveryStatus
     Cancelled
 }
 
+/// <summary>
+/// Durable cause of a skipped subscription delivery. Recorded at skip time so
+/// vacation refunds never infer cause later from mutable vacation dates.
+/// Null on historical rows whose cause cannot be established unambiguously.
+/// </summary>
+public enum SubscriptionSkipCause
+{
+    Manual,
+    Vacation
+}
+
 public enum SubscriptionDeliverySlot
 {
     Morning,
@@ -87,6 +98,14 @@ public sealed class Subscription : AuditableEntity
         AddressSnapshot = Required(addressSnapshot, nameof(addressSnapshot));
     }
 
+    /// <summary>
+    /// Human-readable document number allocated from the branch-scoped SUB
+    /// number series at creation (e.g. SUB/DB0001/26-27/000001). Assigned once
+    /// inside the creation transaction; the GUID <see cref="Entity.PublicId"/>
+    /// remains the internal correlation key.
+    /// </summary>
+    public string? SubscriptionNumber { get; private set; }
+
     public long CustomerId { get; private set; }
     public long ProductId { get; private set; }
     public long CustomerAddressId { get; private set; }
@@ -100,6 +119,13 @@ public sealed class Subscription : AuditableEntity
     /// <summary>Sum of the frozen <see cref="Charges"/> amounts; included in PayableAmount.</summary>
     public decimal ChargesTotal { get; private set; }
     public decimal PayableAmount { get; private set; }
+    /// <summary>
+    /// End-of-subscription vacation-refund processing marker. Set once the
+    /// term has ended and all in-term occurrences are finalized, whether or
+    /// not an eligible vacation refund existed. Null until then so restarts
+    /// and missed runs safely retry.
+    /// </summary>
+    public DateTime? VacationRefundProcessedAt { get; private set; }
     public int TotalEntitlement { get; private set; }
     public int UsedEntitlement { get; private set; }
     public int RemainingEntitlement => TotalEntitlement - UsedEntitlement;
@@ -121,6 +147,26 @@ public sealed class Subscription : AuditableEntity
     public ICollection<SubscriptionSchedule> Schedules { get; private set; } = [];
     public ICollection<SubscriptionDelivery> Deliveries { get; private set; } = [];
     public ICollection<SubscriptionCharge> Charges { get; private set; } = [];
+
+    /// <summary>
+    /// Assigns the document number allocated from the SUB number series.
+    /// May be assigned exactly once; historical rows are backfilled by
+    /// migration rather than regenerated.
+    /// </summary>
+    public void AssignSubscriptionNumber(string subscriptionNumber)
+    {
+        if (string.IsNullOrWhiteSpace(subscriptionNumber))
+        {
+            throw new ArgumentException("A subscription number is required.", nameof(subscriptionNumber));
+        }
+
+        if (SubscriptionNumber is not null)
+        {
+            throw new InvalidOperationException("The subscription number has already been assigned.");
+        }
+
+        SubscriptionNumber = subscriptionNumber.Trim();
+    }
 
     public void AddSchedule(
         DayOfWeek dayOfWeek,
@@ -348,7 +394,11 @@ public sealed class Subscription : AuditableEntity
         }
     }
 
-    public void Skip(SubscriptionDelivery delivery, DateTime indiaLocalNow, TimeSpan cutoff)
+    public void Skip(
+        SubscriptionDelivery delivery,
+        DateTime indiaLocalNow,
+        TimeSpan cutoff,
+        SubscriptionSkipCause cause = SubscriptionSkipCause.Manual)
     {
         EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         EnsureOwned(delivery);
@@ -357,7 +407,13 @@ public sealed class Subscription : AuditableEntity
             throw new InvalidOperationException($"A delivery cannot be skipped while the subscription is '{Status}'.");
         }
 
-        delivery.Skip(indiaLocalNow, cutoff);
+        delivery.Skip(indiaLocalNow, cutoff, cause);
+    }
+
+    public void MarkVacationRefundProcessed(DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        VacationRefundProcessedAt ??= indiaLocalNow;
     }
 
     public void MarkFailed(SubscriptionDelivery delivery, DateTime indiaLocalNow)
@@ -465,6 +521,12 @@ public sealed class SubscriptionDelivery : PublicEntity
     public string BranchNameSnapshot { get; private set; } = string.Empty;
     public string AddressSnapshot { get; private set; } = string.Empty;
     public DateTime? StatusChangedAt { get; private set; }
+    /// <summary>
+    /// Durable skip cause recorded at skip time. Null for historical skips
+    /// whose cause cannot be established unambiguously (never backfilled by
+    /// guessing); set for every skip recorded after this field existed.
+    /// </summary>
+    public SubscriptionSkipCause? SkipCause { get; private set; }
 
     /// <summary>
     /// D1-D: true for replacement occurrences created via
@@ -485,7 +547,10 @@ public sealed class SubscriptionDelivery : PublicEntity
     public RefundReplacementRequest? RefundReplacementRequest { get; internal set; }
     public ICollection<SubscriptionDelivery> ReplacementDeliveries { get; private set; } = [];
 
-    internal void Skip(DateTime indiaLocalNow, TimeSpan cutoff)
+    internal void Skip(
+        DateTime indiaLocalNow,
+        TimeSpan cutoff,
+        SubscriptionSkipCause cause = SubscriptionSkipCause.Manual)
     {
         EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
         if (Status == SubscriptionDeliveryStatus.Skipped) return;
@@ -509,6 +574,7 @@ public sealed class SubscriptionDelivery : PublicEntity
 
         Status = SubscriptionDeliveryStatus.Skipped;
         StatusChangedAt = indiaLocalNow;
+        SkipCause = cause;
     }
 
     internal void Fail(DateTime indiaLocalNow)
@@ -559,4 +625,50 @@ public sealed class SubscriptionDelivery : PublicEntity
             throw new ArgumentException("Timestamp must be an India-local wall-clock value.", parameterName);
         }
     }
+}
+
+/// <summary>
+/// Durable per-occurrence linkage for the automatic unused-prepaid
+/// subscription-cancellation refund. One row per refunded occurrence;
+/// the unique occurrence FK prevents the same entitlement from refunding
+/// twice, and the stored allocation + idempotency keys make the wallet
+/// ledger, payment refunds, and audit trail reconcilable without parsing
+/// transaction descriptions.
+/// </summary>
+public sealed class SubscriptionCancelRefundOccurrence : Entity
+{
+    private SubscriptionCancelRefundOccurrence() { }
+
+    public SubscriptionCancelRefundOccurrence(
+        long subscriptionId,
+        long subscriptionDeliveryId,
+        decimal allocationAmount,
+        string walletIdempotencyKey,
+        DateTime createdAt)
+    {
+        if (subscriptionId <= 0) throw new ArgumentOutOfRangeException(nameof(subscriptionId));
+        if (subscriptionDeliveryId <= 0) throw new ArgumentOutOfRangeException(nameof(subscriptionDeliveryId));
+        if (allocationAmount < 0) throw new ArgumentOutOfRangeException(nameof(allocationAmount));
+        if (createdAt.Kind != DateTimeKind.Unspecified)
+        {
+            throw new ArgumentException("Timestamp must be an India-local wall-clock value.", nameof(createdAt));
+        }
+
+        SubscriptionId = subscriptionId;
+        SubscriptionDeliveryId = subscriptionDeliveryId;
+        AllocationAmount = allocationAmount;
+        WalletIdempotencyKey = string.IsNullOrWhiteSpace(walletIdempotencyKey)
+            ? throw new ArgumentException("A value is required.", nameof(walletIdempotencyKey))
+            : walletIdempotencyKey.Trim();
+        CreatedAt = createdAt;
+    }
+
+    public long SubscriptionId { get; private set; }
+    public long SubscriptionDeliveryId { get; private set; }
+    public decimal AllocationAmount { get; private set; }
+    public string WalletIdempotencyKey { get; private set; } = string.Empty;
+    public DateTime CreatedAt { get; private set; }
+
+    public Subscription Subscription { get; private set; } = null!;
+    public SubscriptionDelivery SubscriptionDelivery { get; private set; } = null!;
 }

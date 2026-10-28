@@ -198,7 +198,10 @@ void main() {
       expect(await controller.create('address-1'), isNull);
       await controller.loadOrders();
       await controller.loadOrder('order-1');
-      expect(await controller.cancel('order-1'), isFalse);
+      expect(
+        await controller.cancel('order-1', reasonCode: 'ChangedMind'),
+        isFalse,
+      );
 
       expect(orderRepository.previewCalls, 0);
       expect(orderRepository.createCalls, 0);
@@ -321,7 +324,20 @@ class _TrackingOrderRepository extends OrderRepository {
   }
 
   @override
-  Future<OrderSummary> cancel(String token, String orderId) {
+  Future<CancelOrderPreview> previewCancel(String token, String orderId) {
+    throw UnimplementedError('guest must never preview an order cancellation');
+  }
+
+  @override
+  Future<OrderSummary> cancel(
+    String token,
+    String orderId, {
+    String? reasonCode,
+    String? comment,
+    bool confirmed = false,
+    double? confirmedDeductionPercentage,
+    double? confirmedRefundAmount,
+  }) {
     cancelCalls += 1;
     throw UnimplementedError('guest must never cancel an order');
   }
