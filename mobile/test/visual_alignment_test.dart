@@ -5,17 +5,18 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('shared alignment tokens', () {
     test('uses the reference-aligned forest/ivory/tan palette', () {
-      // Primary deep teal #0B6B70 for primary actions/CTA fills (incl. the
-      // product-card "Add to cart" button); warm ivory background, tan
-      // delivery surfaces, deep gold accent per the reference images.
-      expect(DoodhColors.teal, const Color(0xFF0B6B70));
-      expect(DoodhColors.tealDark, const Color(0xFF0C2E2A));
-      expect(DoodhColors.cream, const Color(0xFFFFF9EE));
-      expect(DoodhColors.mint, const Color(0xFFEAF0DC));
-      expect(DoodhColors.line, const Color(0xFFE8E0CD));
-      expect(DoodhColors.tanSurface, const Color(0xFFEFDFB2));
-      expect(DoodhColors.goldAccent, const Color(0xFF8A5B1F));
-      expect(DoodhColors.highlightSurface, const Color(0xFFFBF3D9));
+      // Fresh-meadow refresh: fresh emerald #0E7C5B for primary
+      // actions/CTA fills (incl. the product-card "Add to cart" button);
+      // airy porcelain background, butter delivery surfaces, deep gold
+      // accent.
+      expect(DoodhColors.teal, const Color(0xFF0E7C5B));
+      expect(DoodhColors.tealDark, const Color(0xFF0A3428));
+      expect(DoodhColors.cream, const Color(0xFFF5F7F2));
+      expect(DoodhColors.mint, const Color(0xFFDFF0E3));
+      expect(DoodhColors.line, const Color(0xFFE3DCC8));
+      expect(DoodhColors.tanSurface, const Color(0xFFF6E9C4));
+      expect(DoodhColors.goldAccent, const Color(0xFF8A6410));
+      expect(DoodhColors.highlightSurface, const Color(0xFFFFF7E0));
       expect(DoodhColors.deliveredGreen, const Color(0xFF17B34A));
     });
 
@@ -30,8 +31,8 @@ void main() {
     });
 
     test('adds the reference tan/gold accents to the existing palette', () {
-      expect(DoodhColors.tanSurface, const Color(0xFFEFDFB2));
-      expect(DoodhColors.goldAccent, const Color(0xFF8A5B1F));
+      expect(DoodhColors.tanSurface, const Color(0xFFF6E9C4));
+      expect(DoodhColors.goldAccent, const Color(0xFF8A6410));
     });
 
     test('softens the shared card radius toward the reference ~20px feel', () {

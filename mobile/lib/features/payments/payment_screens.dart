@@ -96,9 +96,22 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                                     ?.copyWith(color: Colors.white),
                               ),
                               const SizedBox(height: 4),
-                              Text(
-                                order.orderNumber,
-                                style: const TextStyle(color: Colors.white70),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      order.orderNumber,
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                      ),
+                                    ),
+                                  ),
+                                  CopyReferenceButton(
+                                    value: order.orderNumber,
+                                    message: 'Order number copied',
+                                    color: Colors.white70,
+                                  ),
+                                ],
                               ),
                               const SizedBox(height: 2),
                               Text(
@@ -149,8 +162,8 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                   onChanged: paymentState.isLoading
                       ? null
                       : (value) => ref
-                          .read(paymentControllerProvider.notifier)
-                          .setUseWalletBalance(value),
+                            .read(paymentControllerProvider.notifier)
+                            .setUseWalletBalance(value),
                   title: const Text('Use wallet balance'),
                   subtitle: Text(
                     paymentState.useWalletBalance
@@ -365,7 +378,7 @@ class _PaymentResultScreenState extends ConsumerState<PaymentResultScreen> {
       appBar: AppBar(
         title: Text(
           payment?.status.isSuccessful == true &&
-              payment?.isOrderPayment == true
+                  payment?.isOrderPayment == true
               ? 'Order Success'
               : 'Payment status',
         ),
@@ -380,7 +393,10 @@ class _PaymentResultScreenState extends ConsumerState<PaymentResultScreen> {
                   .load(widget.paymentId),
             )
           : payment.status.isSuccessful
-          ? _OrderSuccessBody(payment: payment, errorMessage: state.errorMessage)
+          ? _OrderSuccessBody(
+              payment: payment,
+              errorMessage: state.errorMessage,
+            )
           : _PaymentIssueBody(
               payment: payment,
               isLoading: state.isLoading,
@@ -433,7 +449,8 @@ class _OrderSuccessBodyState extends ConsumerState<_OrderSuccessBody> {
   Widget build(BuildContext context) {
     final payment = widget.payment;
     final orderState = ref.watch(orderControllerProvider);
-    final order = payment.orderId != null &&
+    final order =
+        payment.orderId != null &&
             orderState.selectedOrder?.publicId == payment.orderId
         ? orderState.selectedOrder
         : null;
@@ -446,9 +463,7 @@ class _OrderSuccessBodyState extends ConsumerState<_OrderSuccessBody> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < DoodhBreakpoints.compact;
-          final horizontalPadding = compact
-              ? DoodhSpacing.md
-              : DoodhSpacing.lg;
+          final horizontalPadding = compact ? DoodhSpacing.md : DoodhSpacing.lg;
           // Phones get the full-width reference composition; tablets and web
           // centre the same content on a comfortable reading width instead of
           // stretching cards edge to edge.
@@ -571,6 +586,10 @@ class _OrderSuccessBodyState extends ConsumerState<_OrderSuccessBody> {
 
 /// The confirmation hero: brand-teal surface, check badge, verified message,
 /// and the authoritative "Payment confirmed by DoodhDirect" pill.
+///
+/// Layout is a compact leading-badge row (badge + title/message) with the
+/// status pill on its own centred row, so the banner stays readable on
+/// narrow phones without truncating the verified amount.
 class _SuccessHero extends StatelessWidget {
   const _SuccessHero({required this.payment});
 
@@ -584,50 +603,71 @@ class _SuccessHero extends StatelessWidget {
     // that the amount was verified for the payment's target.
     final message =
         '${payment.formattedAmount} was verified for ${payment.targetLabel}.';
+    final theme = Theme.of(context);
     return Semantics(
       container: true,
       liveRegion: true,
       label: '$statusLabel. $title. $message',
       child: DoodhCard(
         color: DoodhColors.tealDark,
-        padding: const EdgeInsets.all(DoodhSpacing.xl),
+        padding: const EdgeInsets.all(DoodhSpacing.lg),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: const BoxDecoration(
-                color: DoodhColors.mint,
-                shape: BoxShape.circle,
-              ),
-              child: const ExcludeSemantics(
-                child: Icon(
-                  Icons.check_rounded,
-                  size: 34,
-                  color: DoodhColors.tealDark,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: DoodhColors.mint,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.35),
+                      width: 2,
+                    ),
+                  ),
+                  child: const ExcludeSemantics(
+                    child: Icon(
+                      Icons.check_rounded,
+                      size: 30,
+                      color: DoodhColors.tealDark,
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(width: DoodhSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: DoodhSpacing.xs),
+                      Text(
+                        message,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: DoodhSpacing.md),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: DoodhSpacing.sm),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.white70,
-              ),
-            ),
+            const Divider(color: Colors.white24, height: 1),
             const SizedBox(height: DoodhSpacing.md),
-            const DoodhStatusPill(
-              label: statusLabel,
-              tone: DoodhStatusTone.success,
+            const Center(
+              child: DoodhStatusPill(
+                label: statusLabel,
+                tone: DoodhStatusTone.success,
+              ),
             ),
           ],
         ),
@@ -670,9 +710,7 @@ class _SuccessOrderSummaryCard extends StatelessWidget {
           for (final item in items)
             MergeSemantics(
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: DoodhSpacing.xs,
-                ),
+                padding: const EdgeInsets.symmetric(vertical: DoodhSpacing.xs),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -705,16 +743,18 @@ class _SuccessOrderSummaryCard extends StatelessWidget {
                 ),
               ),
             ),
-          const Divider(),
-          DoodhKeyValueRow(
-            label: 'Subtotal',
-            value: '₹${order!.subtotal.toStringAsFixed(2)}',
-          ),
-          if (order.discountAmount > 0)
+          // Only one paid amount is shown on this screen: intermediate
+          // totals (subtotal) are intentionally omitted and the footer
+          // "Payment amount" below carries the single authoritative total.
+          // The discount adjustment is still disclosed when the server
+          // reports one.
+          if (order!.discountAmount > 0) ...[
+            const Divider(),
             DoodhKeyValueRow(
               label: 'Discount',
               value: '-₹${order.discountAmount.toStringAsFixed(2)}',
             ),
+          ],
         ],
         DoodhKeyValueRow(label: 'Payment method', value: payment.method.label),
         const DoodhKeyValueRow(label: 'Payment status', value: 'Verified'),
@@ -780,9 +820,8 @@ class _SuccessDeliveryCard extends StatelessWidget {
   }
 }
 
-DoodhStatusTone _deliveryStatusTone(String status) => switch (
-  status.toLowerCase()
-) {
+DoodhStatusTone _deliveryStatusTone(String status) => switch (status
+    .toLowerCase()) {
   'delivered' => DoodhStatusTone.success,
   'cancelled' || 'failed' => DoodhStatusTone.error,
   'outfordelivery' || 'intransit' || 'dispatched' => DoodhStatusTone.warning,
@@ -863,7 +902,9 @@ class _PaymentIssueBody extends ConsumerWidget {
     final (icon, title, message) = status.isTerminalFailure
         ? (
             Icons.cancel_outlined,
-            status == PaymentStatus.expired ? 'Payment expired' : 'Payment failed',
+            status == PaymentStatus.expired
+                ? 'Payment expired'
+                : 'Payment failed',
             payment.failureMessage ??
                 'This payment was not completed. You can retry from the $targetName.',
           )
@@ -880,6 +921,12 @@ class _PaymentIssueBody extends ConsumerWidget {
     final statusLabel = status.isTerminalFailure
         ? 'Payment needs attention'
         : 'Payment status is still being verified';
+    final surface = status.isTerminalFailure
+        ? DoodhColors.errorSurface
+        : DoodhColors.warningSurface;
+    final foreground = status.isTerminalFailure
+        ? DoodhColors.errorForeground
+        : DoodhColors.warningForeground;
     return RefreshIndicator(
       onRefresh: () => ref.read(paymentControllerProvider.notifier).refresh(),
       child: ListView(
@@ -890,25 +937,57 @@ class _PaymentIssueBody extends ConsumerWidget {
             container: true,
             liveRegion: true,
             label: '$statusLabel. $title. $message',
-            child: Card(
-              color: status.isTerminalFailure
-                  ? DoodhColors.errorSurface
-                  : DoodhColors.warningSurface,
-              child: Padding(
-                padding: DoodhSpacing.cardPadding,
-                child: Column(
-                  children: [
-                    DoodhStatusPill(label: title, tone: tone),
-                    const SizedBox(height: DoodhSpacing.md),
-                    Icon(
-                      icon,
-                      size: 64,
-                      color: status.isTerminalFailure
-                          ? DoodhColors.errorForeground
-                          : DoodhColors.warningForeground,
-                    ),
-                  ],
-                ),
+            child: DoodhCard(
+              color: surface,
+              padding: const EdgeInsets.all(DoodhSpacing.lg),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.65),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: foreground, width: 2),
+                        ),
+                        child: ExcludeSemantics(
+                          child: Icon(icon, size: 30, color: foreground),
+                        ),
+                      ),
+                      const SizedBox(width: DoodhSpacing.md),
+                      // The banner headline names the state group; the exact
+                      // title and message render once each below, so counts
+                      // relied on by widget tests are preserved.
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              statusLabel,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: DoodhSpacing.xs),
+                            Text(
+                              'Details and next steps are listed below.',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: DoodhSpacing.sm),
+                  Center(
+                    child: DoodhStatusPill(label: title, tone: tone),
+                  ),
+                ],
               ),
             ),
           ),

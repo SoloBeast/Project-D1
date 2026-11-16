@@ -393,10 +393,11 @@ void main() {
     expect(find.text('Toned Milk'), findsOneWidget);
     expect(find.text('2 litre'), findsOneWidget);
     // Item lines come from the confirmed order snapshot. The amount appears
-    // three times from server data: item line total, subtotal, and the
-    // verified payment amount (all ₹90.00 in this fixture).
-    expect(find.text('₹90.00'), findsNWidgets(3));
-    expect(find.text('Subtotal'), findsOneWidget);
+    // twice from server data: item line total and the verified payment
+    // amount (both ₹90.00 in this fixture). Intermediate totals are
+    // intentionally omitted so only one paid amount is shown.
+    expect(find.text('₹90.00'), findsNWidgets(2));
+    expect(find.text('Subtotal'), findsNothing);
     expect(find.text('₹90.00 / litre'), findsNothing);
   });
 

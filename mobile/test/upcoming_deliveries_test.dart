@@ -528,7 +528,7 @@ class MyDeliveriesPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => DoodhCard(
-    color: const Color(0xFFF2E3C0),
+    color: DoodhColors.tanSurface,
     padding: const EdgeInsets.all(16),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

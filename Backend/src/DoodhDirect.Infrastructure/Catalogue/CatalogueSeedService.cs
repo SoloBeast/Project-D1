@@ -9,7 +9,6 @@ public sealed class CatalogueSeedService(
     DoodhDirectDbContext dbContext,
     NumberSeriesSeedService numberSeriesSeedService)
 {
-    private const string MilkCategoryCode = "MILK";
     private const string MainBranchCode = "MAIN";
     private const string FreshBuffaloMilkSku = "FRESH-BUFFALO-MILK";
 
@@ -26,11 +25,11 @@ public sealed class CatalogueSeedService(
                 cancellationToken);
 
             var category = await dbContext.ProductCategories
-                .SingleOrDefaultAsync(item => item.Code == MilkCategoryCode, cancellationToken);
+                .SingleOrDefaultAsync(item => item.Code == ProductCategory.MilkCategoryCode, cancellationToken);
             if (category is null)
             {
                 category = new ProductCategory(
-                    MilkCategoryCode,
+                    ProductCategory.MilkCategoryCode,
                     "Milk",
                     "Fresh dairy milk products.");
                 dbContext.ProductCategories.Add(category);

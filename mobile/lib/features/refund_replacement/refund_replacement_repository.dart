@@ -247,6 +247,45 @@ class RefundReplacementRepository {
         as Map<String, dynamic>,
   );
 
+  /// Expired re-delivery to refund conversion by staff. Requires branch
+  /// scope and explicit customer confirmation on the backend; idempotent
+  /// retries return the converted ticket. Moves no money — the ticket
+  /// re-enters the normal refund approval workflow.
+  Future<RefundReplacementRequest> convertToRefund(
+    String token,
+    String requestId, {
+    required bool customerConfirmed,
+    String? remarks,
+  }) async => RefundReplacementRequest.fromJson(
+    (await api.post(
+          '/api/v1/refund-replacements/$requestId/convert-to-refund',
+          body: {
+            'customerConfirmed': customerConfirmed,
+            if (remarks != null) 'remarks': remarks,
+          },
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+
+  /// Idempotent expiry notice for an expired re-delivery ticket. The first
+  /// call records the single customer notification; retries return the
+  /// current state. Moves no money and changes no ticket state. When
+  /// [staff] is true the staff route is used, otherwise the customer route.
+  Future<RefundReplacementRequest> notifyRedeliveryExpired(
+    String token,
+    String requestId, {
+    required bool staff,
+  }) async => RefundReplacementRequest.fromJson(
+    (await api.post(
+          staff
+              ? '/api/v1/refund-replacements/$requestId/notify-redelivery-expired'
+              : '/api/v1/customer/refund-replacements/$requestId/notify-redelivery-expired',
+          accessToken: token,
+        ))['data']
+        as Map<String, dynamic>,
+  );
+
   /// Legacy remediation: atomically supersedes an approved, order-backed
   /// Replacement ticket and creates exactly one linked Pending Refund
   /// ticket. Requires `REFUND_REPLACEMENT.MANAGE_BRANCH`; the backend

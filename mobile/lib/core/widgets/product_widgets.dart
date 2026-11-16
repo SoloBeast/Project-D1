@@ -73,7 +73,7 @@ class DoodhProductImage extends StatelessWidget {
     width: double.infinity,
     decoration: const BoxDecoration(
       gradient: LinearGradient(
-        colors: [DoodhColors.mint, Color(0xFFCDE7DF)],
+        colors: [DoodhColors.mint, DoodhColors.neutralSurface],
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
       ),

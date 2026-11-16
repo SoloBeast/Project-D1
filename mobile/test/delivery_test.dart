@@ -9,6 +9,8 @@ import 'package:doodh_direct_mobile/features/deliveries/delivery_controller.dart
 import 'package:doodh_direct_mobile/features/deliveries/delivery_models.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_repository.dart';
 import 'package:doodh_direct_mobile/features/deliveries/delivery_screens.dart';
+import 'package:doodh_direct_mobile/features/milk_testing/milk_test_controller.dart';
+import 'package:doodh_direct_mobile/features/milk_testing/milk_test_models.dart';
 import 'package:doodh_direct_mobile/features/refund_replacement/refund_replacement_controller.dart';
 import 'package:doodh_direct_mobile/features/refund_replacement/refund_replacement_models.dart'
     hide DeliveryStatus;
@@ -774,6 +776,33 @@ void main() {
       }
     });
 
+    testWidgets('non-milk delivery hides milk test and refund entry points', (
+      tester,
+    ) async {
+      await _pumpDeliveryScreen(
+        tester,
+        const CustomerDeliveryDetailScreen(deliveryId: 'delivery-1'),
+        DeliveryState(
+          selectedCustomerDelivery: CustomerDelivery.fromJson(
+            customerDeliveryJson(tracking: false, milk: false),
+          ),
+        ),
+      );
+
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      expect(find.text('Doorstep milk test'), findsNothing);
+      expect(find.text('Milk test'), findsNothing);
+      expect(find.text('Refund or replacement'), findsNothing);
+      expect(find.text('Raise a support ticket'), findsOneWidget);
+      expect(
+        find.text(
+          'Support tickets for non-milk deliveries are coming soon',
+        ),
+        findsOneWidget,
+      );
+    });
+
     testWidgets(
       'failed delivery prompts the awaiting support-ticket choice',
       (tester) async {
@@ -843,8 +872,14 @@ void main() {
         const StaffDeliveryDetailScreen(deliveryId: 'delivery-1'),
         DeliveryState(
           selectedDelivery: DeliveryDetails.fromJson(
-            deliveryDetailsJson(status: 'Arrived'),
+            deliveryDetailsJson(
+              status: 'Arrived',
+              requiresAllocation: true,
+            ),
           ),
+        ),
+        milkController: _SeededMilkTestController(
+          MilkTestState(staffTest: _requestedStaffMilkTest()),
         ),
       );
 
@@ -853,6 +888,38 @@ void main() {
       expect(find.text('Complete delivery'), findsNothing);
       expect(find.text('Mark failed'), findsOneWidget);
       expect(find.text('Perform milk test'), findsOneWidget);
+
+      // No customer request: the entry stays hidden even for milk.
+      await _pumpDeliveryScreen(
+        tester,
+        const StaffDeliveryDetailScreen(deliveryId: 'delivery-1'),
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(
+            deliveryDetailsJson(
+              status: 'Arrived',
+              requiresAllocation: true,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Perform milk test'), findsNothing);
+
+      // Non-milk delivery with a request: still hidden (milk only).
+      await _pumpDeliveryScreen(
+        tester,
+        const StaffDeliveryDetailScreen(deliveryId: 'delivery-1'),
+        DeliveryState(
+          selectedDelivery: DeliveryDetails.fromJson(
+            deliveryDetailsJson(status: 'Arrived'),
+          ),
+        ),
+        milkController: _SeededMilkTestController(
+          MilkTestState(staffTest: _requestedStaffMilkTest()),
+        ),
+      );
+
+      expect(find.text('Perform milk test'), findsNothing);
 
       await _pumpDeliveryScreen(
         tester,
@@ -1227,6 +1294,7 @@ Map<String, dynamic> customerDeliveryJson({
   String sourceType = 'OneTimeOrder',
   String? failedAt,
   String? failureReason,
+  bool milk = true,
 }) => {
   'deliveryId': 'delivery-1',
   'sourceType': sourceType,
@@ -1242,6 +1310,7 @@ Map<String, dynamic> customerDeliveryJson({
   'failedAt': failedAt,
   'failureReason': failureReason,
   'activeOtp': activeOtp,
+  'containsMilkItems': milk,
 };
 
 Map<String, dynamic> deliveryDetailsJson({
@@ -1254,6 +1323,7 @@ Map<String, dynamic> deliveryDetailsJson({
   String? failedAt,
   String? failureReason,
   String? remarks,
+  bool requiresAllocation = false,
 }) => {
   'deliveryId': deliveryId,
   'sourceType': 'OneTimeOrder',
@@ -1283,6 +1353,7 @@ Map<String, dynamic> deliveryDetailsJson({
   'remarks': remarks,
   'operationalNotes': null,
   'isTrackingActive': status == 'OutForDelivery',
+  'requiresBatchAllocation': requiresAllocation,
   'latestLocation': status == 'OutForDelivery' ? locationJson() : null,
   'assignments': assigned
       ? [
@@ -1368,6 +1439,7 @@ Future<void> _pumpDeliveryScreen(
   DeliveryState state, {
   DeliveryController? controller,
   RefundReplacementController? refundController,
+  MilkTestController? milkController,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -1380,12 +1452,44 @@ Future<void> _pumpDeliveryScreen(
           refundReplacementControllerProvider.overrideWith(
             () => refundController,
           ),
+        if (milkController != null)
+          milkTestControllerProvider.overrideWith(() => milkController),
       ],
       child: MaterialApp(home: screen),
     ),
   );
   await tester.pumpAndSettle();
 }
+
+/// Seeds the milk-test controller with a fixed staff test so the delivery
+/// boy's Perform entry can be tested without network access.
+class _SeededMilkTestController extends MilkTestController {
+  _SeededMilkTestController(this.seed);
+
+  final MilkTestState seed;
+
+  @override
+  MilkTestState build() => seed;
+
+  @override
+  Future<void> loadForStaff(String deliveryId) async {}
+}
+
+StaffMilkTest _requestedStaffMilkTest() => StaffMilkTest.fromJson({
+  'milkTestId': 'test-1',
+  'deliveryId': 'delivery-1',
+  'status': 'Requested',
+  'customerDecision': 'Pending',
+  'requestedAtUtc': '2026-08-17T09:00:00Z',
+  'completedAtUtc': null,
+  'confirmedAtUtc': null,
+  'rejectedAtUtc': null,
+  'cancelledAtUtc': null,
+  'customerRemarks': null,
+  'staffRemarks': null,
+  'parameters': const [],
+  'images': const [],
+});
 
 /// Seeds the support-ticket controller with a fixed customer list so the
 /// failed-delivery prompt can be tested without network access.

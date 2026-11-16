@@ -128,6 +128,10 @@ public sealed class RefundReplacementRedeliveryCompletionTests
         Assert.Equal(2, operational.Count);
         foreach (var delivery in operational)
         {
+            // Preserved milk allocation gate: batch allocation precedes
+            // staff assignment, mirroring the production UI flow.
+            var setupBatchId = await harness.RecordMilkBatchAsync();
+            await harness.SaveAllocationAsync(delivery.PublicId, setupBatchId, 1m);
             await harness.AssignAsync(delivery.PublicId, harness.Staff);
             await harness.FailSubscriptionAsync(delivery.PublicId, harness.Staff);
         }
@@ -276,6 +280,152 @@ public sealed class RefundReplacementRedeliveryCompletionTests
             .CountAsync(x => x.EventKey == $"refund-replacement:{requestId:N}:redelivery-delivered"));
     }
 
+    [Fact]
+    public async Task Completion_WithinOneHour_RecordsTimelyOutcomeAndDeadline()
+    {
+        await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
+        await FailAsync(harness);
+        var requestId = await TicketPublicIdAsync(harness);
+        var service = CreateRefundService(harness);
+        await ChooseReDeliveryAsync(service, harness, requestId);
+        var approved = await service.ApproveAsync(
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
+
+        // The displayed deadline is exactly CustomerChoiceAt + 1 hour.
+        Assert.NotNull(approved.CustomerChoiceAt);
+        Assert.Equal(approved.CustomerChoiceAt.Value.AddHours(1), approved.RedeliveryDeadline);
+
+        var deliveryId = await MaterializeReplacementAsync(harness);
+        await AdvanceToArrivedAsync(harness, deliveryId);
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+
+        harness.Db.ChangeTracker.Clear();
+        var ticket = await harness.Db.RefundReplacementRequests.AsNoTracking().SingleAsync();
+        Assert.Equal(RefundReplacementStatus.Completed, ticket.Status);
+        Assert.NotNull(ticket.CompletedAt);
+        Assert.DoesNotContain("overdue", ticket.CompletionRemarks ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        var audit = Assert.Single(await harness.Db.AuditLogs.AsNoTracking()
+            .Where(x => x.Action == "REFUND_REPLACEMENT.COMPLETE").ToListAsync());
+        Assert.Contains("RedeliveryDelivered", audit.NewValueJson ?? string.Empty, StringComparison.Ordinal);
+        Assert.DoesNotContain("RedeliveryOverdue", audit.NewValueJson ?? string.Empty, StringComparison.Ordinal);
+        var completedEvent = Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventKey == $"refund-replacement:{requestId:N}:redelivery-delivered").ToListAsync());
+        Assert.Contains("has been delivered", completedEvent.PayloadJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("late", completedEvent.PayloadJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Completion_AfterOneHour_RecordsOverdueWithoutSecondDelivery()
+    {
+        await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
+        await FailAsync(harness);
+        var requestId = await TicketPublicIdAsync(harness);
+        var service = CreateRefundService(harness);
+        await ChooseReDeliveryAsync(service, harness, requestId);
+        var approved = await service.ApproveAsync(
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
+        Assert.NotNull(approved.RedeliveryDeadline);
+
+        // Push completion past the one-hour SLA (approval happened inside
+        // the window, so the ticket is legitimately Approved).
+        harness.Clock.Advance(TimeSpan.FromHours(2));
+
+        var deliveryId = await MaterializeReplacementAsync(harness);
+        await AdvanceToArrivedAsync(harness, deliveryId);
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
+        var code = await harness.GetOtpCodeAsync(deliveryId);
+        await harness.Service.VerifyOtpAsync(
+            harness.StaffActor(harness.Staff),
+            deliveryId,
+            new VerifyDeliveryOtpRequest(code),
+            CancellationToken.None);
+
+        harness.Db.ChangeTracker.Clear();
+        var ticket = await harness.Db.RefundReplacementRequests.AsNoTracking().SingleAsync();
+        // The physical delivery still completes the ticket — it is never
+        // re-marked undelivered — but the outcome explicitly records the
+        // breach instead of silently passing as on-time.
+        Assert.Equal(RefundReplacementStatus.Completed, ticket.Status);
+        Assert.NotNull(ticket.CompletedAt);
+        Assert.True(ticket.CompletedAt > ticket.CustomerChoiceAt!.Value.AddHours(1));
+        Assert.Contains("overdue", ticket.CompletionRemarks ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+        var delivery = await harness.Db.Deliveries.AsNoTracking()
+            .SingleAsync(x => x.PublicId == deliveryId);
+        Assert.Equal(DeliveryStatus.Delivered, delivery.Status);
+        Assert.Equal(
+            new DateOnly(2026, 8, 16),
+            await harness.Db.SubscriptionDeliveries.AsNoTracking()
+                .Where(x => x.IsReplacement)
+                .Select(x => x.ScheduledDate)
+                .SingleAsync());
+        var audit = Assert.Single(await harness.Db.AuditLogs.AsNoTracking()
+            .Where(x => x.Action == "REFUND_REPLACEMENT.COMPLETE").ToListAsync());
+        Assert.Contains("RedeliveryOverdue", audit.NewValueJson ?? string.Empty, StringComparison.Ordinal);
+        var completedEvent = Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+            .Where(x => x.EventKey == $"refund-replacement:{requestId:N}:redelivery-delivered").ToListAsync());
+        Assert.Contains("late", completedEvent.PayloadJson, StringComparison.OrdinalIgnoreCase);
+        // No second ticket, no refund, no duplicate side effects.
+        Assert.Equal(1, await harness.Db.RefundReplacementRequests.AsNoTracking().CountAsync());
+        Assert.Equal(0, await harness.Db.WalletTransactions.AsNoTracking().CountAsync());
+        Assert.Equal(0, await harness.Db.Refunds.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task OverdueUndelivered_RemainsActionableForRefund()
+    {
+        await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
+        await FailAsync(harness);
+        var requestId = await TicketPublicIdAsync(harness);
+        var service = CreateRefundService(harness);
+        await ChooseReDeliveryAsync(service, harness, requestId);
+        await service.ApproveAsync(
+            StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
+
+        var deliveryId = await MaterializeReplacementAsync(harness);
+        harness.Clock.Advance(TimeSpan.FromHours(2));
+
+        // The overdue replacement is still undelivered: the ticket stays
+        // Approved (nothing is auto-delivered or silently extended) and the
+        // existing replacement-failure flow can fail it for a refund-only
+        // second ticket.
+        harness.Db.ChangeTracker.Clear();
+        Assert.Equal(
+            RefundReplacementStatus.Approved,
+            (await harness.Db.RefundReplacementRequests.AsNoTracking().SingleAsync(x => x.PublicId == requestId)).Status);
+
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
+        await harness.AssignAsync(deliveryId, harness.Staff);
+        await harness.FailSubscriptionAsync(deliveryId, harness.Staff);
+
+        harness.Db.ChangeTracker.Clear();
+        var tickets = await harness.Db.RefundReplacementRequests.AsNoTracking().OrderBy(x => x.Id).ToListAsync();
+        Assert.Equal(2, tickets.Count);
+        var first = tickets.Single(x => x.PublicId == requestId);
+        var second = tickets.Single(x => x.PublicId != requestId);
+        var replacementOccurrenceId = await harness.Db.SubscriptionDeliveries.AsNoTracking()
+            .Where(x => x.IsReplacement)
+            .Select(x => x.Id)
+            .SingleAsync();
+        Assert.Equal(replacementOccurrenceId, second.SubscriptionDeliveryId);
+        Assert.NotEqual(first.SubscriptionDeliveryId, second.SubscriptionDeliveryId);
+        var choiceService = CreateRefundService(harness);
+        var exception = await Assert.ThrowsAsync<BusinessRuleException>(() => choiceService.ChooseAsync(
+            CustomerActor(harness),
+            second.PublicId,
+            new ChooseRefundReplacementRequest(CustomerChoice.ReDelivery),
+            CancellationToken.None));
+        Assert.Contains("refund", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// Shared post-condition: the correct ticket reached Completed exactly
     /// once via the delivery path, with history, entitlement, term, and
@@ -324,17 +474,24 @@ public sealed class RefundReplacementRedeliveryCompletionTests
     private static async Task<Guid> MaterializeReplacementAsync(
         DeliveryServiceTests.DeliveryHarness harness)
     {
+        // Same-day policy: the replacement lives on the original date.
         await harness.Service.MaterializeEligibleAsync(
-            harness.ManagerActor, new DateOnly(2026, 8, 18), CancellationToken.None);
+            harness.ManagerActor, new DateOnly(2026, 8, 16), CancellationToken.None);
         return await harness.Db.Deliveries.AsNoTracking()
             .Where(x => x.SubscriptionDelivery != null && x.SubscriptionDelivery.IsReplacement)
             .Select(x => x.PublicId)
             .SingleAsync();
     }
 
-    private static Task AdvanceToArrivedAsync(
-        DeliveryServiceTests.DeliveryHarness harness, Guid deliveryId) =>
-        harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+    private static async Task AdvanceToArrivedAsync(
+        DeliveryServiceTests.DeliveryHarness harness, Guid deliveryId)
+    {
+        // Preserved milk allocation gate: batch allocation precedes staff
+        // assignment, mirroring the production UI flow.
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
+    }
 
     private static async Task AddDeliveryAsync(
         DeliveryServiceTests.DeliveryHarness harness, DateOnly date)
@@ -358,6 +515,10 @@ public sealed class RefundReplacementRedeliveryCompletionTests
     private static async Task<Guid> FailTicketAsync(DeliveryServiceTests.DeliveryHarness harness)
     {
         var deliveryId = await harness.MaterializeSubscriptionAsync();
+        // Preserved milk allocation gate: batch allocation precedes staff
+        // assignment, mirroring the production UI flow.
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
         await harness.AssignAsync(deliveryId, harness.Staff);
         return deliveryId;
     }

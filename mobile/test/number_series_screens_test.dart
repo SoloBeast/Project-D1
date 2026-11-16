@@ -93,7 +93,8 @@ void main() {
       );
       await _pump(tester, const NumberSeriesListScreen(), controller);
 
-      expect(find.byTooltip('Configure CUST'), findsOneWidget);
+      // No settings icon: the card itself opens the configure screen.
+      expect(find.byTooltip('Configure CUST'), findsNothing);
       expect(find.text('Deactivate'), findsOneWidget);
 
       await tester.tap(find.text('Deactivate'));
@@ -102,6 +103,76 @@ void main() {
       expect(controller.lastCode, 'CUST');
       expect(controller.lastIsActive, isFalse);
       expect(controller.lastScope, isNull);
+    });
+
+    testWidgets('tapping the card opens the configure screen', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(800, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final router = GoRouter(
+        initialLocation: '/admin/setup/number-series',
+        routes: [
+          GoRoute(
+            path: '/admin/setup/number-series',
+            builder: (context, state) => const NumberSeriesListScreen(),
+          ),
+          GoRoute(
+            path: '/admin/setup/number-series/:code/edit',
+            builder: (context, state) => const Scaffold(
+              body: Center(child: Text('Configure screen')),
+            ),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          key: UniqueKey(),
+          overrides: [
+            numberSeriesControllerProvider.overrideWith(
+              () => _SeededNumberSeriesController(
+                NumberSeriesState(series: [_series()]),
+              ),
+            ),
+            sessionControllerProvider.overrideWith(
+              () => _SeededSessionController(
+                permissions: const [
+                  kNumberSeriesReadPermission,
+                  kNumberSeriesManagePermission,
+                ],
+                branchIds: const [7],
+              ),
+            ),
+          ],
+          child: MaterialApp.router(
+            theme: ThemeData(useMaterial3: true),
+            routerConfig: router,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('CUST'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Configure screen'), findsOneWidget);
+      expect(find.text('CUST'), findsNothing);
+    });
+
+    testWidgets('card is not tappable without manage permission', (tester) async {
+      await _pump(
+        tester,
+        const NumberSeriesListScreen(),
+        _SeededNumberSeriesController(
+          NumberSeriesState(series: [_series()]),
+        ),
+        permissions: const [kNumberSeriesReadPermission],
+      );
+
+      await tester.tap(find.text('CUST'));
+      await tester.pumpAndSettle();
+
+      // No router, no navigation: a tap must be a harmless no-op.
+      expect(find.text('CUST'), findsOneWidget);
     });
 
     testWidgets('shows the scope badge and passes scope for scoped series', (

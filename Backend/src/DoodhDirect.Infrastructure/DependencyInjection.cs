@@ -87,6 +87,10 @@ public static class DependencyInjection
             .Bind(configuration.GetSection(DeliveryFailTimeoutOptions.SectionName))
             .ValidateDataAnnotations()
             .ValidateOnStart();
+        services.AddOptions<RedeliveryExpiryOptions>()
+            .Bind(configuration.GetSection(RedeliveryExpiryOptions.SectionName))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
         services.AddOptions<VacationRefundOptions>()
             .Bind(configuration.GetSection(VacationRefundOptions.SectionName))
             .ValidateDataAnnotations()
@@ -210,6 +214,8 @@ public static class DependencyInjection
         services.AddScoped<IRefundBankExportService, RefundBankExportService>();
         services.AddScoped<IDeliveryFailTimeoutProcessor, DeliveryFailTimeoutProcessor>();
         services.AddHostedService<DeliveryFailTimeoutWorker>();
+        services.AddScoped<IRedeliveryExpiryProcessor, RedeliveryExpiryProcessor>();
+        services.AddHostedService<RedeliveryExpiryWorker>();
         services.AddScoped<IVacationRefundService, VacationRefundService>();
         services.AddHostedService<VacationRefundWorker>();
         services.AddScoped<ICameraService, CameraService>();

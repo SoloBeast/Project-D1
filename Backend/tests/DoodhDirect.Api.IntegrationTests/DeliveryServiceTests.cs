@@ -79,12 +79,13 @@ public sealed class DeliveryServiceTests
             .AsNoTracking()
             .Where(x => x.SubscriptionDeliveryId == harness.SubscriptionDelivery.Id)
             .ToListAsync());
-        // OTP exists only for real materialized work (order + today's task).
+        // OTPs belong to the assigned lifecycle: materialized-but-unassigned
+        // deliveries never receive an OTP or its customer notification.
         Assert.Equal(
-            2,
+            0,
             await harness.Db.DeliveryOtps.AsNoTracking().CountAsync());
         Assert.Equal(
-            2,
+            0,
             await harness.Db.NotificationEvents.AsNoTracking()
                 .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued));
     }
@@ -295,6 +296,22 @@ public sealed class DeliveryServiceTests
             x.SubscriptionDeliveryId == harness.SubscriptionDelivery.Id &&
             x.ScheduledDate == harness.Today);
 
+        // Assigned lifecycle: no OTP or notification exists before assignment.
+        Assert.Empty(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
+        Assert.Equal(
+            0,
+            await harness.Db.NotificationEvents.AsNoTracking()
+                .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued));
+        Assert.Empty(harness.OtpDelivery.Messages);
+
+        foreach (var delivery in deliveries)
+        {
+            var batchId = await harness.RecordMilkBatchAsync(4m);
+            var required = delivery.SourceType == DeliverySourceType.SubscriptionOccurrence ? 1m : 2m;
+            await harness.SaveAllocationAsync(delivery.PublicId, batchId, required);
+            await harness.AssignAsync(delivery.PublicId, harness.Staff);
+        }
+
         var otps = await harness.Db.DeliveryOtps
             .AsNoTracking()
             .Where(x => x.DeliveryId == orderDelivery.Id || x.DeliveryId == subscriptionDelivery.Id)
@@ -337,7 +354,10 @@ public sealed class DeliveryServiceTests
         await using var harness = await DeliveryHarness.CreateAsync();
         harness.OtpDelivery.FailNextSend = true;
 
-        await harness.MaterializeOrderAsync();
+        var materializedId = await harness.MaterializeOrderAsync();
+        var materializedBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(materializedId, materializedBatchId, 2m);
+        await harness.AssignAsync(materializedId, harness.Staff);
 
         var delivery = await harness.Db.Deliveries
             .AsNoTracking()
@@ -353,7 +373,9 @@ public sealed class DeliveryServiceTests
         Assert.Equal(1, await harness.Db.NotificationEvents.AsNoTracking()
             .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued &&
                 x.EventKey == $"delivery:{delivery.PublicId:N}:otp-issued"));
-        Assert.Equal(2, await harness.Db.NotificationEvents.AsNoTracking()
+        // Only the assigned order delivery has an OTP; the unassigned
+        // subscription delivery has none.
+        Assert.Equal(1, await harness.Db.NotificationEvents.AsNoTracking()
             .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued));
 
         await harness.Service.IssuePendingOtpsAsync(
@@ -371,7 +393,7 @@ public sealed class DeliveryServiceTests
         Assert.Equal(1, await harness.Db.NotificationEvents.AsNoTracking()
             .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued &&
                 x.EventKey == $"delivery:{delivery.PublicId:N}:otp-issued"));
-        Assert.Equal(2, await harness.Db.NotificationEvents.AsNoTracking()
+        Assert.Equal(1, await harness.Db.NotificationEvents.AsNoTracking()
             .CountAsync(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued));
     }
 
@@ -381,6 +403,9 @@ public sealed class DeliveryServiceTests
         await using var harness = await DeliveryHarness.CreateAsync();
         harness.OtpDelivery.FailNextSend = true;
         var deliveryId = await harness.MaterializeOrderAsync();
+        var concurrentBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, concurrentBatchId, 2m);
+        await harness.AssignAsync(deliveryId, harness.Staff);
         var delivery = await harness.Db.Deliveries
             .AsNoTracking()
             .SingleAsync(x => x.PublicId == deliveryId);
@@ -1059,9 +1084,9 @@ public sealed class DeliveryServiceTests
     {
         await using var harness = await DeliveryHarness.CreateAsync();
         var deliveryId = await harness.MaterializeOrderAsync();
-        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
         var orderWorkflowBatchId = await harness.RecordMilkBatchAsync();
         await harness.SaveAllocationAsync(deliveryId, orderWorkflowBatchId, 2m);
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
 
         await Assert.ThrowsAsync<BusinessRuleException>(() => harness.Service.CompleteAsync(
             harness.StaffActor(harness.Staff),
@@ -1161,9 +1186,9 @@ public sealed class DeliveryServiceTests
     {
         await using var harness = await DeliveryHarness.CreateAsync();
         var deliveryId = await harness.MaterializeSubscriptionAsync();
-        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
         var subscriptionAllocationBatchId = await harness.RecordMilkBatchAsync();
         await harness.SaveAllocationAsync(deliveryId, subscriptionAllocationBatchId, 1m);
+        await harness.AdvanceToArrivedAsync(deliveryId, harness.Staff);
         var code = await harness.GetOtpCodeAsync(deliveryId);
 
         var verified = await harness.Service.VerifyOtpAsync(

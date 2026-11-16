@@ -237,7 +237,18 @@ public sealed record RefundReplacementRequestResult(
     /// Never accepted from client input; staff UI gating only — execution
     /// revalidates inside the service guard.
     /// </summary>
-    bool IsEmployeeOriginated = false);
+    bool IsEmployeeOriginated = false,
+    /// <summary>
+    /// Same-day re-delivery SLA deadline: exactly
+    /// <c>CustomerChoiceAt + 1 hour</c> (India-local wall clock, same kind as
+    /// <see cref="CustomerChoiceAt"/>) for a subscription delivery-fail
+    /// ticket with a recorded Re-Delivery choice. Null on every other shape.
+    /// The replacement must be physically delivered by this instant on the
+    /// original delivery date; approval already fails closed past it and the
+    /// delivery-completion hook records an explicit overdue outcome instead
+    /// of silently extending it.
+    /// </summary>
+    DateTime? RedeliveryDeadline = null);
 
 /// <summary>
 /// Row for the branch-scoped staff list. Images are summarized by count so the
@@ -312,7 +323,14 @@ public sealed record RefundReplacementListItem(
     /// Never accepted from client input; staff UI gating only — execution
     /// revalidates inside the service guard.
     /// </summary>
-    bool IsEmployeeOriginated = false);
+    bool IsEmployeeOriginated = false,
+    /// <summary>
+    /// Same-day re-delivery SLA deadline: exactly
+    /// <c>CustomerChoiceAt + 1 hour</c> (India-local wall clock) for a
+    /// subscription delivery-fail ticket with a recorded Re-Delivery choice.
+    /// Null on every other shape. Staff UI gating only.
+    /// </summary>
+    DateTime? RedeliveryDeadline = null);
 
 public sealed record RefundReplacementListQuery(
     long? BranchId = null,
@@ -332,6 +350,15 @@ public sealed record RefundReplacementPageResult(
 /// reference; the choice value binds from "Refund" / "ReDelivery".
 /// </summary>
 public sealed record ChooseRefundReplacementRequest(CustomerChoice Choice);
+
+/// <summary>
+/// Expired re-delivery to refund conversion by staff. The customer must have
+/// requested or confirmed the refund (<see cref="CustomerConfirmed"/> must
+/// be true — the backend never infers consent); an optional staff remark is
+/// recorded in audit. Moves no money: the ticket re-enters the existing
+/// refund approval/settlement workflow.
+/// </summary>
+public sealed record ConvertExpiredRedeliveryRequest(bool CustomerConfirmed, string? Remarks);
 
 /// <summary>
 /// D1-C: outcome of one automatic timeout resolution. All amounts are in the
@@ -370,6 +397,37 @@ public interface IDeliveryFailTimeoutProcessor
     /// unresolvable right now); otherwise resolves it and returns the outcome.
     /// </summary>
     Task<DeliveryFailTimeoutResult?> ProcessTicketAsync(
+        Guid requestId,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Expired re-delivery notice sweeper. Finds subscription delivery-fail
+/// tickets whose recorded Re-Delivery choice passed the one-hour same-day
+/// window (<c>CustomerChoiceAt + 1 hour</c>) while still awaiting staff
+/// action, and ensures the single deterministic customer expiry notice.
+/// Notice-only: never converts, approves, or moves money. Already-noticed
+/// tickets, ineligible tickets, and tickets lost to a concurrent winner
+/// (conversion, approval, completion) are skipped without side effects so
+/// retries and restarts are safe.
+/// </summary>
+public interface IRedeliveryExpiryProcessor
+{
+    /// <summary>
+    /// Ensures expiry notices for due tickets in deadline order, up to the
+    /// configured batch size. Returns the number of tickets newly notified.
+    /// A ticket lost to a concurrent winner is skipped, never retried in
+    /// the same cycle; unexpected failures are logged by the caller.
+    /// </summary>
+    Task<int> ProcessExpiredRedeliveriesAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Ensures the expiry notice for one ticket by public id. Returns true
+    /// when the notice was newly created, false when the ticket already
+    /// carried the notice or is not eligible (missing, not yet expired,
+    /// converted, resolved, or otherwise ineligible).
+    /// </summary>
+    Task<bool> ProcessTicketAsync(
         Guid requestId,
         CancellationToken cancellationToken);
 }
@@ -540,6 +598,43 @@ public interface IRefundReplacementService
         RefundReplacementActor actor,
         Guid requestId,
         ApproveRefundReplacementRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Staff conversion of an expired re-delivery choice to Refund. Requires
+    /// branch scope, the one-hour window to have passed, and explicit
+    /// customer confirmation. Idempotent: a converted ticket returns its
+    /// current state without new side effects. Moves no money.
+    /// </summary>
+    Task<RefundReplacementRequestResult> ConvertExpiredRedeliveryToRefundAsync(
+        RefundReplacementActor actor,
+        Guid requestId,
+        ConvertExpiredRedeliveryRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Idempotent expiry notice for an expired re-delivery ticket. Inserts
+    /// the single deterministic expiry notification when absent; a retry or
+    /// concurrent call returns the current state without duplicating it.
+    /// Moves no money and changes no ticket state.
+    /// </summary>
+    Task<RefundReplacementRequestResult> NotifyRedeliveryExpiredAsync(
+        RefundReplacementActor actor,
+        Guid requestId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Actor-free expiry notice for the background sweeper. Ensures the
+    /// single deterministic customer expiry notification for an expired
+    /// re-delivery ticket, reusing the same notice/audit logic as the
+    /// on-demand path. Returns true when the notice was newly created,
+    /// false when the ticket already carried it. Throws
+    /// Throws <c>NotFoundException</c> when missing and
+    /// <c>ConflictException</c> when not yet expired. Notice-only: never
+    /// converts, approves, or moves money.
+    /// </summary>
+    Task<bool> NotifyExpiredRedeliveryForSweepAsync(
+        Guid requestId,
         CancellationToken cancellationToken);
 
     /// <summary>

@@ -482,15 +482,8 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/admin/branches/new',
         builder: (context, state) => const BranchFormScreen(),
       ),
-      GoRoute(
-        path: '/admin/branches/:branchId',
-        builder: (context, state) {
-          final branchId = _requiredPathParameter(state, 'branchId');
-          return branchId == null
-              ? const _RouteErrorScreen(resource: 'branch')
-              : BranchDetailScreen(branchId: branchId);
-        },
-      ),
+      // The branch details page is removed: list cards open the edit
+      // page directly.
       GoRoute(
         path: '/admin/branches/:branchId/edit',
         builder: (context, state) {

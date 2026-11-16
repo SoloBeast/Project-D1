@@ -52,6 +52,7 @@ CustomerDelivery _delivery({
   DateTime? completedAt,
   DateTime? failedAt,
   String? failureReason,
+  bool milk = true,
 }) => CustomerDelivery(
   deliveryId: 'delivery-1',
   sourceType: DeliverySourceType.oneTimeOrder,
@@ -74,6 +75,7 @@ CustomerDelivery _delivery({
   failedAt: failedAt,
   failureReason: failureReason,
   activeOtp: activeOtp,
+  containsMilkItems: milk,
 );
 
 GoRouter _trackingRouter() => GoRouter(
@@ -383,6 +385,22 @@ void main() {
       find.text('Check backend-confirmed availability for this delivery'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('non-milk delivery shows the support-ticket placeholder', (
+    tester,
+  ) async {
+    _useSurface(tester, const Size(1024, 1600));
+    await _pumpTracking(
+      tester,
+      state: DeliveryState(
+        selectedCustomerDelivery: _delivery(milk: false),
+      ),
+    );
+
+    expect(find.text('Doorstep milk test'), findsNothing);
+    expect(find.text('Refund or replacement'), findsNothing);
+    expect(find.text('Raise a support ticket'), findsOneWidget);
   });
 
   testWidgets('milk-test and refund-replacement routes stay registered', (

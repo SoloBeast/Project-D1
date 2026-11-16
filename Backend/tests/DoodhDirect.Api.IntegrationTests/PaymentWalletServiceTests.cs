@@ -455,7 +455,9 @@ public sealed class PaymentWalletServiceTests
         Assert.Equal(PaymentStatus.Success, replay.Status);
         Assert.Equal(OrderStatus.Confirmed, (await harness.Db.Orders.AsNoTracking().SingleAsync()).Status);
         Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
-        Assert.Single(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
+        // Assigned lifecycle: payment confirmation materializes the delivery but
+        // never issues its OTP — issuance waits for assignment.
+        Assert.Empty(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
         Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
             .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
             .ToListAsync());
@@ -487,7 +489,9 @@ public sealed class PaymentWalletServiceTests
         Assert.Equal(PaymentStatus.Success, replay.Status);
         Assert.Equal(OrderStatus.Confirmed, (await harness.Db.Orders.AsNoTracking().SingleAsync()).Status);
         Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
-        Assert.Single(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
+        // Assigned lifecycle: payment confirmation materializes the delivery but
+        // never issues its OTP — issuance waits for assignment.
+        Assert.Empty(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
         Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
             .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
             .ToListAsync());
@@ -698,12 +702,14 @@ public sealed class PaymentWalletServiceTests
             created.PublicId,
             bypassOwnership: false,
             CancellationToken.None);
-        await harness.AssertConfirmedWithPendingOtpAsync(result);
+        await harness.AssertConfirmedWithoutOtpBeforeAssignmentAsync(result);
         Assert.Single(await harness.Db.Payments.AsNoTracking().ToListAsync());
         Assert.Single(await harness.Db.Orders.AsNoTracking().ToListAsync());
         Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
-        Assert.Single(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
-        Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
+        // Assigned lifecycle: payment confirmation materializes the delivery but
+        // never issues its OTP — issuance waits for assignment.
+        Assert.Empty(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
+        Assert.Empty(await harness.Db.NotificationEvents.AsNoTracking()
             .Where(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued)
             .ToListAsync());
         var receipt = Assert.Single(await harness.Db.PaymentWebhooks.AsNoTracking().ToListAsync());
@@ -723,7 +729,7 @@ public sealed class PaymentWalletServiceTests
             "wallet-otp-transport-failure",
             CancellationToken.None);
 
-        await harness.AssertConfirmedWithPendingOtpAsync(result);
+        await harness.AssertConfirmedWithoutOtpBeforeAssignmentAsync(result);
     }
 
     [Fact]
@@ -742,7 +748,7 @@ public sealed class PaymentWalletServiceTests
             created.PublicId,
             CancellationToken.None);
 
-        await harness.AssertConfirmedWithPendingOtpAsync(result);
+        await harness.AssertConfirmedWithoutOtpBeforeAssignmentAsync(result);
     }
 
     [Fact]
@@ -775,7 +781,7 @@ public sealed class PaymentWalletServiceTests
                 "test_verified"),
             CancellationToken.None);
 
-        await harness.AssertConfirmedWithPendingOtpAsync(result);
+        await harness.AssertConfirmedWithoutOtpBeforeAssignmentAsync(result);
     }
 
     [Theory]
@@ -857,7 +863,9 @@ public sealed class PaymentWalletServiceTests
         Assert.Equal(PaymentReconciliationOutcome.Captured, replay.Outcome);
         Assert.Equal(PaymentStatus.Success, replay.Payment.Status);
         Assert.Single(await harness.Db.Deliveries.AsNoTracking().ToListAsync());
-        Assert.Single(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
+        // Assigned lifecycle: payment confirmation materializes the delivery but
+        // never issues its OTP — issuance waits for assignment.
+        Assert.Empty(await harness.Db.DeliveryOtps.AsNoTracking().ToListAsync());
         Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
             .Where(x => x.EventType == NotificationEventTypes.PaymentSucceeded)
             .ToListAsync());
@@ -1645,35 +1653,21 @@ public sealed class PaymentWalletServiceTests
                 otpHandoffProtector);
         }
 
-        public async Task AssertConfirmedWithPendingOtpAsync(PaymentResult result)
+        // Assigned lifecycle: payment confirmation materializes the delivery
+        // but issues no OTP and creates no OTP notification — the single OTP
+        // is issued when the delivery is assigned (see DeliveryServiceTests).
+        public async Task AssertConfirmedWithoutOtpBeforeAssignmentAsync(PaymentResult result)
         {
             Assert.Equal(PaymentStatus.Success, result.Status);
             Assert.Equal(
                 OrderStatus.Confirmed,
                 (await Db.Orders.AsNoTracking().SingleAsync()).Status);
             Assert.Single(await Db.Deliveries.AsNoTracking().ToListAsync());
-
-            var otp = Assert.Single(await Db.DeliveryOtps.AsNoTracking().ToListAsync());
-            Assert.Null(otp.SentAt);
-            Assert.NotNull(otp.ProtectedCode);
-            var protectedCode = otp.ProtectedCode;
-            var expectedCode = OtpHandoffProtector.Unprotect(protectedCode);
-            var events = await Db.NotificationEvents.AsNoTracking()
-                .Where(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued)
-                .ToListAsync();
-            Assert.Single(events);
-            Assert.Equal(NotificationEventStatus.Pending, events[0].Status);
-
-            await DeliveryService.IssuePendingOtpsAsync(CancellationToken.None);
-
-            var retriedOtp = Assert.Single(await Db.DeliveryOtps.AsNoTracking().ToListAsync());
-            Assert.NotNull(retriedOtp.SentAt);
-            Assert.Equal(protectedCode, retriedOtp.ProtectedCode);
-            var sent = Assert.Single(OtpDelivery.Messages);
-            Assert.Equal(expectedCode, sent.Code);
-            Assert.Single(await Db.NotificationEvents.AsNoTracking()
+            Assert.Empty(await Db.DeliveryOtps.AsNoTracking().ToListAsync());
+            Assert.Empty(await Db.NotificationEvents.AsNoTracking()
                 .Where(x => x.EventType == NotificationEventTypes.DeliveryOtpIssued)
                 .ToListAsync());
+            Assert.Empty(OtpDelivery.Messages);
         }
 
         public async Task AssertInsufficientAttemptDidNotPersistAsync(decimal expectedBalance)

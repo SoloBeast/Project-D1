@@ -210,8 +210,11 @@ public sealed class Subscription : AuditableEntity
     /// source's frozen quantity/branch/snapshots/slot and links back to the
     /// source occurrence and the originating refund/replacement request.
     /// Unlike <see cref="AddDelivery"/>, the replacement date MAY fall after
-    /// <see cref="EndDate"/> (the purchase term itself is never extended);
-    /// the per-date uniqueness guard still applies. Creation never consumes
+    /// <see cref="EndDate"/> (the purchase term itself is never extended).
+    /// The per-date uniqueness guard still applies, except that the failed
+    /// source occurrence itself never conflicts with its own replacement:
+    /// same-day re-delivery schedules the replacement on the source's own
+    /// date. Creation never consumes
     /// entitlement and never touches financial fields — fulfillment happens
     /// later through <see cref="MarkDelivered"/> on the replacement row.
     /// At most one replacement may exist per original failure.
@@ -240,7 +243,7 @@ public sealed class Subscription : AuditableEntity
         {
             throw new ArgumentOutOfRangeException(nameof(refundReplacementRequestId));
         }
-        if (Deliveries.Any(x => x.ScheduledDate == replacementDate))
+        if (Deliveries.Any(x => x.ScheduledDate == replacementDate && !IsSameOccurrence(x, failedDelivery)))
         {
             throw new InvalidOperationException("A delivery already exists for this date.");
         }
@@ -272,6 +275,10 @@ public sealed class Subscription : AuditableEntity
         Deliveries.Add(replacement);
         return replacement;
     }
+
+    private static bool IsSameOccurrence(SubscriptionDelivery candidate, SubscriptionDelivery failedDelivery) =>
+        ReferenceEquals(candidate, failedDelivery)
+        || (candidate.Id > 0 && candidate.Id == failedDelivery.Id);
 
     private bool IsReplaced(SubscriptionDelivery failedDelivery) =>
         Deliveries.Any(x =>
@@ -431,6 +438,53 @@ public sealed class Subscription : AuditableEntity
         if (UsedEntitlement >= TotalEntitlement)
         {
             throw new InvalidOperationException("The prepaid entitlement is exhausted.");
+        }
+
+        UsedEntitlement++;
+        if (UsedEntitlement == TotalEntitlement)
+        {
+            Status = SubscriptionStatus.Completed;
+            CompletedAt = indiaLocalNow;
+        }
+    }
+
+    /// <summary>
+    /// Consumes one entitlement unit when a failed or skipped day is
+    /// financially resolved (its refund completed). Delivered days were
+    /// already counted at delivery time, so they are a no-op here; every
+    /// other resolved day counts exactly once, which lets a fully resolved
+    /// term (delivered, refunded or skipped-and-refunded) complete instead
+    /// of lingering Active with phantom remaining days. Best-effort when
+    /// the entitlement is already whole (e.g. a late complaint refund on a
+    /// completed term): the money still moves, the count stays capped.
+    /// </summary>
+    public void MarkRefundSettled(SubscriptionDelivery delivery, DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        EnsureOwned(delivery);
+        if (delivery.Status == SubscriptionDeliveryStatus.Delivered)
+        {
+            return;
+        }
+        if (delivery.Status is not (SubscriptionDeliveryStatus.Failed or SubscriptionDeliveryStatus.Skipped))
+        {
+            throw new InvalidOperationException(
+                $"A delivery in status '{delivery.Status}' cannot settle entitlement.");
+        }
+        ConsumeEntitlement(indiaLocalNow);
+    }
+
+    /// <summary>
+    /// Consumes one prepaid unit for a resolved day. Skipped, failed and
+    /// delivered days each count exactly once, so a fully resolved term
+    /// (every day delivered, failed/refunded or skipped) completes instead
+    /// of lingering Active with phantom remaining days.
+    /// </summary>
+    private void ConsumeEntitlement(DateTime indiaLocalNow)
+    {
+        if (UsedEntitlement >= TotalEntitlement)
+        {
+            return;
         }
 
         UsedEntitlement++;

@@ -178,7 +178,7 @@ public sealed class OrderService(
             .Include(order => order.Items)
             .Include(order => order.Branch)
             .Include(order => order.CustomerAddress)
-            .Include(order => order.Items).ThenInclude(item => item.Product)
+            .Include(order => order.Items).ThenInclude(item => item.Product).ThenInclude(product => product.Category)
             .SingleOrDefaultAsync(order => order.CustomerId == customerId && order.IdempotencyKey == idempotencyKey.Trim(), cancellationToken);
         if (existing is not null)
         {
@@ -1058,7 +1058,7 @@ public sealed class OrderService(
     }
 
     private IQueryable<Order> QueryOrders() => dbContext.Orders
-        .Include(order => order.Items).ThenInclude(item => item.Product)
+        .Include(order => order.Items).ThenInclude(item => item.Product).ThenInclude(product => product.Category)
         .Include(order => order.Charges)
         .Include(order => order.Branch)
         .Include(order => order.CustomerAddress);
@@ -1074,6 +1074,10 @@ public sealed class OrderService(
         foreach (var item in order.Items)
         {
             await dbContext.Entry(item).Reference(line => line.Product).LoadAsync(cancellationToken);
+            if (item.Product is not null)
+            {
+                await dbContext.Entry(item.Product).Reference(product => product.Category).LoadAsync(cancellationToken);
+            }
         }
     }
 
@@ -1090,6 +1094,18 @@ public sealed class OrderService(
         if (orders.Count == 0)
         {
             return [];
+        }
+
+        // Ensure milk-category detection works for freshly created orders
+        // whose Product.Category navigation was never loaded: EF fixup
+        // populates the navigation once the categories are tracked.
+        var milkProductIds = orders.SelectMany(order => order.Items.Select(item => item.ProductId)).Distinct().ToArray();
+        if (milkProductIds.Length > 0)
+        {
+            await dbContext.Products
+                .Include(product => product.Category)
+                .Where(product => milkProductIds.Contains(product.Id))
+                .LoadAsync(cancellationToken);
         }
 
         var orderIds = orders.Select(order => order.Id).ToArray();

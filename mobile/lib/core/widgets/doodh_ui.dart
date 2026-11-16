@@ -886,3 +886,60 @@ class DoodhPriceTag extends StatelessWidget {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// Copyable references
+// ---------------------------------------------------------------------------
+
+/// Copies an exact display reference (order number, subscription number)
+/// to the clipboard and confirms with a short message. Always copies the
+/// formatted business reference the user sees — never an internal id.
+Future<void> copyReference(
+  BuildContext context, {
+  required String value,
+  required String message,
+}) async {
+  await Clipboard.setData(ClipboardData(text: value));
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+}
+
+/// Small copy icon placed beside a displayed reference number. The tooltip
+/// and content description announce the action for assistive tech.
+class CopyReferenceButton extends StatelessWidget {
+  const CopyReferenceButton({
+    super.key,
+    required this.value,
+    required this.message,
+    this.color,
+    this.iconSize = 18,
+  });
+
+  /// The exact formatted reference to copy.
+  final String value;
+
+  /// The confirmation shown after copying.
+  final String message;
+  final Color? color;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+    tooltip: 'Copy',
+    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+    padding: EdgeInsets.zero,
+    visualDensity: VisualDensity.compact,
+    iconSize: iconSize,
+    color: color,
+    icon: const Icon(Icons.copy_outlined),
+    onPressed: () => copyReference(context, value: value, message: message),
+  );
+}

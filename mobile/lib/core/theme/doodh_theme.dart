@@ -8,41 +8,41 @@ import 'package:flutter/material.dart';
 /// semantic layer used by shared components so status colours stay consistent
 /// (and contrast-safe) across every screen.
 abstract final class DoodhColors {
-  // Brand palette. The teal/cream/tan values are tuned to the supplied
-  // customer reference images: warm ivory background, deep forest primary,
-  // warm tan delivery surfaces. Names stay stable so every screen picks the
-  // retuned values up through the shared tokens.
-  static const ink = Color(0xFF172321);
+  // Brand palette. "Fresh meadow" refresh: airy porcelain background,
+  // fresh emerald primary, deep pine emphasis, light butter delivery band.
+  // Names stay stable so every screen picks the retuned values up through
+  // the shared tokens.
+  static const ink = Color(0xFF15211D);
   static const muted = Color(0xFF667572);
 
-  /// Primary action / surface: primary deep teal (reference hero + CTAs,
-  /// including the product-card "Add to cart" fills).
-  static const teal = Color(0xFF0B6B70);
+  /// Primary action / surface: fresh emerald (hero + CTAs, including the
+  /// product-card "Add to cart" fills).
+  static const teal = Color(0xFF0E7C5B);
 
-  /// Deep forest for headline emphasis and selected calendar treatment.
-  static const tealDark = Color(0xFF0C2E2A);
+  /// Deep pine for headline emphasis and selected calendar treatment.
+  static const tealDark = Color(0xFF0A3428);
 
-  /// Soft pale-green supporting surface (reference cards / search wells).
-  static const mint = Color(0xFFEAF0DC);
+  /// Soft fresh-mint supporting surface (cards / search wells / fallback art).
+  static const mint = Color(0xFFDFF0E3);
 
-  /// Warm off-white app background.
-  static const cream = Color(0xFFFFF9EE);
+  /// Airy porcelain app background.
+  static const cream = Color(0xFFF5F7F2);
   static const amber = Color(0xFFF4B942);
   static const coral = Color(0xFFD8664D);
 
-  /// Warm hairline for card borders on the ivory background.
-  static const line = Color(0xFFE8E0CD);
+  /// Warm hairline for card borders on the porcelain background.
+  static const line = Color(0xFFE3DCC8);
 
-  /// Warm tan surface for the delivery/subscription band on the customer
-  /// entry surface (reference language: warm golden supporting surface).
-  static const tanSurface = Color(0xFFEFDFB2);
+  /// Light butter surface for the delivery/subscription band on the customer
+  /// entry surface (warm golden supporting surface).
+  static const tanSurface = Color(0xFFF6E9C4);
 
-  /// Deep golden accent for chips and highlighted actions on tan surfaces.
-  static const goldAccent = Color(0xFF8A5B1F);
+  /// Deep golden accent for chips and highlighted actions on butter surfaces.
+  static const goldAccent = Color(0xFF8A6410);
 
   /// Soft warm highlight surface for emphasized supporting rows and
-  /// highlighted quick actions (reference guarantee/assurance strips).
-  static const highlightSurface = Color(0xFFFBF3D9);
+  /// highlighted quick actions (guarantee/assurance strips).
+  static const highlightSurface = Color(0xFFFFF7E0);
 
   /// Vivid delivered-green used by calendar status dots and the legend so the
   /// "Delivered" state reads at a glance like the reference.

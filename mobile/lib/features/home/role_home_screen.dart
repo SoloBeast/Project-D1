@@ -69,6 +69,7 @@ class RoleHomeScreen extends ConsumerWidget {
               permissions: user?.permissions ?? const [],
               branchIds: user?.branchIds ?? const [],
               branchDetails: user?.branchDetails ?? const [],
+              displayName: user?.displayName,
             ),
             UserRole.dairy => const _DairyHomeActions(),
             UserRole.owner || UserRole.admin => _AdminHomeActions(
@@ -237,13 +238,25 @@ class _CustomerHomeActionsState extends ConsumerState<_CustomerHomeActions> {
               key: const ValueKey('customer-home-scroll'),
               physics: const AlwaysScrollableScrollPhysics(),
               children: [
-                DoodhSearchBar(
-                  key: const ValueKey('home-search'),
-                  hint: 'Search milk, paneer, ghee…',
-                  onChanged: (value) => ref
-                      .read(catalogueControllerProvider.notifier)
-                      .setSearchQuery(value),
-                  onSubmitted: (_) => _openCatalogue(),
+                Container(
+                  decoration: const BoxDecoration(
+                    borderRadius: DoodhRadii.pillRadius,
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x140A3428),
+                        blurRadius: 16,
+                        offset: Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: DoodhSearchBar(
+                    key: const ValueKey('home-search'),
+                    hint: 'Search milk, paneer, ghee…',
+                    onChanged: (value) => ref
+                        .read(catalogueControllerProvider.notifier)
+                        .setSearchQuery(value),
+                    onSubmitted: (_) => _openCatalogue(),
+                  ),
                 ),
                 const SizedBox(height: DoodhSpacing.lg),
                 const _MyDeliveries(),
@@ -269,66 +282,153 @@ class _CustomerHomeHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Business ask: the DoodhDirect name was being truncated on phones
-    // because the wallet balance pill shared the title row. The header is
-    // now two rows — brand block + cart/notification icons on top, the
-    // wallet chip on its own row BELOW the icons — so the name gets the
-    // full title-row width back.
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    // Modern hero header (pilot): deep-teal gradient card carrying the same
+    // two-row structure as before — brand block + cart/notification icons
+    // on top, greeting + wallet chip below — so the DoodhDirect name keeps
+    // the full title-row width. All keys, tooltips, texts and destinations
+    // are unchanged; only the visual layer is new.
+    final now = DateTime.now();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [DoodhColors.tealDark, DoodhColors.teal],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Stack(
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Business ask: the logo sits BESIDE the DoodhDirect name (the
-                  // business-uploaded logo when branding is configured, the
-                  // bundled drop icon otherwise).
-                  const Row(
-                    children: [
-                      DoodhBrandMark(showWordmark: false, height: 30),
-                      SizedBox(width: DoodhSpacing.sm),
-                      Flexible(
-                        child: Text(
-                          'DoodhDirect',
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w800,
-                            color: DoodhColors.ink,
+            // Soft decorative bubbles; pure decoration with no semantics.
+            const Positioned(
+              right: -30,
+              top: -36,
+              child: _HeroBubble(diameter: 104),
+            ),
+            const Positioned(
+              right: 64,
+              bottom: -48,
+              child: _HeroBubble(diameter: 76),
+            ),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Business ask: the logo sits BESIDE the DoodhDirect
+                          // name (the business-uploaded logo when branding is
+                          // configured, the bundled drop icon otherwise).
+                          const Row(
+                            children: [
+                              DoodhBrandMark(
+                                showWordmark: false,
+                                height: 30,
+                              ),
+                              SizedBox(width: DoodhSpacing.sm),
+                              Flexible(
+                                child: Text(
+                                  'DoodhDirect',
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Fresh dairy, delivered with care.',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Action icons inherit white so they read on the teal
+                    // gradient; badges and tap targets are untouched.
+                    const IconTheme(
+                      data: IconThemeData(color: Colors.white),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _CartButton(),
+                          _NotificationButton(),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: DoodhSpacing.sm),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '${_homeGreeting(now)} · ${formatDeliveryDate(now)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
                         ),
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'Fresh dairy, delivered with care.',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
+                    ),
+                    const SizedBox(width: DoodhSpacing.sm),
+                    const _WalletChip(),
+                  ],
+                ),
+              ],
             ),
-            const _CartButton(),
-            const _NotificationButton(),
           ],
         ),
-        const SizedBox(height: DoodhSpacing.xs),
-        const Align(alignment: Alignment.centerRight, child: _WalletChip()),
-      ],
+      ),
     );
   }
 }
 
+/// Time-aware greeting for the home hero header.
+String _homeGreeting(DateTime now) {
+  if (now.hour < 12) return 'Good morning';
+  if (now.hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+/// Translucent decorative bubble for the home hero header.
+class _HeroBubble extends StatelessWidget {
+  const _HeroBubble({required this.diameter});
+
+  final double diameter;
+
+  @override
+  Widget build(BuildContext context) => ExcludeSemantics(
+    child: Container(
+      width: diameter,
+      height: diameter,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white.withValues(alpha: 0.07),
+      ),
+    ),
+  );
+}
+
 /// Visible balance chip — the first of the header trio (Wallet → Cart →
-/// Notification, per the business ask). Same controller state and destination
-/// as before — the balance is only the server-authoritative value.
+/// Notification, per the business ask). Same controller state, tooltip and
+/// destination as before — the balance is only the server-authoritative
+/// value. Rendered as a frosted-glass pill so it reads on the teal hero.
 class _WalletChip extends StatelessWidget {
   const _WalletChip();
 
@@ -356,9 +456,11 @@ class _WalletChip extends StatelessWidget {
                 vertical: DoodhSpacing.xs + 2,
               ),
               decoration: BoxDecoration(
-                color: DoodhColors.tanSurface,
+                color: Colors.white.withValues(alpha: 0.16),
                 borderRadius: DoodhRadii.pillRadius,
-                border: Border.all(color: DoodhColors.goldAccent),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.35),
+                ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -366,7 +468,7 @@ class _WalletChip extends StatelessWidget {
                   const Icon(
                     Icons.account_balance_wallet_outlined,
                     size: 18,
-                    color: DoodhColors.goldAccent,
+                    color: Colors.white,
                   ),
                   const SizedBox(width: DoodhSpacing.xs + 2),
                   Text(
@@ -374,7 +476,7 @@ class _WalletChip extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.labelLarge
-                        ?.copyWith(color: DoodhColors.goldAccent),
+                        ?.copyWith(color: Colors.white),
                   ),
                 ],
               ),
@@ -459,6 +561,23 @@ class _MyDeliveriesState extends ConsumerState<_MyDeliveries> {
         children: [
           Row(
             children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: .75),
+                  borderRadius: DoodhRadii.sm,
+                  border: Border.all(
+                    color: DoodhColors.goldAccent.withValues(alpha: .35),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.local_shipping_outlined,
+                  color: DoodhColors.tealDark,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: DoodhSpacing.sm),
               Expanded(
                 child: Text(
                   'My Deliveries',
@@ -885,6 +1004,20 @@ class UpcomingDeliveriesSection extends ConsumerWidget {
         children: [
           Row(
             children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: const BoxDecoration(
+                  color: DoodhColors.mint,
+                  borderRadius: DoodhRadii.sm,
+                ),
+                child: const Icon(
+                  Icons.event_available_outlined,
+                  color: DoodhColors.tealDark,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: DoodhSpacing.sm),
               Expanded(
                 child: Text(
                   'Upcoming Deliveries',
@@ -1122,6 +1255,8 @@ class _UpcomingDeliveryCard extends ConsumerWidget {
       width: 264,
       child: Card(
         clipBehavior: Clip.antiAlias,
+        elevation: 2,
+        shadowColor: DoodhColors.tealDark.withValues(alpha: .14),
         child: InkWell(
           // Pre-materialized occurrences have no Delivery row to open — tap
           // routes to the owning subscription instead.
@@ -1138,13 +1273,42 @@ class _UpcomingDeliveryCard extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Full-width date header, matching the reference layout.
-                Text(
-                  _upcomingDateLabel(delivery.scheduledDate),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
+                // Date pill: the scheduled day reads as a mint date chip on
+                // its own line so long weekday labels ellipsize safely in
+                // the 264px card.
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: const BoxDecoration(
+                      color: DoodhColors.mint,
+                      borderRadius: DoodhRadii.pillRadius,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.calendar_today_outlined,
+                          size: 12,
+                          color: DoodhColors.tealDark,
+                        ),
+                        const SizedBox(width: 5),
+                        Flexible(
+                          child: Text(
+                            _upcomingDateLabel(delivery.scheduledDate),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: DoodhColors.tealDark,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: DoodhSpacing.xs),
@@ -1167,19 +1331,22 @@ class _UpcomingDeliveryCard extends ConsumerWidget {
                   ),
                 const SizedBox(height: DoodhSpacing.xs),
                 // Compact status: short label, no long delivery jargon.
-                DoodhStatusPill(
-                  label:
-                      line.occurrence?.isPastDue == true ||
-                          (isSubscription && delivery.isPastDue)
-                      ? 'Past due'
-                      : isSubscription
-                      ? 'Confirmed'
-                      : delivery.status.label,
-                  tone:
-                      line.occurrence?.isPastDue == true ||
-                          (isSubscription && delivery.isPastDue)
-                      ? DoodhStatusTone.warning
-                      : DoodhStatusTone.success,
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: DoodhStatusPill(
+                    label:
+                        line.occurrence?.isPastDue == true ||
+                            (isSubscription && delivery.isPastDue)
+                        ? 'Past due'
+                        : isSubscription
+                        ? 'Confirmed'
+                        : delivery.status.label,
+                    tone:
+                        line.occurrence?.isPastDue == true ||
+                            (isSubscription && delivery.isPastDue)
+                        ? DoodhStatusTone.warning
+                        : DoodhStatusTone.success,
+                  ),
                 ),
                 const SizedBox(height: DoodhSpacing.xs),
                 Row(
@@ -1375,6 +1542,21 @@ class _DeliveryDateTile extends StatelessWidget {
               color: today ? DoodhColors.tealDark : DoodhColors.line,
               width: today ? 2 : 1,
             ),
+            boxShadow: today
+                ? const [
+                    BoxShadow(
+                      color: Color(0x330A3428),
+                      blurRadius: 12,
+                      offset: Offset(0, 4),
+                    ),
+                  ]
+                : const [
+                    BoxShadow(
+                      color: Color(0x0D0A3428),
+                      blurRadius: 10,
+                      offset: Offset(0, 3),
+                    ),
+                  ],
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -2036,18 +2218,23 @@ class _HomeProductDiscovery extends ConsumerWidget {
   }
 }
 
+/// Delivery-staff home: a mobile-app style landing with a greeting hero and
+/// a prominent route card. All titles, subtitles, tooltips and destinations
+/// are unchanged — only the visual layer is new.
 class _DeliveryHomeActions extends StatelessWidget {
   const _DeliveryHomeActions({
     required this.roles,
     required this.permissions,
     required this.branchIds,
     required this.branchDetails,
+    this.displayName,
   });
 
   final List<String> roles;
   final List<String> permissions;
   final List<int> branchIds;
   final List<AuthUserBranchInfo> branchDetails;
+  final String? displayName;
 
   bool get _canManage =>
       roles.contains('DELIVERY_MANAGER') ||
@@ -2056,39 +2243,240 @@ class _DeliveryHomeActions extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final branchId = branchIds.isEmpty ? null : branchIds.first;
+    final now = DateTime.now();
+    final name = (displayName ?? '').trim();
     return ListView(
       padding: DoodhSpacing.pagePadding,
       children: [
+        // Hero greeting card: teal gradient, greeting + name, date row and
+        // a branch chip so staff immediately see their operating context.
+        ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [DoodhColors.tealDark, DoodhColors.teal],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Stack(
+              children: [
+                const Positioned(
+                  right: -30,
+                  top: -36,
+                  child: _HeroBubble(diameter: 104),
+                ),
+                const Positioned(
+                  right: 64,
+                  bottom: -48,
+                  child: _HeroBubble(diameter: 76),
+                ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.16),
+                            borderRadius: DoodhRadii.sm,
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.delivery_dining_outlined,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: DoodhSpacing.sm),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                name.isEmpty
+                                    ? _homeGreeting(now)
+                                    : '${_homeGreeting(now)}, $name',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _canManage
+                                    ? 'Staff, routes and live progress'
+                                    : 'Your assigned drops for today',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: DoodhSpacing.sm),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            formatDeliveryDate(now),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: DoodhSpacing.sm),
+                        if (branchId != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: DoodhSpacing.sm + 4,
+                              vertical: DoodhSpacing.xs + 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.16),
+                              borderRadius: DoodhRadii.pillRadius,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.35),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.store_outlined,
+                                  size: 16,
+                                  color: Colors.white,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  branchDisplayName(
+                                    branchDetails,
+                                    branchId,
+                                  ),
+                                  style: Theme.of(context).textTheme.labelLarge
+                                      ?.copyWith(color: Colors.white),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
         Text(
           _canManage ? 'Delivery management' : 'Delivery route',
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 16),
-        if (!_canManage)
+        if (!_canManage) ...[
           Card(
-            child: ListTile(
-              leading: const Icon(Icons.route_outlined),
-              title: const Text("Today's deliveries"),
-              subtitle: const Text('Operate deliveries assigned to you'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => context.push('/delivery'),
+            elevation: 2,
+            shadowColor: DoodhColors.tealDark.withValues(alpha: .14),
+            child: Padding(
+              padding: const EdgeInsets.all(DoodhSpacing.sm),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: DoodhSpacing.sm,
+                ),
+                leading: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: const BoxDecoration(
+                    color: DoodhColors.mint,
+                    borderRadius: DoodhRadii.sm,
+                  ),
+                  child: const Icon(
+                    Icons.route_outlined,
+                    color: DoodhColors.tealDark,
+                    size: 26,
+                  ),
+                ),
+                title: const Text("Today's deliveries"),
+                subtitle: const Text('Operate deliveries assigned to you'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push('/delivery'),
+              ),
             ),
           ),
-        if (_canManage && branchId != null)
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.local_shipping_outlined),
-              title: Text(
-                '${branchDisplayName(branchDetails, branchId)} deliveries',
-              ),
-              subtitle: const Text(
-                'Assign staff and monitor delivery progress',
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () =>
-                  context.push('/delivery-management/branch/$branchId'),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () => context.push('/delivery'),
+            icon: const Icon(Icons.play_arrow_rounded),
+            label: const Text("Start today's route"),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(52),
             ),
           ),
+        ],
+        if (_canManage && branchId != null) ...[
+          Card(
+            elevation: 2,
+            shadowColor: DoodhColors.tealDark.withValues(alpha: .14),
+            child: Padding(
+              padding: const EdgeInsets.all(DoodhSpacing.sm),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: DoodhSpacing.sm,
+                ),
+                leading: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: const BoxDecoration(
+                    color: DoodhColors.mint,
+                    borderRadius: DoodhRadii.sm,
+                  ),
+                  child: const Icon(
+                    Icons.local_shipping_outlined,
+                    color: DoodhColors.tealDark,
+                    size: 26,
+                  ),
+                ),
+                title: Text(
+                  '${branchDisplayName(branchDetails, branchId)} deliveries',
+                ),
+                subtitle: const Text(
+                  'Assign staff and monitor delivery progress',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () =>
+                    context.push('/delivery-management/branch/$branchId'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () =>
+                context.push('/delivery-management/branch/$branchId'),
+            icon: const Icon(Icons.dashboard_outlined),
+            label: const Text('Open branch dashboard'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(52),
+            ),
+          ),
+        ],
         if (_canManage && branchId == null)
           const StatePanel(
             icon: Icons.location_off_outlined,
@@ -2242,9 +2630,151 @@ class _DairyHomeActions extends ConsumerWidget {
       return 'Branch $id';
     }
 
-    return ListView(
+    final now = DateTime.now();
+    final name = (user?.displayName ?? '').trim();
+    // SingleChildScrollView + Column (not a lazy ListView) so the dairy
+    // cards and the personal-ordering section below them are always built,
+    // even on short viewports.
+    return SingleChildScrollView(
       padding: DoodhSpacing.pagePadding,
-      children: [
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [DoodhColors.tealDark, DoodhColors.teal],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Stack(
+              children: [
+                const Positioned(
+                  right: -30,
+                  top: -36,
+                  child: _HeroBubble(diameter: 104),
+                ),
+                const Positioned(
+                  right: 64,
+                  bottom: -48,
+                  child: _HeroBubble(diameter: 76),
+                ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.16),
+                            borderRadius: DoodhRadii.sm,
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.agriculture_outlined,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: DoodhSpacing.sm),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                name.isEmpty
+                                    ? _homeGreeting(now)
+                                    : '${_homeGreeting(now)}, $name',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                branchIds.length > 1
+                                    ? '${branchIds.length} dairies under management'
+                                    : 'Dairy workspace at a glance',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: DoodhSpacing.sm),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            formatDeliveryDate(now),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: DoodhSpacing.sm),
+                        if (branchId != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: DoodhSpacing.sm + 4,
+                              vertical: DoodhSpacing.xs + 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.16),
+                              borderRadius: DoodhRadii.pillRadius,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.35),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.store_outlined,
+                                  size: 16,
+                                  color: Colors.white,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  branchIds.length > 1
+                                      ? '${branchIds.length} dairies'
+                                      : dairyName(branchId),
+                                  style: Theme.of(context).textTheme.labelLarge
+                                      ?.copyWith(color: Colors.white),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
         Text(
           'Dairy operations',
           style: Theme.of(context).textTheme.headlineSmall,
@@ -2266,28 +2796,78 @@ class _DairyHomeActions extends ConsumerWidget {
           // directly on its dashboard — no selection step afterwards.
           for (final dairyId in branchIds) ...[
             Card(
-              child: ListTile(
-                leading: const Icon(Icons.agriculture_outlined),
-                title: Text('${dairyName(dairyId)} dairy dashboard'),
-                subtitle: const Text(
-                  'Production, batches, availability, and usage',
+              elevation: 2,
+              shadowColor: DoodhColors.tealDark.withValues(alpha: .14),
+              child: Padding(
+                padding: const EdgeInsets.all(DoodhSpacing.sm),
+                child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: DoodhSpacing.sm,
+                  ),
+                  leading: Container(
+                    width: 48,
+                    height: 48,
+                    decoration: const BoxDecoration(
+                      color: DoodhColors.mint,
+                      borderRadius: DoodhRadii.sm,
+                    ),
+                    child: const Icon(
+                      Icons.agriculture_outlined,
+                      color: DoodhColors.tealDark,
+                      size: 26,
+                    ),
+                  ),
+                  title: Text('${dairyName(dairyId)} dairy dashboard'),
+                  subtitle: const Text(
+                    'Production, batches, availability, and usage',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/dairy/branch/$dairyId/dashboard'),
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => context.push('/dairy/branch/$dairyId/dashboard'),
               ),
             ),
             const SizedBox(height: 12),
           ],
+          FilledButton.icon(
+            onPressed: () =>
+                context.push('/dairy/branch/$branchId/dashboard'),
+            icon: const Icon(Icons.dashboard_outlined),
+            label: const Text('Open dairy dashboard'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(52),
+            ),
+          ),
+          const SizedBox(height: 12),
           Card(
-            child: ListTile(
-              leading: const Icon(Icons.local_shipping_outlined),
-              title: const Text('Delivery Management'),
-              subtitle: const Text(
-                'Manage deliveries, generate subscription deliveries, and assign deliveries to delivery staff.',
+            elevation: 2,
+            shadowColor: DoodhColors.tealDark.withValues(alpha: .14),
+            child: Padding(
+              padding: const EdgeInsets.all(DoodhSpacing.sm),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: DoodhSpacing.sm,
+                ),
+                leading: Container(
+                  width: 48,
+                  height: 48,
+                  decoration: const BoxDecoration(
+                    color: DoodhColors.mint,
+                    borderRadius: DoodhRadii.sm,
+                  ),
+                  child: const Icon(
+                    Icons.local_shipping_outlined,
+                    color: DoodhColors.tealDark,
+                    size: 26,
+                  ),
+                ),
+                title: const Text('Delivery Management'),
+                subtitle: const Text(
+                  'Manage deliveries, generate subscription deliveries, and assign deliveries to delivery staff.',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () =>
+                    context.push('/delivery-management/branch/$branchId'),
               ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () =>
-                  context.push('/delivery-management/branch/$branchId'),
             ),
           ),
           const SizedBox(height: 12),
@@ -2317,7 +2897,8 @@ class _DairyHomeActions extends ConsumerWidget {
           ),
         ],
         SelfOrderingSection(permissions: user?.permissions ?? const []),
-      ],
+        ],
+      ),
     );
   }
 }
@@ -2388,18 +2969,10 @@ class _AdminHomeActions extends ConsumerWidget {
     return ListView(
       padding: DoodhSpacing.pagePadding,
       children: [
-        if (_canReadReports) ...[
-          Text(
-            'Administration',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: 8),
-          const Text('Review operational metrics and authorized reports.'),
-          const SizedBox(height: 8),
-        ],
+        if (_canReadReports) ...[const _AdminHero()],
         if (_canManageEmployees) ...[
-          const _AdminSectionHeader('User & Access'),
-          _AdminTileGrid(
+          _AdminSectionCard(
+            title: 'User & Access',
             items: [
               _AdminTileData(
                 icon: Icons.group_outlined,
@@ -2411,8 +2984,8 @@ class _AdminHomeActions extends ConsumerWidget {
           ),
         ],
         if (_canReadBranches) ...[
-          const _AdminSectionHeader('Master Data'),
-          _AdminTileGrid(
+          _AdminSectionCard(
+            title: 'Master Data',
             items: [
               _AdminTileData(
                 icon: Icons.storefront_outlined,
@@ -2441,8 +3014,8 @@ class _AdminHomeActions extends ConsumerWidget {
             _canReadIntegrations ||
             _canReadRefundReplacementConfig ||
             _canReadBranding) ...[
-          const _AdminSectionHeader('System Setup'),
-          _AdminTileGrid(
+          _AdminSectionCard(
+            title: 'System Setup',
             items: [
               if (_canReadNumberSeries)
                 _AdminTileData(
@@ -2493,8 +3066,8 @@ class _AdminHomeActions extends ConsumerWidget {
             _canReadReports ||
             _canReadRefundReplacements ||
             branchIds.isNotEmpty) ...[
-          const _AdminSectionHeader('Monitoring & Operations'),
-          _AdminTileGrid(
+          _AdminSectionCard(
+            title: 'Monitoring & Operations',
             items: [
               if (_canReadReports)
                 _AdminTileData(
@@ -2558,35 +3131,112 @@ class _AdminHomeActions extends ConsumerWidget {
   }
 }
 
-/// Compact section heading with a small accent bar.
-class _AdminSectionHeader extends StatelessWidget {
-  const _AdminSectionHeader(this.title);
-
-  final String title;
+/// Teal gradient hero carrying the Admin Centre identity, in the same
+/// language as the staff detail heroes.
+class _AdminHero extends StatelessWidget {
+  const _AdminHero();
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 22, bottom: 12),
-    child: Row(
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [DoodhColors.teal, DoodhColors.tealDark],
+      ),
+      borderRadius: DoodhRadii.mdRadius,
+    ),
+    child: Stack(
       children: [
-        Container(
-          width: 4,
-          height: 18,
-          decoration: BoxDecoration(
-            color: DoodhColors.teal,
-            borderRadius: BorderRadius.circular(2),
+        Positioned(
+          right: -30,
+          top: -36,
+          child: ExcludeSemantics(
+            child: Container(
+              width: 104,
+              height: 104,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.07),
+              ),
+            ),
           ),
         ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleLarge,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: DoodhRadii.sm,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.admin_panel_settings_outlined,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Administration',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Review operational metrics and authorized reports.',
+                      style: TextStyle(color: Colors.white70, height: 1.35),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ],
+    ),
+  );
+}
+
+/// White section card grouping one admin tile grid under its title.
+class _AdminSectionCard extends StatelessWidget {
+  const _AdminSectionCard({required this.title, required this.items});
+
+  final String title;
+  final List<_AdminTileData> items;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 12),
+    child: Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 10),
+            _AdminTileGrid(items: items),
+          ],
+        ),
+      ),
     ),
   );
 }

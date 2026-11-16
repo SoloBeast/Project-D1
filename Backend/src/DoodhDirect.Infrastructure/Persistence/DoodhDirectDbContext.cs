@@ -989,7 +989,12 @@ public sealed class DoodhDirectDbContext(
         entity.Property(x => x.BranchCodeSnapshot).HasMaxLength(50).IsRequired();
         entity.Property(x => x.BranchNameSnapshot).HasMaxLength(200).IsRequired();
         entity.Property(x => x.AddressSnapshot).HasMaxLength(2000).IsRequired();
-        entity.HasIndex(x => new { x.SubscriptionId, x.ScheduledDate }).IsUnique();
+        // Same-day re-delivery: the replacement shares its failed source's
+        // scheduled date, so per-date uniqueness admits at most one ordinary
+        // and one replacement occurrence. Ordinary duplicates stay blocked;
+        // second replacements for one failure stay blocked by the domain
+        // IsReplaced guard and the single replacement per ticket.
+        entity.HasIndex(x => new { x.SubscriptionId, x.ScheduledDate, x.IsReplacement }).IsUnique();
         entity.HasIndex(x => new { x.Status, x.ScheduledDate });
         entity.Property(x => x.SkipCause).HasConversion<string>().HasMaxLength(20).IsRequired(false);
         entity.HasIndex(x => x.SkipCause).HasFilter("[SkipCause] IS NOT NULL");

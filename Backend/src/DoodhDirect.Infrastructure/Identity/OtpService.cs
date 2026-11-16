@@ -251,15 +251,6 @@ public sealed class OtpService(
         dbContext.RefreshTokens.Add(new RefreshToken(user.Id, tokenService.HashRefreshToken(tokens.RefreshToken), tokens.RefreshTokenExpiresAt, session.Id, now));
         dbContext.AddAuditLog(new AuditLog(user.Id, "AUTH_OTP_LOGIN", "UserSession", session.PublicId.ToString(), null, null, request.Device.IpAddress, request.Device.UserAgent, request.Purpose.ToString(), now));
 
-        notificationEventWriter.Add(new NotificationEventRequest(
-            user.Id,
-            NotificationEventTypes.AuthenticationSucceeded,
-            $"authentication:{session.PublicId:N}:succeeded",
-            new Dictionary<string, string>
-            {
-                ["message"] = "You signed in successfully."
-            },
-            "/"));
         await dbContext.SaveChangesAsync(cancellationToken);
         return new OtpVerificationResult(false, new AuthSessionResult(authUser, tokens), null, null);
     }

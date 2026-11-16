@@ -135,14 +135,14 @@ void main() {
 
       expect(find.text('Items'), findsOneWidget);
       expect(find.text('Fresh Buffalo Milk · 1 litre'), findsWidgets);
+      // Subscription order no. appears in the header and items section;
+      // the internal SUB-guid-date correlation key must never render.
       expect(
         find.text('Subscription SUB/DB0001/26-27/000001'),
-        findsOneWidget,
-      );
-      expect(
-        find.textContaining('SUB-'),
         findsWidgets,
       );
+      expect(find.text('SUB-aaa-20261016'), findsNothing);
+      expect(find.textContaining('SUB-aaa'), findsNothing);
     });
   });
 

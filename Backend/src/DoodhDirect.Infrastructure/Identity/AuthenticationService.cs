@@ -398,15 +398,6 @@ public sealed class AuthenticationService(
                 "/"));
         }
 
-        notificationEventWriter.Add(new NotificationEventRequest(
-            user.Id,
-            NotificationEventTypes.AuthenticationSucceeded,
-            $"authentication:{session.PublicId:N}:succeeded",
-            new Dictionary<string, string>
-            {
-                ["message"] = "You signed in successfully."
-            },
-            "/"));
         await dbContext.SaveChangesAsync(cancellationToken);
         return new AuthSessionResult(authUser, tokens);
     }

@@ -12,6 +12,7 @@ using DoodhDirect.Application.Setup;
 using DoodhDirect.Domain.RefundReplacement;
 using DoodhDirect.Application.Notifications;
 using DoodhDirect.Domain.Auditing;
+using DoodhDirect.Domain.Catalogue;
 using DoodhDirect.Domain.Dairy;
 using DoodhDirect.Domain.Deliveries;
 using DoodhDirect.Domain.Identity;
@@ -378,6 +379,7 @@ public sealed class DeliveryService(
     {
         var delivery = await FindAsync(deliveryId, cancellationToken);
         EnsureBranchAccess(actor, delivery.BranchId);
+        EnsureAllocationForMilkAssignment(delivery);
         var employee = await FindEligibleEmployeeAsync(request.EmployeeId, delivery.BranchId, cancellationToken);
         var previousEmployeeId = delivery.AssignedEmployeeId;
         var now = timeProvider.Now;
@@ -397,6 +399,10 @@ public sealed class DeliveryService(
                 ["employeeName"] = employee.DisplayName ?? "Delivery employee"
             });
         await dbContext.SaveChangesAsync(cancellationToken);
+        // The delivery has now entered its assigned lifecycle: issue its single
+        // OTP through the idempotent path (reuse if already present). Reads,
+        // retries and reassignments never create another one.
+        await IssuePendingOtpsAsync(cancellationToken);
         return await PublishChangedAsync(delivery.PublicId, cancellationToken);
     }
 
@@ -439,6 +445,7 @@ public sealed class DeliveryService(
                     throw new BusinessRuleException(
                         $"Order '{delivery.Order.OrderNumber}' is not ready for assignment.");
                 }
+                EnsureAllocationForMilkAssignment(delivery);
             }
 
             var employeesByBranch = new Dictionary<long, User>();
@@ -482,6 +489,9 @@ public sealed class DeliveryService(
             }
 
             await dbContext.SaveChangesAsync(cancellationToken);
+            // Assigned lifecycle starts here: issue each delivery's single OTP
+            // through the idempotent path (runs inline in this transaction).
+            await IssuePendingOtpsAsync(cancellationToken);
         }, cancellationToken);
 
         var results = new List<DeliveryResult>(deliveries.Count);
@@ -541,7 +551,18 @@ public sealed class DeliveryService(
         var pending = new List<(Delivery Delivery, DeliveryOtp Otp, string Code)>();
         await ExecuteSerializableAsync(async () =>
         {
+            // OTPs belong to the assigned lifecycle only. A delivery must have
+            // an assigned employee and be non-terminal before any OTP row or
+            // customer notification may exist: materialized-but-unassigned
+            // (ReadyForAssignment) deliveries never receive an OTP here, and
+            // terminal deliveries never gain one retroactively. Issuance for a
+            // newly assigned delivery is triggered by AssignAsync /
+            // BulkAssignAsync through this same idempotent path.
             var deliveries = await OperationsQuery()
+                .Where(x => x.AssignedEmployeeId != null
+                    && x.Status != DeliveryStatus.Delivered
+                    && x.Status != DeliveryStatus.Failed
+                    && x.Status != DeliveryStatus.Cancelled)
                 .Where(x => !x.Otps.Any() || x.Otps.Any(otp => !otp.SentAt.HasValue))
                 .ToListAsync(cancellationToken);
 
@@ -844,7 +865,24 @@ public sealed class DeliveryService(
 
         var previousStatus = ticket.Status;
         var deliveryNumber = delivery.DeliveryNumber ?? delivery.ReferenceNumber;
-        var reason = $"Replacement delivery {deliveryNumber} delivered.";
+        // Same-day re-delivery SLA: the replacement must be physically
+        // delivered within one hour of the customer's re-delivery request
+        // (CustomerChoiceAt + 1 hour, India-local wall clock — the same basis
+        // as the approval gate). A late delivery is still a physical fact and
+        // completes the delivery, but the ticket outcome must say so
+        // explicitly instead of silently passing as on-time: overdue
+        // completions carry the breach in the remarks, audit, and customer
+        // notification. An undelivered overdue replacement is never marked
+        // delivered here; its actionable path is the existing replacement-
+        // failure flow (fail the replacement delivery for a refund-only
+        // second ticket), which stays available past the deadline.
+        DateTime? redeliveryDeadline = ticket.CustomerChoiceAt.HasValue
+            ? ticket.CustomerChoiceAt.Value.AddHours(1)
+            : null;
+        var isOverdue = redeliveryDeadline.HasValue && completedAt > redeliveryDeadline.Value;
+        var reason = isOverdue
+            ? $"Replacement delivery {deliveryNumber} delivered overdue (one-hour same-day SLA ending {redeliveryDeadline.Value:yyyy-MM-dd HH:mm} breached)."
+            : $"Replacement delivery {deliveryNumber} delivered.";
         Mutate(() => ticket.Complete(actor.UserId, completedAt, reason));
 
         AddAudit(
@@ -853,7 +891,14 @@ public sealed class DeliveryService(
             "RefundReplacementRequest",
             ticket.PublicId.ToString(),
             new { Status = previousStatus.ToString() },
-            new { Status = ticket.Status.ToString(), ticket.CompletedAt },
+            new
+            {
+                Status = ticket.Status.ToString(),
+                ticket.CompletedAt,
+                Resolution = isOverdue ? "RedeliveryOverdue" : "RedeliveryDelivered",
+                RedeliveryDeadline = redeliveryDeadline,
+                IsOverdue = isOverdue
+            },
             reason,
             completedAt);
 
@@ -867,7 +912,9 @@ public sealed class DeliveryService(
                 ["requestNumber"] = ticket.RequestNumber,
                 ["type"] = ticket.Type.ToString(),
                 ["status"] = ticket.Status.ToString(),
-                ["message"] = $"Your replacement delivery {deliveryNumber} has been delivered."
+                ["message"] = isOverdue
+                    ? $"Your replacement delivery {deliveryNumber} was delivered late (after the one-hour same-day window ending {redeliveryDeadline.Value:yyyy-MM-dd HH:mm})."
+                    : $"Your replacement delivery {deliveryNumber} has been delivered."
             },
             $"/refund-replacements/{ticket.PublicId}",
             completedAt));
@@ -889,19 +936,25 @@ public sealed class DeliveryService(
         DateTime completedAt,
         CancellationToken cancellationToken)
     {
+        // Allocation is enforced at assignment time (EnsureAllocationForMilkAssignment),
+        // never at completion. Non-milk deliveries carry no MilkUsage and must
+        // complete without any allocation. Milk deliveries assigned through the
+        // gate always carry allocations; a missing allocation here (legacy or
+        // race) must not fail OTP completion — there is simply nothing to consume.
+        if (!RequiresBatchAllocationFor(delivery))
+        {
+            return;
+        }
         var allocationIds = delivery.BatchAllocations.Select(a => a.Id).ToArray();
-        if (allocationIds.Length > 0 &&
-            await dbContext.MilkUsages.AnyAsync(
+        if (allocationIds.Length == 0)
+        {
+            return;
+        }
+        if (await dbContext.MilkUsages.AnyAsync(
                 x => x.DeliveryBatchAllocationId != null && allocationIds.Contains(x.DeliveryBatchAllocationId.Value),
                 cancellationToken))
         {
             return;
-        }
-
-        if (allocationIds.Length == 0)
-        {
-            throw new BusinessRuleException(
-                "A delivery cannot be completed until batch allocations have been saved for it.");
         }
 
         if (delivery.Order is not null)
@@ -1018,6 +1071,11 @@ public sealed class DeliveryService(
             EnsureAllocatable(delivery);
 
             var required = RequiredQuantityFor(delivery);
+            if (required <= 0m)
+            {
+                throw new ValidationAppException(
+                    "Batch allocations are only required for milk items.", "allocations");
+            }
             ValidateAllocations(request.Allocations, required);
 
             var batchIds = request.Allocations.Select(a => a.BatchId).Distinct().ToArray();
@@ -1101,10 +1159,28 @@ public sealed class DeliveryService(
         }
     }
 
-    private static decimal RequiredQuantityFor(Delivery delivery) =>
-        delivery.Order is not null
-            ? delivery.Order.Items.Sum(x => x.Quantity)
-            : delivery.SubscriptionDelivery?.Quantity ?? 0m;
+    /// <summary>
+    /// Milk-only allocation quantity: sums quantities of milk-category items
+    /// only. Non-milk (paneer/tofu) items never contribute. For mixed orders
+    /// only the milk portion requires batch cover. A non-milk subscription
+    /// occurrence requires zero. Uses the canonical product category code.
+    /// Fail-closed: an item whose product (or product category) cannot be
+    /// resolved throws instead of being silently treated as non-milk.
+    /// </summary>
+    private static decimal RequiredQuantityFor(Delivery delivery)
+    {
+        if (delivery.Order is not null)
+        {
+            return delivery.Order.Items.Where(IsMilkOrderItem).Sum(x => x.Quantity);
+        }
+        var subscription = delivery.SubscriptionDelivery
+            ?? throw new BusinessRuleException(
+                "The delivery's product classification could not be determined because it has no order or subscription occurrence.");
+        var product = subscription.Subscription?.Product
+            ?? throw new BusinessRuleException(
+                "The delivery's product classification could not be determined because the subscription product is missing.");
+        return IsMilkProduct(product) ? subscription.Quantity : 0m;
+    }
 
     private static void ValidateAllocations(
         IReadOnlyCollection<DeliveryBatchAllocationRequest> allocations,
@@ -1492,7 +1568,11 @@ public sealed class DeliveryService(
     private IQueryable<Delivery> OperationsQuery() => dbContext.Deliveries
         .Include(x => x.Order)
             .ThenInclude(x => x!.Items)
+                .ThenInclude(x => x.Product)
+                    .ThenInclude(x => x.Category)
         .Include(x => x.SubscriptionDelivery).ThenInclude(x => x!.Subscription)
+            .ThenInclude(x => x.Product)
+                .ThenInclude(x => x.Category)
         .Include(x => x.Customer)
         .Include(x => x.AssignedEmployee)
         .Include(x => x.Assignments).ThenInclude(x => x.Employee)
@@ -1727,7 +1807,57 @@ public sealed class DeliveryService(
             delivery.SubscriptionDelivery?.Subscription.SubscriptionNumber,
             delivery.SubscriptionDelivery?.PublicId,
             delivery.SubscriptionDelivery?.Subscription.ProductNameSnapshot,
-            delivery.SubscriptionDelivery?.Subscription.UnitOfMeasureSnapshot);
+            delivery.SubscriptionDelivery?.Subscription.UnitOfMeasureSnapshot,
+            RequiresBatchAllocationFor(delivery));
+    }
+
+    /// <summary>
+    /// Milk-only allocation gate: true when any ordered/subscribed item belongs
+    /// to the milk category. Non-milk (paneer/tofu) deliveries never require
+    /// batch allocation before assignment. Identification uses the canonical
+    /// category code from the product model, never display names. Category
+    /// codes are normalized to uppercase on write, so the comparison is
+    /// ordinal. Fail-closed: a missing product or category navigation throws
+    /// instead of silently classifying the item as non-milk.
+    /// </summary>
+    private static bool RequiresBatchAllocationFor(Delivery delivery)
+    {
+        if (delivery.Order is not null)
+        {
+            return delivery.Order.Items.Any(IsMilkOrderItem);
+        }
+        var subscription = delivery.SubscriptionDelivery
+            ?? throw new BusinessRuleException(
+                "The delivery's product classification could not be determined because it has no order or subscription occurrence.");
+        var product = subscription.Subscription?.Product
+            ?? throw new BusinessRuleException(
+                "The delivery's product classification could not be determined because the subscription product is missing.");
+        return IsMilkProduct(product);
+    }
+
+    private static bool IsMilkOrderItem(OrderItem item) =>
+        IsMilkProduct(item.Product
+            ?? throw new BusinessRuleException(
+                $"The delivery's product classification could not be determined because order item {item.ProductId} has no linked product."));
+
+    private static bool IsMilkProduct(Product product)
+    {
+        var category = product.Category
+            ?? throw new BusinessRuleException(
+                "The delivery's product classification could not be determined because the product category is missing.");
+        return string.Equals(
+            category.Code,
+            ProductCategory.MilkCategoryCode,
+            StringComparison.Ordinal);
+    }
+
+    private static void EnsureAllocationForMilkAssignment(Delivery delivery)
+    {
+        if (RequiresBatchAllocationFor(delivery) && delivery.BatchAllocations.Count == 0)
+        {
+            throw new BusinessRuleException(
+                "Batch allocations must be saved before assigning this milk delivery.");
+        }
     }
 
     private CustomerDeliveryResult ToCustomerResult(Delivery delivery)
@@ -1765,7 +1895,8 @@ public sealed class DeliveryService(
                         .Select(x => $"{x.ProductNameSnapshot} x {x.Quantity:0.###} {x.UnitOfMeasureSnapshot}")
                         .ToArray()),
             delivery.SubscriptionDelivery?.Subscription.ProductNameSnapshot,
-            delivery.SubscriptionDelivery?.Subscription.UnitOfMeasureSnapshot);
+            delivery.SubscriptionDelivery?.Subscription.UnitOfMeasureSnapshot,
+            RequiresBatchAllocationFor(delivery));
     }
 
     private string? GetActiveOtp(Delivery delivery)

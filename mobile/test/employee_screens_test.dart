@@ -99,7 +99,40 @@ void main() {
       expect(find.text('Resend'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
       expect(find.text('Deactivate'), findsOneWidget);
-      expect(find.byTooltip('Edit Ramesh Kumar'), findsOneWidget);
+      // No edit icon: the card itself opens the edit screen.
+      expect(find.byTooltip('Edit Ramesh Kumar'), findsNothing);
+    });
+
+    testWidgets('tapping the card opens the edit screen', (tester) async {
+      await _pumpConfig(
+        tester,
+        const EmployeeListScreen(),
+        _SeededEmployeeController(EmployeeState(employees: [_employee()])),
+      );
+
+      await tester.tap(find.text('Ramesh Kumar'));
+      await tester.pumpAndSettle();
+
+      // The edit route renders (placeholder harness) and the list is gone.
+      expect(find.text('Placeholder'), findsOneWidget);
+      expect(find.text('Ramesh Kumar'), findsNothing);
+    });
+
+    testWidgets('card is not tappable without manage permission', (
+      tester,
+    ) async {
+      await _pumpConfig(
+        tester,
+        const EmployeeListScreen(),
+        _SeededEmployeeController(EmployeeState(employees: [_employee()])),
+        permissions: const [kEmployeesReadPermission],
+      );
+
+      await tester.tap(find.text('Ramesh Kumar'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Ramesh Kumar'), findsOneWidget);
+      expect(find.text('Placeholder'), findsNothing);
     });
 
     testWidgets('hides manage actions without manage permission', (
@@ -1148,6 +1181,60 @@ void main() {
 
       expect(controller.updateCount, 1);
       expect(controller.lastUpdateRequest?.branchIds, [9]);
+    });
+
+    testWidgets('edit drops a stale archived assignment on branch change', (
+      tester,
+    ) async {
+      final controller = _SeededEmployeeController(
+        EmployeeState(
+          branchOptions: [
+            _branchOption(),
+            _branchOption(id: 9, code: 'NORTH', name: 'North Branch'),
+          ],
+        ),
+      );
+      // Persisted assignment is an archived branch that the options
+      // endpoint no longer returns.
+      final employee = _employee(
+        roleCode: 'DAIRY_MANAGER',
+        roleName: 'Dairy Manager',
+        branchId: 8,
+        branchName: 'Main Branch',
+        branchAssignments: const [
+          EmployeeBranchAssignment(branchId: 8, branchName: 'Main Branch'),
+        ],
+      );
+      await _pumpConfig(
+        tester,
+        EmployeeEditScreen(employeeId: 42, employee: employee),
+        controller,
+        routePath: '/admin/employees/:id',
+        initialPath: '/admin/employees/42',
+      );
+
+      // The archived assignment is named explicitly instead of vanishing.
+      expect(
+        find.text(
+          'Main Branch is archived and will be removed when you change branches.',
+        ),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.widgetWithText(CheckboxListTile, 'Main Branch (MAIN)'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.widgetWithText(CheckboxListTile, 'North Branch (NORTH)'),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Save changes'));
+      await tester.pumpAndSettle();
+
+      expect(controller.updateCount, 1);
+      // The stale archived branch is replaced, never resubmitted.
+      expect(controller.lastUpdateRequest?.branchIds, [7, 9]);
     });
 
     testWidgets('list shows every permitted assignment without duplicates', (

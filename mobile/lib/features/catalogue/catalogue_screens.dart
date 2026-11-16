@@ -886,11 +886,11 @@ class AdminCatalogueScreen extends ConsumerStatefulWidget {
 /// (controller calls, menu keys, dialog contracts) is unchanged — only the
 /// presentation is restyled.
 class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
-  static const _panelGreen = Color(0xFF198754);
-  static const _pageGrey = Color(0xFFF8F9FA);
+  static const _panelGreen = DoodhColors.teal;
+  static const _pageGrey = DoodhColors.cream;
   // Wide web-style table (Product + SKU + Category + Unit + Price +
-  // Description + Branches + Taxes + Status + Actions): phones get
-  // horizontal scroll for the full grid, cards never overflow.
+  // Description + Branches + Taxes + Outside radius + Status + Actions):
+  // phones get horizontal scroll for the full grid, cards never overflow.
   static const _tableMinWidth = 1480.0;
 
   int _tab = 0;
@@ -1029,29 +1029,84 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
     );
   }
 
-  Widget _managementHeader(BuildContext context) {
-    final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  /// Teal gradient hero heading catalogue management, in the shared Admin
+  /// Centre language.
+  Widget _managementHeader(BuildContext context) => Container(
+    width: double.infinity,
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [DoodhColors.teal, DoodhColors.tealDark],
+      ),
+      borderRadius: DoodhRadii.mdRadius,
+    ),
+    child: Stack(
       children: [
-        Text(
-          'Catalogue management',
-          style: theme.textTheme.headlineSmall?.copyWith(
-            fontSize: 24,
-            fontWeight: FontWeight.w800,
+        Positioned(
+          right: -30,
+          top: -36,
+          child: ExcludeSemantics(
+            child: Container(
+              width: 104,
+              height: 104,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.07),
+              ),
+            ),
           ),
         ),
-        const SizedBox(height: 2),
-        Text(
-          'Manage your products and categories',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: DoodhColors.muted,
-            fontSize: 14,
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: DoodhRadii.sm,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.inventory_2_outlined,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Catalogue management',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Manage your products and categories',
+                      style: TextStyle(color: Colors.white70, height: 1.35),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ],
-    );
-  }
+    ),
+  );
 
   Widget _tabs(BuildContext context) {
     Widget tab({
@@ -1107,7 +1162,7 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF2F0),
+        color: DoodhColors.neutralSurface,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -1162,7 +1217,7 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
     color: Colors.white,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(12),
-      side: const BorderSide(color: Color(0xFFE9ECEF)),
+      side: const BorderSide(color: DoodhColors.line),
     ),
     child: Padding(
       padding: const EdgeInsets.all(DoodhSpacing.md),
@@ -1385,7 +1440,9 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
 
   /// Description, Branches and Taxes each own a column so long text in one
   /// never shifts the horizontal rhythm of the others; every header cell
-  /// carries the same 4px outer gutter as the row cells below.
+  /// carries the same 4px outer gutter as the row cells below. The header
+  /// flexes mirror the row cells exactly (including Outside radius),
+  /// otherwise every column after the gap misaligns.
   Widget _productHeaderRow() => const Padding(
     padding: EdgeInsets.symmetric(vertical: 10),
     child: Row(
@@ -1399,6 +1456,7 @@ class _AdminCatalogueScreenState extends ConsumerState<AdminCatalogueScreen> {
         Expanded(flex: 2, child: _HeaderCell('Description')),
         Expanded(flex: 2, child: _HeaderCell('Branches')),
         Expanded(flex: 2, child: _HeaderCell('Applicable Taxes')),
+        Expanded(flex: 1, child: _HeaderCell('Outside radius')),
         Expanded(flex: 1, child: _HeaderCell('Status')),
         // Save/discard plus status-adjacent tools need the room; the table
         // scrolls horizontally, so this never overflows the card.
@@ -2683,7 +2741,9 @@ class _CategoryRowState extends State<_CategoryRow> {
       children: [
         Flexible(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            // Horizontal 4 matches the header gutter so the count sits
+            // exactly under the 'Products' caption.
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
             child: Text(
               '${widget.productCount}',
               style: const TextStyle(fontSize: 13),
@@ -3203,7 +3263,7 @@ class _ProductDialogState extends ConsumerState<_ProductDialog> {
       ),
       FilledButton(
         style: FilledButton.styleFrom(
-          backgroundColor: const Color(0xFF198754),
+          backgroundColor: DoodhColors.teal,
         ),
         onPressed: () {
           final price = double.tryParse(_price.text);
@@ -3281,7 +3341,7 @@ class _ProductDialogState extends ConsumerState<_ProductDialog> {
               color: DoodhColors.line,
               style: BorderStyle.solid,
             ),
-            color: const Color(0xFFFBFBF9),
+            color: DoodhColors.cream,
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -3337,7 +3397,7 @@ class _ProductDialogState extends ConsumerState<_ProductDialog> {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(12),
               gradient: const LinearGradient(
-                colors: [Color(0xFFEAF0DC), Color(0xFFCDE7DF)],
+                colors: [DoodhColors.mint, DoodhColors.neutralSurface],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),

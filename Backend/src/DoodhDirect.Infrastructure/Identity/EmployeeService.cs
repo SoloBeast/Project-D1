@@ -929,16 +929,6 @@ public sealed class EmployeeService(
                     ["message"] = "Your DoodhDirect registration is complete."
                 },
                 "/"));
-            notificationEventWriter.Add(new NotificationEventRequest(
-                user.Id,
-                NotificationEventTypes.AuthenticationSucceeded,
-                $"authentication:{session.PublicId:N}:succeeded",
-                new Dictionary<string, string>
-                {
-                    ["message"] = "You signed in successfully."
-                },
-                "/"));
-
             await dbContext.SaveChangesAsync(cancellationToken);
             result = new CompleteEmployeeRegistrationResult(new AuthSessionResult(authUser, tokens), invitation.Status);
         }, cancellationToken);

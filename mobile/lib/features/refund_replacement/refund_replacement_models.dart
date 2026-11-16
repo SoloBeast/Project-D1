@@ -342,6 +342,10 @@ class RefundReplacementRequest {
     // execution revalidates inside the backend service guard. Defaults to
     // false for older payloads.
     this.isEmployeeOriginated = false,
+    // Same-day re-delivery SLA deadline: exactly customerChoiceAt + 1 hour
+    // (India-local wall clock, server-computed). Null on every other shape
+    // and on older payloads (falls back to the client-side derivation).
+    this.redeliveryDeadlineUtc,
   });
 
   factory RefundReplacementRequest.fromJson(Map<String, dynamic> json) =>
@@ -397,6 +401,11 @@ class RefundReplacementRequest {
           json,
           'customerChoiceAt',
           'customerChoiceAtUtc',
+        ),
+        redeliveryDeadlineUtc: _optionalProtocolDate(
+          json,
+          'redeliveryDeadline',
+          'redeliveryDeadlineUtc',
         ),
         replacementDate: _optionalDateOnly(json['replacementDate']),
         replacementDeliveryNumber:
@@ -497,6 +506,54 @@ class RefundReplacementRequest {
   final String? beneficiaryIfsc;
   final String? beneficiaryAccountLast4;
   final bool isEmployeeOriginated;
+  /// Same-day re-delivery SLA deadline (server-computed, India-local wall
+  /// clock). Null on non-re-delivery shapes and older payloads.
+  final DateTime? redeliveryDeadlineUtc;
+
+  /// Effective re-delivery deadline: the server value when present,
+  /// otherwise exactly customerChoiceAt + 1 hour for re-delivery tickets.
+  /// The client never invents a different deadline — the fallback only
+  /// covers payloads that predate the server field.
+  DateTime? get effectiveRedeliveryDeadline {
+    if (redeliveryDeadlineUtc != null) return redeliveryDeadlineUtc;
+    if (isRedeliveryTicket && customerChoiceAtUtc != null) {
+      return customerChoiceAtUtc!.add(const Duration(hours: 1));
+    }
+    return null;
+  }
+
+  /// True for a subscription delivery-fail ticket with a recorded
+  /// Re-Delivery choice — the only shape carrying the one-hour SLA.
+  bool get isRedeliveryTicket =>
+      source == RefundReplacementSource.deliveryFailed &&
+      customerChoice == CustomerChoice.reDelivery &&
+      subscriptionDeliveryPublicId != null;
+
+  /// True when the re-delivery is overdue: still in a non-terminal state
+  /// past the effective deadline. Terminal tickets keep their recorded
+  /// outcome (an overdue delivery stays visibly overdue via its remarks).
+  bool isRedeliveryOverdueAt(DateTime now) {
+    final deadline = effectiveRedeliveryDeadline;
+    if (!isRedeliveryTicket || deadline == null) return false;
+    if (status.isTerminal) return false;
+    return now.isAfter(deadline);
+  }
+
+  /// True when the recorded re-delivery choice has expired while the ticket
+  /// still awaits staff action: the one-hour window passed and the ticket
+  /// was not decided. Only this shape is convertible to a refund — expired
+  /// tickets that already moved on (approved/completed/failed/cancelled)
+  /// keep their recorded outcome. The backend revalidates every
+  /// precondition; the UI only gates the Convert / Change actions.
+  bool isRedeliveryExpiredAt(DateTime now) {
+    if (!isRedeliveryTicket) return false;
+    if (status != RefundReplacementStatus.awaitingCustomerChoice) {
+      return false;
+    }
+    final deadline = effectiveRedeliveryDeadline;
+    if (deadline == null) return false;
+    return now.isAfter(deadline);
+  }
 
   /// True when this Refund ticket is designated for manual bank transfer:
   /// completion is disabled — payment happens through the bank-transfer
@@ -634,6 +691,8 @@ class RefundReplacementListItem {
     // Employee-origin policy indicator for list rows. Server-derived;
     // staff UI gating only. Defaults to false for older payloads.
     this.isEmployeeOriginated = false,
+    // Same-day re-delivery SLA deadline (server-computed). Null otherwise.
+    this.redeliveryDeadlineUtc,
   });
 
   factory RefundReplacementListItem.fromJson(Map<String, dynamic> json) =>
@@ -679,6 +738,11 @@ class RefundReplacementListItem {
             : DeliveryStatus.parse(json['deliveryStatus']),
         isEmployeeOriginated:
             (json['isEmployeeOriginated'] as bool?) ?? false,
+        redeliveryDeadlineUtc: _optionalProtocolDate(
+          json,
+          'redeliveryDeadline',
+          'redeliveryDeadlineUtc',
+        ),
       );
 
   final String requestId;
@@ -710,6 +774,7 @@ class RefundReplacementListItem {
   final String? supersedesRequestNumber;
   final DeliveryStatus? deliveryStatus;
   final bool isEmployeeOriginated;
+  final DateTime? redeliveryDeadlineUtc;
 
   /// True when this row was closed by legacy remediation.
   bool get isSuperseded =>

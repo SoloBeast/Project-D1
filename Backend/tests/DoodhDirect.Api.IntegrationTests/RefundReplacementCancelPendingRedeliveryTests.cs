@@ -483,6 +483,8 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
                 && x.SubscriptionDelivery.ScheduledDate == new DateOnly(2026, 8, 19)
                 && !x.SubscriptionDelivery.IsReplacement)
             .Select(x => x.PublicId).SingleAsync();
+        var secondBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(secondDeliveryId, secondBatchId, 1m);
         await harness.AssignAsync(secondDeliveryId, harness.Staff);
         await harness.FailSubscriptionAsync(secondDeliveryId, harness.Staff);
         var secondId = await harness.Db.RefundReplacementRequests.AsNoTracking()
@@ -494,7 +496,8 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
         await choiceService.ApproveAsync(
             StaffActor(harness),
             secondId,
-            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 20), SettlementMethod: RefundSettlementMethod.Wallet),
+            // Same-day policy: the second ticket's own original date.
+            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 19), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
         await SeedSubscriptionPaymentAsync(harness, PaymentMethod.Wallet);
 
@@ -605,6 +608,10 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
     private static async Task<Guid> FailTicketAsync(DeliveryServiceTests.DeliveryHarness harness)
     {
         var deliveryId = await harness.MaterializeSubscriptionAsync();
+        // Preserved milk allocation gate: batch allocation precedes staff
+        // assignment, mirroring the production UI flow.
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
         await harness.AssignAsync(deliveryId, harness.Staff);
         return deliveryId;
     }
@@ -659,12 +666,18 @@ public sealed class RefundReplacementCancelPendingRedeliveryTests
     private static async Task<Guid> MaterializeReplacementAsync(
         DeliveryServiceTests.DeliveryHarness harness)
     {
+        // Same-day policy: the replacement lives on the original date.
         await harness.Service.MaterializeEligibleAsync(
-            harness.ManagerActor, new DateOnly(2026, 8, 18), CancellationToken.None);
-        return await harness.Db.Deliveries.AsNoTracking()
+            harness.ManagerActor, new DateOnly(2026, 8, 16), CancellationToken.None);
+        var deliveryId = await harness.Db.Deliveries.AsNoTracking()
             .Where(x => x.SubscriptionDelivery != null && x.SubscriptionDelivery.IsReplacement)
             .Select(x => x.PublicId)
             .SingleAsync();
+        // Preserved milk allocation gate: batch allocation precedes staff
+        // assignment, mirroring the production UI flow.
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
+        return deliveryId;
     }
 
     private static async Task<Payment> SeedSubscriptionPaymentAsync(

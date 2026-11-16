@@ -8,6 +8,7 @@ using DoodhDirect.Application.RefundReplacement;
 using DoodhDirect.Domain.Auditing;
 using DoodhDirect.Domain.Payments;
 using DoodhDirect.Domain.RefundReplacement;
+using DoodhDirect.Domain.Subscriptions;
 using DoodhDirect.Domain.Wallets;
 using DoodhDirect.Infrastructure.Payments;
 using DoodhDirect.Infrastructure.Persistence;
@@ -263,6 +264,16 @@ public sealed class DeliveryFailTimeoutProcessor(
         }
 
         Mutate(() => ticket.Complete(ticket.CustomerId, now, remarks));
+
+        // Financial resolution consumes the day's entitlement so a fully
+        // resolved term completes instead of lingering Active. Only a
+        // terminally resolved day settles; anything else is left alone.
+        if (ticket.SubscriptionDelivery!.Status is SubscriptionDeliveryStatus.Failed or SubscriptionDeliveryStatus.Skipped)
+        {
+            await dbContext.Entry(subscription).Collection(x => x.Deliveries).LoadAsync(cancellationToken);
+            var settled = subscription.Deliveries.Single(x => x.Id == ticket.SubscriptionDelivery.Id);
+            Mutate(() => subscription.MarkRefundSettled(settled, now));
+        }
 
         // D1-D slice 5.2: when the resolved ticket is the refund-only remedy
         // of a failed re-delivery replacement, resolve the original ReDelivery

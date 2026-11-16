@@ -134,6 +134,9 @@ public sealed class OtpScopeSeparationTests
     {
         await using var harness = await DeliveryHarness.CreateAsync();
         var deliveryId = await harness.MaterializeOrderAsync();
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 2m);
+        await harness.AssignAsync(deliveryId, harness.Staff);
 
         var code = await harness.GetOtpCodeAsync(deliveryId);
 
@@ -256,7 +259,11 @@ public sealed class OtpScopeSeparationTests
         await using var harness = await DeliveryHarness.CreateAsync();
         var deliveryId = await harness.MaterializeOrderAsync();
 
-        // Order is still Confirmed; its delivery OTP was already issued in-app. Cancel it.
+        // Order is still Confirmed; assign first so its delivery OTP is issued
+        // in-app, then cancel and verify the OTP is invalidated.
+        var cancelBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, cancelBatchId, 2m);
+        await harness.AssignAsync(deliveryId, harness.Staff);
         var orderService = new OrderService(
             harness.Db,
             new BranchAllocationService(harness.Db),
@@ -367,6 +374,9 @@ public sealed class OtpScopeSeparationTests
     {
         await using var harness = await DeliveryHarness.CreateAsync();
         var deliveryId = await harness.MaterializeOrderAsync();
+        var schemaBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, schemaBatchId, 2m);
+        await harness.AssignAsync(deliveryId, harness.Staff);
 
         var targetDeliveryId = await harness.Db.Deliveries
             .AsNoTracking()

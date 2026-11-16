@@ -96,7 +96,7 @@ public sealed class VacationRefundService(
             .SingleOrDefaultAsync(x => x.PublicId == requestId, cancellationToken)
             ?? throw new NotFoundException("The vacation-refund request was not found.");
         EnsureStaffAccess(actor, entity);
-        return ToResult(entity);
+        return await ToResultAsync(entity, cancellationToken);
     }
 
     public async Task<VacationRefundRequestResult> GetForCustomerAsync(
@@ -112,7 +112,7 @@ public sealed class VacationRefundService(
             throw new NotFoundException("The vacation-refund request was not found.");
         }
 
-        return ToResult(entity);
+        return await ToResultAsync(entity, cancellationToken);
     }
 
     public async Task<VacationRefundSubscriptionStatus> GetStatusForCustomerAsync(
@@ -191,7 +191,7 @@ public sealed class VacationRefundService(
             subscription.PublicId,
             termEnded,
             processed,
-            request is null ? null : ToResult(request),
+            request is null ? null : await ToResultAsync(request, cancellationToken),
             vacationSkipped,
             unresolved,
             hasBlockingTicket,
@@ -210,22 +210,38 @@ public sealed class VacationRefundService(
             query = query.Where(x => branches.Contains(x.BranchId));
         }
 
-        return (await query
-                .OrderByDescending(x => x.Id)
-                .ToListAsync(cancellationToken))
-            .Select(ToResult)
+        var staffEntities = await query
+            .OrderByDescending(x => x.Id)
+            .ToListAsync(cancellationToken);
+        var staffNames = await ResolveStaffNamesAsync(
+            staffEntities.SelectMany(x => new long?[] { x.DecidedByUserId, x.CompletedByUserId }),
+            cancellationToken);
+        return staffEntities
+            .Select(x => ToResult(
+                x,
+                staffNames.GetValueOrDefault(x.DecidedByUserId ?? 0),
+                staffNames.GetValueOrDefault(x.CompletedByUserId ?? 0)))
             .ToList();
     }
 
     public async Task<IReadOnlyList<VacationRefundRequestResult>> ListForCustomerAsync(
         RefundReplacementActor actor,
-        CancellationToken cancellationToken) =>
-        (await DetailQuery(asNoTracking: true)
-                .Where(x => x.CustomerId == actor.UserId)
-                .OrderByDescending(x => x.Id)
-                .ToListAsync(cancellationToken))
-            .Select(ToResult)
+        CancellationToken cancellationToken)
+    {
+        var customerEntities = await DetailQuery(asNoTracking: true)
+            .Where(x => x.CustomerId == actor.UserId)
+            .OrderByDescending(x => x.Id)
+            .ToListAsync(cancellationToken);
+        var customerNames = await ResolveStaffNamesAsync(
+            customerEntities.SelectMany(x => new long?[] { x.DecidedByUserId, x.CompletedByUserId }),
+            cancellationToken);
+        return customerEntities
+            .Select(x => ToResult(
+                x,
+                customerNames.GetValueOrDefault(x.DecidedByUserId ?? 0),
+                customerNames.GetValueOrDefault(x.CompletedByUserId ?? 0)))
             .ToList();
+    }
 
     public Task<VacationRefundRequestResult> ApproveAsync(
         RefundReplacementActor actor,
@@ -273,7 +289,7 @@ public sealed class VacationRefundService(
                 now));
 
             await dbContext.SaveChangesAsync(cancellationToken);
-            return ToResult(entity);
+            return await ToResultAsync(entity, cancellationToken);
         }, cancellationToken);
 
     public Task<VacationRefundRequestResult> RejectAsync(
@@ -307,7 +323,7 @@ public sealed class VacationRefundService(
                 now);
 
             await dbContext.SaveChangesAsync(cancellationToken);
-            return ToResult(entity);
+            return await ToResultAsync(entity, cancellationToken);
         }, cancellationToken);
 
     public Task<VacationRefundRequestResult> CompleteAsync(
@@ -405,6 +421,23 @@ public sealed class VacationRefundService(
                 actor.UserId,
                 now);
 
+            // Financial resolution consumes the days' entitlement: each
+            // refunded skipped day counts against the prepaid term, so a
+            // fully resolved term completes instead of lingering Active.
+            await dbContext.Entry(entity.Subscription)
+                .Collection(x => x.Deliveries)
+                .LoadAsync(cancellationToken);
+            foreach (var entry in entries)
+            {
+                var target = entity.Subscription.Deliveries.Single(x => x.Id == entry.SubscriptionDeliveryId);
+                // Only terminally resolved days settle: a live day in the
+                // request stays consumable by its future delivery.
+                if (target.Status is SubscriptionDeliveryStatus.Failed or SubscriptionDeliveryStatus.Skipped)
+                {
+                    Mutate(() => entity.Subscription.MarkRefundSettled(target, now));
+                }
+            }
+
             AddAudit(
                 actor.UserId,
                 "VACATION_REFUND.COMPLETE",
@@ -438,7 +471,7 @@ public sealed class VacationRefundService(
                 now));
 
             await dbContext.SaveChangesAsync(cancellationToken);
-            return ToResult(entity);
+            return await ToResultAsync(entity, cancellationToken);
         }, cancellationToken);
 
     internal static string RequestRefundKey(Guid requestPublicId) =>
@@ -844,7 +877,41 @@ public sealed class VacationRefundService(
         return asNoTracking ? query.AsNoTracking() : query;
     }
 
-    private static VacationRefundRequestResult ToResult(VacationRefundRequest entity)
+    private async Task<VacationRefundRequestResult> ToResultAsync(
+        VacationRefundRequest entity,
+        CancellationToken cancellationToken)
+    {
+        var names = await ResolveStaffNamesAsync(
+            [entity.DecidedByUserId, entity.CompletedByUserId], cancellationToken);
+        return ToResult(
+            entity,
+            names.GetValueOrDefault(entity.DecidedByUserId ?? 0),
+            names.GetValueOrDefault(entity.CompletedByUserId ?? 0));
+    }
+
+    private async Task<Dictionary<long, string>> ResolveStaffNamesAsync(
+        IEnumerable<long?> userIds,
+        CancellationToken cancellationToken)
+    {
+        var ids = userIds.OfType<long>().Distinct().ToList();
+        if (ids.Count == 0)
+        {
+            return new Dictionary<long, string>();
+        }
+
+        // Decided/completed identities are staff users; their profile display
+        // name is what support sees. No schema change: resolved read-only
+        // from the user profile the decision already recorded.
+        return await dbContext.Users
+            .AsNoTracking()
+            .Where(x => ids.Contains(x.Id) && x.DisplayName != null)
+            .ToDictionaryAsync(x => x.Id, x => x.DisplayName!, cancellationToken);
+    }
+
+    private static VacationRefundRequestResult ToResult(
+        VacationRefundRequest entity,
+        string? decidedByName = null,
+        string? completedByName = null)
     {
         var customer = entity.Subscription.Customer;
         var branch = entity.Subscription.Branch;
@@ -869,11 +936,11 @@ public sealed class VacationRefundService(
             entity.Currency,
             entity.SubmittedAt,
             entity.DecidedByUserId,
-            null,
+            decidedByName,
             entity.DecidedAt,
             entity.DecisionRemarks,
             entity.CompletedByUserId,
-            null,
+            completedByName,
             entity.CompletedAt,
             entity.CompletionRemarks,
             entity.Occurrences

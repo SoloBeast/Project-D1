@@ -109,14 +109,19 @@ class _BranchListBody extends StatelessWidget {
       child: ListView.separated(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 28),
-        itemCount: branches.length,
+        itemCount: branches.length + 1,
         separatorBuilder: (_, index) => const SizedBox(height: 10),
         itemBuilder: (context, index) {
-          final branch = branches[index];
+          if (index == 0) return _BranchListHero(count: branches.length);
+          final branch = branches[index - 1];
           return _BranchCard(
             branch: branch,
             canManage: canManage,
-            onTap: () => context.push('/admin/branches/${branch.publicId}'),
+            // Cards open the edit page directly; the details page is gone.
+            onTap: () => context.push(
+              '/admin/branches/${branch.publicId}/edit',
+              extra: branch,
+            ),
           );
         },
       ),
@@ -141,11 +146,16 @@ class _BranchCard extends StatelessWidget {
     return Card(
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        leading: CircleAvatar(
-          backgroundColor: DoodhColors.mint,
-          child: Icon(
-            Icons.storefront_outlined,
-            color: DoodhColors.tealDark,
+        leading: ExcludeSemantics(
+          child: CircleAvatar(
+            backgroundColor: DoodhColors.mint,
+            child: Text(
+              _branchInitial(branch.name),
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: DoodhColors.tealDark,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
         ),
         title: Row(
@@ -192,6 +202,199 @@ class _BranchCard extends StatelessWidget {
   }
 }
 
+/// Teal gradient hero heading the branch form, in the shared Admin
+/// Centre language.
+class _BranchFormHero extends StatelessWidget {
+  const _BranchFormHero({required this.isEditing, this.name});
+
+  final bool isEditing;
+  final String? name;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [DoodhColors.teal, DoodhColors.tealDark],
+      ),
+      borderRadius: DoodhRadii.mdRadius,
+    ),
+    child: Stack(
+      children: [
+        Positioned(
+          right: -30,
+          top: -36,
+          child: ExcludeSemantics(
+            child: Container(
+              width: 104,
+              height: 104,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.07),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: DoodhRadii.sm,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.storefront_outlined,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      // The AppBar already carries Edit/Add branch, so the
+                      // hero names the branch (or New branch) to keep every
+                      // pinned title unique for tests and screen readers.
+                      isEditing ? (name ?? 'Edit branch') : 'New branch',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      isEditing
+                          ? 'Update details, location and service area.'
+                          : 'Set up a new branch location.',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Teal gradient hero heading the branch list, in the shared Admin
+/// Centre language.
+class _BranchListHero extends StatelessWidget {
+  const _BranchListHero({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [DoodhColors.teal, DoodhColors.tealDark],
+      ),
+      borderRadius: DoodhRadii.mdRadius,
+    ),
+    child: Stack(
+      children: [
+        Positioned(
+          right: -30,
+          top: -36,
+          child: ExcludeSemantics(
+            child: Container(
+              width: 104,
+              height: 104,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.07),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: DoodhRadii.sm,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.storefront_outlined,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Branches',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      count == 1
+                          ? '1 location · codes and service cities'
+                          : '$count locations · codes and service cities',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Initial letter for the card avatar.
+String _branchInitial(String name) {
+  final trimmed = name.trim();
+  if (trimmed.isEmpty) return '?';
+  return trimmed[0].toUpperCase();
+}
+
 class BranchFormScreen extends ConsumerStatefulWidget {
   const BranchFormScreen({super.key, this.branch});
 
@@ -219,6 +422,7 @@ class _BranchFormScreenState extends ConsumerState<BranchFormScreen> {
   late bool _hasExplicitLocationSelection;
   bool _isLookingUpAddress = false;
   int _addressLookupSequence = 0;
+  bool _actionBusy = false;
 
   @override
   void initState() {
@@ -393,266 +597,51 @@ class _BranchFormScreenState extends ConsumerState<BranchFormScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final state = ref.watch(branchControllerProvider);
-    final canManage =
-        ref.watch(sessionControllerProvider).session?.user.permissions.contains(
-              kBranchesManagePermission,
-            ) ??
-            false;
-    if (!canManage) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Branch')),
-        body: const UnauthorizedStatePanel(),
-      );
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.isEditing ? 'Edit branch' : 'Add branch'),
-      ),
-      body: ListView(
-        padding: DoodhSpacing.pagePadding,
-        children: [
-          Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 2,
-                      child: TextFormField(
-                        controller: _code,
-                        enabled: !state.isSaving,
-                        onChanged: (_) => setState(() {}),
-                        textCapitalization: TextCapitalization.characters,
-                        maxLength: 50,
-                        decoration: const InputDecoration(
-                          labelText: 'Branch code *',
-                          hintText: 'e.g. MAIN',
-                          helperText:
-                              'Stable business key used for order allocation and '
-                              'scoped numbering series.',
-                        ),
-                        validator: (value) {
-                          final trimmed = value?.trim() ?? '';
-                          if (trimmed.isEmpty) return 'Enter a branch code.';
-                          if (trimmed.length > 50) {
-                            return 'Keep the code under 50 characters.';
-                          }
-                          return null;
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 3,
-                      child: TextFormField(
-                        controller: _name,
-                        enabled: !state.isSaving,
-                        maxLength: 200,
-                        decoration: const InputDecoration(labelText: 'Branch name *'),
-                        validator: (value) {
-                          final trimmed = value?.trim() ?? '';
-                          if (trimmed.isEmpty) return 'Enter a branch name.';
-                          return null;
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _addressLine1,
-                  enabled: !state.isSaving,
-                  maxLength: 300,
-                  decoration: const InputDecoration(labelText: 'Address line 1'),
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _addressLine2,
-                  enabled: !state.isSaving,
-                  maxLength: 300,
-                  decoration: const InputDecoration(labelText: 'Address line 2'),
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _locality,
-                  enabled: !state.isSaving,
-                  maxLength: 150,
-                  decoration: const InputDecoration(labelText: 'Locality'),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: TextFormField(
-                        controller: _city,
-                        enabled: !state.isSaving,
-                        maxLength: 100,
-                        decoration: const InputDecoration(labelText: 'City *'),
-                        validator: (value) {
-                          final trimmed = value?.trim() ?? '';
-                          if (trimmed.isEmpty) return 'Enter a city.';
-                          return null;
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 3,
-                      child: TextFormField(
-                        controller: _state,
-                        enabled: !state.isSaving,
-                        maxLength: 100,
-                        decoration: const InputDecoration(labelText: 'State *'),
-                        validator: (value) {
-                          final trimmed = value?.trim() ?? '';
-                          if (trimmed.isEmpty) return 'Enter a state.';
-                          return null;
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      flex: 2,
-                      child: TextFormField(
-                        controller: _pinCode,
-                        enabled: !state.isSaving,
-                        maxLength: 10,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'PIN code'),
-                        validator: (value) {
-                          final trimmed = value?.trim() ?? '';
-                          if (trimmed.isEmpty) return null;
-                          if (trimmed.length > 10) {
-                            return 'Keep the PIN code under 10 characters.';
-                          }
-                          return null;
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                if (!_hasExplicitLocationSelection)
-                  const Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'Select a branch location on the map before saving.',
-                    ),
-                  ),
-                GoogleMapCoordinatePicker(
-                  initialLocation: _initialMapLocation(),
-                  onLocationSelected: _setMapLocation,
-                  mapsLoader: _loadGoogleMaps,
-                ),
-                if (_isLookingUpAddress)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Row(
-                      children: [
-                        const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Determining the address for the selected location...',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _serviceRadius,
-                  enabled: !state.isSaving,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Service radius (km)',
-                    helperText: 'Optional',
-                  ),
-                  validator: (value) {
-                    final trimmed = value?.trim() ?? '';
-                    if (trimmed.isEmpty) return null;
-                    final parsed = double.tryParse(trimmed);
-                    if (parsed == null || parsed < 0) return 'Enter a valid distance';
-                    return null;
-                  },
-                ),
-                if (state.fieldErrors.isNotEmpty)
-                  ...state.fieldErrors.entries.map(
-                    (entry) => Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        '${entry.key}: ${entry.value}',
-                        style: TextStyle(color: Theme.of(context).colorScheme.error),
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  onPressed: state.isSaving ? null : _save,
-                  icon: state.isSaving
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.save_outlined),
-                  label: Text(widget.isEditing ? 'Save changes' : 'Create branch'),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class BranchDetailScreen extends ConsumerStatefulWidget {
-  const BranchDetailScreen({super.key, required this.branchId, this.branch});
-
-  final String branchId;
-  final Branch? branch;
-
-  @override
-  ConsumerState<BranchDetailScreen> createState() => _BranchDetailScreenState();
-}
-
-class _BranchDetailScreenState extends ConsumerState<BranchDetailScreen> {
-  bool _deactivateConfirming = false;
-  bool _deleteConfirming = false;
-
-  @override
-  void initState() {
-    super.initState();
-    if (widget.branch == null) {
-      Future.microtask(
-        () => ref.read(branchControllerProvider.notifier).loadById(widget.branchId),
-      );
-    }
-  }
-
+  /// The freshest copy of the edited branch (post-toggle updates included).
   Branch? _effectiveBranch(BranchState state) {
-    if (state.selectedBranch?.publicId == widget.branchId) {
+    final extra = widget.branch;
+    if (extra == null) return null;
+    if (state.selectedBranch?.publicId == extra.publicId) {
       return state.selectedBranch;
     }
     for (final branch in state.branches) {
-      if (branch.publicId == widget.branchId) return branch;
+      if (branch.publicId == extra.publicId) return branch;
     }
-    return widget.branch;
+    return extra;
+  }
+
+  /// Activate/deactivate and delete/archive actions, shown below Save on
+  /// the edit page. Moved here verbatim from the removed details page.
+  List<Widget> _managementActions(BranchState state) {
+    if (!widget.isEditing) return const [];
+    final branch = _effectiveBranch(state);
+    if (branch == null || branch.isArchived) return const [];
+    final busy = state.isSaving || _actionBusy;
+    return [
+      const SizedBox(height: 12),
+      FilledButton.tonalIcon(
+        onPressed: busy ? null : () => _toggleActive(branch),
+        icon: Icon(
+          branch.isActive
+              ? Icons.pause_circle_outline
+              : Icons.play_circle_outline,
+        ),
+        label: Text(
+          branch.isActive ? 'Deactivate branch' : 'Activate branch',
+        ),
+      ),
+      if (!branch.isActive) ...[
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: busy ? null : () => _delete(branch),
+          icon: const Icon(Icons.delete_outline),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
+          ),
+          label: const Text('Delete branch'),
+        ),
+      ],
+    ];
   }
 
   Future<void> _toggleActive(Branch branch) async {
@@ -681,12 +670,12 @@ class _BranchDetailScreenState extends ConsumerState<BranchDetailScreen> {
       ),
     );
     if (confirm != true || !mounted) return;
-    setState(() => _deactivateConfirming = true);
+    setState(() => _actionBusy = true);
     final success = await ref
         .read(branchControllerProvider.notifier)
         .setActive(branch.publicId, !isDeactivating);
     if (!mounted) return;
-    setState(() => _deactivateConfirming = false);
+    setState(() => _actionBusy = false);
     if (success) {
       final saved = ref.read(branchControllerProvider).savedMessage;
       ScaffoldMessenger.of(context)
@@ -726,20 +715,20 @@ class _BranchDetailScreenState extends ConsumerState<BranchDetailScreen> {
       ),
     );
     if (confirm != true || !mounted) return;
-    setState(() => _deleteConfirming = true);
+    setState(() => _actionBusy = true);
     final success = await ref
         .read(branchControllerProvider.notifier)
         .delete(branch.publicId);
     if (!mounted) return;
-    setState(() => _deleteConfirming = false);
+    setState(() => _actionBusy = false);
     if (success) {
       final message =
           ref.read(branchControllerProvider).savedMessage ?? 'Branch updated.';
       ScaffoldMessenger.of(context)
         ..hideCurrentSnackBar()
         ..showSnackBar(SnackBar(content: Text(message)));
-      // A permanent delete removes the branch from state, so leave the detail
-      // screen; an archive keeps the branch open in its view-only state.
+      // A permanent delete removes the branch from state, so leave the edit
+      // screen; an archive keeps it open.
       final stillSelected =
           ref.read(branchControllerProvider).selectedBranch?.publicId ==
               branch.publicId;
@@ -764,154 +753,274 @@ class _BranchDetailScreenState extends ConsumerState<BranchDetailScreen> {
               kBranchesManagePermission,
             ) ??
             false;
-    final branch = _effectiveBranch(state);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Branch details'),
-        actions: [
-          if (branch != null && canManage && !branch.isArchived)
-            IconButton(
-              tooltip: 'Edit branch',
-              onPressed: state.isSaving
-                  ? null
-                  : () => context.push(
-                        '/admin/branches/${branch.publicId}/edit',
-                        extra: branch,
-                      ),
-              icon: const Icon(Icons.edit_outlined),
-            ),
-        ],
-      ),
-      body: _BranchDetailBody(
-        state: state,
-        branch: branch,
-        canManage: canManage,
-        busy: _deactivateConfirming || _deleteConfirming || state.isSaving,
-        onRetry: () =>
-            ref.read(branchControllerProvider.notifier).loadById(widget.branchId),
-        onToggleActive: branch == null ? null : () => _toggleActive(branch),
-        onDelete: branch == null ? null : () => _delete(branch),
-      ),
-    );
-  }
-}
-
-class _BranchDetailBody extends StatelessWidget {
-  const _BranchDetailBody({
-    required this.state,
-    required this.branch,
-    required this.canManage,
-    required this.busy,
-    required this.onRetry,
-    required this.onToggleActive,
-    required this.onDelete,
-  });
-
-  final BranchState state;
-  final Branch? branch;
-  final bool canManage;
-  final bool busy;
-  final Future<void> Function() onRetry;
-  final VoidCallback? onToggleActive;
-  final VoidCallback? onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    final branch = this.branch;
-    if (state.isLoading && branch == null) {
-      return const LoadingStatePanel(message: 'Loading branch...');
-    }
-    if (branch == null) {
-      if (state.isUnauthorized) return const UnauthorizedStatePanel();
-      if (state.isOffline) return OfflineStatePanel(onRetry: onRetry);
-      return ErrorStatePanel(
-        message: state.errorMessage ?? 'Branch not found.',
-        onRetry: onRetry,
+    if (!canManage) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Branch')),
+        body: const UnauthorizedStatePanel(),
       );
     }
 
-    return ListView(
-      padding: DoodhSpacing.pagePadding,
-      children: [
-        Card(
-          child: Padding(
-            padding: DoodhSpacing.cardPadding,
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.isEditing ? 'Edit branch' : 'Add branch'),
+      ),
+      body: ListView(
+        padding: DoodhSpacing.pagePadding,
+        children: [
+          _BranchFormHero(
+            isEditing: widget.isEditing,
+            name: widget.branch?.name,
+          ),
+          const SizedBox(height: 12),
+          Form(
+            key: _formKey,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
+                DoodhSectionCard(
+                  icon: Icons.badge_outlined,
+                  title: 'Branch identity',
                   children: [
-                    Expanded(
-                      child: Text(
-                        branch.name,
-                        style: Theme.of(context).textTheme.headlineSmall,
-                      ),
-                    ),
-                    DoodhChip(
-                      label: branch.isArchived
-                          ? 'Archived'
-                          : (branch.isActive ? 'Active' : 'Inactive'),
-                      tone: branch.isArchived || !branch.isActive
-                          ? DoodhTone.neutral
-                          : DoodhTone.success,
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: TextFormField(
+                            controller: _code,
+                            enabled: !state.isSaving,
+                            onChanged: (_) => setState(() {}),
+                            textCapitalization: TextCapitalization.characters,
+                            maxLength: 50,
+                            decoration: const InputDecoration(
+                              labelText: 'Branch code *',
+                              hintText: 'e.g. MAIN',
+                              helperText:
+                                  'Stable business key used for order allocation and '
+                                  'scoped numbering series.',
+                            ),
+                            validator: (value) {
+                              final trimmed = value?.trim() ?? '';
+                              if (trimmed.isEmpty) {
+                                return 'Enter a branch code.';
+                              }
+                              if (trimmed.length > 50) {
+                                return 'Keep the code under 50 characters.';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 3,
+                          child: TextFormField(
+                            controller: _name,
+                            enabled: !state.isSaving,
+                            maxLength: 200,
+                            decoration: const InputDecoration(
+                              labelText: 'Branch name *',
+                            ),
+                            validator: (value) {
+                              final trimmed = value?.trim() ?? '';
+                              if (trimmed.isEmpty) {
+                                return 'Enter a branch name.';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Code ${branch.code}',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                const SizedBox(height: 12),
+                DoodhSectionCard(
+                  icon: Icons.location_on_outlined,
+                  title: 'Address',
+                  children: [
+                    TextFormField(
+                      controller: _addressLine1,
+                      enabled: !state.isSaving,
+                      maxLength: 300,
+                      decoration: const InputDecoration(
+                        labelText: 'Address line 1',
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: _addressLine2,
+                      enabled: !state.isSaving,
+                      maxLength: 300,
+                      decoration: const InputDecoration(
+                        labelText: 'Address line 2',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      controller: _locality,
+                      enabled: !state.isSaving,
+                      maxLength: 150,
+                      decoration: const InputDecoration(labelText: 'Locality'),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: TextFormField(
+                            controller: _city,
+                            enabled: !state.isSaving,
+                            maxLength: 100,
+                            decoration: const InputDecoration(
+                              labelText: 'City *',
+                            ),
+                            validator: (value) {
+                              final trimmed = value?.trim() ?? '';
+                              if (trimmed.isEmpty) return 'Enter a city.';
+                              return null;
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 3,
+                          child: TextFormField(
+                            controller: _state,
+                            enabled: !state.isSaving,
+                            maxLength: 100,
+                            decoration: const InputDecoration(
+                              labelText: 'State *',
+                            ),
+                            validator: (value) {
+                              final trimmed = value?.trim() ?? '';
+                              if (trimmed.isEmpty) return 'Enter a state.';
+                              return null;
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 2,
+                          child: TextFormField(
+                            controller: _pinCode,
+                            enabled: !state.isSaving,
+                            maxLength: 10,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: 'PIN code',
+                            ),
+                            validator: (value) {
+                              final trimmed = value?.trim() ?? '';
+                              if (trimmed.isEmpty) return null;
+                              if (trimmed.length > 10) {
+                                return 'Keep the PIN code under 10 characters.';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
-                Text(
-                  branch.addressSummary,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '${branch.latitude}, ${branch.longitude}'
-                  '${branch.serviceRadiusKm == null ? '' : ' · ${branch.serviceRadiusKm!.toStringAsFixed(1)} km service radius'}',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                DoodhSectionCard(
+                  icon: Icons.map_outlined,
+                  title: 'Location',
+                  children: [
+                    if (!_hasExplicitLocationSelection)
+                      const Padding(
+                        padding: EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          'Select a branch location on the map before saving.',
+                        ),
                       ),
+                    GoogleMapCoordinatePicker(
+                      initialLocation: _initialMapLocation(),
+                      onLocationSelected: _setMapLocation,
+                      mapsLoader: _loadGoogleMaps,
+                    ),
+                    if (_isLookingUpAddress)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Row(
+                          children: [
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Determining the address for the selected location...',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
+                const SizedBox(height: 12),
+                DoodhSectionCard(
+                  icon: Icons.radar_outlined,
+                  title: 'Service coverage',
+                  children: [
+                    TextFormField(
+                      controller: _serviceRadius,
+                      enabled: !state.isSaving,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Service radius (km)',
+                        helperText: 'Optional',
+                      ),
+                      validator: (value) {
+                        final trimmed = value?.trim() ?? '';
+                        if (trimmed.isEmpty) return null;
+                        final parsed = double.tryParse(trimmed);
+                        if (parsed == null || parsed < 0) {
+                          return 'Enter a valid distance';
+                        }
+                        return null;
+                      },
+                    ),
+                    if (state.fieldErrors.isNotEmpty)
+                      ...state.fieldErrors.entries.map(
+                        (entry) => Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            '${entry.key}: ${entry.value}',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  onPressed: state.isSaving ? null : _save,
+                  icon: state.isSaving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save_outlined),
+                  label: Text(widget.isEditing ? 'Save changes' : 'Create branch'),
+                ),
+                // Former details-page actions live on the edit page now.
+                ..._managementActions(state),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 16),
-        if (canManage && !branch.isArchived)
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              FilledButton.tonalIcon(
-                onPressed: busy ? null : onToggleActive,
-                icon: Icon(
-                  branch.isActive
-                      ? Icons.pause_circle_outline
-                      : Icons.play_circle_outline,
-                ),
-                label: Text(
-                  branch.isActive ? 'Deactivate branch' : 'Activate branch',
-                ),
-              ),
-              if (!branch.isActive) ...[
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: busy ? null : onDelete,
-                  icon: const Icon(Icons.delete_outline),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Theme.of(context).colorScheme.error,
-                  ),
-                  label: const Text('Delete branch'),
-                ),
-              ],
-            ],
-          ),
-      ],
+        ],
+      ),
     );
   }
 }

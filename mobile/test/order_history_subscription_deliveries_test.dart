@@ -27,6 +27,10 @@ void main() {
         ],
       );
 
+      expect(find.text('One-Time Orders'), findsOneWidget);
+      expect(find.text('Subscription Orders'), findsOneWidget);
+      await tester.tap(find.text('Subscription Orders'));
+      await tester.pumpAndSettle();
       expect(find.text('Subscription deliveries'), findsOneWidget);
       expect(find.text('SUB-445da95c-20261019'), findsOneWidget);
       expect(find.text('No orders yet'), findsNothing);
@@ -50,6 +54,8 @@ void main() {
         ],
       );
 
+      await tester.tap(find.text('Subscription Orders'));
+      await tester.pumpAndSettle();
       expect(find.text('Subscription deliveries'), findsOneWidget);
       expect(find.text('SUB-445da95c-20261019'), findsOneWidget);
       expect(find.text('ORD-1001'), findsNothing);

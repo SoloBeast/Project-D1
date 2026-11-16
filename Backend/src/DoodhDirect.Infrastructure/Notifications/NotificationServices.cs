@@ -70,7 +70,11 @@ internal sealed class NotificationService(
             throw new ValidationAppException("Page size must be between 1 and 100.", "pageSize");
         }
 
-        var query = dbContext.Notifications.AsNoTracking().Where(x => x.UserId == actor.UserId);
+        // Login success events are audit-level noise, not actionable inbox
+        // content: exclude them (including rows stored before emission
+        // stopped) so the customer inbox never shows "Authentication
+        // Succeeded" entries.
+        var query = dbContext.Notifications.AsNoTracking().Where(x => x.UserId == actor.UserId && x.EventType != NotificationEventTypes.AuthenticationSucceeded);
         if (request.IsRead.HasValue)
         {
             query = request.IsRead.Value
@@ -104,7 +108,7 @@ internal sealed class NotificationService(
     {
         ValidateActor(actor);
         var count = await dbContext.Notifications.CountAsync(
-            x => x.UserId == actor.UserId && x.ReadAt == null,
+            x => x.UserId == actor.UserId && x.ReadAt == null && x.EventType != NotificationEventTypes.AuthenticationSucceeded,
             cancellationToken);
         return new NotificationUnreadCountResult(count);
     }

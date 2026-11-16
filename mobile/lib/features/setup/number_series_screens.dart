@@ -99,6 +99,8 @@ class _NumberSeriesListScreenState
     return ListView(
       padding: DoodhSpacing.pagePadding,
       children: [
+        _NumberSeriesHero(count: items.length),
+        const SizedBox(height: 12),
         if (state.savedMessage != null) ...[
           DoodhSavedBanner(message: state.savedMessage!),
           const SizedBox(height: 12),
@@ -107,14 +109,165 @@ class _NumberSeriesListScreenState
           DoodhErrorBanner(message: state.errorMessage!),
           const SizedBox(height: 12),
         ],
+        // Cards open the configure screen directly; read-only users and
+        // mid-save taps stay non-tappable.
         ...items.map(
-          (series) => _SeriesCard(
-            series: series,
-            canManage: canManage,
-            isBusy: state.isSaving,
+          (series) => _TappableSeriesCard(
+            onTap: canManage && !state.isSaving
+                ? () => context.push(
+                    '/admin/setup/number-series/${series.code}/edit',
+                    extra: series,
+                  )
+                : null,
+            child: _SeriesCard(
+              series: series,
+              canManage: canManage,
+              isBusy: state.isSaving,
+            ),
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Teal gradient hero heading the number series list, in the shared
+/// Admin Centre language.
+class _NumberSeriesHero extends StatelessWidget {
+  const _NumberSeriesHero({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [DoodhColors.teal, DoodhColors.tealDark],
+      ),
+      borderRadius: DoodhRadii.mdRadius,
+    ),
+    child: Stack(
+      children: [
+        Positioned(
+          right: -30,
+          top: -36,
+          child: ExcludeSemantics(
+            child: Container(
+              width: 104,
+              height: 104,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.07),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: DoodhRadii.sm,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.numbers_outlined,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Number series',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      count == 1
+                          ? '1 template · business numbers'
+                          : '$count templates · business numbers',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// First letter for the card avatar.
+String _seriesInitial(String code) {
+  final trimmed = code.trim();
+  if (trimmed.isEmpty) return '?';
+  return trimmed[0].toUpperCase();
+}
+
+/// Icon-led detail line. The text stays a single string so assistive
+/// tech announces it whole.
+class _SeriesDetailRow extends StatelessWidget {
+  const _SeriesDetailRow({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 4),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: DoodhColors.tealDark),
+        const SizedBox(width: 6),
+        Expanded(child: Text(text)),
+      ],
+    ),
+  );
+}
+
+/// Card wrapper that opens the configure screen on tap. Renders the plain
+/// card when there is nothing to open. The InkWell announces the card as
+/// tappable to assistive tech.
+class _TappableSeriesCard extends StatelessWidget {
+  const _TappableSeriesCard({required this.onTap, required this.child});
+
+  final VoidCallback? onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final onTap = this.onTap;
+    if (onTap == null) return child;
+    return InkWell(
+      borderRadius: DoodhRadii.md,
+      onTap: onTap,
+      child: child,
     );
   }
 }
@@ -140,6 +293,20 @@ class _SeriesCard extends ConsumerWidget {
           children: [
             Row(
               children: [
+                ExcludeSemantics(
+                  child: CircleAvatar(
+                    radius: 20,
+                    backgroundColor: DoodhColors.mint,
+                    child: Text(
+                      _seriesInitial(series.code),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: DoodhColors.tealDark,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     series.code,
@@ -165,16 +332,21 @@ class _SeriesCard extends ConsumerWidget {
             const SizedBox(height: 4),
             Text(series.description),
             const SizedBox(height: 12),
-            Text('Template: ${series.template}'),
-            const SizedBox(height: 4),
-            Text(
-              'Next: ${series.nextNumber ?? _nextHint(series)}  ·  '
-              'Last used: ${series.lastUsedNumber}',
+            _SeriesDetailRow(
+              icon: Icons.tag_outlined,
+              text: 'Template: ${series.template}',
             ),
-            const SizedBox(height: 4),
-            Text(
-              'Reset: ${series.resetPolicy.label}  ·  '
-              'Step: ${series.incrementBy}',
+            _SeriesDetailRow(
+              icon: Icons.numbers_outlined,
+              text:
+                  'Next: ${series.nextNumber ?? _nextHint(series)}  ·  '
+                  'Last used: ${series.lastUsedNumber}',
+            ),
+            _SeriesDetailRow(
+              icon: Icons.restart_alt_outlined,
+              text:
+                  'Reset: ${series.resetPolicy.label}  ·  '
+                  'Step: ${series.incrementBy}',
             ),
             if (canManage) ...[
               const SizedBox(height: 8),
@@ -209,17 +381,6 @@ class _SeriesCard extends ConsumerWidget {
                       icon: const Icon(Icons.play_arrow_outlined, size: 18),
                       label: const Text('Activate'),
                     ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: 'Configure ${series.code}',
-                    onPressed: isBusy
-                        ? null
-                        : () => context.push(
-                            '/admin/setup/number-series/${series.code}/edit',
-                            extra: series,
-                          ),
-                    icon: const Icon(Icons.settings_outlined),
-                  ),
                   const SizedBox(width: 8),
                   IconButton(
                     tooltip: 'Delete ${series.code}',

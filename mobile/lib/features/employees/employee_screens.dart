@@ -260,6 +260,8 @@ class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
     return ListView(
       padding: DoodhSpacing.pagePadding,
       children: [
+        _EmployeeListHero(count: items.length),
+        const SizedBox(height: 12),
         if (state.savedMessage != null) ...[
           DoodhSavedBanner(message: state.savedMessage!),
           const SizedBox(height: 12),
@@ -268,14 +270,258 @@ class _EmployeeListScreenState extends ConsumerState<EmployeeListScreen> {
           DoodhErrorBanner(message: state.errorMessage!),
           const SizedBox(height: 12),
         ],
+        // The card itself opens the edit screen; read-only viewers,
+        // archived rows and mid-save taps stay non-tappable.
         ...items.map(
-          (employee) => _EmployeeCard(
-            employee: employee,
-            canManage: canManage,
-            isBusy: state.isSaving,
+          (employee) => _TappableCard(
+            onTap:
+                canManage && !employee.isArchived && !state.isSaving
+                ? () => context.push(
+                    '/admin/employees/${employee.id}',
+                    extra: employee,
+                  )
+                : null,
+            child: _EmployeeCard(
+              employee: employee,
+              canManage: canManage,
+              isBusy: state.isSaving,
+            ),
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Teal gradient hero heading the employee list, in the shared Admin
+/// Centre language.
+class _EmployeeListHero extends StatelessWidget {
+  const _EmployeeListHero({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [DoodhColors.teal, DoodhColors.tealDark],
+      ),
+      borderRadius: DoodhRadii.mdRadius,
+    ),
+    child: Stack(
+      children: [
+        Positioned(
+          right: -30,
+          top: -36,
+          child: ExcludeSemantics(
+            child: Container(
+              width: 104,
+              height: 104,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.07),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: DoodhRadii.sm,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.group_outlined,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Employees',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      count == 1
+                          ? '1 team member · roles and invitations'
+                          : '$count team members · roles and invitations',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Initials for the card avatar (first letters of the first two words).
+String _initials(String displayName) {
+  final parts = displayName
+      .split(RegExp(r'\s+'))
+      .where((part) => part.isNotEmpty)
+      .toList(growable: false);
+  if (parts.isEmpty) return '?';
+  final first = parts.first[0];
+  final second = parts.length > 1 ? parts[1][0] : '';
+  return '$first$second'.toUpperCase();
+}
+
+/// Icon-led contact line. The text stays a single string so assistive
+/// tech announces it whole.
+/// Teal gradient hero heading the edit-employee form, in the shared Admin
+/// Centre language.
+class _EditEmployeeHero extends StatelessWidget {
+  const _EditEmployeeHero({required this.displayName});
+
+  final String displayName;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [DoodhColors.teal, DoodhColors.tealDark],
+      ),
+      borderRadius: DoodhRadii.mdRadius,
+    ),
+    child: Stack(
+      children: [
+        Positioned(
+          right: -30,
+          top: -36,
+          child: ExcludeSemantics(
+            child: Container(
+              width: 104,
+              height: 104,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.07),
+              ),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: DoodhRadii.sm,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.person_outlined,
+                  color: Colors.white,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    const Text(
+                      'Update details, role and branch access.',
+                      style: TextStyle(color: Colors.white70, height: 1.35),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _EmployeeContactRow extends StatelessWidget {
+  const _EmployeeContactRow({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 2),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 16, color: DoodhColors.tealDark),
+        const SizedBox(width: 6),
+        Expanded(child: Text(text)),
+      ],
+    ),
+  );
+}
+
+/// Card wrapper that opens the edit screen on tap. Renders the plain card
+/// when there is nothing to open (read-only viewers, archived rows,
+/// mid-save). The InkWell announces the card as tappable to assistive
+/// tech.
+class _TappableCard extends StatelessWidget {
+  const _TappableCard({required this.onTap, required this.child});
+
+  final VoidCallback? onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final onTap = this.onTap;
+    if (onTap == null) return child;
+    return InkWell(
+      borderRadius: DoodhRadii.md,
+      onTap: onTap,
+      child: child,
     );
   }
 }
@@ -308,6 +554,20 @@ class _EmployeeCard extends ConsumerWidget {
           children: [
             Row(
               children: [
+                ExcludeSemantics(
+                  child: CircleAvatar(
+                    radius: 20,
+                    backgroundColor: DoodhColors.mint,
+                    child: Text(
+                      _initials(employee.displayName),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: DoodhColors.tealDark,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     employee.displayName,
@@ -352,9 +612,15 @@ class _EmployeeCard extends ConsumerWidget {
             ),
             const SizedBox(height: 8),
             if (employee.mobile != null && employee.mobile!.isNotEmpty)
-              Text('Mobile: ${employee.mobile}'),
+              _EmployeeContactRow(
+                icon: Icons.phone_outlined,
+                text: 'Mobile: ${employee.mobile}',
+              ),
             if (employee.email != null && employee.email!.isNotEmpty)
-              Text('Email: ${employee.email}'),
+              _EmployeeContactRow(
+                icon: Icons.email_outlined,
+                text: 'Email: ${employee.email}',
+              ),
             if (status != null) ...[
               const SizedBox(height: 8),
               _InvitationRow(
@@ -421,17 +687,6 @@ class _EmployeeCard extends ConsumerWidget {
                       ),
                     ],
                   ],
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: 'Edit ${employee.displayName}',
-                    onPressed: isBusy
-                        ? null
-                        : () => context.push(
-                            '/admin/employees/${employee.id}',
-                            extra: employee,
-                          ),
-                    icon: const Icon(Icons.edit_outlined),
-                  ),
                 ],
               ),
             ],
@@ -995,6 +1250,8 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
       body: ListView(
         padding: DoodhSpacing.pagePadding,
         children: [
+          _EditEmployeeHero(displayName: employee.displayName),
+          const SizedBox(height: 12),
           if (state.errorMessage != null) ...[
             DoodhErrorBanner(message: state.errorMessage!),
             const SizedBox(height: 12),
@@ -1004,56 +1261,67 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
                 employee.invitationStatus ?? EmployeeInvitationStatus.invited,
             expiresAt: employee.invitationExpiresAt,
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Form(
             key: _formKey,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                TextFormField(
-                  controller: _displayName,
-                  enabled: !state.isSaving,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: InputDecoration(
-                    labelText: 'Full name',
-                    errorText: fieldErrors['displayName'],
-                  ),
-                  validator: (value) => value == null || value.trim().isEmpty
-                      ? 'Enter the employee name.'
-                      : null,
+                DoodhSectionCard(
+                  icon: Icons.person_outlined,
+                  title: 'Details',
+                  children: [
+                    TextFormField(
+                      controller: _displayName,
+                      enabled: !state.isSaving,
+                      textCapitalization: TextCapitalization.words,
+                      decoration: InputDecoration(
+                        labelText: 'Full name',
+                        errorText: fieldErrors['displayName'],
+                      ),
+                      validator: (value) =>
+                          value == null || value.trim().isEmpty
+                          ? 'Enter the employee name.'
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _email,
+                      enabled: !state.isSaving,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: InputDecoration(
+                        labelText: 'Email (optional)',
+                        errorText: fieldErrors['email'],
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
-                TextFormField(
-                  controller: _email,
-                  enabled: !state.isSaving,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: InputDecoration(
-                    labelText: 'Email (optional)',
-                    errorText: fieldErrors['email'],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<EmployeeRole>(
-                  initialValue: _role,
-                  decoration: const InputDecoration(
-                    labelText: 'Role',
-                    helperText:
-                        'Changing the role reassigns access immediately and '
-                        'is recorded in the audit trail.',
-                  ),
-                  items: EmployeeRole.values
-                      .map(
-                        (role) => DropdownMenuItem(
-                          value: role,
-                          child: Text(role.label),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: state.isSaving
-                      ? null
-                      : (value) => setState(() => _role = value),
-                ),
-                const SizedBox(height: 12),
+                DoodhSectionCard(
+                  icon: Icons.vpn_key_outlined,
+                  title: 'Role & access',
+                  children: [
+                    DropdownButtonFormField<EmployeeRole>(
+                      initialValue: _role,
+                      decoration: const InputDecoration(
+                        labelText: 'Role',
+                        helperText:
+                            'Changing the role reassigns access immediately and '
+                            'is recorded in the audit trail.',
+                      ),
+                      items: EmployeeRole.values
+                          .map(
+                            (role) => DropdownMenuItem(
+                              value: role,
+                              child: Text(role.label),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: state.isSaving
+                          ? null
+                          : (value) => setState(() => _role = value),
+                    ),
+                    const SizedBox(height: 12),
                 if (_role == EmployeeRole.dairyManager) ...[
                   Text(
                     'Branches',
@@ -1068,6 +1336,24 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
                       fontSize: 12,
                     ),
                   ),
+                  // A previously assigned branch that has since been
+                  // archived is no longer offered and can never be kept by
+                  // a changed assignment: name it so the removal on save
+                  // is explicit instead of silent.
+                  if (_staleArchivedBranchNames(
+                    state.branchOptions,
+                  ).isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_staleArchivedBranchNames(state.branchOptions).join(', ')} '
+                      'is archived and will be removed when you change branches.',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   BranchMultiSelect(
                     options: state.branchOptions,
@@ -1105,21 +1391,41 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
                         : (value) => setState(() => _branch = value),
                   ),
                 ],
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: state.isSaving ? null : _submit,
-                    icon: const Icon(Icons.save_outlined),
-                    label: Text(state.isSaving ? 'Saving...' : 'Save changes'),
-                  ),
-                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: state.isSaving ? null : _submit,
+                icon: const Icon(Icons.save_outlined),
+                label: Text(state.isSaving ? 'Saving...' : 'Save changes'),
+              ),
+            ),
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// Names of persisted assignments that are no longer offered (archived
+  /// branches), shown so their removal on the next branch change is
+  /// explicit.
+  List<String> _staleArchivedBranchNames(
+    List<EmployeeBranchOption> options,
+  ) {
+    final offeredIds = {for (final option in options) option.id};
+    final employee = _employee;
+    if (employee == null) return const [];
+    return [
+      for (final assignment in employee.branchAssignments)
+        if (!offeredIds.contains(assignment.branchId))
+          (assignment.branchName?.isNotEmpty ?? false)
+              ? assignment.branchName!
+              : 'Branch ${assignment.branchId}',
+    ];
   }
 
   /// Assigned branches that are no longer offered for new work, kept visible
@@ -1146,17 +1452,30 @@ class _EmployeeEditScreenState extends ConsumerState<EmployeeEditScreen> {
     if (role == EmployeeRole.systemAdmin) {
       branchId = null;
     } else if (role == EmployeeRole.dairyManager) {
+      // Archived branches vanish from the offered options, but a stale
+      // archived assignment stays in the persisted set — and the server
+      // rejects any changed assignment that still contains it. So an
+      // explicit branch change replaces the set with the offered
+      // selection only; an untouched selection keeps the persisted set.
+      final offeredIds = {
+        for (final option in ref.read(employeeControllerProvider).branchOptions)
+          option.id,
+      };
+      final effectiveSelected =
+          _selectedBranchIds.where(offeredIds.contains).toSet();
+      final effectiveInitial =
+          _initialBranchIds.where(offeredIds.contains).toSet();
       final changed =
-          _selectedBranchIds.length != _initialBranchIds.length ||
-          !_selectedBranchIds.containsAll(_initialBranchIds);
+          effectiveSelected.length != effectiveInitial.length ||
+          !effectiveSelected.containsAll(effectiveInitial);
       if (changed) {
-        if (_selectedBranchIds.isEmpty) {
+        if (effectiveSelected.isEmpty) {
           setState(
             () => _branchSelectionError = 'Select at least one branch.',
           );
           return;
         }
-        branchIds = _selectedBranchIds.toList()..sort();
+        branchIds = effectiveSelected.toList()..sort();
       }
     } else {
       final selectedId = _branch?.id;

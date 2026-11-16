@@ -167,6 +167,27 @@ public sealed class SubscriptionReplacementDeliveryTests
         Assert.Equal(2, subscription.Deliveries.Count);
     }
 
+    [Fact]
+    public void AddReplacementDelivery_AllowsSameDateAsFailedSource()
+    {
+        var subscription = CreateActiveSubscription();
+        subscription.AddDelivery(new DateOnly(2026, 8, 18));
+        var failed = Assert.Single(subscription.Deliveries);
+        subscription.MarkFailed(failed, IndiaNow);
+
+        // Same-day re-delivery: the source occurrence itself never conflicts
+        // with its own replacement.
+        var replacement = subscription.AddReplacementDelivery(
+            failed, new DateOnly(2026, 8, 18), 7, null);
+
+        Assert.Equal(2, subscription.Deliveries.Count);
+        Assert.Equal(new DateOnly(2026, 8, 18), replacement.ScheduledDate);
+        Assert.True(replacement.IsReplacement);
+        Assert.Same(failed, replacement.ReplacesSubscriptionDelivery);
+        Assert.Equal(SubscriptionDeliveryStatus.Failed, failed.Status);
+        Assert.Equal(SubscriptionDeliveryStatus.Scheduled, replacement.Status);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-3)]

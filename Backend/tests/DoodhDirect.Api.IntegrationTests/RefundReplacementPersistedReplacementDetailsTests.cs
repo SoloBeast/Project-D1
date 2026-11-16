@@ -22,7 +22,9 @@ namespace DoodhDirect.Api.IntegrationTests;
 /// </summary>
 public sealed class RefundReplacementPersistedReplacementDetailsTests
 {
-    private static readonly DateOnly ReplacementDay = new(2026, 8, 20);
+    // Same-day policy: the replacement is always scheduled on the failed
+    // occurrence's original delivery date (2026-08-16 in this harness).
+    private static readonly DateOnly ReplacementDay = new(2026, 8, 16);
 
     [Fact]
     public async Task Approve_ReDelivery_ReturnsSelectedReplacementDateWithoutDeliveryNumber()
@@ -36,7 +38,7 @@ public sealed class RefundReplacementPersistedReplacementDetailsTests
         var approved = await service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest("Re-drive on Thursday", ReplacementDay, SettlementMethod: RefundSettlementMethod.Wallet),
+            new ApproveRefundReplacementRequest("Same-day re-drive", ReplacementDay, SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
@@ -234,6 +236,10 @@ public sealed class RefundReplacementPersistedReplacementDetailsTests
     private static async Task<Guid> FailTicketAsync(DeliveryServiceTests.DeliveryHarness harness)
     {
         var deliveryId = await harness.MaterializeSubscriptionAsync();
+        // Preserved milk allocation gate: batch allocation precedes staff
+        // assignment, mirroring the production UI flow.
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
         await harness.AssignAsync(deliveryId, harness.Staff);
         return deliveryId;
     }

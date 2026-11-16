@@ -1363,17 +1363,22 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen> {
         subscriptionDeliveries.isNotEmpty ||
         (deliveryState.isLoading && !hasOrders) ||
         (deliveryState.errorMessage != null && !hasOrders);
+    final isInitialLoading =
+        state.isLoading && !hasOrders && !showDeliveries;
+    final initialError =
+        state.errorMessage != null && !hasOrders && !showDeliveries;
+    final isEmpty = !hasOrders && !showDeliveries;
     return CustomerShell(
       currentPath: '/orders',
       title: 'My orders',
-      child: state.isLoading && !hasOrders && !showDeliveries
+      child: isInitialLoading
           ? const LoadingStatePanel(message: 'Loading your orders...')
-          : state.errorMessage != null && !hasOrders && !showDeliveries
+          : initialError
           ? ErrorStatePanel(
               message: state.errorMessage!,
               onRetry: _load,
             )
-          : !hasOrders && !showDeliveries
+          : isEmpty
           ? EmptyStatePanel(
               title: 'No orders yet',
               message:
@@ -1383,37 +1388,103 @@ class _OrderHistoryScreenState extends ConsumerState<OrderHistoryScreen> {
                 child: const Text('Browse products'),
               ),
             )
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: DoodhPage(
-                child: ListView(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.only(bottom: DoodhSpacing.xl),
-                  children: [
-                    for (final order in state.orders) ...[
-                      _CustomerOrderCard(
-                        order: order,
-                        onTap: () => context.push('/orders/${order.publicId}'),
-                      ),
-                      const SizedBox(height: DoodhSpacing.md),
+          : DefaultTabController(
+              length: 2,
+              child: Column(
+                children: [
+                  const TabBar(
+                    tabs: [
+                      Tab(text: 'One-Time Orders'),
+                      Tab(text: 'Subscription Orders'),
                     ],
-                    if (showDeliveries) ...[
-                      _SubscriptionDeliveriesSection(
-                        deliveries: subscriptionDeliveries,
-                        isLoading: deliveryState.isLoading,
-                        errorMessage: deliveryState.errorMessage,
-                        onRetry: () => ref
-                            .read(deliveryControllerProvider.notifier)
-                            .loadCustomerDeliveries(),
-                        onOpen: (delivery) => context.push(
-                          '/deliveries/${delivery.deliveryId}',
+                  ),
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        _OneTimeOrdersTab(
+                          state: state,
+                          onLoad: _load,
+                          onOpen: (order) =>
+                              context.push('/orders/${order.publicId}'),
                         ),
-                      ),
-                    ],
-                  ],
-                ),
+                        RefreshIndicator(
+                          onRefresh: _load,
+                          child: DoodhPage(
+                            child: ListView(
+                              physics:
+                                  const AlwaysScrollableScrollPhysics(),
+                              padding: const EdgeInsets.only(
+                                bottom: DoodhSpacing.xl,
+                              ),
+                              children: [
+                                _SubscriptionDeliveriesSection(
+                                  deliveries: subscriptionDeliveries,
+                                  isLoading: deliveryState.isLoading,
+                                  errorMessage: deliveryState.errorMessage,
+                                  onRetry: () => ref
+                                      .read(
+                                        deliveryControllerProvider.notifier,
+                                      )
+                                      .loadCustomerDeliveries(),
+                                  onOpen: (delivery) => context.push(
+                                    '/deliveries/${delivery.deliveryId}',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
+    );
+  }
+}
+
+/// One-time orders tab content: loading/error/empty states mirror the
+/// previous full-screen behaviour, scoped to confirmed one-time orders.
+class _OneTimeOrdersTab extends StatelessWidget {
+  const _OneTimeOrdersTab({
+    required this.state,
+    required this.onLoad,
+    required this.onOpen,
+  });
+
+  final OrderState state;
+  final Future<void> Function() onLoad;
+  final ValueChanged<OrderSummary> onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    if (state.isLoading && state.orders.isEmpty) {
+      return const LoadingStatePanel(message: 'Loading your orders...');
+    }
+    if (state.errorMessage != null && state.orders.isEmpty) {
+      return ErrorStatePanel(message: state.errorMessage!, onRetry: onLoad);
+    }
+    if (state.orders.isEmpty) {
+      return const EmptyStatePanel(
+        title: 'No one-time orders yet',
+        message: 'Your confirmed one-time orders will appear here.',
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: onLoad,
+      child: DoodhPage(
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.only(bottom: DoodhSpacing.xl),
+          children: [
+            for (final order in state.orders) ...[
+              _CustomerOrderCard(order: order, onTap: () => onOpen(order)),
+              const SizedBox(height: DoodhSpacing.md),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1532,13 +1603,23 @@ class _CustomerOrderCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      order.orderNumber,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            order.orderNumber,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        CopyReferenceButton(
+                          value: order.orderNumber,
+                          message: 'Order number copied',
+                        ),
+                      ],
                     ),
                     const SizedBox(height: DoodhSpacing.xs),
                     Text(
@@ -1919,6 +2000,10 @@ class _OrderTrustHeader extends StatelessWidget {
     title: order.orderNumber,
     subtitle: formatOrderDate(order.createdAt),
     icon: Icons.receipt_long_outlined,
+    trailing: CopyReferenceButton(
+      value: order.orderNumber,
+      message: 'Order number copied',
+    ),
     children: [
       Wrap(
         spacing: DoodhSpacing.xs,
@@ -2087,7 +2172,7 @@ class _OrderSupportSection extends StatelessWidget {
     subtitle: 'Requests use backend-confirmed eligibility and status',
     icon: Icons.support_agent_outlined,
     children: [
-      if (order.deliveryPublicId != null)
+      if (order.deliveryPublicId != null && order.isMilkOrder)
         DoodhActionTile(
           icon: Icons.assignment_return_outlined,
           title: 'Check refund or replacement availability',
@@ -2098,6 +2183,20 @@ class _OrderSupportSection extends StatelessWidget {
           onTap: () => context.push(
             '/deliveries/${order.deliveryPublicId}/refund-replacement'
             '?source=${DeliverySourceType.oneTimeOrder.name}',
+          ),
+        ),
+      if (order.deliveryPublicId != null && !order.isMilkOrder)
+        DoodhActionTile(
+          icon: Icons.support_agent_outlined,
+          title: 'Raise a support ticket',
+          subtitle:
+              'Support tickets for non-milk orders are coming soon',
+          onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Support tickets for non-milk orders are coming soon.',
+              ),
+            ),
           ),
         ),
       DoodhActionTile(
@@ -2169,9 +2268,21 @@ class _StaffOrderInspectionScreenState
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              order.orderNumber,
-                              style: Theme.of(context).textTheme.headlineSmall,
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    order.orderNumber,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineSmall,
+                                  ),
+                                ),
+                                CopyReferenceButton(
+                                  value: order.orderNumber,
+                                  message: 'Order number copied',
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 4),
                             Text(formatOrderDate(order.createdAt)),

@@ -8,6 +8,14 @@ public sealed class ProductCategory : AuditableEntity
 {
     private ProductCategory() { }
 
+    /// <summary>
+    /// Canonical code of the milk category. Milk-only rules (batch
+    /// allocation, milk usage accounting, the assignment gate) identify milk
+    /// items through the product's <see cref="Product.Category"/> code —
+    /// never through display names.
+    /// </summary>
+    public const string MilkCategoryCode = "MILK";
+
     public ProductCategory(string code, string name, string? description = null)
     {
         Update(code, name, description);

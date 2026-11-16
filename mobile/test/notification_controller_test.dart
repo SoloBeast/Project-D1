@@ -149,7 +149,9 @@ void main() {
           .markRead(notification);
       final state = container.read(notificationControllerProvider);
 
-      expect(link, isNull);
+      // Navigation still proceeds so a transient failure never traps the
+      // user on the inbox; only the read state stays unchanged.
+      expect(link, '/orders/order-1');
       expect(state.items.single.isRead, isFalse);
       expect(state.unreadCount, 1);
       expect(state.errorMessage, 'Read failed.');
@@ -299,6 +301,59 @@ void main() {
         expect(normalizeNotificationDeepLink(null), isNull);
       },
     );
+
+    test(
+      'opens refund, vacation, payment, and home targets from backend links',
+      () {
+        const ticketId = '11111111-1111-1111-1111-111111111111';
+        expect(
+          normalizeNotificationDeepLink('/refund-replacements'),
+          '/refund-replacements',
+        );
+        expect(
+          normalizeNotificationDeepLink('/refund-replacements/$ticketId'),
+          '/refund-replacements/$ticketId',
+        );
+        expect(
+          normalizeNotificationDeepLink('/staff/refund-replacements/$ticketId'),
+          '/staff/refund-replacements/$ticketId',
+        );
+        expect(
+          normalizeNotificationDeepLink('/vacation-refunds/$ticketId'),
+          '/subscriptions/vacations',
+        );
+        expect(
+          normalizeNotificationDeepLink('/payments/$ticketId'),
+          '/payments/$ticketId/result',
+        );
+        expect(normalizeNotificationDeepLink('/'), '/home');
+      },
+    );
+
+    test('hides login-success notifications from the loaded inbox', () async {
+      final login = _notification(
+        'login-1',
+        eventType: 'AUTHENTICATION_SUCCEEDED',
+        deepLink: '/',
+      );
+      final order = _notification('order-1');
+      final repository = _FakeNotificationRepository(
+        pages: {
+          1: _page([login, order], totalCount: 2),
+        },
+        unreadCount: 2,
+      );
+      final gateway = _FakePushGateway();
+      final container = await _authenticatedContainer(repository, gateway);
+      addTearDown(container.dispose);
+      addTearDown(gateway.dispose);
+
+      final state = container.read(notificationControllerProvider);
+      expect(
+        state.items.map((item) => item.notificationId),
+        ['order-1'],
+      );
+    });
   });
 }
 
@@ -483,12 +538,16 @@ NotificationPage _page(
   totalCount: totalCount,
 );
 
-AppNotification _notification(String id) => AppNotification(
+AppNotification _notification(
+  String id, {
+  String eventType = 'ORDER_CONFIRMED',
+  String? deepLink = '/orders/order-1',
+}) => AppNotification(
   notificationId: id,
-  eventType: 'ORDER_CONFIRMED',
+  eventType: eventType,
   title: 'Order confirmed',
   body: 'Your order has been confirmed.',
-  deepLink: '/orders/order-1',
+  deepLink: deepLink,
   isRead: false,
   createdAt: DateTime(2026, 8, 17, 10),
   readAt: null,

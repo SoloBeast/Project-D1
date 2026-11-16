@@ -209,11 +209,13 @@ public sealed class MissedOccurrenceFailTests
         Assert.Equal(100m, refund.Amount);
         Assert.Equal(RefundStatus.Succeeded, refund.Status);
 
-        // Subscription financials and the other entitlements are unchanged.
+        // Subscription financials are unchanged; entitlement counts resolved
+        // days: 1 delivered + 1 failed-and-refunded. Skips are not consumed
+        // until their vacation refund completes.
         var refreshed = await harness.Db.Subscriptions.AsNoTracking().SingleAsync();
         Assert.Equal(700m, refreshed.PayableAmount);
         Assert.Equal(0m, refreshed.ChargesTotal);
-        Assert.Equal(1, refreshed.UsedEntitlement);
+        Assert.Equal(2, refreshed.UsedEntitlement);
         Assert.Equal(0, await harness.Db.SubscriptionDeliveries.AsNoTracking()
             .CountAsync(x => x.Status == SubscriptionDeliveryStatus.Scheduled));
     }

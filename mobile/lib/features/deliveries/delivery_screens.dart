@@ -14,6 +14,8 @@ import 'package:image_picker/image_picker.dart';
 import 'delivery_controller.dart';
 import 'delivery_models.dart';
 import 'delivery_navigation.dart';
+import 'package:doodh_direct_mobile/features/milk_testing/milk_test_controller.dart';
+import 'package:doodh_direct_mobile/features/milk_testing/milk_test_models.dart';
 import 'package:doodh_direct_mobile/features/refund_replacement/refund_replacement_controller.dart';
 // DeliveryStatus comes from delivery_models above; the refund models'
 // same-named enum (staff ticket gating) is hidden to avoid ambiguity.
@@ -244,7 +246,9 @@ class _CustomerDeliveryDetailScreenState
                         // delivery is delivered, failed, or cancelled the test
                         // workflow is over, so the entry point is hidden
                         // instead of leading to dead customer actions.
-                        if (delivery.status != DeliveryStatus.delivered &&
+                        // Milk tests are milk-category only.
+                        if (delivery.isMilkDelivery &&
+                            delivery.status != DeliveryStatus.delivered &&
                             delivery.status != DeliveryStatus.failed &&
                             delivery.status != DeliveryStatus.cancelled) ...[
                           const SizedBox(height: DoodhSpacing.md),
@@ -283,17 +287,34 @@ class _CustomerDeliveryDetailScreenState
                                     '${resolvedTicket.status.label}'
                                     '${resolvedTicket.customerChoice != null ? ' · ${resolvedTicket.customerChoice!.label}' : ''}',
                               ),
-                            DoodhActionTile(
-                              icon: Icons.assignment_return_outlined,
-                              title: 'Refund or replacement',
-                              subtitle: resolvedTicket != null
-                                  ? 'Ticket ${resolvedTicket.requestNumber} · ${resolvedTicket.status.label}'
-                                  : 'Check backend-confirmed availability for this delivery',
-                              onTap: () => context.push(
-                                '/deliveries/${widget.deliveryId}/refund-replacement'
-                                '?source=${delivery.sourceType.name}',
+                            if (delivery.isMilkDelivery)
+                              DoodhActionTile(
+                                icon: Icons.assignment_return_outlined,
+                                title: 'Refund or replacement',
+                                subtitle: resolvedTicket != null
+                                    ? 'Ticket ${resolvedTicket.requestNumber} · ${resolvedTicket.status.label}'
+                                    : 'Check backend-confirmed availability for this delivery',
+                                onTap: () => context.push(
+                                  '/deliveries/${widget.deliveryId}/refund-replacement'
+                                  '?source=${delivery.sourceType.name}',
+                                ),
+                              )
+                            else
+                              DoodhActionTile(
+                                icon: Icons.support_agent_outlined,
+                                title: 'Raise a support ticket',
+                                subtitle:
+                                    'Support tickets for non-milk deliveries are coming soon',
+                                onTap: () => ScaffoldMessenger.of(
+                                  context,
+                                ).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Support tickets for non-milk deliveries are coming soon.',
+                                    ),
+                                  ),
+                                ),
                               ),
-                            ),
                           ],
                         ),
                       ],
@@ -367,113 +388,538 @@ class _DeliveryInspectionScreenState
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
                 children: [
-                  _DeliveryHeader(
-                    reference: delivery.referenceNumber,
-                    source: delivery.sourceType,
-                    status: delivery.status,
-                    date: delivery.scheduledDate,
-                  ),
+                  _DeliveryInspectionHero(delivery: delivery),
                   const SizedBox(height: 12),
-                  DoodhInfoTile(
-                    icon: Icons.person_outline,
-                    title: delivery.customerName,
-                    subtitle: delivery.customerMobile,
+                  _InspectionCard(
+                    icon: Icons.info_outline,
+                    title: 'Overview',
+                    children: [
+                      _InspectionRow(
+                        icon: Icons.person_outline,
+                        label: 'Customer',
+                        value:
+                            '${delivery.customerName} · ${delivery.customerMobile}',
+                      ),
+                      _InspectionRow(
+                        icon: Icons.delivery_dining_outlined,
+                        label: 'Delivery handled by',
+                        value:
+                            delivery.assignedEmployeeName ??
+                            (delivery.assignedEmployeeId != null
+                                ? 'Employee ${delivery.assignedEmployeeId}'
+                                : 'Not assigned'),
+                      ),
+                      _InspectionRow(
+                        icon: Icons.location_on_outlined,
+                        label: 'Destination',
+                        value: delivery.destinationAddress,
+                      ),
+                      _NavigateButton(delivery: delivery),
+                      if (delivery.deliveryInstructions != null)
+                        _InspectionRow(
+                          icon: Icons.notes_outlined,
+                          label: 'Instructions',
+                          value: delivery.deliveryInstructions!,
+                        ),
+                    ],
                   ),
-                  DoodhInfoTile(
-                    icon: Icons.delivery_dining_outlined,
-                    title: 'Delivery handled by',
-                    subtitle:
-                        delivery.assignedEmployeeName ??
-                        (delivery.assignedEmployeeId != null
-                            ? 'Employee ${delivery.assignedEmployeeId}'
-                            : 'Not assigned'),
-                  ),
-                  DoodhInfoTile(
-                    icon: Icons.location_on_outlined,
-                    title: 'Destination',
-                    subtitle: delivery.destinationAddress,
-                  ),
-                  _NavigateButton(delivery: delivery),
-                  if (delivery.deliveryInstructions != null)
-                    DoodhInfoTile(
-                      icon: Icons.notes_outlined,
-                      title: 'Instructions',
-                      subtitle: delivery.deliveryInstructions!,
-                    ),
                   if (delivery.orderSummary != null) ...[
-                    const SizedBox(height: 8),
-                    DoodhSectionHeader(title: 'Linked order'),
-                    DoodhInfoTile(
-                      icon: Icons.receipt_long_outlined,
-                      title: delivery.orderSummary!.orderNumber,
-                      subtitle: delivery.orderSummary!.items.join(', '),
+                    const SizedBox(height: 12),
+                    _InspectionCard(
+                      icon: Icons.link_outlined,
+                      title: 'Linked order',
+                      children: [
+                        _InspectionRow(
+                          icon: Icons.receipt_long_outlined,
+                          label: 'Order',
+                          value: delivery.orderSummary!.orderNumber,
+                        ),
+                        if (delivery.orderSummary!.items.isNotEmpty)
+                          Text(
+                            delivery.orderSummary!.items.join(', '),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: DoodhColors.muted),
+                          ),
+                      ],
                     ),
                   ],
-                  const SizedBox(height: 8),
-                  DoodhSectionHeader(title: 'Timeline'),
-                  DoodhInfoTile(
-                    icon: Icons.event_outlined,
-                    title: 'Scheduled',
-                    subtitle: formatDeliveryDateTime(delivery.scheduledDate),
-                  ),
+                  const SizedBox(height: 12),
+                  _InspectionCard(
+                    icon: Icons.timeline_outlined,
+                    title: 'Timeline',
+                    children: [
+                      _InspectionRow(
+                        icon: Icons.event_outlined,
+                        label: 'Scheduled',
+                        value: formatDeliveryDateTime(delivery.scheduledDate),
+                      ),
                   // Every lifecycle step carries the server-provided date
                   // and time; steps that have not happened yet stay hidden
                   // instead of showing a placeholder. Remarks carry no
                   // timestamp on the payload, so they render as text only.
-                  if (delivery.assignedAt != null)
-                    DoodhInfoTile(
-                      icon: Icons.assignment_ind_outlined,
-                      title: 'Assigned',
-                      subtitle: formatDeliveryDateTime(delivery.assignedAt!),
-                    ),
-                  if (delivery.pickedUpAt != null)
-                    DoodhInfoTile(
-                      icon: Icons.inventory_2_outlined,
-                      title: 'Picked up',
-                      subtitle: formatDeliveryDateTime(delivery.pickedUpAt!),
-                    ),
-                  if (delivery.outForDeliveryAt != null)
-                    DoodhInfoTile(
-                      icon: Icons.route_outlined,
-                      title: 'Out for delivery',
-                      subtitle: formatDeliveryDateTime(
-                        delivery.outForDeliveryAt!,
-                      ),
-                    ),
-                  if (delivery.arrivedAt != null)
-                    DoodhInfoTile(
-                      icon: Icons.location_on_outlined,
-                      title: 'Arrived',
-                      subtitle: formatDeliveryDateTime(delivery.arrivedAt!),
-                    ),
-                  if (delivery.completedAt != null)
-                    DoodhInfoTile(
-                      icon: Icons.check_circle_outline,
-                      title: 'Completed',
-                      subtitle: formatDeliveryDateTime(delivery.completedAt!),
-                    ),
-                  if (delivery.failedAt != null)
-                    DoodhInfoTile(
-                      icon: Icons.error_outline,
-                      title: 'Failed',
-                      subtitle: delivery.failureReason == null
-                          ? formatDeliveryDateTime(delivery.failedAt!)
-                          : '${delivery.failureReason!} · '
-                                '${formatDeliveryDateTime(delivery.failedAt!)}',
-                    ),
-                  if (delivery.remarks != null)
-                    DoodhInfoTile(
-                      icon: Icons.comment_outlined,
-                      title: 'Remarks',
-                      subtitle: delivery.remarks!,
-                    ),
-                  if (state.errorMessage != null)
+                      if (delivery.assignedAt != null)
+                        _InspectionRow(
+                          icon: Icons.assignment_ind_outlined,
+                          label: 'Assigned',
+                          value: formatDeliveryDateTime(delivery.assignedAt!),
+                        ),
+                      if (delivery.pickedUpAt != null)
+                        _InspectionRow(
+                          icon: Icons.inventory_2_outlined,
+                          label: 'Picked up',
+                          value: formatDeliveryDateTime(delivery.pickedUpAt!),
+                        ),
+                      if (delivery.outForDeliveryAt != null)
+                        _InspectionRow(
+                          icon: Icons.route_outlined,
+                          label: 'Out for delivery',
+                          value: formatDeliveryDateTime(
+                            delivery.outForDeliveryAt!,
+                          ),
+                        ),
+                      if (delivery.arrivedAt != null)
+                        _InspectionRow(
+                          icon: Icons.location_on_outlined,
+                          label: 'Arrived',
+                          value: formatDeliveryDateTime(delivery.arrivedAt!),
+                        ),
+                      if (delivery.completedAt != null)
+                        _InspectionRow(
+                          icon: Icons.check_circle_outline,
+                          label: 'Completed',
+                          value: formatDeliveryDateTime(delivery.completedAt!),
+                        ),
+                      if (delivery.failedAt != null)
+                        _InspectionRow(
+                          icon: Icons.error_outline,
+                          label: 'Failed',
+                          value: delivery.failureReason == null
+                              ? formatDeliveryDateTime(delivery.failedAt!)
+                              : '${delivery.failureReason!} · '
+                                    '${formatDeliveryDateTime(delivery.failedAt!)}',
+                        ),
+                      if (delivery.remarks != null)
+                        _InspectionRow(
+                          icon: Icons.comment_outlined,
+                          label: 'Remarks',
+                          value: delivery.remarks!,
+                        ),
+                    ],
+                  ),
+                  if (state.errorMessage != null) ...[
+                    const SizedBox(height: 12),
                     _ErrorText(state.errorMessage!),
+                  ],
                 ],
               ),
             ),
     );
   }
+}
+
+/// Delivery-inspection hero: teal gradient carrying the delivery reference,
+/// source/date line, and a frosted status pill. Local to the inspection
+/// screen — the manage/detail screens keep their own headers, which this
+/// screen no longer shares.
+class _DeliveryInspectionHero extends StatelessWidget {
+  const _DeliveryInspectionHero({required this.delivery});
+
+  final DeliveryDetails delivery;
+
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+    borderRadius: BorderRadius.circular(20),
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [DoodhColors.tealDark, DoodhColors.teal],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.16),
+              borderRadius: DoodhRadii.sm,
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.35),
+              ),
+            ),
+            child: const Icon(
+              Icons.local_shipping_outlined,
+              color: Colors.white,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  delivery.displayReference,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${delivery.sourceType.label} · '
+                  '${formatDeliveryDate(delivery.scheduledDate)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.16),
+              borderRadius: DoodhRadii.pillRadius,
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.35),
+              ),
+            ),
+            child: Text(
+              delivery.status.label,
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Grouped section card for the delivery-inspection page: an icon + title
+/// header followed by the section rows. Every row string is identical to
+/// the previous flat layout — only the grouping is new.
+class _InspectionCard extends StatelessWidget {
+  const _InspectionCard({
+    required this.icon,
+    required this.title,
+    required this.children,
+  });
+
+  final IconData icon;
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: const BoxDecoration(
+                    color: DoodhColors.mint,
+                    borderRadius: DoodhRadii.sm,
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 16,
+                    color: DoodhColors.tealDark,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(title, style: theme.textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 12),
+            for (var i = 0; i < children.length; i++) ...[
+              if (i > 0) const SizedBox(height: 12),
+              children[i],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Detail row for the delivery-inspection cards: mint icon tile with the
+/// label over the value. Plain and tappable variants are not needed here —
+/// navigation lives in [_NavigateButton] — so rows never render ink.
+class _InspectionRow extends StatelessWidget {
+  const _InspectionRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: const BoxDecoration(
+            color: DoodhColors.mint,
+            borderRadius: DoodhRadii.sm,
+          ),
+          child: Icon(icon, size: 18, color: DoodhColors.muted),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: DoodhColors.muted,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(value),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Day summary hero for the staff delivery list: gradient card with the day
+/// title, the calendar date and live counts derived from the already loaded
+/// deliveries (no extra API calls). Purely presentational — filtering and
+/// loading behaviour below it are unchanged.
+class _StaffDayHero extends StatelessWidget {
+  const _StaffDayHero({
+    required this.date,
+    required this.isToday,
+    required this.deliveries,
+  });
+
+  final DateTime date;
+  final bool isToday;
+  final List<DeliveryDetails> deliveries;
+
+  @override
+  Widget build(BuildContext context) {
+    final onRoute = deliveries
+        .where(
+          (d) =>
+              d.status == DeliveryStatus.assigned ||
+              d.status == DeliveryStatus.pickedUp ||
+              d.status == DeliveryStatus.outForDelivery ||
+              d.status == DeliveryStatus.arrived,
+        )
+        .length;
+    final delivered = deliveries
+        .where((d) => d.status == DeliveryStatus.delivered)
+        .length;
+    final failed = deliveries
+        .where((d) => d.status == DeliveryStatus.failed)
+        .length;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [DoodhColors.tealDark, DoodhColors.teal],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -30,
+              top: -36,
+              child: ExcludeSemantics(
+                child: Container(
+                  width: 104,
+                  height: 104,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.07),
+                  ),
+                ),
+              ),
+            ),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.16),
+                        borderRadius: DoodhRadii.sm,
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.route_outlined,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            isToday
+                                ? "Today's deliveries"
+                                : 'Deliveries for ${formatDeliveryDate(date)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            formatDeliveryDate(date),
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    _StaffHeroStat(
+                      icon: Icons.navigation_outlined,
+                      value: '$onRoute',
+                      label: 'On route',
+                    ),
+                    const SizedBox(width: 8),
+                    _StaffHeroStat(
+                      icon: Icons.check_circle_outline,
+                      value: '$delivered',
+                      label: 'Delivered',
+                    ),
+                    const SizedBox(width: 8),
+                    _StaffHeroStat(
+                      icon: Icons.error_outline,
+                      value: '$failed',
+                      label: 'Failed',
+                    ),
+                    const SizedBox(width: 8),
+                    _StaffHeroStat(
+                      icon: Icons.local_shipping_outlined,
+                      value: '${deliveries.length}',
+                      label: 'Total',
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Frosted-glass count pill inside the staff day hero.
+class _StaffHeroStat extends StatelessWidget {
+  const _StaffHeroStat({
+    required this.icon,
+    required this.value,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.16),
+        borderRadius: DoodhRadii.sm,
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: Colors.white),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class StaffDeliveryListScreen extends ConsumerStatefulWidget {
@@ -540,34 +986,36 @@ class _StaffDeliveryListScreenState
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  isToday
-                      ? "Today's deliveries"
-                      : 'Deliveries for ${formatDeliveryDate(_date)}',
-                  style: Theme.of(context).textTheme.headlineSmall,
+                _StaffDayHero(
+                  date: _date,
+                  isToday: isToday,
+                  deliveries: state.staffDeliveries,
                 ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<DeliveryStatus?>(
-                  initialValue: state.staffStatus,
-                  decoration: const InputDecoration(
-                    labelText: 'Delivery status',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem<DeliveryStatus?>(
-                      value: null,
-                      child: Text('All'),
+                const SizedBox(height: 10),
+                DoodhCard(
+                  padding: const EdgeInsets.fromLTRB(14, 6, 14, 10),
+                  child: DropdownButtonFormField<DeliveryStatus?>(
+                    initialValue: state.staffStatus,
+                    decoration: const InputDecoration(
+                      labelText: 'Delivery status',
+                      border: OutlineInputBorder(),
                     ),
-                    ..._filterStatuses.map(
-                      (status) => DropdownMenuItem<DeliveryStatus?>(
-                        value: status,
-                        child: Text(status.label),
+                    items: [
+                      const DropdownMenuItem<DeliveryStatus?>(
+                        value: null,
+                        child: Text('All'),
                       ),
-                    ),
-                  ],
-                  onChanged: state.isLoading ? null : _selectStatus,
+                      ..._filterStatuses.map(
+                        (status) => DropdownMenuItem<DeliveryStatus?>(
+                          value: status,
+                          child: Text(status.label),
+                        ),
+                      ),
+                    ],
+                    onChanged: state.isLoading ? null : _selectStatus,
+                  ),
                 ),
               ],
             ),
@@ -586,7 +1034,7 @@ class _StaffDeliveryListScreenState
                   : 'Assigned deliveries for the selected date will appear here.',
               reload: _load,
               itemBuilder: (delivery) => DeliveryListTile(
-                reference: delivery.referenceNumber,
+                reference: delivery.displayReference,
                 status: delivery.status,
                 date: delivery.scheduledDate,
                 subtitle:
@@ -597,6 +1045,140 @@ class _StaffDeliveryListScreenState
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Staff detail hero: gradient card carrying the delivery identity
+/// (reference, source and date), a high-contrast status pill and the
+/// customer name, restyled for the staff mobile flow. Info tiles and
+/// actions below it are unchanged.
+class _StaffDetailHero extends StatelessWidget {
+  const _StaffDetailHero({required this.delivery});
+
+  final DeliveryDetails delivery;
+
+  (IconData, String) get _statusVisual => switch (delivery.status) {
+    DeliveryStatus.delivered => (Icons.check_circle, 'Delivered'),
+    DeliveryStatus.failed => (Icons.error, 'Failed'),
+    DeliveryStatus.arrived => (Icons.navigation, 'Arrived'),
+    DeliveryStatus.outForDelivery =>
+      (Icons.local_shipping_outlined, 'Out for delivery'),
+    DeliveryStatus.pickedUp => (Icons.inventory_2_outlined, 'Picked up'),
+    DeliveryStatus.assigned => (Icons.assignment_ind_outlined, 'Assigned'),
+    DeliveryStatus.cancelled => (Icons.cancel_outlined, 'Cancelled'),
+    _ => (Icons.schedule_outlined, delivery.status.label),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final (statusIcon, statusText) = _statusVisual;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [DoodhColors.tealDark, DoodhColors.teal],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -30,
+              top: -36,
+              child: ExcludeSemantics(
+                child: Container(
+                  width: 104,
+                  height: 104,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.07),
+                  ),
+                ),
+              ),
+            ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.16),
+                    borderRadius: DoodhRadii.sm,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.receipt_long_outlined,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        delivery.displayReference,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${delivery.sourceType.label} · ${formatDeliveryDate(delivery.scheduledDate)} · ${delivery.customerName}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall
+                            ?.copyWith(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.16),
+                    borderRadius: DoodhRadii.pillRadius,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(statusIcon, size: 16, color: Colors.white),
+                      const SizedBox(width: 6),
+                      Text(
+                        statusText,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -615,11 +1197,14 @@ class _StaffDeliveryDetailScreenState
   @override
   void initState() {
     super.initState();
-    Future.microtask(
-      () => ref
+    Future.microtask(() {
+      ref
           .read(deliveryControllerProvider.notifier)
-          .loadStaffDelivery(widget.deliveryId),
-    );
+          .loadStaffDelivery(widget.deliveryId);
+      ref
+          .read(milkTestControllerProvider.notifier)
+          .loadForStaff(widget.deliveryId);
+    });
   }
 
   @override
@@ -628,6 +1213,18 @@ class _StaffDeliveryDetailScreenState
     final delivery = state.selectedDelivery?.deliveryId == widget.deliveryId
         ? state.selectedDelivery
         : null;
+    final milkTestState = ref.watch(milkTestControllerProvider);
+    final staffTest = milkTestState.staffTest?.deliveryId == widget.deliveryId
+        ? milkTestState.staffTest
+        : null;
+    // Perform entry is milk-category only and only once the customer has
+    // requested a test (requested, not yet completed).
+    final showPerformMilkTest =
+        delivery != null &&
+        delivery.status == DeliveryStatus.arrived &&
+        delivery.requiresBatchAllocation &&
+        staffTest != null &&
+        staffTest.status == MilkTestStatus.requested;
     return Scaffold(
       appBar: AppBar(title: const Text('Delivery details')),
       body: delivery == null
@@ -640,12 +1237,7 @@ class _StaffDeliveryDetailScreenState
           : ListView(
               padding: DoodhSpacing.pagePadding,
               children: [
-                _DeliveryHeader(
-                  reference: delivery.referenceNumber,
-                  source: delivery.sourceType,
-                  status: delivery.status,
-                  date: delivery.scheduledDate,
-                ),
+                _StaffDetailHero(delivery: delivery),
                 const SizedBox(height: 12),
                 DoodhInfoTile(
                   icon: Icons.person_outline,
@@ -666,7 +1258,7 @@ class _StaffDeliveryDetailScreenState
                   ),
                 if (state.errorMessage != null) _ErrorText(state.errorMessage!),
                 const SizedBox(height: 12),
-                if (delivery.status == DeliveryStatus.arrived)
+                if (showPerformMilkTest)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: OutlinedButton.icon(
@@ -686,9 +1278,9 @@ class _StaffDeliveryDetailScreenState
 
 /// Admin-centre catalogue look shared by the delivery-management screen:
 /// light-grey page, white section cards and the panel-green primary action.
-const _deliveryAdminPage = Color(0xFFF8F9FA);
-const _deliveryAdminAction = Color(0xFF198754);
-const _deliveryAdminCardBorder = Color(0xFFE9ECEF);
+const _deliveryAdminPage = DoodhColors.cream;
+const _deliveryAdminAction = DoodhColors.teal;
+const _deliveryAdminCardBorder = DoodhColors.line;
 
 class DeliveryManagementScreen extends ConsumerStatefulWidget {
   const DeliveryManagementScreen({super.key, required this.branchId});
@@ -996,6 +1588,26 @@ class _DeliveryManagementScreenState
   }
 
   Future<void> _assignSelected(DeliveryState state) async {
+    final blocked = state.managedDeliveries
+        .where(
+          (delivery) =>
+              state.selectedManagedDeliveryIds.contains(delivery.deliveryId) &&
+              delivery.needsBatchAllocationBeforeAssign,
+        )
+        .toList(growable: false);
+    if (blocked.isNotEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            blocked.length == 1
+                ? 'Save batch allocations before assigning ${blocked.single.displayReference}.'
+                : 'Save batch allocations before assigning ${blocked.length} selected milk deliveries.',
+          ),
+        ),
+      );
+      return;
+    }
     final choice = await _showBulkAssignmentDialog(context, state.employees);
     if (choice == null) return;
     final assigned = await ref
@@ -1099,26 +1711,93 @@ class _DeliveryManagementScreenState
           child: ListView(
             padding: DoodhSpacing.pagePadding,
             children: [
-              Text(
-                'Delivery management',
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                'Manage branch deliveries for ${formatDeliveryDate(_date)}',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: DoodhColors.muted,
-                  fontSize: 14,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${state.managedDeliveries.length} deliveries · $selectedCount selected',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: DoodhColors.muted,
+              ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [DoodhColors.tealDark, DoodhColors.teal],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        right: -30,
+                        top: -36,
+                        child: ExcludeSemantics(
+                          child: Container(
+                            width: 104,
+                            height: 104,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.white.withValues(alpha: 0.07),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 44,
+                                height: 44,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.16),
+                                  borderRadius: DoodhRadii.sm,
+                                  border: Border.all(
+                                    color: Colors.white.withValues(
+                                      alpha: 0.35,
+                                    ),
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.local_shipping_outlined,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  'Delivery management',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.headlineSmall
+                                      ?.copyWith(
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.white,
+                                      ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Manage branch deliveries for ${formatDeliveryDate(_date)}',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${state.managedDeliveries.length} deliveries · $selectedCount selected',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: DoodhSpacing.sm),
@@ -1302,17 +1981,13 @@ class _DeliveryManagementDetailScreenState
           : ListView(
               padding: DoodhSpacing.pagePadding,
               children: [
-                _DeliveryHeader(
-                  reference: delivery.referenceNumber,
-                  source: delivery.sourceType,
-                  status: delivery.status,
-                  date: delivery.scheduledDate,
-                ),
+                _StaffDetailHero(delivery: delivery),
                 const SizedBox(height: 12),
                 DoodhInfoTile(
-                  icon: Icons.person_outline,
-                  title: delivery.customerName,
-                  subtitle: delivery.destinationAddress,
+                  icon: Icons.location_on_outlined,
+                  title: 'Destination',
+                  subtitle:
+                      '${delivery.customerName} · ${delivery.destinationAddress}',
                 ),
                 DoodhInfoTile(
                   icon: Icons.badge_outlined,
@@ -1321,6 +1996,14 @@ class _DeliveryManagementDetailScreenState
                 ),
                 _DeliveryItemSection(delivery: delivery),
                 if (state.errorMessage != null) _ErrorText(state.errorMessage!),
+                if (delivery.needsBatchAllocationBeforeAssign) ...[
+                  const SizedBox(height: 12),
+                  const DoodhInfoBanner(
+                    tone: DoodhTone.warning,
+                    message:
+                        'Save batch allocations before assigning this milk delivery.',
+                  ),
+                ],
                 const SizedBox(height: 16),
                 FilledButton.icon(
                   icon: const Icon(Icons.assignment_ind_outlined),
@@ -1329,7 +2012,8 @@ class _DeliveryManagementDetailScreenState
                         ? 'Assign employee'
                         : 'Reassign employee',
                   ),
-                  onPressed: state.isSaving
+                  onPressed: state.isSaving ||
+                          delivery.needsBatchAllocationBeforeAssign
                       ? null
                       : () => _showAssignmentDialog(
                           context,
@@ -1340,16 +2024,43 @@ class _DeliveryManagementDetailScreenState
                 ),
                 if (delivery.assignments.isNotEmpty) ...[
                   const SizedBox(height: 20),
-                  Text(
-                    'Assignment history',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  ...delivery.assignments.reversed.map(
-                    (item) => ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.history),
-                      title: Text(item.employeeName ?? item.employeeId),
-                      subtitle: Text(item.reason ?? 'Assigned'),
+                  Card(
+                    elevation: 2,
+                    shadowColor: DoodhColors.tealDark.withValues(alpha: .14),
+                    child: Padding(
+                      padding: const EdgeInsets.all(DoodhSpacing.sm),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Assignment history',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          ...delivery.assignments.reversed.map(
+                            (item) => ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: const BoxDecoration(
+                                  color: DoodhColors.mint,
+                                  borderRadius: DoodhRadii.sm,
+                                ),
+                                child: const Icon(
+                                  Icons.history,
+                                  color: DoodhColors.tealDark,
+                                  size: 22,
+                                ),
+                              ),
+                              title: Text(
+                                item.employeeName ?? item.employeeId,
+                              ),
+                              subtitle: Text(item.reason ?? 'Assigned'),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -1549,39 +2260,6 @@ class DeliveryListTile extends StatelessWidget {
   );
 }
 
-class _DeliveryHeader extends StatelessWidget {
-  const _DeliveryHeader({
-    required this.reference,
-    required this.source,
-    required this.status,
-    required this.date,
-  });
-  final String reference;
-  final DeliverySourceType source;
-  final DeliveryStatus status;
-  final DateTime date;
-  @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(reference, style: Theme.of(context).textTheme.headlineSmall),
-      const SizedBox(height: 4),
-      Text('${source.label} · ${formatDeliveryDate(date)}'),
-      const SizedBox(height: 8),
-      DoodhStatusPill(
-        label: status.label,
-        tone: switch (status) {
-          DeliveryStatus.delivered => DoodhStatusTone.success,
-          DeliveryStatus.failed => DoodhStatusTone.error,
-          DeliveryStatus.outForDelivery ||
-          DeliveryStatus.arrived => DoodhStatusTone.warning,
-          _ => DoodhStatusTone.neutral,
-        },
-      ),
-    ],
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Customer order tracking / delivery details
 // ---------------------------------------------------------------------------
@@ -1627,36 +2305,22 @@ class _TrackingHero extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Status leads so the current state is the first thing seen;
+            // the order reference and schedule follow below the divider.
+            // Every string from the previous layout is preserved verbatim.
             Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    delivery.trackingReference,
-                    style: Theme.of(context).textTheme.headlineSmall
-                        ?.copyWith(color: Colors.white),
-                  ),
-                ),
-                DoodhChip(
-                  label: delivery.sourceType.label,
-                  tone: DoodhTone.info,
-                ),
-              ],
-            ),
-            const SizedBox(height: DoodhSpacing.xs),
-            Text(
-              'Scheduled for ${formatDeliveryDate(delivery.scheduledDate)}',
-              style: Theme.of(context).textTheme.bodyMedium
-                  ?.copyWith(color: Colors.white70),
-            ),
-            const Divider(color: Colors.white24, height: DoodhSpacing.lg),
-            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Container(
                   width: 52,
                   height: 52,
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     color: DoodhColors.mint,
                     shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.35),
+                      width: 2,
+                    ),
                   ),
                   child: ExcludeSemantics(
                     child: Icon(statusIcon, color: DoodhColors.tealDark),
@@ -1670,7 +2334,10 @@ class _TrackingHero extends StatelessWidget {
                       Text(
                         delivery.status.label,
                         style: Theme.of(context).textTheme.titleLarge
-                            ?.copyWith(color: Colors.white),
+                            ?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
                       ),
                       const SizedBox(height: DoodhSpacing.xs),
                       Text(
@@ -1682,6 +2349,29 @@ class _TrackingHero extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const Divider(color: Colors.white24, height: DoodhSpacing.lg),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    delivery.trackingReference,
+                    style: Theme.of(context).textTheme.titleMedium
+                        ?.copyWith(color: Colors.white),
+                  ),
+                ),
+                const SizedBox(width: DoodhSpacing.sm),
+                DoodhChip(
+                  label: delivery.sourceType.label,
+                  tone: DoodhTone.info,
+                ),
+              ],
+            ),
+            const SizedBox(height: DoodhSpacing.xs),
+            Text(
+              'Scheduled for ${formatDeliveryDate(delivery.scheduledDate)}',
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: Colors.white70),
             ),
             if (delivery.status == DeliveryStatus.delivered &&
                 delivery.completedAt != null) ...[
@@ -2532,8 +3222,21 @@ class _DeliveryItemSection extends StatelessWidget {
                     ? 'One-time order'
                     : 'Order ${delivery.orderSummary!.orderNumber}'),
           subtitle: isSubscription
-              ? 'Delivery ${delivery.referenceNumber}'
+              ? 'Scheduled ${formatDeliveryDate(delivery.scheduledDate)}'
               : 'Delivery ${delivery.referenceNumber}',
+          trailing: isSubscription
+              ? (subscriptionNumber != null && subscriptionNumber.isNotEmpty
+                    ? CopyReferenceButton(
+                        value: subscriptionNumber,
+                        message: 'Subscription reference copied',
+                      )
+                    : null)
+              : (delivery.orderSummary == null
+                    ? null
+                    : CopyReferenceButton(
+                        value: delivery.orderSummary!.orderNumber,
+                        message: 'Order number copied',
+                      )),
         ),
       ],
     );
@@ -2655,10 +3358,9 @@ class _ManagedDeliveryTile extends StatelessWidget {
   }
 
   String _referenceLine() {
-    if (delivery.sourceType == DeliverySourceType.subscriptionOccurrence) {
-      final number = delivery.subscriptionNumber;
-      if (number != null && number.isNotEmpty) return 'Subscription $number';
-    }
+    // Title already shows the SUB-series document number for subscription
+    // occurrences (see displayReference); keep this line to the source
+    // label so the number is not duplicated.
     return delivery.sourceType.label;
   }
 
@@ -2680,7 +3382,7 @@ class _ManagedDeliveryTile extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              delivery.referenceNumber,
+              delivery.displayReference,
               style: Theme.of(context).textTheme.titleMedium,
             ),
           ),

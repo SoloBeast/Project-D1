@@ -1,7 +1,7 @@
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
-import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/widgets/customer_widgets.dart';
+import 'package:doodh_direct_mobile/core/widgets/doodh_ui.dart';
 import 'package:doodh_direct_mobile/core/widgets/state_panel.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:flutter/foundation.dart';
@@ -583,9 +583,25 @@ class _CustomerRefundReplacementDetailScreenState
     Future.microtask(_load);
   }
 
-  Future<void> _load() => ref
-      .read(refundReplacementControllerProvider.notifier)
-      .loadCustomerRequest(widget.requestId);
+  Future<void> _load() async {
+    await ref
+        .read(refundReplacementControllerProvider.notifier)
+        .loadCustomerRequest(widget.requestId);
+    if (!mounted) return;
+    // Best-effort single expiry notice so the customer learns re-delivery
+    // expired even before changing to a refund. Backend-idempotent;
+    // failures never block the Change action.
+    final request = ref
+        .read(refundReplacementControllerProvider)
+        .selectedCustomerRequest;
+    if (request != null &&
+        request.requestId == widget.requestId &&
+        request.isRedeliveryExpiredAt(DateTime.now())) {
+      await ref
+          .read(refundReplacementControllerProvider.notifier)
+          .notifyRedeliveryExpired(widget.requestId, staff: false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -653,6 +669,8 @@ class _RefundReplacementDetailBody extends ConsumerWidget {
         icon: Icons.receipt_long_outlined,
         label: 'Order',
         value: request.orderNumber ?? 'Subscription delivery',
+        copyValue: request.orderNumber,
+        copyMessage: 'Order number copied',
       ),
       _InfoRow(
         icon: Icons.local_shipping_outlined,
@@ -745,6 +763,28 @@ class _RefundReplacementDetailBody extends ConsumerWidget {
           icon: Icons.event_repeat_outlined,
           label: 'Replacement date',
           value: formatRefundReplacementDate(request.replacementDate!),
+        ),
+      // Same-day re-delivery SLA: the server-computed deadline (exactly
+      // customerChoiceAt + 1 hour, India-local wall clock). Display only —
+      // approval and completion enforcement live in the backend; the UI
+      // never extends it. Past the deadline an undelivered replacement
+      // stays actionable through the existing replacement-failure flow
+      // (fail the replacement delivery for the refund-only remedy).
+      if (request.effectiveRedeliveryDeadline != null)
+        _InfoRow(
+          icon: Icons.timer_outlined,
+          label: 'Re-delivery by',
+          value: formatRefundReplacementDateTime(
+            request.effectiveRedeliveryDeadline!,
+          ),
+        ),
+      if (request.isRedeliveryOverdueAt(DateTime.now()))
+        const _Notice(
+          icon: Icons.warning_amber_outlined,
+          text:
+              'The one-hour same-day window has passed. Deliver immediately, '
+              'or fail the replacement delivery so the refund-only remedy '
+              'can be resolved instead.',
         ),
       if (request.replacementDeliveryNumber != null)
         _InfoRow(
@@ -878,12 +918,24 @@ class _CustomerRequestCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text('${request.type.label} · ${request.source.label}'),
             const SizedBox(height: 4),
-            Text(
-              request.orderNumber == null
-                  ? 'Subscription delivery ${request.deliveryNumber ?? ''}'
-                        .trim()
-                  : 'Order ${request.orderNumber}',
-              style: Theme.of(context).textTheme.bodySmall,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Text(
+                    request.orderNumber == null
+                        ? 'Subscription delivery ${request.deliveryNumber ?? ''}'
+                              .trim()
+                        : 'Order ${request.orderNumber}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                if (request.orderNumber != null)
+                  CopyReferenceButton(
+                    value: request.orderNumber!,
+                    message: 'Order number copied',
+                  ),
+              ],
             ),
             if (request.status.isAwaitingChoice)
               Padding(
@@ -944,25 +996,76 @@ class _AuthenticatedImagesState extends ConsumerState<_AuthenticatedImages> {
   Widget build(BuildContext context) => Wrap(
     spacing: 12,
     runSpacing: 12,
-    children: widget.images
-        .map(
-          (image) => _AuthenticatedImageTile(
-            requestId: widget.requestId,
-            image: image,
-          ),
-        )
-        .toList(growable: false),
+    children: [
+      for (var i = 0; i < widget.images.length; i++)
+        _AuthenticatedImageTile(
+          requestId: widget.requestId,
+          image: widget.images[i],
+          index: i,
+          total: widget.images.length,
+        ),
+    ],
   );
 }
 
-class _AuthenticatedImageTile extends ConsumerWidget {
-  const _AuthenticatedImageTile({required this.requestId, required this.image});
+/// Protected proof-image thumbnail. Tapping it opens a full-screen
+/// pinch-to-zoom viewer. Bytes are fetched once through the authenticated
+/// channel and shared between the thumbnail and the viewer — the viewer
+/// itself never issues a network request and never renders a public URL.
+class _AuthenticatedImageTile extends ConsumerStatefulWidget {
+  const _AuthenticatedImageTile({
+    required this.requestId,
+    required this.image,
+    required this.index,
+    required this.total,
+  });
 
   final String requestId;
   final RefundReplacementImage image;
+  final int index;
+  final int total;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_AuthenticatedImageTile> createState() =>
+      _AuthenticatedImageTileState();
+}
+
+class _AuthenticatedImageTileState
+    extends ConsumerState<_AuthenticatedImageTile> {
+  late Future<ApiByteResponse> _bytes;
+
+  @override
+  void initState() {
+    super.initState();
+    _bytes = _loadBytes();
+  }
+
+  Future<ApiByteResponse> _loadBytes() {
+    final token = ref.read(sessionControllerProvider).session?.accessToken;
+    if (token == null) {
+      throw const RefundReplacementImageUnauthenticatedException();
+    }
+    return ref
+        .read(refundReplacementRepositoryProvider)
+        .getImageContent(token, widget.requestId, widget.image.imageId);
+  }
+
+  void _openViewer(Uint8List bytes) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => _TicketImageViewer(
+          bytes: bytes,
+          fileName: widget.image.fileName,
+          index: widget.index,
+          total: widget.total,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return SizedBox(
       width: 140,
       child: Column(
@@ -970,11 +1073,58 @@ class _AuthenticatedImageTile extends ConsumerWidget {
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: _ImageContent(requestId: requestId, image: image),
+            child: FutureBuilder<ApiByteResponse>(
+              future: _bytes,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const SizedBox(
+                    height: 120,
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                if (snapshot.hasError || snapshot.data == null) {
+                  return const SizedBox(
+                    height: 120,
+                    child: Center(child: Icon(Icons.lock_outline, size: 32)),
+                  );
+                }
+                return GestureDetector(
+                  onTap: () => _openViewer(snapshot.data!.bytes),
+                  child: Stack(
+                    alignment: Alignment.bottomRight,
+                    children: [
+                      Image.memory(
+                        snapshot.data!.bytes,
+                        fit: BoxFit.cover,
+                        height: 120,
+                        width: 140,
+                        errorBuilder: (_, _, _) => const SizedBox(
+                          height: 120,
+                          child: Center(child: Text('Preview unavailable')),
+                        ),
+                      ),
+                      Container(
+                        margin: const EdgeInsets.all(6),
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.zoom_in,
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           ),
           const SizedBox(height: 4),
           Text(
-            image.fileName,
+            widget.image.fileName,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodySmall,
@@ -985,51 +1135,74 @@ class _AuthenticatedImageTile extends ConsumerWidget {
   }
 }
 
-class _ImageContent extends ConsumerWidget {
-  const _ImageContent({required this.requestId, required this.image});
+/// Full-screen, pinch-to-zoom viewer for a protected ticket proof image.
+///
+/// The bytes were already fetched through the authenticated channel by the
+/// thumbnail that opened this; the viewer never issues a network request
+/// and never renders a public URL. Closing returns to the ticket detail.
+class _TicketImageViewer extends StatelessWidget {
+  const _TicketImageViewer({
+    required this.bytes,
+    required this.fileName,
+    required this.index,
+    required this.total,
+  });
 
-  final String requestId;
-  final RefundReplacementImage image;
+  final Uint8List bytes;
+  final String fileName;
+  final int index;
+  final int total;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return FutureBuilder<ApiByteResponse>(
-      future: _loadBytes(ref),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const SizedBox(
-            height: 120,
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-        if (snapshot.hasError || snapshot.data == null) {
-          return const SizedBox(
-            height: 120,
-            child: Center(child: Icon(Icons.lock_outline, size: 32)),
-          );
-        }
-        return Image.memory(
-          snapshot.data!.bytes,
-          fit: BoxFit.cover,
-          height: 120,
-          errorBuilder: (_, _, _) => const SizedBox(
-            height: 120,
-            child: Center(child: Text('Preview unavailable')),
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    appBar: AppBar(
+      backgroundColor: Colors.black,
+      foregroundColor: Colors.white,
+      title: Text(total > 1 ? 'Image ${index + 1} of $total' : 'Proof image'),
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        tooltip: 'Close',
+        onPressed: () => Navigator.of(context).maybePop(),
+      ),
+    ),
+    body: Column(
+      children: [
+        Expanded(
+          child: InteractiveViewer(
+            minScale: 1,
+            maxScale: 5,
+            clipBehavior: Clip.none,
+            child: Center(
+              child: Image.memory(
+                bytes,
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+                errorBuilder: (_, _, _) => const Icon(
+                  Icons.broken_image_outlined,
+                  color: Colors.white70,
+                  size: 48,
+                ),
+              ),
+            ),
           ),
-        );
-      },
-    );
-  }
-
-  Future<ApiByteResponse> _loadBytes(WidgetRef ref) {
-    final token = ref.read(sessionControllerProvider).session?.accessToken;
-    if (token == null) {
-      throw const RefundReplacementImageUnauthenticatedException();
-    }
-    return ref
-        .read(refundReplacementRepositoryProvider)
-        .getImageContent(token, requestId, image.imageId);
-  }
+        ),
+        SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(
+              fileName,
+              maxLines: 2,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _Notice extends StatelessWidget {
@@ -1053,15 +1226,15 @@ class _Notice extends StatelessWidget {
 }
 
 class _InfoRow extends StatelessWidget {
-  const _InfoRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
+  const _InfoRow({required this.icon, required this.label, required this.value, this.copyValue, this.copyMessage = 'Copied to clipboard'});
 
   final IconData icon;
   final String label;
   final String value;
+
+  /// When set, a copy icon beside the value copies this exact reference.
+  final String? copyValue;
+  final String copyMessage;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -1076,6 +1249,8 @@ class _InfoRow extends StatelessWidget {
           child: Text(label, style: const TextStyle(color: DoodhColors.muted)),
         ),
         Expanded(child: Text(value)),
+        if (copyValue != null)
+          CopyReferenceButton(value: copyValue!, message: copyMessage),
       ],
     ),
   );
@@ -1285,10 +1460,42 @@ class _CustomerChoicePanel extends ConsumerWidget {
                     : Icons.autorenew,
                 text: 'You chose ${choice.label}.',
               ),
-              const _Notice(
-                icon: Icons.hourglass_top,
-                text: 'Waiting for approval',
-              ),
+              // Expired re-delivery: approval can no longer happen, so the
+              // customer gets an explicit path to a refund instead of a
+              // dead "waiting" state. The backend revalidates expiry and
+              // records the conversion with history; no money moves here.
+              if (choice == CustomerChoice.reDelivery &&
+                  request.isRedeliveryExpiredAt(DateTime.now())) ...[
+                const _Notice(
+                  icon: Icons.timer_off_outlined,
+                  text:
+                      'The one-hour re-delivery window has expired, so '
+                      're-delivery is no longer available. Change to a refund '
+                      'to keep the normal refund approval process — the '
+                      'wallet is credited only when the refund completes.',
+                ),
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: state.isSaving
+                      ? null
+                      : () => _changeToRefund(ref, context),
+                  icon: state.isSaving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.currency_rupee),
+                  label: const Text('Change to refund'),
+                ),
+                const SizedBox(height: 8),
+              ],
+              if (!(choice == CustomerChoice.reDelivery &&
+                  request.isRedeliveryExpiredAt(DateTime.now())))
+                const _Notice(
+                  icon: Icons.hourglass_top,
+                  text: 'Waiting for approval',
+                ),
             ] else if (expired) ...[
               const _Notice(
                 icon: Icons.timer_off_outlined,
@@ -1333,6 +1540,50 @@ class _CustomerChoicePanel extends ConsumerWidget {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Confirmed change from an expired re-delivery choice to Refund. The
+  /// dialog submits once (guarded by [state.isSaving]); cancel dismisses
+  /// without any API call or state change. The backend revalidates the
+  /// expired window and records the conversion; no money moves here.
+  Future<void> _changeToRefund(WidgetRef ref, BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Change to refund?'),
+            content: const Text(
+              'The re-delivery window has expired. Your choice will change '
+              'from Re-delivery to Refund and follow the normal refund '
+              'approval process. No money moves until the refund completes.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Change to refund'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !context.mounted) return;
+    final ok = await ref
+        .read(refundReplacementControllerProvider.notifier)
+        .chooseCustomerChoice(request.requestId, CustomerChoice.refund);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'Your choice was changed to Refund. Waiting for approval.'
+              : ref.read(refundReplacementControllerProvider).errorMessage ??
+                    'Your choice could not be changed.',
         ),
       ),
     );
@@ -1621,7 +1872,17 @@ class _StaffRefundReplacementListScreenState
         ],
       ),
       body: Column(
-        children: [Expanded(child: _body(state, items))],
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: _StaffQueueHero(
+              icon: Icons.assignment_return_outlined,
+              title: 'Support queue',
+              subtitle: '${items.length} requests',
+            ),
+          ),
+          Expanded(child: _body(state, items)),
+        ],
       ),
     );
   }
@@ -1660,6 +1921,83 @@ class _StaffRefundReplacementListScreenState
                 context.push('/staff/refund-replacements/${item.requestId}'),
           );
         },
+      ),
+    );
+  }
+}
+
+/// Staff queue hero: gradient card carrying the queue identity and the
+/// visible request count. Titles stay in the AppBar; this hero never
+/// repeats status words so the row status labels stay unambiguous.
+class _StaffQueueHero extends StatelessWidget {
+  const _StaffQueueHero({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [DoodhColors.tealDark, DoodhColors.teal],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: DoodhRadii.sm,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.35),
+                ),
+              ),
+              child: Icon(icon, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1735,11 +2073,23 @@ class _StaffRequestCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text('${item.type.label} · ${item.source.label}'),
             const SizedBox(height: 4),
-            Text(
-              item.orderNumber == null
-                  ? 'Subscription delivery · ${item.customerName}'
-                  : 'Order ${item.orderNumber} · ${item.customerName}',
-              style: Theme.of(context).textTheme.bodySmall,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Text(
+                    item.orderNumber == null
+                        ? 'Subscription delivery · ${item.customerName}'
+                        : 'Order ${item.orderNumber} · ${item.customerName}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                if (item.orderNumber != null)
+                  CopyReferenceButton(
+                    value: item.orderNumber!,
+                    message: 'Order number copied',
+                  ),
+              ],
             ),
             if (item.customerChoice != null)
               Padding(
@@ -1813,9 +2163,51 @@ class _StaffRefundReplacementDetailScreenState
     Future.microtask(_load);
   }
 
-  Future<void> _load() => ref
-      .read(refundReplacementControllerProvider.notifier)
-      .loadStaffRequest(widget.requestId);
+  Future<void> _load() async {
+    await ref
+        .read(refundReplacementControllerProvider.notifier)
+        .loadStaffRequest(widget.requestId);
+    if (!mounted) return;
+    // Best-effort single expiry notice for an expired re-delivery ticket
+    // so the customer is told even before anyone converts. Idempotent on
+    // the backend; failures never block the Convert action (conversion
+    // ensures the notice itself).
+    final request = ref
+        .read(refundReplacementControllerProvider)
+        .selectedStaffRequest;
+    if (request != null &&
+        request.requestId == widget.requestId &&
+        request.isRedeliveryExpiredAt(DateTime.now())) {
+      await ref
+          .read(refundReplacementControllerProvider.notifier)
+          .notifyRedeliveryExpired(widget.requestId, staff: true);
+    }
+  }
+
+  /// Staff conversion of an expired re-delivery choice to Refund. The
+  /// dialog already confirmed explicit customer consent; the backend
+  /// revalidates consent, expiry, and scope. Moves no money — the ticket
+  /// re-enters normal refund approval, announced below.
+  Future<void> _convert({
+    required bool customerConfirmed,
+    String? remarks,
+  }) async {
+    final controller = ref.read(refundReplacementControllerProvider.notifier);
+    final succeeded = await controller.convertExpiredToRefund(
+      widget.requestId,
+      customerConfirmed: customerConfirmed,
+      remarks: remarks,
+    );
+    if (!mounted || !succeeded) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Converted to refund. It now follows the normal refund approval — '
+          'no money has moved yet.',
+        ),
+      ),
+    );
+  }
 
   bool get _canManage {
     final permissions =
@@ -1965,6 +2357,7 @@ class _StaffRefundReplacementDetailScreenState
                     isSaving: state.isSaving,
                     errorMessage: state.errorMessage,
                     onDecide: _decide,
+                    onConvert: _convert,
                     onRemediate: request.isLegacyRemediationEligible
                         ? () => _remediate(request)
                         : null,
@@ -2013,175 +2406,165 @@ class _StaffRequestDetailBody extends StatelessWidget {
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
     children: [
-      Row(
+      _StaffRequestHero(request: request),
+      const SizedBox(height: 12),
+      _StaffDetailCard(
+        icon: Icons.info_outline,
+        title: 'Overview',
         children: [
-          Expanded(
-            child: Text(
-              request.requestNumber,
-              style: Theme.of(context).textTheme.titleLarge,
+          _StaffDetailRow(
+            icon: Icons.person_outline,
+            label: 'Customer',
+            value: '${request.customerName} · ${request.customerMobile}',
+          ),
+          _StaffDetailRow(
+            icon: Icons.storefront_outlined,
+            label: 'Branch',
+            value: '${request.branchName} (${request.branchCode})',
+          ),
+          _StaffDetailRow(
+            icon: Icons.event_available_outlined,
+            label: 'Submitted',
+            value: formatRefundReplacementDateTime(request.submittedAtUtc),
+          ),
+          if (request.deadlineUtc != null)
+            _StaffDetailRow(
+              icon: Icons.schedule,
+              label: 'Deadline',
+              value: formatRefundReplacementDateTime(request.deadlineUtc!),
             ),
-          ),
-          DoodhStatusPill(
-            label: request.status.label,
-            tone: _statusTone(request.status),
-          ),
         ],
       ),
-      const SizedBox(height: 4),
-      Text(
-        '${request.type.label} · ${request.source.label}',
-        style: Theme.of(context).textTheme.bodyMedium,
-      ),
       const SizedBox(height: 12),
-      _InfoRow(
-        icon: Icons.person_outline,
-        label: 'Customer',
-        value: '${request.customerName} · ${request.customerMobile}',
-      ),
-      _InfoRow(
-        icon: Icons.storefront_outlined,
-        label: 'Branch',
-        value: '${request.branchName} (${request.branchCode})',
-      ),
-      _InfoRow(
-        icon: Icons.event_available_outlined,
-        label: 'Submitted',
-        value: formatRefundReplacementDateTime(request.submittedAtUtc),
-      ),
-      if (request.deadlineUtc != null)
-        _InfoRow(
-          icon: Icons.schedule,
-          label: 'Deadline',
-          value: formatRefundReplacementDateTime(request.deadlineUtc!),
-        ),
-      const SizedBox(height: 12),
-      Text('Linked records', style: Theme.of(context).textTheme.titleMedium),
-      const SizedBox(height: 4),
-      _StaffLinkedRow(
-        icon: Icons.receipt_long_outlined,
-        label: 'Order',
-        value: request.orderNumber ?? 'Subscription delivery',
-        onTap: onOrderTap,
-      ),
-      if (request.customerChoice != null)
-        _InfoRow(
-          icon: request.customerChoice == CustomerChoice.refund
-              ? Icons.currency_rupee
-              : Icons.autorenew,
-          label: 'Customer choice',
-          value: request.customerChoiceAtUtc == null
-              ? request.customerChoice!.label
-              : '${request.customerChoice!.label} · '
-                    '${formatRefundReplacementDateTime(request.customerChoiceAtUtc!)}',
-        )
-      else if (request.status.isAwaitingChoice)
-        const _Notice(
-          icon: Icons.hourglass_top,
-          text: 'Waiting for the customer to choose Refund or Re-Delivery.',
-        ),
-      if (request.status == RefundReplacementStatus.failed)
-        const _Notice(
-          icon: Icons.cancel_outlined,
-          text:
-              'The replacement delivery failed, so this ticket was closed '
-              'without delivery. The refund-only remedy was resolved instead. '
-              'No further re-delivery is available for this failure.',
-        ),
-      if (request.status == RefundReplacementStatus.cancelled)
-        const _Notice(
-          icon: Icons.cancel_outlined,
-          text:
-              'The subscription was cancelled while the replacement was '
-              'still pending, so the replacement was voided and the frozen '
-              'entitlement refund was resolved instead. This is not a '
-              'replacement failure.',
-        ),
-      // Legacy remediation: the unsupported one-time Replacement was
-      // replaced by a supported Refund request. Shown as terminal but
-      // never as Completed, Failed, Rejected, or Refunded — and never as
-      // money already moved. The replacement number is text only (the
-      // detail API exposes no linked public id, so no deep link).
-      if (request.isSuperseded) ...[
-        const _Notice(
-          icon: Icons.swap_horiz_outlined,
-          text:
-              'This replacement request is not supported for one-time '
-              'orders, so it was superseded by a Refund request for the '
-              'same delivery. Refund is the supported remedy. Superseding '
-              'issued no refund and credited nothing — the linked Refund '
-              'ticket follows the normal approval and wallet-settlement '
-              'workflow.',
-        ),
-        if (request.supersededByRequestNumber != null)
-          _InfoRow(
-            icon: Icons.currency_rupee_outlined,
-            label: 'Refund request',
-            value: request.supersededByRequestNumber!,
+      _StaffDetailCard(
+        icon: Icons.link_outlined,
+        title: 'Linked records',
+        children: [
+          _StaffDetailRow(
+            icon: Icons.receipt_long_outlined,
+            label: 'Order',
+            value: request.orderNumber ?? 'Subscription delivery',
+            onTap: onOrderTap,
           ),
-      ],
-      // The Refund half of a remediation pair. Navigation to the legacy
-      // ticket is offered only because the API returns its public id.
-      if (request.isRemediationRefund &&
-          request.supersedesRequestNumber != null)
-        onLegacyTicketTap == null
-            ? _InfoRow(
-                icon: Icons.history_outlined,
-                label: 'Supersedes',
-                value: request.supersedesRequestNumber!,
-              )
-            : _StaffLinkedRow(
-                icon: Icons.history_outlined,
-                label: 'Supersedes',
-                value: request.supersedesRequestNumber!,
-                onTap: onLegacyTicketTap,
+          if (request.customerChoice != null)
+            _StaffDetailRow(
+              icon: request.customerChoice == CustomerChoice.refund
+                  ? Icons.currency_rupee
+                  : Icons.autorenew,
+              label: 'Customer choice',
+              value: request.customerChoiceAtUtc == null
+                  ? request.customerChoice!.label
+                  : '${request.customerChoice!.label} · '
+                        '${formatRefundReplacementDateTime(request.customerChoiceAtUtc!)}',
+            )
+          else if (request.status.isAwaitingChoice)
+            const _StaffDetailNotice(
+              icon: Icons.hourglass_top,
+              text:
+                  'Waiting for the customer to choose Refund or Re-Delivery.',
+            ),
+          if (request.status == RefundReplacementStatus.failed)
+            const _StaffDetailNotice(
+              icon: Icons.cancel_outlined,
+              text:
+                  'The replacement delivery failed, so this ticket was closed '
+                  'without delivery. The refund-only remedy was resolved instead. '
+                  'No further re-delivery is available for this failure.',
+              tone: _StaffNoticeTone.error,
+            ),
+          if (request.status == RefundReplacementStatus.cancelled)
+            const _StaffDetailNotice(
+              icon: Icons.cancel_outlined,
+              text:
+                  'The subscription was cancelled while the replacement was '
+                  'still pending, so the replacement was voided and the frozen '
+                  'entitlement refund was resolved instead. This is not a '
+                  'replacement failure.',
+              tone: _StaffNoticeTone.error,
+            ),
+          // Legacy remediation: the unsupported one-time Replacement was
+          // replaced by a supported Refund request. Shown as terminal but
+          // never as Completed, Failed, Rejected, or Refunded — and never as
+          // money already moved. The replacement number is text only (the
+          // detail API exposes no linked public id, so no deep link).
+          if (request.isSuperseded) ...[
+            const _StaffDetailNotice(
+              icon: Icons.swap_horiz_outlined,
+              text:
+                  'This replacement request is not supported for one-time '
+                  'orders, so it was superseded by a Refund request for the '
+                  'same delivery. Refund is the supported remedy. Superseding '
+                  'issued no refund and credited nothing — the linked Refund '
+                  'ticket follows the normal approval and wallet-settlement '
+                  'workflow.',
+            ),
+            if (request.supersededByRequestNumber != null)
+              _StaffDetailRow(
+                icon: Icons.currency_rupee_outlined,
+                label: 'Refund request',
+                value: request.supersededByRequestNumber!,
               ),
-      _StaffLinkedRow(
-        icon: Icons.local_shipping_outlined,
-        label: 'Delivery',
-        value: request.deliveryNumber ?? request.deliveryId,
-        onTap: onDeliveryTap,
+          ],
+          // The Refund half of a remediation pair. Navigation to the legacy
+          // ticket is offered only because the API returns its public id.
+          if (request.isRemediationRefund &&
+              request.supersedesRequestNumber != null)
+            _StaffDetailRow(
+              icon: Icons.history_outlined,
+              label: 'Supersedes',
+              value: request.supersedesRequestNumber!,
+              onTap: onLegacyTicketTap,
+            ),
+          _StaffDetailRow(
+            icon: Icons.local_shipping_outlined,
+            label: 'Delivery',
+            value: request.deliveryNumber ?? request.deliveryId,
+            onTap: onDeliveryTap,
+          ),
+          if (request.milkTestPublicId != null)
+            _StaffDetailRow(
+              icon: Icons.science_outlined,
+              label: 'Milk test',
+              value: request.milkTestPublicId!,
+              onTap: onMilkTestTap,
+            ),
+        ],
       ),
-      if (request.milkTestPublicId != null)
-        _StaffLinkedRow(
-          icon: Icons.science_outlined,
-          label: 'Milk test',
-          value: request.milkTestPublicId!,
-          onTap: onMilkTestTap,
-        ),
-      const SizedBox(height: 16),
-      _Remarks(label: 'Reason', text: request.reason),
-      if (request.remarks?.isNotEmpty ?? false)
-        _Remarks(label: 'Customer remarks', text: request.remarks!),
-      if (request.proofImageRequired) ...[
-        const SizedBox(height: 8),
-        const _Notice(
-          icon: Icons.photo_outlined,
-          text: 'A proof image is required for this request.',
-        ),
-      ],
-      if (request.decidedAtUtc != null) ...[
-        const SizedBox(height: 8),
-        _InfoRow(
-          icon: request.status == RefundReplacementStatus.rejected
-              ? Icons.thumb_down_outlined
-              : Icons.thumb_up_outlined,
-          label: request.status == RefundReplacementStatus.rejected
-              ? 'Rejected'
-              : 'Approved',
-          value:
-              '${request.decidedByName ?? 'Support'} · '
-              '${formatRefundReplacementDateTime(request.decidedAtUtc!)}',
-        ),
-      ],
-      if (request.decisionRemarks?.isNotEmpty ?? false)
-        _Remarks(label: 'Decision remarks', text: request.decisionRemarks!),
+      const SizedBox(height: 12),
+      _StaffDetailCard(
+        icon: Icons.fact_check_outlined,
+        title: 'Resolution',
+        children: [
+          _Remarks(label: 'Reason', text: request.reason),
+          if (request.remarks?.isNotEmpty ?? false)
+            _Remarks(label: 'Customer remarks', text: request.remarks!),
+          if (request.proofImageRequired)
+            const _StaffDetailNotice(
+              icon: Icons.photo_outlined,
+              text: 'A proof image is required for this request.',
+              tone: _StaffNoticeTone.warn,
+            ),
+          if (request.decidedAtUtc != null)
+            _StaffDetailRow(
+              icon: request.status == RefundReplacementStatus.rejected
+                  ? Icons.thumb_down_outlined
+                  : Icons.thumb_up_outlined,
+              label: request.status == RefundReplacementStatus.rejected
+                  ? 'Rejected'
+                  : 'Approved',
+              value:
+                  '${request.decidedByName ?? 'Support'} · '
+                  '${formatRefundReplacementDateTime(request.decidedAtUtc!)}',
+            ),
+          if (request.decisionRemarks?.isNotEmpty ?? false)
+            _Remarks(label: 'Decision remarks', text: request.decisionRemarks!),
       // Stage 2: the persisted support deduction decision for order-backed
       // Refund tickets. Rendered only from authoritative API fields — the
       // UI never infers a deduction from the delivery state.
       if ((request.isOrderRefundTicket ||
                   request.isSubscriptionDeliveryFailRefund) &&
           request.appliedDeductionPercentage != null)
-        _InfoRow(
+        _StaffDetailRow(
           icon: request.deductionWaived
               ? Icons.money_off_outlined
               : Icons.percent_outlined,
@@ -2191,53 +2574,140 @@ class _StaffRequestDetailBody extends StatelessWidget {
                     '${request.deductionWaiverReason?.isNotEmpty ?? false ? ' · ${request.deductionWaiverReason}' : ''}'
               : '${request.appliedDeductionPercentage!.toStringAsFixed(2)}% applied',
         ),
-      if (request.replacementDate != null)
-        _InfoRow(
-          icon: Icons.event_repeat_outlined,
-          label: 'Replacement date',
-          value: formatRefundReplacementDate(request.replacementDate!),
-        ),
-      if (request.completedAtUtc != null) ...[
-        _InfoRow(
-          icon:
-              request.status == RefundReplacementStatus.failed ||
-              request.status == RefundReplacementStatus.cancelled
-              ? Icons.cancel_outlined
-              : Icons.task_alt,
-          label:
-              request.status == RefundReplacementStatus.failed ||
-              request.status == RefundReplacementStatus.cancelled
-              ? 'Closed'
-              : 'Completed',
-          value:
-              '${request.completedByName ?? 'Support'} · '
-              '${formatRefundReplacementDateTime(request.completedAtUtc!)}',
-        ),
-        if (request.completionRemarks?.isNotEmpty ?? false)
-          _Remarks(
-            label: 'Completion remarks',
-            text: request.completionRemarks!,
-          ),
-      ],
+          if (request.replacementDate != null)
+            _StaffDetailRow(
+              icon: Icons.event_repeat_outlined,
+              label: 'Replacement date',
+              value: formatRefundReplacementDate(request.replacementDate!),
+            ),
+      // Same-day re-delivery SLA: the server-computed deadline (exactly
+      // customerChoiceAt + 1 hour, India-local wall clock). Display only —
+      // approval and completion enforcement live in the backend; the UI
+      // never extends it. Past the deadline an undelivered replacement
+      // stays actionable through the existing replacement-failure flow
+      // (fail the replacement delivery for the refund-only remedy).
+          if (request.effectiveRedeliveryDeadline != null)
+            _StaffDetailRow(
+              icon: Icons.timer_outlined,
+              label: 'Re-delivery by',
+              value: formatRefundReplacementDateTime(
+                request.effectiveRedeliveryDeadline!,
+              ),
+            ),
+          if (request.isRedeliveryOverdueAt(DateTime.now()))
+            const _StaffDetailNotice(
+              icon: Icons.warning_amber_outlined,
+              text:
+                  'The one-hour same-day window has passed. Deliver immediately, '
+                  'or fail the replacement delivery so the refund-only remedy '
+                  'can be resolved instead.',
+              tone: _StaffNoticeTone.warn,
+            ),
+          if (request.completedAtUtc != null) ...[
+            _StaffDetailRow(
+              icon:
+                  request.status == RefundReplacementStatus.failed ||
+                  request.status == RefundReplacementStatus.cancelled
+                  ? Icons.cancel_outlined
+                  : Icons.task_alt,
+              label:
+                  request.status == RefundReplacementStatus.failed ||
+                  request.status == RefundReplacementStatus.cancelled
+                  ? 'Closed'
+                  : 'Completed',
+              value:
+                  '${request.completedByName ?? 'Support'} · '
+                  '${formatRefundReplacementDateTime(request.completedAtUtc!)}',
+            ),
+            if (request.completionRemarks?.isNotEmpty ?? false)
+              _Remarks(
+                label: 'Completion remarks',
+                text: request.completionRemarks!,
+              ),
+          ],
+        ],
+      ),
       if (request.images.isNotEmpty) ...[
-        const SizedBox(height: 20),
-        Text('Proof images', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        _AuthenticatedImages(
-          requestId: request.requestId,
-          images: request.images,
+        const SizedBox(height: 12),
+        _StaffDetailCard(
+          icon: Icons.photo_library_outlined,
+          title: 'Proof images',
+          children: [
+            _AuthenticatedImages(
+              requestId: request.requestId,
+              images: request.images,
+            ),
+          ],
         ),
       ],
     ],
   );
 }
 
-class _StaffLinkedRow extends StatelessWidget {
-  const _StaffLinkedRow({
+/// Grouped section card for the staff request-detail page: an icon + title
+/// header followed by the section rows. All row/notice strings stay
+/// identical to the previous flat layout — only the grouping is new.
+class _StaffDetailCard extends StatelessWidget {
+  const _StaffDetailCard({
+    required this.icon,
+    required this.title,
+    required this.children,
+  });
+
+  final IconData icon;
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: const BoxDecoration(
+                    color: DoodhColors.mint,
+                    borderRadius: DoodhRadii.sm,
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 16,
+                    color: DoodhColors.tealDark,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(title, style: theme.textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 12),
+            for (var i = 0; i < children.length; i++) ...[
+              if (i > 0) const SizedBox(height: 12),
+              children[i],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Detail row for the staff request-detail cards: mint icon tile, muted
+/// label over the value, and a chevron when the row navigates somewhere.
+/// Plain (non-tappable) rows render without ink or a trailing icon.
+class _StaffDetailRow extends StatelessWidget {
+  const _StaffDetailRow({
     required this.icon,
     required this.label,
     required this.value,
-    required this.onTap,
+    this.onTap,
   });
 
   final IconData icon;
@@ -2246,29 +2716,202 @@ class _StaffLinkedRow extends StatelessWidget {
   final VoidCallback? onTap;
 
   @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: onTap,
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: DoodhColors.muted),
+  Widget build(BuildContext context) {
+    final content = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: const BoxDecoration(
+            color: DoodhColors.mint,
+            borderRadius: DoodhRadii.sm,
+          ),
+          child: Icon(
+            icon,
+            size: 18,
+            color: onTap == null ? DoodhColors.muted : DoodhColors.tealDark,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: DoodhColors.muted,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(value),
+            ],
+          ),
+        ),
+        if (onTap != null) ...[
           const SizedBox(width: 8),
-          SizedBox(
-            width: 110,
-            child: Text(
-              label,
-              style: const TextStyle(color: DoodhColors.muted),
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Icon(
+              Icons.chevron_right,
+              size: 18,
+              color: DoodhColors.muted,
             ),
           ),
-          Expanded(child: Text(value)),
+        ],
+      ],
+    );
+    if (onTap == null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: content,
+      );
+    }
+    return InkWell(
+      onTap: onTap,
+      borderRadius: DoodhRadii.sm,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: content,
+      ),
+    );
+  }
+}
+
+enum _StaffNoticeTone { info, warn, error }
+
+/// Tinted notice banner for the staff request-detail cards. The text is
+/// unchanged — only the presentation groups it with its section.
+class _StaffDetailNotice extends StatelessWidget {
+  const _StaffDetailNotice({
+    required this.icon,
+    required this.text,
+    this.tone = _StaffNoticeTone.info,
+  });
+
+  final IconData icon;
+  final String text;
+  final _StaffNoticeTone tone;
+
+  Color get _color => switch (tone) {
+    _StaffNoticeTone.info => Colors.blue,
+    _StaffNoticeTone.warn => Colors.orange.shade800,
+    _StaffNoticeTone.error => Colors.red,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _color;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: color),
           const SizedBox(width: 8),
-          Icon(
-            Icons.open_in_new,
-            size: 16,
-            color: onTap == null
-                ? DoodhColors.muted.withValues(alpha: 0.4)
-                : DoodhColors.muted,
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Staff request-detail hero: teal gradient carrying the ticket number,
+/// type/source line, and a frosted status pill. Compact single-row layout
+/// so the linked records below stay where the old header left them.
+class _StaffRequestHero extends StatelessWidget {
+  const _StaffRequestHero({required this.request});
+
+  final RefundReplacementRequest request;
+
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+    borderRadius: BorderRadius.circular(20),
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [DoodhColors.tealDark, DoodhColors.teal],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.16),
+              borderRadius: DoodhRadii.sm,
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.35),
+              ),
+            ),
+            child: const Icon(
+              Icons.receipt_long_outlined,
+              color: Colors.white,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  request.requestNumber,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${request.type.label} · ${request.source.label}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 6,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.16),
+              borderRadius: DoodhRadii.pillRadius,
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.35),
+              ),
+            ),
+            child: Text(
+              request.status.label,
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
       ),
@@ -2286,6 +2929,7 @@ class _StaffDecisionActions extends StatelessWidget {
     required this.errorMessage,
     required this.onDecide,
     this.onRemediate,
+    this.onConvert,
     this.employeeOriginBlocked = false,
   });
 
@@ -2293,6 +2937,15 @@ class _StaffDecisionActions extends StatelessWidget {
   final bool isSaving;
   final String? errorMessage;
   final Future<void> Function(String decision, String? remarks) onDecide;
+
+  /// Expired re-delivery to refund conversion. Non-null only when the
+  /// viewer may manage branch requests; the widget shows it only for
+  /// expired re-delivery tickets and the backend revalidates expiry,
+  /// scope, and explicit customer confirmation.
+  final Future<void> Function({
+    required bool customerConfirmed,
+    String? remarks,
+  })? onConvert;
 
   /// Legacy remediation entry point. Non-null only when the loaded ticket
   /// is remediation-eligible from authoritative API fields (order-backed,
@@ -2315,6 +2968,13 @@ class _StaffDecisionActions extends StatelessWidget {
     // no choice yet offer no actions — and a failed replacement is never
     // offered another re-delivery.
     final canDecide = request.isStaffDecidable && !employeeOriginBlocked;
+    // Expired re-delivery: approval is permanently disabled from here on
+    // (the backend fails it closed) and the actionable path is Convert to
+    // refund. Converted tickets (choice now Refund) flow through the
+    // normal refund approval below instead.
+    final redeliveryExpired = request.isRedeliveryExpiredAt(DateTime.now());
+    final showConvert =
+        canDecide && redeliveryExpired && request.isRedeliveryApproval;
     final isApproved = request.status == RefundReplacementStatus.approved;
     // Audit remediation B: a failed replacement is refund-only — rejecting
     // it would strand the original ticket, and the backend refuses the
@@ -2359,6 +3019,46 @@ class _StaffDecisionActions extends StatelessWidget {
                       'Only the refund remedy is available for this failed '
                       'replacement. Reject is disabled — approve the refund '
                       'to resolve it.',
+                ),
+                const SizedBox(height: 12),
+              ],
+              // Expired re-delivery conversion: explicit customer consent
+              // plus optional remarks, confirmed in a dialog. Single flight
+              // via isSaving; cancel dismisses without any call. Moves no
+              // money — the ticket re-enters normal refund approval.
+              if (showConvert && onConvert != null) ...[
+                const _Notice(
+                  icon: Icons.timer_off_outlined,
+                  text:
+                      'The one-hour re-delivery window has expired, so '
+                      're-delivery approval is disabled. Convert to a refund '
+                      'once the customer has asked for or agreed to it — '
+                      'the refund then follows the normal approval and '
+                      'wallet settlement. No money moves on conversion.',
+                ),
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          final result = await _promptConvertToRefund(
+                            context,
+                            request: request,
+                          );
+                          if (result == null || !context.mounted) return;
+                          await onConvert!(
+                            customerConfirmed: result.customerConfirmed,
+                            remarks: result.remarks,
+                          );
+                        },
+                  icon: isSaving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.swap_horiz_outlined),
+                  label: const Text('Convert to refund'),
                 ),
                 const SizedBox(height: 12),
               ],
@@ -2443,7 +3143,11 @@ class _StaffDecisionActions extends StatelessWidget {
                     if (!isRefundOnly) const SizedBox(width: 12),
                     Expanded(
                       child: FilledButton.icon(
-                        onPressed: isSaving
+                        // Expired re-delivery approval stays visibly
+                        // disabled; Convert to refund above is the action.
+                        onPressed: (isSaving ||
+                                (request.isRedeliveryApproval &&
+                                    redeliveryExpired))
                             ? null
                             : () async {
                                 // The re-delivery dialog submits the approval
@@ -2474,6 +3178,11 @@ class _StaffDecisionActions extends StatelessWidget {
                                     ),
                                   );
                                 } else if (request.isRedeliveryApproval) {
+                                  // Permanently disabled once expired: the
+                                  // Convert action above is the only path.
+                                  // This guard mirrors the backend fail-closed
+                                  // approval; it never invents a new date.
+                                  if (redeliveryExpired) return;
                                   final result =
                                       await _promptRedeliveryApproval(
                                         context,
@@ -3307,6 +4016,107 @@ class _RedeliveryApprovalResult {
   final DateTime replacementDate;
 }
 
+/// Result of the expired re-delivery conversion dialog: explicit customer
+/// confirmation plus optional staff remarks. Null means staff cancelled.
+class _ConvertToRefundResult {
+  const _ConvertToRefundResult({
+    required this.customerConfirmed,
+    this.remarks,
+  });
+
+  final bool customerConfirmed;
+  final String? remarks;
+}
+
+/// Opens the expired re-delivery conversion dialog: explains that
+/// re-delivery is permanently unavailable, requires staff to confirm the
+/// customer asked for or agreed to the refund (checkbox), and collects an
+/// optional remark. The Convert action stays disabled until the checkbox is
+/// set; the backend revalidates consent, expiry, and scope. Conversion moves
+/// no money — the ticket re-enters normal refund approval.
+Future<_ConvertToRefundResult?> _promptConvertToRefund(
+  BuildContext context, {
+  required RefundReplacementRequest request,
+}) => showDialog<_ConvertToRefundResult>(
+  context: context,
+  barrierDismissible: false,
+  builder: (dialogContext) => _ConvertToRefundDialog(request: request),
+);
+
+class _ConvertToRefundDialog extends StatefulWidget {
+  const _ConvertToRefundDialog({required this.request});
+
+  final RefundReplacementRequest request;
+
+  @override
+  State<_ConvertToRefundDialog> createState() => _ConvertToRefundDialogState();
+}
+
+class _ConvertToRefundDialogState extends State<_ConvertToRefundDialog> {
+  bool _confirmed = false;
+  final _remarksController = TextEditingController();
+
+  @override
+  void dispose() {
+    _remarksController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Convert to refund?'),
+    content: SingleChildScrollView(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'The one-hour re-delivery window for ${widget.request.requestNumber} '
+            'has expired. Re-delivery can no longer be approved for this ticket.',
+          ),
+          const SizedBox(height: 12),
+          CheckboxListTile(
+            value: _confirmed,
+            onChanged: (value) =>
+                setState(() => _confirmed = value ?? false),
+            title: const Text(
+              'The customer asked for or agreed to a refund',
+            ),
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
+          ),
+          TextField(
+            controller: _remarksController,
+            decoration: const InputDecoration(
+              labelText: 'Remarks (optional)',
+            ),
+            maxLines: 2,
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: _confirmed
+            ? () => Navigator.of(context).pop(
+                  _ConvertToRefundResult(
+                    customerConfirmed: true,
+                    remarks: _remarksController.text.trim().isEmpty
+                        ? null
+                        : _remarksController.text.trim(),
+                  ),
+                )
+            : null,
+        child: const Text('Convert to refund'),
+      ),
+    ],
+  );
+}
+
 /// Opens the re-delivery approval dialog for an eligible ticket: loads the
 /// server-proposed replacement date (with loading/error/retry), lets staff
 /// confirm it or pick another day, and returns the confirmed date. The
@@ -3402,17 +4212,18 @@ class _RedeliveryApprovalDialogState
   }
 
   Future<void> _pickDate() async {
-    final today = _dateOnly(indiaNow());
-    // Never constrain below a loaded proposal: a stale proposal stays
-    // selectable and the backend re-validates authoritatively on approval.
-    final earliest = _proposed != null && _proposed!.isBefore(today)
-        ? _dateOnly(_proposed!)
-        : today;
+    // Same-day re-delivery policy: the backend only accepts the proposed
+    // original delivery date inside the one-hour window, so the picker is
+    // constrained to that single day. The backend stays authoritative and
+    // re-validates on approval (a stale window still fails closed there).
+    final day = _dateOnly(
+      _proposed ?? _selected ?? indiaNow(),
+    );
     final picked = await showDatePicker(
       context: context,
-      initialDate: _selected ?? _proposed ?? today,
-      firstDate: earliest,
-      lastDate: today.add(const Duration(days: 366)),
+      initialDate: _dateOnly(_selected ?? _proposed ?? indiaNow()),
+      firstDate: day,
+      lastDate: day,
     );
     if (picked != null && mounted) {
       setState(
@@ -3511,8 +4322,9 @@ class _RedeliveryApprovalDialogState
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'The backend validates the weekday, cutoff, branch, and '
-                  'conflicts. Confirm this date or choose another day.',
+                  'Re-delivery is provided on the original delivery date, '
+                  'within one hour of the customer\'s request. The backend '
+                  'validates the date, branch, and window on approval.',
                   style: TextStyle(color: DoodhColors.muted, fontSize: 12),
                 ),
                 const SizedBox(height: 8),

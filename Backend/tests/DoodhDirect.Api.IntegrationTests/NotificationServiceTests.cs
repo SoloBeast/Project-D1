@@ -276,6 +276,45 @@ public sealed class NotificationServiceTests
     }
 
     [Fact]
+    public async Task Inbox_hides_login_success_notifications_but_keeps_actionable_ones()
+    {
+        await using var harness = await NotificationHarness.CreateAsync();
+        await harness.AddTemplatesAsync(
+            NotificationEventTypes.OrderCreated,
+            "Order created",
+            "Your order was created.",
+            NotificationChannel.Email);
+        await harness.AddTemplatesAsync(
+            NotificationEventTypes.AuthenticationSucceeded,
+            "Authentication Succeeded",
+            "You signed in successfully.",
+            NotificationChannel.Email);
+        await harness.AddEventAsync(
+            harness.Customer.Id,
+            NotificationEventTypes.OrderCreated,
+            "order:visible:created",
+            deepLink: "/orders/visible");
+        await harness.AddEventAsync(
+            harness.Customer.Id,
+            NotificationEventTypes.AuthenticationSucceeded,
+            "authentication:stored:session:succeeded",
+            new Dictionary<string, string> { ["message"] = "You signed in successfully." },
+            "/");
+        await harness.Processor.ProcessPendingEventsAsync(default);
+
+        // Both rows are materialized (the login row simulates history stored
+        // before emission stopped), but the inbox hides the login noise.
+        Assert.Equal(2, await harness.Db.Notifications.CountAsync());
+
+        var actor = new NotificationActor(harness.Customer.Id);
+        var page = await harness.Service.GetAsync(actor, new NotificationListRequest(), default);
+        var rendered = Assert.Single(page.Items);
+        Assert.Equal(NotificationEventTypes.OrderCreated, rendered.EventType);
+        Assert.Equal(1, page.TotalCount);
+        Assert.Equal(1, (await harness.Service.GetUnreadCountAsync(actor, default)).UnreadCount);
+    }
+
+    [Fact]
     public async Task Template_updates_are_audited_and_invalid_events_fail_without_notifications()
     {
         await using var harness = await NotificationHarness.CreateAsync();

@@ -189,6 +189,24 @@ public sealed class CustomerRefundReplacementListController(
         Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
             await refundReplacementService.ChooseAsync(
                 RequireRefundReplacementActor(), requestId, request, cancellationToken)));
+
+    /// <summary>
+    /// Idempotent expiry notice for an expired re-delivery choice. The first
+    /// call records the single customer notification explaining that
+    /// re-delivery is no longer available and a refund change is possible;
+    /// retries return the current state without duplicating it. Moves no
+    /// money and changes no ticket state. The customer changes to Refund
+    /// through the existing choose route above.
+    /// </summary>
+    [HttpPost("{requestId:guid}/notify-redelivery-expired")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementRequestOwn)]
+    [ProducesResponseType(typeof(ApiResponse<RefundReplacementRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<RefundReplacementRequestResult>>> NotifyRedeliveryExpired(
+        Guid requestId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
+            await refundReplacementService.NotifyRedeliveryExpiredAsync(
+                RequireRefundReplacementActor(), requestId, cancellationToken)));
 }
 
 /// <summary>
@@ -229,6 +247,38 @@ public sealed class RefundReplacementController(
         CancellationToken cancellationToken) =>
         Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
             await refundReplacementService.GetForStaffAsync(
+                RequireRefundReplacementActor(), requestId, cancellationToken)));
+
+    /// <summary>
+    /// Staff conversion of an expired re-delivery choice to Refund. Requires
+    /// branch scope and explicit customer confirmation
+    /// (<c>customerConfirmed: true</c> — consent is never inferred).
+    /// Idempotent: retrying a converted ticket returns its state. Moves no
+    /// money; the ticket re-enters the normal refund approval workflow.
+    /// </summary>
+    [HttpPost("{requestId:guid}/convert-to-refund")]
+    [Authorize(Policy = "permission:" + AuthorizationCodes.RefundReplacementManageBranch)]
+    [ProducesResponseType(typeof(ApiResponse<RefundReplacementRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<RefundReplacementRequestResult>>> ConvertToRefund(
+        Guid requestId,
+        [FromBody] ConvertExpiredRedeliveryRequest request,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
+            await refundReplacementService.ConvertExpiredRedeliveryToRefundAsync(
+                RequireRefundReplacementActor(), requestId, request, cancellationToken)));
+
+    /// <summary>
+    /// Staff-triggered idempotent expiry notice for an expired re-delivery
+    /// ticket. Records the single customer notification when absent.
+    /// </summary>
+    [HttpPost("{requestId:guid}/notify-redelivery-expired")]
+    [Authorize(Policy = AuthorizationPolicyNames.AnyRefundReplacementRequestView)]
+    [ProducesResponseType(typeof(ApiResponse<RefundReplacementRequestResult>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<ApiResponse<RefundReplacementRequestResult>>> NotifyRedeliveryExpired(
+        Guid requestId,
+        CancellationToken cancellationToken) =>
+        Ok(ApiResponse<RefundReplacementRequestResult>.Ok(
+            await refundReplacementService.NotifyRedeliveryExpiredAsync(
                 RequireRefundReplacementActor(), requestId, cancellationToken)));
 
     [HttpPost("{requestId:guid}/approve")]

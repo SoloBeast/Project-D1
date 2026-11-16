@@ -582,44 +582,25 @@ void main() {
     );
   });
 
-  group('branch detail screen', () {
-    testWidgets('shows loading state while fetching by id', (tester) async {
-      await _pumpConfig(
-        tester,
-        const BranchDetailScreen(branchId: 'b-missing'),
-        _SeededBranchController(const BranchState(isLoading: true)),
-        routePath: '/admin/branches/:id',
-        initialPath: '/admin/branches/b-missing',
-        settle: false,
-      );
-
-      expect(find.bySemanticsLabel('Loading branch...'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    });
-
-    testWidgets('renders branch details with system-allocated number', (
-      tester,
-    ) async {
+  group('branch list navigation', () {
+    testWidgets('tapping a card opens the edit page', (tester) async {
       final branch = _branch();
       await _pumpConfig(
         tester,
-        BranchDetailScreen(branchId: 'b-main', branch: branch),
+        const BranchListScreen(),
         _SeededBranchController(BranchState(branches: [branch])),
-        routePath: '/admin/branches/:id',
-        initialPath: '/admin/branches/b-main',
       );
 
-      expect(find.text('Branch details'), findsOneWidget);
-      expect(find.text('Main Branch'), findsOneWidget);
-      expect(find.text('Code MAIN'), findsOneWidget);
-      expect(
-        find.text('12 Main Road, Andheri, Mumbai, MH, 400001'),
-        findsOneWidget,
-      );
-      expect(find.byTooltip('Edit branch'), findsOneWidget);
-      expect(find.text('Deactivate branch'), findsOneWidget);
+      await tester.tap(find.text('Main Branch'));
+      await tester.pumpAndSettle();
+
+      // The edit route renders (placeholder harness) and the list is gone.
+      expect(find.text('Placeholder'), findsOneWidget);
+      expect(find.text('Main Branch'), findsNothing);
     });
+  });
 
+  group('branch edit management actions', () {
     testWidgets('deactivates a branch after confirmation', (tester) async {
       final branch = _branch();
       final controller = _SeededBranchController(
@@ -627,12 +608,14 @@ void main() {
       );
       await _pumpConfig(
         tester,
-        BranchDetailScreen(branchId: 'b-main', branch: branch),
+        BranchFormScreen(branch: branch),
         controller,
-        routePath: '/admin/branches/:id',
-        initialPath: '/admin/branches/b-main',
+        routePath: '/admin/branches/:id/edit',
+        initialPath: '/admin/branches/b-main/edit',
       );
 
+      await tester.ensureVisible(find.text('Deactivate branch'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Deactivate branch'));
       await tester.pumpAndSettle();
 
@@ -650,19 +633,22 @@ void main() {
     });
 
     testWidgets('activates a branch after confirmation', (tester) async {
-      final branch = _branch( isActive: false);
+      final branch = _branch(isActive: false);
       final controller = _SeededBranchController(
         BranchState(branches: [branch]),
       );
       await _pumpConfig(
         tester,
-        BranchDetailScreen(branchId: 'b-main', branch: branch),
+        BranchFormScreen(branch: branch),
         controller,
-        routePath: '/admin/branches/:id',
-        initialPath: '/admin/branches/b-main',
+        routePath: '/admin/branches/:id/edit',
+        initialPath: '/admin/branches/b-main/edit',
       );
 
+      await tester.ensureVisible(find.text('Activate branch'));
+      await tester.pumpAndSettle();
       expect(find.text('Activate branch'), findsOneWidget);
+      expect(find.text('Delete branch'), findsOneWidget);
 
       await tester.tap(find.text('Activate branch'));
       await tester.pumpAndSettle();
@@ -679,19 +665,42 @@ void main() {
       expect(find.text('Deactivate branch'), findsOneWidget);
     });
 
+    testWidgets('delete asks for confirmation on inactive branches', (
+      tester,
+    ) async {
+      final branch = _branch(isActive: false);
+      await _pumpConfig(
+        tester,
+        BranchFormScreen(branch: branch),
+        _SeededBranchController(BranchState(branches: [branch])),
+        routePath: '/admin/branches/:id/edit',
+        initialPath: '/admin/branches/b-main/edit',
+      );
+
+      await tester.ensureVisible(find.text('Delete branch'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete branch'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete branch?'), findsOneWidget);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete branch?'), findsNothing);
+    });
+
     testWidgets('hides manage actions without manage permission', (tester) async {
       final branch = _branch();
       await _pumpConfig(
         tester,
-        BranchDetailScreen(branchId: 'b-main', branch: branch),
+        BranchFormScreen(branch: branch),
         _SeededBranchController(BranchState(branches: [branch])),
         permissions: const [kBranchesReadPermission],
-        routePath: '/admin/branches/:id',
-        initialPath: '/admin/branches/b-main',
+        routePath: '/admin/branches/:id/edit',
+        initialPath: '/admin/branches/b-main/edit',
       );
 
-      expect(find.text('Main Branch'), findsOneWidget);
-      expect(find.byTooltip('Edit branch'), findsNothing);
+      expect(find.text('Access denied'), findsOneWidget);
       expect(find.text('Deactivate branch'), findsNothing);
     });
   });
@@ -713,7 +722,9 @@ Future<void> _pumpConfig(
   String? initialPath,
   bool settle = true,
 }) async {
-  await tester.binding.setSurfaceSize(const Size(900, 1400));
+  // The card-based form is taller than a phone viewport; give it room so
+  // bottom actions stay reachable (real devices scroll the ListView).
+  await tester.binding.setSurfaceSize(const Size(900, 2200));
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
   Widget placeholder(BuildContext context, GoRouterState state) =>

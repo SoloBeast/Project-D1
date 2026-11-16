@@ -900,6 +900,45 @@ public sealed class RefundReplacementService(
                 throw new BusinessRuleException("The ticket is not awaiting customer choice.");
             }
 
+            // Expired re-delivery to refund conversion (customer path): the
+            // only permitted choice change. The one-hour same-day window is
+            // authoritative here (not the choice Deadline); before it passes
+            // the recorded choice stays immutable.
+            if (entity.CustomerChoice == CustomerChoice.ReDelivery
+                && request.Choice == CustomerChoice.Refund
+                && IsFailedFlowChoice(entity))
+            {
+                var conversionNow = timeProvider.Now;
+                if (!entity.CustomerChoiceAt.HasValue
+                    || conversionNow <= entity.CustomerChoiceAt.Value.AddHours(1))
+                {
+                    throw new ConflictException(
+                        $"A different choice ({entity.CustomerChoice}) has already been recorded and cannot be changed.");
+                }
+
+                try
+                {
+                    Mutate(() => entity.ConvertExpiredRedeliveryToRefund(conversionNow));
+                }
+                catch (InvalidOperationException exception)
+                {
+                    throw new ConflictException(exception.Message);
+                }
+
+                await ConvertExpiredChoiceAsync(
+                    entity, actor.UserId, convertedByStaff: false, customerConfirmed: true, remarks: null, conversionNow, cancellationToken);
+                result = ToResult(
+                    entity,
+                    entity.Order,
+                    entity.Delivery,
+                    entity.Customer,
+                    entity.Branch,
+                    entity.MilkTest,
+                    entity.DecidedByUser,
+                    entity.CompletedByUser);
+                return;
+            }
+
             if (entity.CustomerChoice.HasValue)
             {
                 throw new ConflictException(
@@ -967,6 +1006,204 @@ public sealed class RefundReplacementService(
         return result!;
     }
 
+    /// <summary>
+    /// Staff conversion of an expired re-delivery choice to Refund. Enforces
+    /// branch scope, employee-origin decision authority, the expired window,
+    /// and explicit customer confirmation. Idempotent: an already-converted
+    /// (Refund-choice) ticket returns its current state without new side
+    /// effects. Moves no money; the ticket re-enters the existing refund
+    /// approval/settlement workflow.
+    /// </summary>
+    public async Task<RefundReplacementRequestResult> ConvertExpiredRedeliveryToRefundAsync(
+        RefundReplacementActor actor,
+        Guid requestId,
+        ConvertExpiredRedeliveryRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ValidateText(request.Remarks, "remarks", MaximumRemarksLength, required: false);
+        if (!request.CustomerConfirmed)
+        {
+            throw new ValidationAppException(
+                "Customer confirmation is required to convert an expired re-delivery to a refund. " +
+                "Confirm the customer asked for or agreed to the refund and retry.",
+                "customerConfirmed");
+        }
+
+        RefundReplacementRequestResult? result = null;
+        await ExecuteSerializableAsync(async () =>
+        {
+            dbContext.ChangeTracker.Clear();
+            var entity = await BaseQuery()
+                .SingleOrDefaultAsync(x => x.PublicId == requestId, cancellationToken)
+                ?? throw new NotFoundException("The refund/replacement request was not found.");
+            EnsureStaffAccess(actor, entity);
+            await EmployeeOriginGuard.RequireDecisionAuthorityAsync(
+                dbContext, entity.CustomerId, actor.UserId, "converted", cancellationToken);
+
+            // Idempotent retry: the conversion already won (by the customer
+            // or an earlier staff call) — return state, add nothing.
+            if (entity.CustomerChoice == CustomerChoice.Refund && entity.Type == RefundReplacementType.Refund)
+            {
+                result = ToResult(
+                    entity,
+                    entity.Order,
+                    entity.Delivery,
+                    entity.Customer,
+                    entity.Branch,
+                    entity.MilkTest,
+                    entity.DecidedByUser,
+                    entity.CompletedByUser);
+                return;
+            }
+
+            var now = timeProvider.Now;
+            try
+            {
+                Mutate(() => entity.ConvertExpiredRedeliveryToRefund(now));
+            }
+            catch (InvalidOperationException exception)
+            {
+                throw new ConflictException(exception.Message);
+            }
+
+            await ConvertExpiredChoiceAsync(
+                entity, actor.UserId, convertedByStaff: true, customerConfirmed: true, request.Remarks, now, cancellationToken);
+            result = ToResult(
+                entity,
+                entity.Order,
+                entity.Delivery,
+                entity.Customer,
+                entity.Branch,
+                entity.MilkTest,
+                entity.DecidedByUser,
+                entity.CompletedByUser);
+        }, cancellationToken);
+
+        return result!;
+    }
+
+    /// <summary>
+    /// Idempotent expiry notice for an expired re-delivery ticket. The first
+    /// call inserts the single deterministic customer notification (and an
+    /// audit trace); retries or concurrent calls return the current state
+    /// without duplicating it. Moves no money and changes no ticket state.
+    /// Either the owning customer or branch-scoped staff may trigger it.
+    /// </summary>
+    public async Task<RefundReplacementRequestResult> NotifyRedeliveryExpiredAsync(
+        RefundReplacementActor actor,
+        Guid requestId,
+        CancellationToken cancellationToken)
+    {
+        RefundReplacementRequestResult? result = null;
+        await ExecuteSerializableAsync(async () =>
+        {
+            dbContext.ChangeTracker.Clear();
+            var entity = await BaseQuery()
+                .SingleOrDefaultAsync(x => x.PublicId == requestId, cancellationToken)
+                ?? throw new NotFoundException("The refund/replacement request was not found.");
+            if (entity.CustomerId != actor.UserId)
+            {
+                EnsureStaffAccess(actor, entity);
+            }
+
+            var now = timeProvider.Now;
+            if (!IsRedeliveryExpired(entity, now))
+            {
+                throw new ConflictException(
+                    "The re-delivery window has not expired, so no expiry notice applies.");
+            }
+
+            await EnsureRedeliveryExpiryNoticedAsync(entity, now, cancellationToken);
+            await SaveChangesWithConcurrencyGuardAsync(cancellationToken);
+            result = ToResult(
+                entity,
+                entity.Order,
+                entity.Delivery,
+                entity.Customer,
+                entity.Branch,
+                entity.MilkTest,
+                entity.DecidedByUser,
+                entity.CompletedByUser);
+        }, cancellationToken);
+
+        return result!;
+    }
+
+    /// <summary>
+    /// Actor-free expiry notice for the background sweeper. Reuses the same
+    /// <see cref="EnsureRedeliveryExpiryNoticedAsync"/> notice/audit logic as
+    /// the on-demand path, so no notification-generation logic is duplicated.
+    /// Notice-only: never converts, approves, or moves money. Returns true
+    /// when the notice was newly created, false when the ticket already
+    /// carried it. Throws <c>NotFoundException</c> when missing and
+    /// <c>ConflictException</c> when not yet expired or otherwise ineligible.
+    /// A unique-key commit race (concurrent lazy notice or conversion)
+    /// resolves to the winner: already-noticed returns false instead of
+    /// failing.
+    /// </summary>
+    public async Task<bool> NotifyExpiredRedeliveryForSweepAsync(
+        Guid requestId,
+        CancellationToken cancellationToken)
+    {
+        var eventKey = $"refund-replacement:{requestId:N}:redelivery-expired";
+        var alreadyNoticed = await dbContext.NotificationEvents.AsNoTracking()
+            .AnyAsync(x => x.EventKey == eventKey, cancellationToken);
+        if (alreadyNoticed)
+        {
+            return false;
+        }
+
+        try
+        {
+            var isNew = false;
+            await ExecuteSerializableAsync(async () =>
+            {
+                dbContext.ChangeTracker.Clear();
+                var entity = await BaseQuery()
+                    .SingleOrDefaultAsync(x => x.PublicId == requestId, cancellationToken)
+                    ?? throw new NotFoundException("The refund/replacement request was not found.");
+
+                var now = timeProvider.Now;
+                if (!IsRedeliveryExpired(entity, now))
+                {
+                    throw new ConflictException(
+                        "The re-delivery window has not expired, so no expiry notice applies.");
+                }
+
+                var preCount = await dbContext.NotificationEvents.AsNoTracking()
+                    .CountAsync(x => x.EventKey == eventKey, cancellationToken);
+                await EnsureRedeliveryExpiryNoticedAsync(entity, now, cancellationToken);
+                await SaveChangesWithConcurrencyGuardAsync(cancellationToken);
+                var postCount = await dbContext.NotificationEvents.AsNoTracking()
+                    .CountAsync(x => x.EventKey == eventKey, cancellationToken);
+                isNew = postCount > preCount;
+            }, cancellationToken);
+
+            return isNew;
+        }
+        catch (DbUpdateException)
+        {
+            dbContext.ChangeTracker.Clear();
+            var winner = await dbContext.NotificationEvents.AsNoTracking()
+                .AnyAsync(x => x.EventKey == eventKey, cancellationToken);
+            if (winner)
+            {
+                return false;
+            }
+
+            var current = await dbContext.RefundReplacementRequests.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.PublicId == requestId, cancellationToken);
+            if (current is not null
+                && current.Status != RefundReplacementStatus.AwaitingCustomerChoice)
+            {
+                return false;
+            }
+
+            throw;
+        }
+    }
+
     public Task<RefundReplacementRequestResult> ApproveAsync(
         RefundReplacementActor actor,
         Guid requestId,
@@ -994,8 +1231,22 @@ public sealed class RefundReplacementService(
 
         var subscription = await LoadSubscriptionForReplacementAsync(
             entity.SubscriptionDeliveryId!.Value, asNoTracking: true, cancellationToken);
-        var proposed = ProposeReplacementDate(
-            subscription, timeProvider.Now, await GetReplacementCutoffAsync(cancellationToken));
+        var now = timeProvider.Now;
+        var source = subscription.Deliveries.Single(x => x.Id == entity.SubscriptionDeliveryId.Value);
+        DateOnly proposed;
+        if (IsFailedFlowChoice(entity))
+        {
+            // Same-day re-delivery: the only eligible date is the original
+            // delivery date, inside the one-hour approval window. When the
+            // window has passed the proposal fails closed with an actionable
+            // support message instead of silently moving the date forward.
+            proposed = EnsureSameDayRedeliveryDate(entity, source, subscription, staffDate: null, now);
+        }
+        else
+        {
+            proposed = ProposeReplacementDate(
+                subscription, source.Id, now, await GetReplacementCutoffAsync(cancellationToken));
+        }
         return new ReplacementDateProposalResult(entity.PublicId, proposed);
     }
 
@@ -1151,6 +1402,20 @@ public sealed class RefundReplacementService(
             // amount is invented (reported gap remains a business decision).
             var firstFailureRefund = await ExecuteFirstFailureRefundAsync(
                 entity, actor.UserId, now, cancellationToken);
+
+            // Financial resolution consumes the day's entitlement: a failed or
+            // skipped occurrence whose refund just completed counts against
+            // the prepaid term, so a fully resolved term completes instead of
+            // lingering Active. Delivered occurrences were already counted at
+            // delivery time and are a no-op inside MarkRefundSettled.
+            if (firstFailureRefund is not null && IsEntitlementSettleable(entity.SubscriptionDelivery))
+            {
+                await SettleSubscriptionEntitlementAsync(entity.SubscriptionDelivery!, now, cancellationToken);
+            }
+            if (staffRefund is not null && IsEntitlementSettleable(entity.SubscriptionDelivery))
+            {
+                await SettleSubscriptionEntitlementAsync(entity.SubscriptionDelivery!, now, cancellationToken);
+            }
 
             object completeNewValue = (staffRefund, firstFailureRefund, orderRefund) switch
             {
@@ -1317,6 +1582,11 @@ public sealed class RefundReplacementService(
             }
 
             Mutate(() => entity.Complete(actor.UserId, now, request.Remarks));
+
+            if (entity.Type == RefundReplacementType.Refund && IsEntitlementSettleable(entity.SubscriptionDelivery))
+            {
+                await SettleSubscriptionEntitlementAsync(entity.SubscriptionDelivery!, now, cancellationToken);
+            }
 
             AddAudit(
                 actor.UserId,
@@ -1903,6 +2173,38 @@ public sealed class RefundReplacementService(
             final,
             subscription.PayableAmount,
             subscription.TotalEntitlement);
+    }
+
+    /// <summary>
+    /// Only a terminally resolved day settles entitlement: Failed/Skipped days
+    /// count on refund completion, Delivered days were already counted at
+    /// delivery time, and live or voided days are left alone (a later delivery
+    /// still consumes them, if ever). The domain method stays fail-closed and
+    /// is only invoked for settleable states.
+    /// </summary>
+    private static bool IsEntitlementSettleable(SubscriptionDelivery? occurrence) =>
+        occurrence is not null
+        && occurrence.Status is SubscriptionDeliveryStatus.Failed or SubscriptionDeliveryStatus.Skipped;
+
+    /// <summary>
+    /// Consumes one prepaid entitlement unit for the subscription day behind a
+    /// just-completed refund. The occurrence must belong to the subscription's
+    /// tracked deliveries; a delivered day is already counted (no-op), every
+    /// other resolved day counts exactly once toward term completion.
+    /// </summary>
+    private async Task SettleSubscriptionEntitlementAsync(
+        SubscriptionDelivery occurrence,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var subscription = await dbContext.Subscriptions
+            .Include(x => x.Deliveries)
+            .SingleOrDefaultAsync(x => x.Id == occurrence.SubscriptionId, cancellationToken)
+            ?? throw new ConflictException(
+                "The refund cannot be completed: the subscription for the refunded delivery is missing. " +
+                "Resolve it with staff support first.");
+        var target = subscription.Deliveries.Single(x => x.Id == occurrence.Id);
+        Mutate(() => subscription.MarkRefundSettled(target, now));
     }
 
     /// <summary>
@@ -2758,9 +3060,11 @@ public sealed class RefundReplacementService(
         }
 
         var cutoff = await GetReplacementCutoffAsync(cancellationToken);
-        var date = staffDate.HasValue
-            ? ValidateStaffReplacementDate(subscription, staffDate.Value, now, cutoff)
-            : ProposeReplacementDate(subscription, now, cutoff);
+        var date = isFailedChoice
+            ? EnsureSameDayRedeliveryDate(entity, source, subscription, staffDate, now)
+            : staffDate.HasValue
+                ? ValidateStaffReplacementDate(subscription, source.Id, staffDate.Value, now, cutoff)
+                : ProposeReplacementDate(subscription, source.Id, now, cutoff);
 
         SubscriptionDelivery? created = null;
         Mutate(() => created = subscription.AddReplacementDelivery(
@@ -2841,13 +3145,227 @@ public sealed class RefundReplacementService(
                 x => x.Deliveries.Any(d => d.Id == sourceDeliveryId),
                 cancellationToken)
             ?? throw new ConflictException("The failed delivery no longer belongs to a subscription.");
+    }    private static bool IsFailedFlowChoice(RefundReplacementRequest entity) =>
+        entity.Source == RefundReplacementSource.DeliveryFailed
+        && entity.SubscriptionDeliveryId.HasValue
+        && entity.CustomerChoice == CustomerChoice.ReDelivery;
+
+    /// <summary>
+    /// Same-day re-delivery SLA deadline: exactly
+    /// <c>CustomerChoiceAt + 1 hour</c> for a subscription delivery-fail
+    /// ticket with a recorded Re-Delivery choice, otherwise null.
+    /// <see cref="RefundReplacementRequest.CustomerChoiceAt"/> is stored as
+    /// an India-local wall clock (Unspecified kind, enforced by the domain
+    /// guard), so <c>AddHours(1)</c> preserves that basis with no zone
+    /// conversion — the same basis <c>IIndiaTimeProvider.Now</c> uses at
+    /// approval and completion, keeping the comparison exact.
+    /// </summary>
+    private static DateTime? GetRedeliveryDeadline(RefundReplacementRequest entity) =>
+        IsFailedFlowChoice(entity) && entity.CustomerChoiceAt.HasValue
+            ? entity.CustomerChoiceAt.Value.AddHours(1)
+            : null;
+
+    /// <summary>
+    /// True when a subscription delivery-fail ticket holds a recorded
+    /// Re-Delivery choice whose one-hour window has passed while the ticket
+    /// still awaits staff action. Terminal tickets never count as expired:
+    /// they already carry their recorded outcome.
+    /// </summary>
+    private static bool IsRedeliveryExpired(RefundReplacementRequest entity, DateTime now) =>
+        entity.Status == RefundReplacementStatus.AwaitingCustomerChoice
+        && IsFailedFlowChoice(entity)
+        && entity.CustomerChoiceAt.HasValue
+        && now > entity.CustomerChoiceAt.Value.AddHours(1);
+
+    private static string RedeliveryExpiryEventKey(RefundReplacementRequest entity) =>
+        $"refund-replacement:{entity.PublicId:N}:redelivery-expired";
+
+    private static string RedeliveryConversionEventKey(RefundReplacementRequest entity) =>
+        $"refund-replacement:{entity.PublicId:N}:redelivery-converted";
+
+    /// <summary>
+    /// Inserts the single deterministic expiry customer notification when
+    /// absent (plus an audit trace). Must run inside the caller's
+    /// serializable transaction: the unique EventKey keeps concurrent
+    /// callers to exactly one row.
+    /// </summary>
+    private async Task EnsureRedeliveryExpiryNoticedAsync(
+        RefundReplacementRequest entity,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var eventKey = RedeliveryExpiryEventKey(entity);
+        if (await dbContext.NotificationEvents.AsNoTracking()
+            .AnyAsync(x => x.EventKey == eventKey, cancellationToken))
+        {
+            return;
+        }
+
+        var deadline = entity.CustomerChoiceAt!.Value.AddHours(1);
+        var deliveryNumber = entity.Delivery.DeliveryNumber ?? entity.Delivery.ReferenceNumber;
+        notificationEventWriter.Add(new NotificationEventRequest(
+            entity.CustomerId,
+            NotificationEventTypes.RedeliveryExpired,
+            eventKey,
+            new Dictionary<string, string>
+            {
+                ["requestId"] = entity.PublicId.ToString(),
+                ["requestNumber"] = entity.RequestNumber,
+                ["deliveryNumber"] = deliveryNumber,
+                ["redeliveryDeadline"] = deadline.ToString("yyyy-MM-dd HH:mm"),
+                ["message"] =
+                    $"Your one-hour re-delivery window for delivery {deliveryNumber} has expired " +
+                    $"(window ended {deadline:yyyy-MM-dd HH:mm}). Re-delivery is no longer available. " +
+                    $"You can change your choice to Refund in the app, or ask support to convert ticket " +
+                    $"{entity.RequestNumber} — the refund will then follow the normal approval process."
+            },
+            $"/refund-replacements/{entity.PublicId}",
+            now));
+
+        AddAudit(
+            entity.CustomerId,
+            "REFUND_REPLACEMENT.REDELIVERY_EXPIRED",
+            entity.PublicId,
+            new { entity.RequestNumber, Status = entity.Status.ToString(), CustomerChoice = entity.CustomerChoice.ToString() },
+            new
+            {
+                entity.RequestNumber,
+                Status = entity.Status.ToString(),
+                CustomerChoice = entity.CustomerChoice.ToString(),
+                RedeliveryDeadline = deadline,
+                ExpiredAt = now
+            },
+            $"The one-hour re-delivery window ended at {deadline:yyyy-MM-dd HH:mm}; re-delivery is no longer available.",
+            now);
     }
 
     /// <summary>
-    /// D1-D: deterministic proposal — the first date after the approval day
-    /// satisfying weekday schedule (when schedules exist), cutoff, active
-    /// branch, and no date conflict. May fall after <c>EndDate</c> (the term
-    /// itself is never extended). Bounded to one year, failing closed.
+    /// Shared expired-choice conversion. The caller has already flipped the
+    /// domain choice (customer path via <c>ChooseAsync</c>, staff path via
+    /// the service convert method); this records the expiry notice (if not
+    /// yet sent), the conversion audit with actor identity and confirmation
+    /// provenance, the customer conversion notification, and the staff
+    /// choice fan-out under the new Refund choice. Moves no money.
+    /// </summary>
+    private async Task ConvertExpiredChoiceAsync(
+        RefundReplacementRequest entity,
+        long actorUserId,
+        bool convertedByStaff,
+        bool customerConfirmed,
+        string? remarks,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        await EnsureRedeliveryExpiryNoticedAsync(entity, now, cancellationToken);
+
+        var deadline = entity.CustomerChoiceAt!.Value.AddHours(1);
+        AddAudit(
+            actorUserId,
+            "REFUND_REPLACEMENT.REDELIVERY_CONVERTED",
+            entity.PublicId,
+            new
+            {
+                entity.RequestNumber,
+                Status = entity.Status.ToString(),
+                CustomerChoice = CustomerChoice.ReDelivery.ToString(),
+                RedeliveryDeadline = deadline
+            },
+            new
+            {
+                entity.RequestNumber,
+                Status = entity.Status.ToString(),
+                CustomerChoice = entity.CustomerChoice.ToString(),
+                ConvertedAt = now,
+                ConvertedByStaff = convertedByStaff,
+                CustomerConfirmed = customerConfirmed,
+                Remarks = remarks
+            },
+            convertedByStaff
+                ? $"Support converted the expired re-delivery choice to a refund with customer confirmation."
+                : "Customer changed the expired re-delivery choice to a refund.",
+            now);
+
+        var deliveryNumber = entity.Delivery.DeliveryNumber ?? entity.Delivery.ReferenceNumber;
+        notificationEventWriter.Add(new NotificationEventRequest(
+            entity.CustomerId,
+            NotificationEventTypes.RedeliveryConvertedToRefund,
+            RedeliveryConversionEventKey(entity),
+            new Dictionary<string, string>
+            {
+                ["requestId"] = entity.PublicId.ToString(),
+                ["requestNumber"] = entity.RequestNumber,
+                ["deliveryNumber"] = deliveryNumber,
+                ["message"] =
+                    $"Your re-delivery request {entity.RequestNumber} was converted to a refund " +
+                    $"after the one-hour window expired. It now awaits the normal refund approval; " +
+                    $"the wallet will be credited only when the refund is completed."
+            },
+            $"/refund-replacements/{entity.PublicId}",
+            now));
+
+        await AddStaffChoiceEventsAsync(entity, CustomerChoice.Refund, now, cancellationToken);
+        await SaveChangesWithConcurrencyGuardAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Same-day re-delivery policy for a failed delivery: the remedy is
+    /// provided on the original delivery date and at most one hour after the
+    /// customer's re-delivery request. The failed source occurrence itself
+    /// never conflicts with its own replacement (the domain uniqueness guard
+    /// excludes it too). When the one-hour window cannot be met the date is
+    /// never silently moved forward and same-day service is never falsely
+    /// promised: approval fails closed with an actionable message so support
+    /// approves a refund or arranges a fresh delivery instead.
+    /// The one-hour SLA replaces the ordinary day-ahead cutoff here; branch
+    /// activity is still enforced. The source date is authoritative, so no
+    /// weekday check applies (the date was already a scheduled delivery).
+    /// </summary>
+    private static DateOnly EnsureSameDayRedeliveryDate(
+        RefundReplacementRequest entity,
+        SubscriptionDelivery source,
+        Subscription subscription,
+        DateOnly? staffDate,
+        DateTime now)
+    {
+        if (!subscription.Branch.IsActive)
+        {
+            throw new ConflictException(
+                "The branch is not active, so the re-delivery cannot be scheduled. Approve a refund for this ticket instead.");
+        }
+
+        if (!entity.CustomerChoiceAt.HasValue)
+        {
+            throw new ConflictException(
+                "The customer request time is missing, so the one-hour re-delivery window cannot be verified. Approve a refund for this ticket instead and contact support.");
+        }
+
+        var windowEnds = entity.CustomerChoiceAt.Value.AddHours(1);
+        if (now > windowEnds)
+        {
+            throw new ConflictException(
+                $"The one-hour same-day re-delivery window ended at {windowEnds:yyyy-MM-dd HH:mm}. " +
+                "The date cannot be moved forward automatically. Approve a refund for this ticket instead or contact the customer to arrange a fresh delivery.");
+        }
+
+        var date = source.ScheduledDate;
+        if (staffDate.HasValue && staffDate.Value != date)
+        {
+            throw new ValidationAppException(
+                $"The replacement must be scheduled on the original delivery date ({date:yyyy-MM-dd}).",
+                "replacementDate");
+        }
+
+        return date;
+    }
+
+    /// <summary>
+    /// D1-D: deterministic proposal for post-delivery complaint replacements —
+    /// the first date after the approval day satisfying weekday schedule
+    /// (when schedules exist), cutoff, active branch, and no date conflict.
+    /// May fall after <c>EndDate</c> (the term itself is never extended).
+    /// Bounded to one year, failing closed. The ticket's own source
+    /// occurrence is excluded from the conflict check (it can never conflict
+    /// with its own replacement); every other occupant still blocks.
     /// D1-D slice 2.1: there is no vacation-range entity — persisted
     /// vacation/skip state is a <c>Skipped</c> occurrence row — so the date
     /// conflict exclusion is the enforceable vacation/skip rule here: a date
@@ -2858,6 +3376,7 @@ public sealed class RefundReplacementService(
     /// </summary>
     private static DateOnly ProposeReplacementDate(
         Subscription subscription,
+        long excludedSourceDeliveryId,
         DateTime now,
         TimeSpan cutoff)
     {
@@ -2867,7 +3386,7 @@ public sealed class RefundReplacementService(
         for (var offset = 0; offset < horizonDays; offset++)
         {
             var candidate = start.AddDays(offset);
-            if (IsEligibleReplacementDate(subscription, candidate, now, cutoff, weekdays))
+            if (IsEligibleReplacementDate(subscription, excludedSourceDeliveryId, candidate, now, cutoff, weekdays))
             {
                 return candidate;
             }
@@ -2878,6 +3397,7 @@ public sealed class RefundReplacementService(
 
     private static DateOnly ValidateStaffReplacementDate(
         Subscription subscription,
+        long excludedSourceDeliveryId,
         DateOnly staffDate,
         DateTime now,
         TimeSpan cutoff)
@@ -2885,7 +3405,10 @@ public sealed class RefundReplacementService(
         // D1-D slice 2.1: evaluated inside the authoritative serializable
         // approval transaction, so a vacation/skip committed after the
         // advisory proposal is still caught here — never silently created.
-        var occupant = subscription.Deliveries.FirstOrDefault(x => x.ScheduledDate == staffDate);
+        // The ticket's own source occurrence is excluded: it never conflicts
+        // with its own replacement. Unrelated occupants still block.
+        var occupant = subscription.Deliveries
+            .FirstOrDefault(x => x.ScheduledDate == staffDate && x.Id != excludedSourceDeliveryId);
         if (occupant is not null)
         {
             if (occupant.Status == SubscriptionDeliveryStatus.Skipped)
@@ -2903,19 +3426,22 @@ public sealed class RefundReplacementService(
         if (weekdays.Count > 0 && !weekdays.Contains(staffDate.DayOfWeek))
         {
             throw new ValidationAppException(
-                "The replacement date must fall on a scheduled delivery weekday.", "replacementDate");
+                "The replacement date must fall on a scheduled delivery weekday.",
+                "replacementDate");
         }
 
         if (!subscription.Branch.IsActive)
         {
             throw new ValidationAppException(
-                "The branch is not active for the replacement date.", "replacementDate");
+                "The branch is not active for the replacement date.",
+                "replacementDate");
         }
 
         if (now > DeliveryStart(staffDate) - cutoff)
         {
             throw new ValidationAppException(
-                "The replacement cutoff has passed for this date.", "replacementDate");
+                "The replacement cutoff has passed for this date.",
+                "replacementDate");
         }
 
         return staffDate;
@@ -2923,11 +3449,12 @@ public sealed class RefundReplacementService(
 
     private static bool IsEligibleReplacementDate(
         Subscription subscription,
+        long excludedSourceDeliveryId,
         DateOnly candidate,
         DateTime now,
         TimeSpan cutoff,
         HashSet<DayOfWeek> weekdays) =>
-        !subscription.Deliveries.Any(x => x.ScheduledDate == candidate)
+        !subscription.Deliveries.Any(x => x.ScheduledDate == candidate && x.Id != excludedSourceDeliveryId)
         && (weekdays.Count == 0 || weekdays.Contains(candidate.DayOfWeek))
         && subscription.Branch.IsActive
         && now <= DeliveryStart(candidate) - cutoff;
@@ -3292,7 +3819,8 @@ public sealed class RefundReplacementService(
         request.ManualBankNameSnapshot,
         request.ManualBankIfscSnapshot,
         request.ManualBankAccountLast4Snapshot,
-        EmployeeOriginGuard.IsEmployeeOriginated(customer.UserType));
+        EmployeeOriginGuard.IsEmployeeOriginated(customer.UserType),
+        GetRedeliveryDeadline(request));
 
     private static RefundReplacementListItem ToListItem(
         RefundReplacementRequest request,
@@ -3339,7 +3867,8 @@ public sealed class RefundReplacementService(
         request.SupersedesRequest?.RequestNumber,
         request.Delivery.Status,
         request.SettlementMethod,
-        EmployeeOriginGuard.IsEmployeeOriginated(request.Customer.UserType));
+        EmployeeOriginGuard.IsEmployeeOriginated(request.Customer.UserType),
+        GetRedeliveryDeadline(request));
 
     private static RefundReplacementImageResult ToImageResult(RefundReplacementImage image) => new(
         image.PublicId,

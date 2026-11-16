@@ -155,6 +155,46 @@ public sealed class SubscriptionDomainTests
     }
 
     [Fact]
+    public void MarkRefundSettled_ConsumesFailedAndSkippedDaysExactlyOnce()
+    {
+        var subscription = CreateActiveSubscription(totalEntitlement: 3);
+        subscription.AddDelivery(new DateOnly(2026, 8, 17));
+        subscription.AddDelivery(new DateOnly(2026, 8, 18));
+        subscription.AddDelivery(new DateOnly(2026, 8, 19));
+        var deliveries = subscription.Deliveries.OrderBy(x => x.ScheduledDate).ToArray();
+
+        subscription.MarkDelivered(deliveries[0], IndiaNow);
+        subscription.MarkFailed(deliveries[1], IndiaNow);
+        subscription.Skip(deliveries[2], IndiaNow, TimeSpan.FromHours(24));
+        Assert.Equal(1, subscription.UsedEntitlement);
+        Assert.Equal(SubscriptionStatus.Active, subscription.Status);
+
+        // Financial resolution (refund completion) consumes the failed/skip days.
+        subscription.MarkRefundSettled(deliveries[1], IndiaNow);
+        subscription.MarkRefundSettled(deliveries[2], IndiaNow);
+
+        Assert.Equal(3, subscription.UsedEntitlement);
+        Assert.Equal(0, subscription.RemainingEntitlement);
+        Assert.Equal(SubscriptionStatus.Completed, subscription.Status);
+    }
+
+    [Fact]
+    public void MarkRefundSettled_DeliveredDayIsNoopAndExhaustionCaps()
+    {
+        var subscription = CreateActiveSubscription(totalEntitlement: 1);
+        subscription.AddDelivery(new DateOnly(2026, 8, 17));
+        var delivery = Assert.Single(subscription.Deliveries);
+
+        subscription.MarkDelivered(delivery, IndiaNow);
+        // A late complaint refund on an already-counted day moves money
+        // but must not double-count entitlement.
+        subscription.MarkRefundSettled(delivery, IndiaNow.AddMinutes(1));
+
+        Assert.Equal(1, subscription.UsedEntitlement);
+        Assert.Equal(SubscriptionStatus.Completed, subscription.Status);
+    }
+
+    [Fact]
     public void Cancel_PreservesOccurrencesAndCancelsOnlyScheduledOnes()
     {
         var subscription = CreateActiveSubscription(totalEntitlement: 3);
@@ -214,6 +254,86 @@ public sealed class SubscriptionDomainTests
         Assert.Empty(subscription.Charges);
         Assert.Equal(0m, subscription.ChargesTotal);
         Assert.Equal(640m, subscription.PayableAmount);
+    }
+
+    [Fact]
+    public void UnresolvedFailedDay_KeepsSubscriptionActiveWithVisibleRemaining()
+    {
+        // A failed delivery with no completed refund is a genuine pending
+        // obligation: nothing is consumed and the term stays Active.
+        var subscription = CreateActiveSubscription(totalEntitlement: 2);
+        subscription.AddDelivery(new DateOnly(2026, 8, 17));
+        subscription.AddDelivery(new DateOnly(2026, 8, 18));
+        var deliveries = subscription.Deliveries.OrderBy(x => x.ScheduledDate).ToArray();
+
+        subscription.MarkDelivered(deliveries[0], IndiaNow);
+        subscription.MarkFailed(deliveries[1], IndiaNow);
+
+        Assert.Equal(1, subscription.UsedEntitlement);
+        Assert.Equal(1, subscription.RemainingEntitlement);
+        Assert.Equal(SubscriptionStatus.Active, subscription.Status);
+    }
+
+    [Fact]
+    public void PartiallySettledTerm_StaysActiveUntilEveryDayResolves()
+    {
+        var subscription = CreateActiveSubscription(totalEntitlement: 3);
+        subscription.AddDelivery(new DateOnly(2026, 8, 17));
+        subscription.AddDelivery(new DateOnly(2026, 8, 18));
+        subscription.AddDelivery(new DateOnly(2026, 8, 19));
+        var deliveries = subscription.Deliveries.OrderBy(x => x.ScheduledDate).ToArray();
+
+        subscription.MarkDelivered(deliveries[0], IndiaNow);
+        subscription.MarkFailed(deliveries[1], IndiaNow);
+        subscription.MarkFailed(deliveries[2], IndiaNow);
+        subscription.MarkRefundSettled(deliveries[1], IndiaNow);
+
+        Assert.Equal(2, subscription.UsedEntitlement);
+        Assert.Equal(1, subscription.RemainingEntitlement);
+        Assert.Equal(SubscriptionStatus.Active, subscription.Status);
+
+        subscription.MarkRefundSettled(deliveries[2], IndiaNow);
+
+        Assert.Equal(3, subscription.UsedEntitlement);
+        Assert.Equal(0, subscription.RemainingEntitlement);
+        Assert.Equal(SubscriptionStatus.Completed, subscription.Status);
+    }
+
+    [Fact]
+    public void FullySettledMixedTerm_CompletesAfterVacationAndFailedRefunds()
+    {
+        // Mirrors SUB/DB0001/26-27/000003: three failed days refunded plus
+        // two vacation-skipped days refunded settle the whole term even
+        // though no day was ever delivered.
+        var subscription = CreateActiveSubscription(totalEntitlement: 5);
+        subscription.AddDelivery(new DateOnly(2026, 8, 17));
+        subscription.AddDelivery(new DateOnly(2026, 8, 18));
+        subscription.AddDelivery(new DateOnly(2026, 8, 19));
+        subscription.AddDelivery(new DateOnly(2026, 8, 20));
+        subscription.AddDelivery(new DateOnly(2026, 8, 21));
+        var deliveries = subscription.Deliveries.OrderBy(x => x.ScheduledDate).ToArray();
+
+        subscription.MarkFailed(deliveries[0], IndiaNow);
+        subscription.Skip(deliveries[1], IndiaNow, TimeSpan.FromHours(24), SubscriptionSkipCause.Vacation);
+        subscription.Skip(deliveries[2], IndiaNow, TimeSpan.FromHours(24), SubscriptionSkipCause.Vacation);
+        subscription.MarkFailed(deliveries[3], IndiaNow);
+        subscription.MarkFailed(deliveries[4], IndiaNow);
+        Assert.Equal(0, subscription.UsedEntitlement);
+        Assert.Equal(SubscriptionStatus.Active, subscription.Status);
+
+        // Four of five resolutions consumed: the term must still read 4/5.
+        subscription.MarkRefundSettled(deliveries[0], IndiaNow);
+        subscription.MarkRefundSettled(deliveries[1], IndiaNow);
+        subscription.MarkRefundSettled(deliveries[2], IndiaNow);
+        subscription.MarkRefundSettled(deliveries[3], IndiaNow);
+        Assert.Equal(4, subscription.UsedEntitlement);
+        Assert.Equal(1, subscription.RemainingEntitlement);
+        Assert.Equal(SubscriptionStatus.Active, subscription.Status);
+
+        subscription.MarkRefundSettled(deliveries[4], IndiaNow);
+        Assert.Equal(5, subscription.UsedEntitlement);
+        Assert.Equal(0, subscription.RemainingEntitlement);
+        Assert.Equal(SubscriptionStatus.Completed, subscription.Status);
     }
 
     private static Subscription CreateActiveSubscription(int totalEntitlement = 4)

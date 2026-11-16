@@ -38,9 +38,9 @@ public sealed class RefundReplacementRedeliveryApprovalTests
             StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
-        // No schedules on the harness subscription: first cutoff-satisfiable
-        // date after the approval day (2026-08-18).
-        Assert.Equal(new DateOnly(2026, 8, 18), approved.ReplacementDate);
+        // Same-day policy: the remedy is provided on the original delivery
+        // date (2026-08-16), inside the one-hour window from the choice.
+        Assert.Equal(new DateOnly(2026, 8, 16), approved.ReplacementDate);
         Assert.NotNull(approved.ReplacementDeliveryPublicId);
 
         var rows = await harness.Db.SubscriptionDeliveries.AsNoTracking()
@@ -85,23 +85,23 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var approved = await service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest("Re-drive on Thursday", new DateOnly(2026, 8, 20), SettlementMethod: RefundSettlementMethod.Wallet),
+            new ApproveRefundReplacementRequest("Same-day re-drive", new DateOnly(2026, 8, 16), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
-        Assert.Equal(new DateOnly(2026, 8, 20), approved.ReplacementDate);
+        Assert.Equal(new DateOnly(2026, 8, 16), approved.ReplacementDate);
         var replacement = Assert.Single(await harness.Db.SubscriptionDeliveries.AsNoTracking()
             .Where(x => x.IsReplacement).ToListAsync());
-        Assert.Equal(new DateOnly(2026, 8, 20), replacement.ScheduledDate);
-        Assert.Equal("Re-drive on Thursday", replacement.ReplacementReason);
+        Assert.Equal(new DateOnly(2026, 8, 16), replacement.ScheduledDate);
+        Assert.Equal("Same-day re-drive", replacement.ReplacementReason);
 
         var audit = Assert.Single(await harness.Db.AuditLogs.AsNoTracking()
             .Where(x => x.Action == "REFUND_REPLACEMENT.APPROVE").ToListAsync());
-        Assert.Contains("2026-08-20", audit.NewValueJson ?? string.Empty);
+        Assert.Contains("2026-08-16", audit.NewValueJson ?? string.Empty);
         Assert.Contains(requestId.ToString(), audit.EntityId);
 
         var decided = Assert.Single(await harness.Db.NotificationEvents.AsNoTracking()
             .Where(x => x.EventKey == $"refund-replacement:{requestId:N}:decided:Approved").ToListAsync());
-        Assert.Contains("2026-08-20", decided.PayloadJson ?? string.Empty);
+        Assert.Contains("2026-08-16", decided.PayloadJson ?? string.Empty);
     }
 
     [Fact]
@@ -124,7 +124,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
     }
 
     [Fact]
-    public async Task Approve_ReDelivery_RejectsConflictingDate()
+    public async Task Approve_ReDelivery_OwnFailedDateDoesNotConflict()
     {
         await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
         await FailAsync(harness);
@@ -132,13 +132,38 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var service = CreateService(harness);
         await ChooseReDeliveryAsync(service, harness, requestId);
 
-        // The failed occurrence itself sits on 2026-08-16.
-        var exception = await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
+        // The failed occurrence itself sits on 2026-08-16: it must not
+        // conflict with its own replacement.
+        var approved = await service.ApproveAsync(
             StaffActor(harness),
             requestId,
             new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 16), SettlementMethod: RefundSettlementMethod.Wallet),
+            CancellationToken.None);
+
+        Assert.Equal(new DateOnly(2026, 8, 16), approved.ReplacementDate);
+        Assert.Equal(2, await harness.Db.SubscriptionDeliveries.AsNoTracking().CountAsync());
+    }
+
+    [Fact]
+    public async Task Approve_ReDelivery_RejectsNonOriginalDate()
+    {
+        await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
+        await FailAsync(harness);
+        var requestId = await TicketPublicIdAsync(harness);
+        var service = CreateService(harness);
+        await ChooseReDeliveryAsync(service, harness, requestId);
+
+        // 2026-08-18 is free of any occupant, but it is not the original
+        // delivery date (2026-08-16): staff cannot move the remedy to
+        // another day. Genuine unrelated occupants stay blocked through
+        // the same rule — only the ticket's own date is ever eligible.
+        var exception = await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
+            StaffActor(harness),
+            requestId,
+            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 18), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None));
         Assert.Equal("replacementDate", exception.Field);
+        Assert.Contains("original delivery date", exception.Message, StringComparison.OrdinalIgnoreCase);
 
         harness.Db.ChangeTracker.Clear();
         Assert.Equal(1, await harness.Db.SubscriptionDeliveries.AsNoTracking().CountAsync());
@@ -148,29 +173,7 @@ public sealed class RefundReplacementRedeliveryApprovalTests
     }
 
     [Fact]
-    public async Task Approve_ReDelivery_RejectsOffScheduleWeekday()
-    {
-        await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
-        await FailAsync(harness);
-        await AddScheduleAsync(harness, DayOfWeek.Wednesday);
-        var requestId = await TicketPublicIdAsync(harness);
-        var service = CreateService(harness);
-        await ChooseReDeliveryAsync(service, harness, requestId);
-
-        // 2026-08-24 is a Monday: cutoff and conflict pass, weekday fails.
-        var exception = await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
-            StaffActor(harness),
-            requestId,
-            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 24), SettlementMethod: RefundSettlementMethod.Wallet),
-            CancellationToken.None));
-        Assert.Equal("replacementDate", exception.Field);
-
-        harness.Db.ChangeTracker.Clear();
-        Assert.Equal(1, await harness.Db.SubscriptionDeliveries.AsNoTracking().CountAsync());
-    }
-
-    [Fact]
-    public async Task Approve_ReDelivery_RejectsDateInsideCutoff()
+    public async Task Approve_ReDelivery_RejectsExpiredOneHourWindow()
     {
         await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
         await FailAsync(harness);
@@ -178,25 +181,50 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var service = CreateService(harness);
         await ChooseReDeliveryAsync(service, harness, requestId);
 
-        // Next-day 00:00 minus the default 24h cutoff already passed at 09:30.
-        var exception = await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
+        // The choice was recorded at 09:30; past 10:30 the window is gone.
+        // The date is never moved forward and same-day service is never
+        // falsely promised: support gets an actionable refund message.
+        harness.Clock.Advance(TimeSpan.FromHours(2));
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() => service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 17), SettlementMethod: RefundSettlementMethod.Wallet),
+            new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None));
-        Assert.Equal("replacementDate", exception.Field);
+        Assert.Contains("one-hour", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("refund", exception.Message, StringComparison.OrdinalIgnoreCase);
 
         harness.Db.ChangeTracker.Clear();
         Assert.Equal(1, await harness.Db.SubscriptionDeliveries.AsNoTracking().CountAsync());
+        Assert.Equal(
+            RefundReplacementStatus.AwaitingCustomerChoice,
+            (await harness.Db.RefundReplacementRequests.AsNoTracking().SingleAsync()).Status);
     }
 
     [Fact]
-    public async Task Approve_ReDelivery_SchedulesBeyondEndDateWithoutExtendingTerm()
+    public async Task Propose_RejectsExpiredOneHourWindow()
     {
         await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
         await FailAsync(harness);
-        // Only Mondays: the next eligible Monday (2026-08-24) falls after the
-        // subscription EndDate (2026-08-23).
+        var requestId = await TicketPublicIdAsync(harness);
+        var service = CreateService(harness);
+        await ChooseReDeliveryAsync(service, harness, requestId);
+
+        harness.Clock.Advance(TimeSpan.FromHours(2));
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() => service.ProposeReplacementDateAsync(
+            StaffActor(harness), requestId, CancellationToken.None));
+        Assert.Contains("one-hour", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Approve_ReDelivery_SameDayApprovalKeepsTermIntact()
+    {
+        await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
+        await FailAsync(harness);
+        // Only Mondays on the schedule: the forward search would have
+        // pushed past the subscription EndDate (2026-08-23). Same-day
+        // re-delivery stays on the original date instead.
         await AddScheduleAsync(harness, DayOfWeek.Monday);
         var requestId = await TicketPublicIdAsync(harness);
         var service = CreateService(harness);
@@ -205,10 +233,51 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var approved = await service.ApproveAsync(
             StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
 
-        Assert.Equal(new DateOnly(2026, 8, 24), approved.ReplacementDate);
+        Assert.Equal(new DateOnly(2026, 8, 16), approved.ReplacementDate);
         var subscription = await harness.Db.Subscriptions.AsNoTracking().SingleAsync();
         Assert.Equal(new DateOnly(2026, 8, 23), subscription.EndDate);
         Assert.Equal(0, subscription.UsedEntitlement);
+    }
+
+    [Fact]
+    public async Task Approve_TwoFailures_EachSchedulesItsOwnOriginalDate()
+    {
+        await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
+        await FailAsync(harness);
+        var firstId = await TicketPublicIdAsync(harness);
+        var service = CreateService(harness);
+        await ChooseReDeliveryAsync(service, harness, firstId);
+
+        // A second original failure on a later occurrence: its own ticket.
+        var subscription = await harness.Db.Subscriptions
+            .Include(x => x.Deliveries).SingleAsync();
+        subscription.AddDelivery(new DateOnly(2026, 8, 19));
+        await harness.Db.SaveChangesAsync();
+        harness.Db.ChangeTracker.Clear();
+        await harness.Service.MaterializeEligibleAsync(
+            harness.ManagerActor, new DateOnly(2026, 8, 19), CancellationToken.None);
+        var secondDeliveryId = await harness.Db.Deliveries.AsNoTracking()
+            .Where(x => x.SubscriptionDelivery != null
+                && x.SubscriptionDelivery.ScheduledDate == new DateOnly(2026, 8, 19)
+                && !x.SubscriptionDelivery.IsReplacement)
+            .Select(x => x.PublicId).SingleAsync();
+        var secondBatchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(secondDeliveryId, secondBatchId, 1m);
+        await harness.AssignAsync(secondDeliveryId, harness.Staff);
+        await harness.FailSubscriptionAsync(secondDeliveryId, harness.Staff);
+        var secondId = await harness.Db.RefundReplacementRequests.AsNoTracking()
+            .Where(x => x.PublicId != firstId).Select(x => x.PublicId).SingleAsync();
+        await ChooseReDeliveryAsync(service, harness, secondId);
+
+        var first = await service.ApproveAsync(
+            StaffActor(harness), firstId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
+        var second = await service.ApproveAsync(
+            StaffActor(harness), secondId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
+
+        Assert.Equal(new DateOnly(2026, 8, 16), first.ReplacementDate);
+        Assert.Equal(new DateOnly(2026, 8, 19), second.ReplacementDate);
+        Assert.Equal(2, await harness.Db.SubscriptionDeliveries.AsNoTracking()
+            .CountAsync(x => x.IsReplacement));
     }
 
     [Fact]
@@ -363,13 +432,13 @@ public sealed class RefundReplacementRedeliveryApprovalTests
             StaffActor(harness), requestId, CancellationToken.None);
 
         Assert.Equal(requestId, proposal.RequestId);
-        Assert.Equal(new DateOnly(2026, 8, 18), proposal.ProposedDate);
+        Assert.Equal(new DateOnly(2026, 8, 16), proposal.ProposedDate);
         // Advisory only: nothing persisted.
         Assert.Equal(1, await harness.Db.SubscriptionDeliveries.AsNoTracking().CountAsync());
     }
 
     [Fact]
-    public async Task Propose_RespectsWeekdaySchedule()
+    public async Task Propose_ReturnsOriginalDateDespiteForwardSchedule()
     {
         await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
         await FailAsync(harness);
@@ -381,8 +450,10 @@ public sealed class RefundReplacementRedeliveryApprovalTests
         var proposal = await service.ProposeReplacementDateAsync(
             StaffActor(harness), requestId, CancellationToken.None);
 
-        // Wednesday 2026-08-19 is the first eligible weekday.
-        Assert.Equal(new DateOnly(2026, 8, 19), proposal.ProposedDate);
+        // Same-day policy: the original delivery date (2026-08-16) is
+        // proposed even though the forward weekday search would land on
+        // Wednesday 2026-08-19.
+        Assert.Equal(new DateOnly(2026, 8, 16), proposal.ProposedDate);
     }
 
     [Fact]
@@ -477,6 +548,10 @@ public sealed class RefundReplacementRedeliveryApprovalTests
     private static async Task<Guid> FailTicketAsync(DeliveryServiceTests.DeliveryHarness harness)
     {
         var deliveryId = await harness.MaterializeSubscriptionAsync();
+        // Preserved milk allocation gate: batch allocation precedes staff
+        // assignment, mirroring the production UI flow.
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
         await harness.AssignAsync(deliveryId, harness.Staff);
         return deliveryId;
     }

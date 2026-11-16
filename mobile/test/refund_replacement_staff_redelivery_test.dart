@@ -126,6 +126,94 @@ void main() {
         isFalse,
       );
     });
+
+    test('server redelivery deadline parses exactly as customerChoiceAt + 1h', () {
+      final withServerValue = RefundReplacementRequest.fromJson(
+        _requestJson(
+          status: 'Approved',
+          source: 'DeliveryFailed',
+          customerChoice: 'ReDelivery',
+          subscriptionDeliveryPublicId: 'sub-1',
+          redeliveryDeadline: '2026-08-17T11:00:00Z',
+          includeDecision: true,
+        ),
+      );
+      expect(withServerValue.redeliveryDeadlineUtc, isNotNull);
+      expect(withServerValue.effectiveRedeliveryDeadline, isNotNull);
+      // The displayed deadline is exactly one hour after the choice.
+      expect(
+        withServerValue.effectiveRedeliveryDeadline!.difference(
+          withServerValue.customerChoiceAtUtc!,
+        ),
+        const Duration(hours: 1),
+      );
+
+      // Payloads that predate the server field fall back to choice + 1h —
+      // the client never invents a different deadline.
+      final legacy = RefundReplacementRequest.fromJson(
+        _requestJson(
+          status: 'Approved',
+          source: 'DeliveryFailed',
+          customerChoice: 'ReDelivery',
+          subscriptionDeliveryPublicId: 'sub-1',
+          includeDecision: true,
+        ),
+      );
+      expect(legacy.redeliveryDeadlineUtc, isNull);
+      expect(
+        legacy.effectiveRedeliveryDeadline,
+        legacy.customerChoiceAtUtc!.add(const Duration(hours: 1)),
+      );
+
+      // Non-re-delivery shapes carry no deadline.
+      final refundChoice = RefundReplacementRequest.fromJson(_requestJson());
+      expect(refundChoice.effectiveRedeliveryDeadline, isNull);
+      expect(
+        _ticket(
+          status: RefundReplacementStatus.awaitingCustomerChoice,
+          source: RefundReplacementSource.deliveryFailed,
+          customerChoice: CustomerChoice.refund,
+          subscriptionDeliveryPublicId: 'sub-1',
+        ).effectiveRedeliveryDeadline,
+        isNull,
+      );
+    });
+
+    test('redelivery overdue distinguishes timely, overdue and terminal', () {
+      RefundReplacementRequest ticket({
+        required RefundReplacementStatus status,
+        required DateTime now,
+      }) => _ticket(
+        status: status,
+        source: RefundReplacementSource.deliveryFailed,
+        customerChoice: CustomerChoice.reDelivery,
+        subscriptionDeliveryPublicId: 'sub-1',
+        choiceAtUtc: now.subtract(const Duration(minutes: 30)),
+        redeliveryDeadlineUtc: now.add(const Duration(minutes: 30)),
+      );
+
+      final timelyNow = DateTime.utc(2026, 8, 17, 10, 30);
+      expect(
+        ticket(status: RefundReplacementStatus.approved, now: timelyNow)
+            .isRedeliveryOverdueAt(timelyNow),
+        isFalse,
+      );
+
+      final overdueNow = DateTime.utc(2026, 8, 17, 12, 30);
+      expect(
+        ticket(status: RefundReplacementStatus.approved, now: timelyNow)
+            .isRedeliveryOverdueAt(overdueNow),
+        isTrue,
+      );
+
+      // A terminal ticket keeps its recorded outcome instead of reporting
+      // a live overdue state.
+      expect(
+        ticket(status: RefundReplacementStatus.completed, now: timelyNow)
+            .isRedeliveryOverdueAt(overdueNow),
+        isFalse,
+      );
+    });
   });
 
   group('slice 6 repository', () {
@@ -358,6 +446,92 @@ void main() {
       expect(find.text('Mark completed'), findsNothing);
     });
 
+    testWidgets('staff detail shows the one-hour re-delivery deadline', (
+      tester,
+    ) async {
+      final repository = _Slice6FakeRepository()
+        ..staffRequest = _ticket(
+          status: RefundReplacementStatus.approved,
+          source: RefundReplacementSource.deliveryFailed,
+          customerChoice: CustomerChoice.reDelivery,
+          subscriptionDeliveryPublicId: 'sub-1',
+          replacementDate: DateTime.utc(2026, 8, 17),
+          redeliveryDeadlineUtc: DateTime.utc(2026, 8, 17, 11),
+          includeDecision: true,
+        );
+      await _pumpStaff(
+        tester,
+        const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
+        repository,
+      );
+
+      // The displayed deadline is exactly customerChoiceAt + 1 hour.
+      expect(find.text('Re-delivery by'), findsOneWidget);
+      expect(
+        find.text(
+          formatRefundReplacementDateTime(DateTime.utc(2026, 8, 17, 11)),
+        ),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('overdue re-delivery shows the actionable warning', (
+      tester,
+    ) async {
+      final repository = _Slice6FakeRepository()
+        ..staffRequest = _ticket(
+          status: RefundReplacementStatus.approved,
+          source: RefundReplacementSource.deliveryFailed,
+          customerChoice: CustomerChoice.reDelivery,
+          subscriptionDeliveryPublicId: 'sub-1',
+          replacementDate: DateTime.utc(2026, 8, 17),
+          includeDecision: true,
+        );
+      await _pumpStaff(
+        tester,
+        const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
+        repository,
+      );
+
+      // The fixture choice (2026-08-17T10:00) is long past, so the
+      // deadline row and the overdue warning both render — without ever
+      // moving the date forward.
+      expect(find.text('Re-delivery by'), findsOneWidget);
+      expect(find.text('Replacement date'), findsOneWidget);
+      expect(
+        find.textContaining('one-hour same-day window has passed'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('timely re-delivery shows no overdue warning', (
+      tester,
+    ) async {
+      final now = DateTime.now();
+      final repository = _Slice6FakeRepository()
+        ..staffRequest = _ticket(
+          status: RefundReplacementStatus.approved,
+          source: RefundReplacementSource.deliveryFailed,
+          customerChoice: CustomerChoice.reDelivery,
+          subscriptionDeliveryPublicId: 'sub-1',
+          replacementDate: DateTime.utc(now.year, now.month, now.day),
+          choiceAtUtc: now.subtract(const Duration(minutes: 30)),
+          redeliveryDeadlineUtc: now.add(const Duration(minutes: 30)),
+          includeDecision: true,
+        );
+      await _pumpStaff(
+        tester,
+        const StaffRefundReplacementDetailScreen(requestId: 'req-1'),
+        repository,
+      );
+
+      expect(find.text('Re-delivery by'), findsOneWidget);
+      expect(
+        find.textContaining('one-hour same-day window has passed'),
+        findsNothing,
+      );
+    });
+
     testWidgets('redelivery approval confirms the proposed date', (tester) async {
       final repository = _Slice6FakeRepository()
         ..staffRequest = _ticket(
@@ -399,7 +573,7 @@ void main() {
       expect(find.text('Replacement date'), findsOneWidget);
     });
 
-    testWidgets('staff can change the date with the picker before approving', (
+    testWidgets('date picker is constrained to the proposed original date', (
       tester,
     ) async {
       final repository = _Slice6FakeRepository()
@@ -418,20 +592,28 @@ void main() {
 
       await tester.tap(find.widgetWithText(FilledButton, 'Approve'));
       await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Re-delivery is provided on the original delivery date, '
+          'within one hour of the customer\'s request. The backend '
+          'validates the date, branch, and window on approval.',
+        ),
+        findsOneWidget,
+      );
       await tester.tap(find.widgetWithText(OutlinedButton, 'Change date'));
       await tester.pumpAndSettle();
 
+      // Same-day policy: only the proposed original date is selectable.
       expect(find.byType(DatePickerDialog), findsOneWidget);
-      await tester.tap(find.text('20'));
       await tester.tap(find.text('OK'));
       await tester.pumpAndSettle();
 
-      expect(find.text('20/08/2026'), findsWidgets);
+      expect(find.text('19/08/2026'), findsWidgets);
       await tester.tap(find.widgetWithText(FilledButton, 'Approve re-delivery'));
       await tester.pumpAndSettle();
 
       expect(repository.approveCalls, 1);
-      expect(repository.approvedDate, DateTime(2026, 8, 20));
+      expect(repository.approvedDate, DateTime(2026, 8, 19));
     });
 
     testWidgets('proposal failure shows an error with retry', (tester) async {
@@ -645,6 +827,7 @@ Map<String, dynamic> _requestJson({
   String? customerChoice,
   String? subscriptionDeliveryPublicId,
   String? replacementDate,
+  String? redeliveryDeadline,
   bool includeDecision = false,
 }) => {
   'requestId': 'req-1',
@@ -685,6 +868,7 @@ Map<String, dynamic> _requestJson({
   'proofImageRequired': false,
   'images': const <Map<String, dynamic>>[],
   'replacementDate': replacementDate,
+  'redeliveryDeadline': redeliveryDeadline,
 };
 
 RefundReplacementRequest _ticket({
@@ -693,6 +877,8 @@ RefundReplacementRequest _ticket({
   CustomerChoice? customerChoice,
   String? subscriptionDeliveryPublicId,
   DateTime? replacementDate,
+  DateTime? choiceAtUtc,
+  DateTime? redeliveryDeadlineUtc,
   bool includeDecision = false,
   String? completedByName,
   DateTime? completedAtUtc,
@@ -740,7 +926,8 @@ RefundReplacementRequest _ticket({
   customerChoice: customerChoice,
   customerChoiceAtUtc: customerChoice == null
       ? null
-      : DateTime.utc(2026, 8, 17, 10),
+      : (choiceAtUtc ?? DateTime.utc(2026, 8, 17, 10)),
+  redeliveryDeadlineUtc: redeliveryDeadlineUtc,
   replacementDate: replacementDate,
 );
 
@@ -972,6 +1159,7 @@ class _Slice6FakeRepository extends RefundReplacementRepository {
       failureReasonSnapshot: current.failureReasonSnapshot,
       customerChoice: current.customerChoice,
       customerChoiceAtUtc: current.customerChoiceAtUtc,
+      redeliveryDeadlineUtc: current.redeliveryDeadlineUtc,
       replacementDate: replacementDate == null
           ? null
           : DateTime.utc(

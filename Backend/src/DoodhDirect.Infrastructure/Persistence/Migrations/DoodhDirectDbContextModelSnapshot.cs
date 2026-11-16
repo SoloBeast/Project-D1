@@ -4689,7 +4689,7 @@ namespace DoodhDirect.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Status", "ScheduledDate");
 
-                    b.HasIndex("SubscriptionId", "ScheduledDate")
+                    b.HasIndex("SubscriptionId", "ScheduledDate", "IsReplacement")
                         .IsUnique();
 
                     b.ToTable("SubscriptionDelivery", "dbo", t =>

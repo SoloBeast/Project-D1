@@ -24,8 +24,8 @@ class ChargeListScreen extends ConsumerStatefulWidget {
 /// labels, tooltips, banners) is unchanged — only the presentation matches
 /// the catalogue dashboard.
 class _ChargeListScreenState extends ConsumerState<ChargeListScreen> {
-  static const _panelGreen = Color(0xFF198754);
-  static const _pageGrey = Color(0xFFF8F9FA);
+  static const _panelGreen = DoodhColors.teal;
+  static const _pageGrey = DoodhColors.cream;
   static const _tableMinWidth = 980.0;
   static const _pageSize = 10;
 
@@ -172,7 +172,7 @@ class _ChargeListScreenState extends ConsumerState<ChargeListScreen> {
                 color: Colors.white,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
-                  side: const BorderSide(color: Color(0xFFE9ECEF)),
+                  side: const BorderSide(color: DoodhColors.line),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(DoodhSpacing.md),
@@ -1018,8 +1018,8 @@ class _HeaderActionsCell extends StatelessWidget {
 /// Shared row colours (the list state class keeps its own copies for the
 /// header, filter bar and pagination footer).
 class _ChargeListColors {
-  static const pillBlue = Color(0xFFE7F1FF);
-  static const pillBlueText = Color(0xFF0D6EFD);
+  static const pillBlue = DoodhColors.infoSurface;
+  static const pillBlueText = DoodhColors.infoForeground;
 }
 
 

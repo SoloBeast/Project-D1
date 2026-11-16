@@ -42,6 +42,23 @@ public sealed class AuthenticationServiceTests
     }
 
     [Fact]
+    public async Task PasswordLogin_DoesNotEmitLoginSuccessNotification()
+    {
+        await using var harness = await AuthenticationHarness.CreateAsync();
+        await harness.Authentication.RegisterAsync(
+            new RegisterRequest("Customer", "customer@example.com", null, "correct-password", Device),
+            CancellationToken.None);
+
+        await harness.Authentication.LoginAsync(
+            new PasswordLoginRequest("customer@example.com", "correct-password", Device),
+            CancellationToken.None);
+
+        var events = await harness.Db.NotificationEvents.ToListAsync();
+        Assert.DoesNotContain(events, x => x.EventType == "AUTHENTICATION_SUCCEEDED");
+        Assert.Contains(events, x => x.EventType == "REGISTRATION_COMPLETED");
+    }
+
+    [Fact]
     public async Task PasswordLogin_WithInvalidPassword_IsRejectedAndAudited()
     {
         await using var harness = await AuthenticationHarness.CreateAsync();

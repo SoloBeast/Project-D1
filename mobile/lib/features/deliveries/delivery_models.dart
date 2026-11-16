@@ -170,7 +170,13 @@ class CustomerDelivery {
     required this.failedAt,
     required this.failureReason,
     required this.activeOtp,
+    this.containsMilkItems = false,
   });
+
+  /// Milk-category gate (server-authoritative). Milk-test and
+  /// refund/replacement entry points render only when true; other
+  /// categories get a support-ticket placeholder instead.
+  bool get isMilkDelivery => containsMilkItems;
   factory CustomerDelivery.fromJson(Map<String, dynamic> json) =>
       CustomerDelivery(
         deliveryId: json['deliveryId'] as String,
@@ -205,6 +211,8 @@ class CustomerDelivery {
             json['subscriptionProductName'] as String?,
         subscriptionUnitOfMeasure:
             json['subscriptionUnitOfMeasure'] as String?,
+        containsMilkItems:
+            json['containsMilkItems'] as bool? ?? false,
       );
   final String deliveryId;
   final DeliverySourceType sourceType;
@@ -228,6 +236,7 @@ class CustomerDelivery {
   final DeliveryOrderSummary? orderSummary;
   final String? subscriptionProductName;
   final String? subscriptionUnitOfMeasure;
+  final bool containsMilkItems;
 
   /// An unresolved subscription delivery whose India-local scheduled date has
   /// passed. This is a presentation state only; the backend's operational
@@ -413,7 +422,24 @@ class DeliveryDetails {
     required this.latestLocation,
     required this.assignments,
     required this.batchAllocations,
+    this.requiresBatchAllocation = false,
   });
+
+  /// Customer/staff-visible reference: subscription occurrences show the
+  /// persisted SUB-series document number (never the internal SUB-guid-date
+  /// correlation key). One-time orders keep the order number.
+  String get displayReference {
+    if (sourceType == DeliverySourceType.subscriptionOccurrence &&
+        subscriptionNumber != null &&
+        subscriptionNumber!.isNotEmpty) {
+      return 'Subscription $subscriptionNumber';
+    }
+    return referenceNumber;
+  }
+
+  /// True when assignment must wait for batch allocation (milk only).
+  bool get needsBatchAllocationBeforeAssign =>
+      requiresBatchAllocation && batchAllocations.isEmpty;
   factory DeliveryDetails.fromJson(Map<String, dynamic> json) =>
       DeliveryDetails(
         deliveryId: json['deliveryId'] as String,
@@ -469,6 +495,8 @@ class DeliveryDetails {
                 .cast<Map<String, dynamic>>()
                 .map(DeliveryBatchAllocation.fromJson)
                 .toList(growable: false),
+        requiresBatchAllocation:
+            json['requiresBatchAllocation'] as bool? ?? false,
       );
   final String deliveryId;
   final DeliverySourceType sourceType;
@@ -507,6 +535,7 @@ class DeliveryDetails {
   final DeliveryLocation? latestLocation;
   final List<DeliveryAssignment> assignments;
   final List<DeliveryBatchAllocation> batchAllocations;
+  final bool requiresBatchAllocation;
 }
 
 /// A past-due scheduled subscription occurrence that was never

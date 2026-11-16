@@ -127,7 +127,13 @@ public sealed record OrderResult(
     Guid? DeliveryPublicId,
     string? DeliveryReferenceNumber,
     DeliveryStatus? DeliveryStatus,
-    OrderCancellationResult? Cancellation = null);
+    OrderCancellationResult? Cancellation = null,
+    /// <summary>
+    /// True when any order item belongs to the MILK category. Authoritative
+    /// server flag so refund/milk-test entry points never rely on
+    /// product-name parsing.
+    /// </summary>
+    bool ContainsMilkItems = false);
 
 public sealed record OrderItemResult(
     Guid ProductId,
@@ -249,7 +255,9 @@ public static class OrderMappings
             delivery?.PublicId,
             delivery?.ReferenceNumber,
             delivery?.Status,
-            cancellation);
+            cancellation,
+            order.Items.Any(item =>
+                string.Equals(item.Product?.Category?.Code, "MILK", StringComparison.OrdinalIgnoreCase)));
 }
 
 public static class OrderValidation

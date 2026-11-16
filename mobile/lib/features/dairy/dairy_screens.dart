@@ -112,6 +112,67 @@ class _DairyDashboardScreenState extends ConsumerState<DairyDashboardScreen> {
                 ),
               )
             else ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [DoodhColors.tealDark, DoodhColors.teal],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.16),
+                          borderRadius: DoodhRadii.sm,
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.35),
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.agriculture_outlined,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              branchLabel(branch),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Dairy dashboard at a glance',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: Colors.white70),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
               Text('Today', style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 12),
               _MetricGrid(
@@ -260,7 +321,11 @@ class _DairyProductionEntryScreenState
         child: ListView(
           padding: DoodhSpacing.pagePadding,
           children: [
-            Text(branchTitle, style: Theme.of(context).textTheme.titleLarge),
+            _DairyListHero(
+              icon: Icons.add_circle_outline,
+              title: branchTitle,
+              subtitle: 'Today\'s production entry',
+            ),
             const SizedBox(height: 16),
             TextFormField(
               controller: _quantityController,
@@ -434,6 +499,14 @@ class _DairyBatchListScreenState extends ConsumerState<DairyBatchListScreen> {
       appBar: const _DairyAppBar(title: 'Milk batches'),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: _DairyListHero(
+              icon: Icons.inventory_2_outlined,
+              title: 'Milk stock',
+              subtitle: '${batches.length} batches',
+            ),
+          ),
           _DairyDateRangeFilter(
             fromDate: _fromDate,
             toDate: _toDate,
@@ -464,11 +537,23 @@ class _DairyBatchListScreenState extends ConsumerState<DairyBatchListScreen> {
                   itemBuilder: (context, index) {
                     final batch = batches[index];
                     return Card(
+                      elevation: 2,
+                      shadowColor: DoodhColors.tealDark.withValues(alpha: .14),
                       child: ListTile(
-                        leading: Icon(
-                          batch.status == MilkBatchStatus.available
-                              ? Icons.inventory_2_outlined
-                              : Icons.inventory_outlined,
+                        leading: Container(
+                          width: 48,
+                          height: 48,
+                          decoration: const BoxDecoration(
+                            color: DoodhColors.mint,
+                            borderRadius: DoodhRadii.sm,
+                          ),
+                          child: Icon(
+                            batch.status == MilkBatchStatus.available
+                                ? Icons.inventory_2_outlined
+                                : Icons.inventory_outlined,
+                            color: DoodhColors.tealDark,
+                            size: 26,
+                          ),
                         ),
                         title: Text(batch.batchNumber),
                         subtitle: Text(
@@ -734,6 +819,14 @@ class _DairyProductionHistoryScreenState
       appBar: const _DairyAppBar(title: 'Production history'),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: _DairyListHero(
+              icon: Icons.history_outlined,
+              title: 'Entry log',
+              subtitle: '${state.production.length} entries',
+            ),
+          ),
           _DairyDateRangeFilter(
             fromDate: _fromDate,
             toDate: _toDate,
@@ -764,8 +857,22 @@ class _DairyProductionHistoryScreenState
                   itemBuilder: (context, index) {
                     final production = state.production[index];
                     return Card(
+                      elevation: 2,
+                      shadowColor: DoodhColors.tealDark.withValues(alpha: .14),
                       child: ListTile(
-                        leading: const Icon(Icons.water_drop_outlined),
+                        leading: Container(
+                          width: 48,
+                          height: 48,
+                          decoration: const BoxDecoration(
+                            color: DoodhColors.mint,
+                            borderRadius: DoodhRadii.sm,
+                          ),
+                          child: const Icon(
+                            Icons.water_drop_outlined,
+                            color: DoodhColors.tealDark,
+                            size: 26,
+                          ),
+                        ),
                         title: Text(
                           formatMilkQuantity(
                             production.quantityProduced,
@@ -872,6 +979,14 @@ class _DairyUsageScreenState extends ConsumerState<DairyUsageScreen> {
             ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: _DairyListHero(
+              icon: Icons.local_drink_outlined,
+              title: 'Consumption log',
+              subtitle: '${state.usage.length} records',
+            ),
+          ),
           _DairyDateRangeFilter(
             fromDate: _fromDate,
             toDate: _toDate,
@@ -901,14 +1016,23 @@ class _DairyUsageScreenState extends ConsumerState<DairyUsageScreen> {
                     final usage = state.usage[index];
                     final reference = usageReference(usage);
                     return Card(
+                      elevation: 2,
+                      shadowColor: DoodhColors.tealDark.withValues(alpha: .14),
                       child: ListTile(
-                        leading: Icon(
-                          usage.isAutomatic
-                              ? Icons.receipt_long_outlined
-                              : Icons.local_drink_outlined,
-                          color: usage.isAutomatic
-                              ? Theme.of(context).colorScheme.primary
-                              : null,
+                        leading: Container(
+                          width: 48,
+                          height: 48,
+                          decoration: const BoxDecoration(
+                            color: DoodhColors.mint,
+                            borderRadius: DoodhRadii.sm,
+                          ),
+                          child: Icon(
+                            usage.isAutomatic
+                                ? Icons.receipt_long_outlined
+                                : Icons.local_drink_outlined,
+                            color: DoodhColors.tealDark,
+                            size: 26,
+                          ),
                         ),
                         title: Text(
                           formatMilkQuantity(usage.quantityUsed, usage.unit),
@@ -1096,6 +1220,83 @@ class _DairyAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+}
+
+/// Dairy list hero: gradient card carrying the screen identity and a live
+/// count. The screen title stays in the AppBar; this hero never repeats
+/// row content words so list assertions stay unambiguous.
+class _DairyListHero extends StatelessWidget {
+  const _DairyListHero({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [DoodhColors.tealDark, DoodhColors.teal],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: DoodhRadii.sm,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.35),
+                ),
+              ),
+              child: Icon(icon, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _MetricGrid extends StatelessWidget {

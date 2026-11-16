@@ -64,6 +64,23 @@ public static class NotificationEventTypes
     /// contains the original ticket reference).
     /// </summary>
     public const string RedeliveryFailedResolved = "REFUND_REPLACEMENT_REDELIVERY_FAILED_RESOLVED";
+    /// <summary>
+    /// Same-day SLA: the one-hour re-delivery window (CustomerChoiceAt + 1
+    /// hour) passed without the replacement being approved/delivered.
+    /// Re-delivery is no longer available; the customer may change the
+    /// choice to Refund (or staff may convert it with confirmation) and the
+    /// ticket then follows the normal refund workflow. One deterministic
+    /// event per ticket (key contains the ticket reference). Moves no money.
+    /// </summary>
+    public const string RedeliveryExpired = "REFUND_REPLACEMENT_REDELIVERY_EXPIRED";
+    /// <summary>
+    /// Same-day SLA: an expired re-delivery choice was converted to Refund
+    /// (by the customer or by confirmed staff action). The ticket re-enters
+    /// the standard refund approval/settlement workflow; the conversion
+    /// itself moves no money. One deterministic event per ticket (key
+    /// contains the ticket reference).
+    /// </summary>
+    public const string RedeliveryConvertedToRefund = "REFUND_REPLACEMENT_REDELIVERY_CONVERTED";
     public const string RefundReplacementDecided = "REFUND_REPLACEMENT_DECIDED";
     public const string RefundReplacementCompleted = "REFUND_REPLACEMENT_COMPLETED";
     /// <summary>
@@ -155,6 +172,8 @@ public static class NotificationEventTypes
         RefundReplacementAutoRefunded,
         RefundReplacementCancelRefunded,
         RedeliveryFailedResolved,
+        RedeliveryExpired,
+        RedeliveryConvertedToRefund,
         RefundReplacementDecided,
         RefundReplacementCompleted,
         VacationRefundRequested,

@@ -224,6 +224,7 @@ class RefundReplacementController extends Notifier<RefundReplacementState> {
           failureReasonSnapshot: request.failureReasonSnapshot,
           customerChoice: request.customerChoice,
           customerChoiceAtUtc: request.customerChoiceAtUtc,
+          redeliveryDeadlineUtc: request.redeliveryDeadlineUtc,
           replacementDate: request.replacementDate,
           replacementDeliveryNumber: request.replacementDeliveryNumber,
           isRefundOnly: request.isRefundOnly,
@@ -262,6 +263,55 @@ class RefundReplacementController extends Notifier<RefundReplacementState> {
     final request = await _repository.getForStaff(_token!, requestId);
     state = state.copyWith(selectedStaffRequest: request);
   });
+
+  /// Staff conversion of an expired re-delivery choice to Refund. Forwards
+  /// the explicit customer confirmation and optional remarks; the backend
+  /// revalidates expiry, scope and consent. Returns false and surfaces the
+  /// server message when the ticket is not convertible. Moves no money.
+  Future<bool> convertExpiredToRefund(
+    String requestId, {
+    required bool customerConfirmed,
+    String? remarks,
+  }) => _save(() async {
+    final request = await _repository.convertToRefund(
+      _token!,
+      requestId,
+      customerConfirmed: customerConfirmed,
+      remarks: remarks,
+    );
+    state = state.copyWith(
+      selectedStaffRequest: request,
+      clearOrderRefundPreview: true,
+    );
+  });
+
+  /// Best-effort idempotent expiry notice for an expired re-delivery
+  /// ticket. Records the single customer notification on first success and
+  /// refreshes the visible detail; failures are surfaced but never block
+  /// the Convert / Change actions (the conversion endpoints ensure the
+  /// notice themselves).
+  Future<void> notifyRedeliveryExpired(
+    String requestId, {
+    required bool staff,
+  }) async {
+    final token = _token;
+    if (token == null) return;
+    try {
+      final request = await _repository.notifyRedeliveryExpired(
+        token,
+        requestId,
+        staff: staff,
+      );
+      state = state.copyWith(
+        selectedStaffRequest: staff ? request : state.selectedStaffRequest,
+        selectedCustomerRequest: staff
+            ? state.selectedCustomerRequest
+            : request,
+      );
+    } on Object catch (error) {
+      _setFailure(error);
+    }
+  }
 
   /// D1-D: approves a request, forwarding an optional staff-confirmed
   /// replacement date for re-delivery tickets. Null preserves the existing

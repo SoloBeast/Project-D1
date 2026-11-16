@@ -843,6 +843,46 @@ public sealed class RefundReplacementRequest : AuditableEntity
     }
 
     /// <summary>
+    /// Expired re-delivery to refund conversion. Moves a subscription
+    /// delivery-fail ticket whose recorded choice is ReDelivery to a Refund
+    /// choice once the one-hour same-day window (CustomerChoiceAt + 1 hour)
+    /// has passed. The original CustomerChoiceAt is preserved so the
+    /// deadline stays stable and the history (original choice, expiry
+    /// instant) is traceable through audit/notification payloads recorded
+    /// by the caller. No money moves here: the ticket simply re-enters the
+    /// existing Refund approval and settlement workflow. Only one direction
+    /// is ever allowed (ReDelivery to Refund after expiry); every other
+    /// state reports a domain conflict.
+    /// </summary>
+    public void ConvertExpiredRedeliveryToRefund(DateTime indiaLocalNow)
+    {
+        EnsureIndiaLocal(indiaLocalNow, nameof(indiaLocalNow));
+        if (Status != RefundReplacementStatus.AwaitingCustomerChoice)
+        {
+            throw new InvalidOperationException("Only a ticket awaiting customer choice can be converted to a refund.");
+        }
+        if (Source != RefundReplacementSource.DeliveryFailed || !SubscriptionDeliveryId.HasValue)
+        {
+            throw new InvalidOperationException("Only a subscription delivery-fail ticket can be converted to a refund.");
+        }
+        if (CustomerChoice != global::DoodhDirect.Domain.RefundReplacement.CustomerChoice.ReDelivery)
+        {
+            throw new InvalidOperationException("Only a recorded re-delivery choice can be converted to a refund.");
+        }
+        if (!CustomerChoiceAt.HasValue)
+        {
+            throw new InvalidOperationException("The customer request time is missing, so expiry cannot be verified.");
+        }
+        if (indiaLocalNow <= CustomerChoiceAt.Value.AddHours(1))
+        {
+            throw new InvalidOperationException("The one-hour re-delivery window has not expired yet.");
+        }
+
+        CustomerChoice = global::DoodhDirect.Domain.RefundReplacement.CustomerChoice.Refund;
+        Type = RefundReplacementType.Refund;
+    }
+
+    /// <summary>
     /// D1-A race guard: links the rejecting milk test to a delivery-fail ticket
     /// that was created first by the staff failure path, keeping one ticket.
     /// </summary>

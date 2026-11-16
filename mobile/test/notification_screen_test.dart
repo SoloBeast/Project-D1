@@ -62,7 +62,7 @@ void main() {
                 'notification-1',
                 title: 'Order confirmed',
                 body: 'Order DD-1001 is confirmed.',
-                deepLink: '/destination',
+                deepLink: '/orders/order-1',
               ),
               _notification(
                 'notification-2',
@@ -234,7 +234,7 @@ Future<void> _pumpInbox(
       ),
       if (withDestination)
         GoRoute(
-          path: '/destination',
+          path: '/orders/:orderId',
           builder: (context, state) => const Scaffold(
             body: Center(child: Text('Notification destination')),
           ),

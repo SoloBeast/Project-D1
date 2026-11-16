@@ -418,7 +418,13 @@ class OrderSummary {
     required this.deliveryReferenceNumber,
     required this.deliveryStatus,
     this.cancellation,
+    this.containsMilkItems = false,
   });
+
+  /// True when any item is milk-category (server-authoritative). Refund and
+  /// milk-test entry points use this; non-milk orders get a support-ticket
+  /// placeholder instead.
+  bool get isMilkOrder => containsMilkItems;
 
   factory OrderSummary.fromJson(Map<String, dynamic> json) => OrderSummary(
     publicId: json['publicId'] as String,
@@ -457,6 +463,7 @@ class OrderSummary {
         : OrderCancellationInfo.fromJson(
             json['cancellation'] as Map<String, dynamic>,
           ),
+    containsMilkItems: json['containsMilkItems'] as bool? ?? false,
   );
 
   final String publicId;
@@ -481,6 +488,7 @@ class OrderSummary {
   final String? deliveryReferenceNumber;
   final String? deliveryStatus;
   final OrderCancellationInfo? cancellation;
+  final bool containsMilkItems;
 
   bool get canCancel {
     final normalized = status.toLowerCase();

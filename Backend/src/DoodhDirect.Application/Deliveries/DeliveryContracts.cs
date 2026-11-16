@@ -157,7 +157,13 @@ public sealed record DeliveryResult(
     /// (their items come from <see cref="OrderSummary"/>).
     /// </summary>
     string? SubscriptionProductName = null,
-    string? SubscriptionUnitOfMeasure = null);
+    string? SubscriptionUnitOfMeasure = null,
+    /// <summary>
+    /// True when this delivery contains a milk item and batch allocation
+    /// must be saved before employee assignment. Authoritative server flag
+    /// so staff UI gating never relies on product-name parsing.
+    /// </summary>
+    bool RequiresBatchAllocation = false);
 
 public sealed record CustomerDeliveryResult(
     Guid DeliveryId,
@@ -186,7 +192,12 @@ public sealed record CustomerDeliveryResult(
     decimal? Quantity = null,
     DeliveryOrderSummary? OrderSummary = null,
     string? SubscriptionProductName = null,
-    string? SubscriptionUnitOfMeasure = null);
+    string? SubscriptionUnitOfMeasure = null,
+    /// <summary>
+    /// True when this delivery contains a milk-category item. Authoritative
+    /// server flag for milk-test and refund entry-point gating.
+    /// </summary>
+    bool ContainsMilkItems = false);
 
 public sealed record DeliveryEmployeeResult(
     Guid EmployeeId,

@@ -127,11 +127,17 @@ class DoodhStatusPill extends StatelessWidget {
     final colors = switch (tone) {
       DoodhStatusTone.success => (DoodhColors.mint, DoodhColors.tealDark),
       DoodhStatusTone.warning => (
-        const Color(0xFFFFF2D2),
-        const Color(0xFF855D00),
+        DoodhColors.warningSurface,
+        DoodhColors.warningForeground,
       ),
-      DoodhStatusTone.error => (const Color(0xFFFCE5E0), DoodhColors.coral),
-      DoodhStatusTone.neutral => (const Color(0xFFEFF2F0), DoodhColors.muted),
+      DoodhStatusTone.error => (
+        DoodhColors.errorSurface,
+        DoodhColors.coral,
+      ),
+      DoodhStatusTone.neutral => (
+        DoodhColors.neutralSurface,
+        DoodhColors.muted,
+      ),
     };
     return Semantics(
       label: label,
@@ -261,10 +267,10 @@ class CustomerShell extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       appBar: AppBar(
-        // The customer home passes a rich two-row header (brand block +
-        // icons, wallet chip below) — give the toolbar room for it. All
-        // other shells keep the standard height.
-        toolbarHeight: header != null ? 104 : kToolbarHeight,
+        // The customer home passes a rich gradient hero header (brand block
+        // + icons, greeting + wallet chip below) — give the toolbar room
+        // for it. All other shells keep the standard height.
+        toolbarHeight: header != null ? 140 : kToolbarHeight,
         titleSpacing: 20,
         title:
             header ??

@@ -1393,7 +1393,7 @@ class _AuthenticatedImageTileState extends ConsumerState<_AuthenticatedImageTile
               );
             }
             return const ColoredBox(
-              color: Color(0xFFEEEEEE),
+              color: DoodhColors.neutralSurface,
               child: Center(
                 child: SizedBox.square(
                   dimension: 24,

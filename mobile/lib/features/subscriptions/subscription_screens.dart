@@ -889,10 +889,21 @@ class _SubscriptionDetailScreenState
                         subscription.subscriptionNumber!.isNotEmpty)
                       Padding(
                         padding: const EdgeInsets.only(top: DoodhSpacing.xs),
-                        child: Text(
-                          subscription.subscriptionNumber!,
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(color: Colors.white70),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                subscription.subscriptionNumber!,
+                                style: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(color: Colors.white70),
+                              ),
+                            ),
+                            CopyReferenceButton(
+                              value: subscription.subscriptionNumber!,
+                              message: 'Subscription reference copied',
+                              color: Colors.white70,
+                            ),
+                          ],
                         ),
                       ),
                   ],

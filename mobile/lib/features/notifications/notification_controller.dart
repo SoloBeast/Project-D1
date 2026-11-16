@@ -153,7 +153,10 @@ class NotificationController extends Notifier<NotificationState> {
       );
       if (!_isActive(userId)) return;
       state = state.copyWith(
-        items: _mergeNotifications(state.items, page.items),
+        items: _mergeNotifications(
+          state.items,
+          withoutLoginNotifications(page.items),
+        ),
         page: page.page,
         hasMore: page.hasMore,
         isLoadingMore: false,
@@ -186,8 +189,10 @@ class NotificationController extends Notifier<NotificationState> {
         clearError: true,
       );
     } on Object catch (error) {
+      // Marking read is secondary: still open the relevant screen so a
+      // transient failure never blocks navigation.
       if (_isActive(userId)) _setFailure(error);
-      return null;
+      return deepLink;
     }
     return deepLink;
   }
@@ -399,7 +404,7 @@ class NotificationController extends Notifier<NotificationState> {
       final unreadCount = await _repository.getUnreadCount(token);
       if (!_isActive(userId)) return;
       state = state.copyWith(
-        items: page.items,
+        items: withoutLoginNotifications(page.items),
         unreadCount: unreadCount,
         page: page.page,
         hasMore: page.hasMore,
@@ -442,17 +447,50 @@ bool _canReceivePush(PushPermissionStatus status) =>
     status == PushPermissionStatus.authorized ||
     status == PushPermissionStatus.provisional;
 
+/// Backend deep links that never open a screen (login success lands on
+/// "/", which has no tappable destination).
+const loginSuccessEventType = 'AUTHENTICATION_SUCCEEDED';
+
+/// Drops stored login-success rows client-side as well, so notifications
+/// persisted before the server stopped emitting them never render.
+List<AppNotification> withoutLoginNotifications(List<AppNotification> items) {
+  if (!items.any((item) => item.eventType == loginSuccessEventType)) {
+    return items;
+  }
+  return [
+    for (final item in items)
+      if (item.eventType != loginSuccessEventType) item,
+  ];
+}
+
+/// Maps a backend notification deep link onto a route the app actually
+/// declares. Backend links that have no customer screen are redirected to
+/// the closest relevant one instead of being dropped:
+/// - "/" (login/registration) -> "/home"
+/// - "/vacation-refunds/:id" -> "/subscriptions/vacations" (the customer
+///   vacation list; vacation-refund state also surfaces on each
+///   subscription's detail screen)
+/// - "/payments/:id" -> "/payments/:id/result" (the declared payment
+///   result route)
 String? normalizeNotificationDeepLink(String? value) {
   final candidate = value?.trim();
-  if (candidate == null || candidate.isEmpty || !candidate.startsWith('/')) {
+  if (candidate == null || candidate.isEmpty) {
+    return null;
+  }
+  if (candidate.startsWith('//')) {
     return null;
   }
 
   final uri = Uri.tryParse(candidate);
-  if (uri == null ||
-      uri.hasScheme ||
-      uri.hasAuthority ||
-      candidate.startsWith('//')) {
+  if (uri == null || uri.hasScheme || uri.hasAuthority) {
+    return null;
+  }
+  if (!candidate.startsWith('/')) {
+    return null;
+  }
+
+  final mapped = _mapBackendDeepLink(uri);
+  if (mapped == null) {
     return null;
   }
 
@@ -466,17 +504,40 @@ String? normalizeNotificationDeepLink(String? value) {
     '/payments',
     '/wallet',
     '/admin',
+    '/refund-replacements',
+    '/staff',
+    '/finance',
     '/deliveries',
     '/delivery',
     '/delivery-management',
     '/cameras',
     '/dairy',
+    '/notifications',
+    '/my-calendar',
   };
-  final path = uri.path;
+  final path = mapped.path;
   final isAllowed = allowedRoots.any(
     (root) => path == root || path.startsWith('$root/'),
   );
-  return isAllowed ? uri.toString() : null;
+  return isAllowed ? mapped.toString() : null;
+}
+
+Uri? _mapBackendDeepLink(Uri uri) {
+  final path = uri.path;
+  if (path == '/') {
+    return uri.replace(path: '/home');
+  }
+  if (path == '/vacation-refunds' ||
+      path.startsWith('/vacation-refunds/')) {
+    // No dedicated customer vacation-refund detail route exists; the
+    // vacation list is the relevant screen for these updates.
+    return uri.replace(path: '/subscriptions/vacations');
+  }
+  final payment = RegExp(r'^/payments/([^/]+)$').firstMatch(path);
+  if (payment != null) {
+    return uri.replace(path: '/payments/${payment.group(1)}/result');
+  }
+  return uri;
 }
 
 List<AppNotification> _mergeNotifications(

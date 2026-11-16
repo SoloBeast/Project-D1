@@ -30,10 +30,10 @@ namespace DoodhDirect.Api.IntegrationTests;
 public sealed class RefundReplacementVacationSkipSafeguardTests
 {
     [Fact]
-    public async Task Propose_SkipsOverVacationSkippedDate()
+    public async Task Propose_SameDayUnaffectedByVacationSkippedDates()
     {
         await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
-        // Seed a vacation/skipped occurrence on the otherwise-proposed date.
+        // Seed a vacation/skipped occurrence on a nearby date.
         await SkipDateAsync(harness, new DateOnly(2026, 8, 18));
         await FailAsync(harness);
         var requestId = await TicketPublicIdAsync(harness);
@@ -43,8 +43,9 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         var proposal = await service.ProposeReplacementDateAsync(
             StaffActor(harness), requestId, CancellationToken.None);
 
-        // 2026-08-17 fails the cutoff, 2026-08-18 is vacation-skipped.
-        Assert.Equal(new DateOnly(2026, 8, 19), proposal.ProposedDate);
+        // Same-day policy: the original delivery date (2026-08-16), not a
+        // forward date steered by the skipped 2026-08-18.
+        Assert.Equal(new DateOnly(2026, 8, 16), proposal.ProposedDate);
         // Advisory only: failed source + skipped date, no replacement row.
         Assert.Equal(2, await harness.Db.SubscriptionDeliveries.AsNoTracking().CountAsync());
         Assert.DoesNotContain(
@@ -53,7 +54,7 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
     }
 
     [Fact]
-    public async Task Approve_RejectsVacationSkippedDate_ThenSucceedsOnAlternativeDate()
+    public async Task Approve_RejectsSkippedDate_ThenSucceedsOnOriginalDate()
     {
         await using var harness = await DeliveryServiceTests.DeliveryHarness.CreateAsync();
         await SkipDateAsync(harness, new DateOnly(2026, 8, 18));
@@ -62,16 +63,18 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         var service = CreateRefundService(harness);
         await ChooseReDeliveryAsync(service, harness, requestId);
 
+        // The skipped 2026-08-18 is not the original delivery date, so it
+        // is rejected; the message directs staff back to the original date.
         var exception = await Assert.ThrowsAsync<ValidationAppException>(() => service.ApproveAsync(
             StaffActor(harness),
             requestId,
             new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 18), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None));
         Assert.Equal("replacementDate", exception.Field);
-        Assert.Contains("vacation or skipped", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("original delivery date", exception.Message, StringComparison.OrdinalIgnoreCase);
 
         // Rejection writes nothing: choice immutability and the approval
-        // lifecycle survive, so staff can retry with an eligible date.
+        // lifecycle survive, so staff can retry with the eligible date.
         harness.Db.ChangeTracker.Clear();
         Assert.Equal(2, await harness.Db.SubscriptionDeliveries.AsNoTracking().CountAsync());
         var pending = await harness.Db.RefundReplacementRequests.AsNoTracking().SingleAsync();
@@ -81,16 +84,16 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         var approved = await service.ApproveAsync(
             StaffActor(harness),
             requestId,
-            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 19), SettlementMethod: RefundSettlementMethod.Wallet),
+            new ApproveRefundReplacementRequest(null, new DateOnly(2026, 8, 16), SettlementMethod: RefundSettlementMethod.Wallet),
             CancellationToken.None);
 
         Assert.Equal(RefundReplacementStatus.Approved, approved.Status);
-        Assert.Equal(new DateOnly(2026, 8, 19), approved.ReplacementDate);
+        Assert.Equal(new DateOnly(2026, 8, 16), approved.ReplacementDate);
         Assert.NotNull(approved.ReplacementDeliveryPublicId);
         var replacement = Assert.Single(await harness.Db.SubscriptionDeliveries.AsNoTracking()
             .Where(x => x.IsReplacement).ToListAsync());
         Assert.Equal(SubscriptionDeliveryStatus.Scheduled, replacement.Status);
-        Assert.Equal(new DateOnly(2026, 8, 19), replacement.ScheduledDate);
+        Assert.Equal(new DateOnly(2026, 8, 16), replacement.ScheduledDate);
     }
 
     [Fact]
@@ -103,7 +106,7 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         await ChooseReDeliveryAsync(refundService, harness, requestId);
         var approved = await refundService.ApproveAsync(
             StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
-        Assert.Equal(new DateOnly(2026, 8, 18), approved.ReplacementDate);
+        Assert.Equal(new DateOnly(2026, 8, 16), approved.ReplacementDate);
 
         var subscriptionService = CreateSubscriptionService(harness);
         var subscriptionPublicId = await harness.Db.Subscriptions.AsNoTracking()
@@ -133,23 +136,26 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         await ChooseReDeliveryAsync(refundService, harness, requestId);
         var approved = await refundService.ApproveAsync(
             StaffActor(harness), requestId, new ApproveRefundReplacementRequest(null, SettlementMethod: RefundSettlementMethod.Wallet), CancellationToken.None);
-        Assert.Equal(new DateOnly(2026, 8, 18), approved.ReplacementDate);
+        Assert.Equal(new DateOnly(2026, 8, 16), approved.ReplacementDate);
 
         // An ordinary scheduled occurrence beside the replacement proves the
         // vacation still skips what it legitimately can.
-        await AddDeliveryAsync(harness, new DateOnly(2026, 8, 19));
+        await AddDeliveryAsync(harness, new DateOnly(2026, 8, 17));
 
         var subscriptionService = CreateSubscriptionService(harness);
         var result = await subscriptionService.CreateVacationAsync(
             harness.Customer.Id,
-            new CreateVacationRequest(new DateOnly(2026, 8, 18), new DateOnly(2026, 8, 19)),
+            new CreateVacationRequest(new DateOnly(2026, 8, 16), new DateOnly(2026, 8, 17)),
             CancellationToken.None);
 
         Assert.Equal(1, result.SkippedCount);
-        Assert.Equal(new DateOnly(2026, 8, 19), Assert.Single(result.SkippedDates).Date);
-        var blocked = Assert.Single(result.Ineligible);
-        Assert.Equal(new DateOnly(2026, 8, 18), blocked.Date);
-        Assert.Equal("replacementDelivery", blocked.Reason);
+        Assert.Equal(new DateOnly(2026, 8, 17), Assert.Single(result.SkippedDates).Date);
+        // Both 2026-08-16 rows are reported: the failed original (reason
+        // "failed") and the scheduled replacement ("replacementDelivery").
+        Assert.Equal(2, result.Ineligible.Count);
+        var blocked = Assert.Single(result.Ineligible, x => x.Reason == "replacementDelivery");
+        Assert.Equal(new DateOnly(2026, 8, 16), blocked.Date);
+        Assert.Contains(result.Ineligible, x => x.Reason == "failed");
 
         var rows = await harness.Db.SubscriptionDeliveries.AsNoTracking()
             .OrderBy(x => x.ScheduledDate).ToListAsync();
@@ -158,7 +164,7 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         Assert.Equal(SubscriptionDeliveryStatus.Scheduled, replacement.Status);
         Assert.Equal(
             SubscriptionDeliveryStatus.Skipped,
-            rows.Single(x => x.ScheduledDate == new DateOnly(2026, 8, 19)).Status);
+            rows.Single(x => x.ScheduledDate == new DateOnly(2026, 8, 17)).Status);
     }
 
     [Fact]
@@ -195,7 +201,7 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
         Assert.True(envelope.Success);
         Assert.NotNull(envelope.Data);
         Assert.Equal(requestId, envelope.Data.RequestId);
-        Assert.Equal(new DateOnly(2026, 8, 18), envelope.Data.ProposedDate);
+        Assert.Equal(new DateOnly(2026, 8, 16), envelope.Data.ProposedDate);
     }
 
     private static RefundReplacementActor CustomerActor(DeliveryServiceTests.DeliveryHarness harness) =>
@@ -210,6 +216,10 @@ public sealed class RefundReplacementVacationSkipSafeguardTests
     private static async Task<Guid> FailTicketAsync(DeliveryServiceTests.DeliveryHarness harness)
     {
         var deliveryId = await harness.MaterializeSubscriptionAsync();
+        // Preserved milk allocation gate: batch allocation precedes staff
+        // assignment, mirroring the production UI flow.
+        var batchId = await harness.RecordMilkBatchAsync();
+        await harness.SaveAllocationAsync(deliveryId, batchId, 1m);
         await harness.AssignAsync(deliveryId, harness.Staff);
         return deliveryId;
     }

@@ -66,7 +66,19 @@ class _StaffVacationRefundListScreenState
           ),
         ],
       ),
-      body: _listBody(state, items),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            child: _StaffQueueHero(
+              icon: Icons.beach_access_outlined,
+              title: 'Support queue',
+              subtitle: '${items.length} requests',
+            ),
+          ),
+          Expanded(child: _listBody(state, items)),
+        ],
+      ),
     );
   }
 
@@ -262,7 +274,16 @@ class _StaffVacationRefundDetailScreenState
                 Expanded(
                   child: ListView(
                     padding: DoodhSpacing.pagePadding,
-                    children: [VacationRefundCard(request: request)],
+                    children: [
+                      _StaffVacationHero(request: request),
+                      const SizedBox(height: 12),
+                      VacationRefundCard(request: request),
+                      if (request.decidedAt != null ||
+                          request.completedAt != null) ...[
+                        const SizedBox(height: 12),
+                        _StaffVacationOutcomeCard(request: request),
+                      ],
+                    ],
                   ),
                 ),
                 if (_canManage)
@@ -507,6 +528,268 @@ class _Notice extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(child: Text(text, style: theme.textTheme.bodySmall)),
       ],
+    );
+  }
+}
+
+/// Staff vacation-refund detail hero: teal gradient carrying the customer
+/// and branch/count line. The ticket number and status stay single-sourced
+/// in the [VacationRefundCard] below (which also keeps the frozen money
+/// math unchanged), so review-state labels never render twice.
+class _StaffVacationHero extends StatelessWidget {
+  const _StaffVacationHero({required this.request});
+
+  final VacationRefundRequest request;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [DoodhColors.tealDark, DoodhColors.teal],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: DoodhRadii.sm,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.35),
+                ),
+              ),
+              child: const Icon(
+                Icons.beach_access_outlined,
+                color: Colors.white,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    request.customerName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${request.branchName} (${request.branchCode}) · '
+                    '${request.occurrenceCount} skipped deliveries',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Decision/completion outcome for a vacation-refund ticket, rendered only
+/// from authoritative API fields. Approval alone is never presented as a
+/// wallet credit — only a completed ticket names the credited result.
+class _StaffVacationOutcomeCard extends StatelessWidget {
+  const _StaffVacationOutcomeCard({required this.request});
+
+  final VacationRefundRequest request;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Decision', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            if (request.decidedAt != null)
+              _StaffVacationOutcomeRow(
+                icon: request.status == VacationRefundStatus.rejected
+                    ? Icons.thumb_down_outlined
+                    : Icons.thumb_up_outlined,
+                label: request.status == VacationRefundStatus.rejected
+                    ? 'Rejected'
+                    : 'Approved',
+                value:
+                    '${request.decidedByName ?? 'Support'} · '
+                    '${_formatDateTime(request.decidedAt!)}',
+              ),
+            if (request.decisionRemarks?.isNotEmpty ?? false)
+              _StaffVacationOutcomeRow(
+                icon: Icons.notes_outlined,
+                label: 'Remarks',
+                value: request.decisionRemarks!,
+              ),
+            if (request.completedAt != null) ...[
+              const SizedBox(height: 8),
+              _StaffVacationOutcomeRow(
+                icon: Icons.task_alt,
+                label: 'Completed',
+                value:
+                    '${request.completedByName ?? 'Support'} · '
+                    '${_formatDateTime(request.completedAt!)}',
+              ),
+            ],
+            if (request.completionRemarks?.isNotEmpty ?? false)
+              _StaffVacationOutcomeRow(
+                icon: Icons.notes_outlined,
+                label: 'Completion remarks',
+                value: request.completionRemarks!,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StaffVacationOutcomeRow extends StatelessWidget {
+  const _StaffVacationOutcomeRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: const BoxDecoration(
+              color: DoodhColors.mint,
+              borderRadius: DoodhRadii.sm,
+            ),
+            child: Icon(icon, size: 18, color: DoodhColors.tealDark),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: const TextStyle(color: DoodhColors.muted),
+            ),
+          ),
+          Expanded(child: Text(value, style: theme.textTheme.bodyMedium)),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatDateTime(DateTime value) =>
+    '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year} '
+    '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+
+/// Staff queue hero: gradient card carrying the queue identity and the
+/// visible request count. The title stays in the AppBar; this hero never
+/// repeats status words so the row status labels stay unambiguous.
+class _StaffQueueHero extends StatelessWidget {
+  const _StaffQueueHero({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [DoodhColors.tealDark, DoodhColors.teal],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: DoodhRadii.sm,
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.35),
+                ),
+              ),
+              child: Icon(icon, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
