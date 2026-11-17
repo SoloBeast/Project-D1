@@ -84,6 +84,34 @@ internal sealed partial class NotificationProcessor(
         return processed;
     }
 
+    public async Task<int> PurgeExpiredInboxAsync(CancellationToken cancellationToken)
+    {
+        var cutoff = timeProvider.Now.AddHours(-24);
+        var expiredIds = await dbContext.Notifications
+            .AsNoTracking()
+            .Where(x => x.CreatedAt < cutoff)
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+        if (expiredIds.Count == 0) return 0;
+        var deliveryIds = await dbContext.NotificationDeliveries
+            .AsNoTracking()
+            .Where(x => expiredIds.Contains(x.NotificationId))
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+        if (deliveryIds.Count > 0)
+        {
+            await dbContext.NotificationAttempts
+                .Where(x => deliveryIds.Contains(x.NotificationDeliveryId))
+                .ExecuteDeleteAsync(cancellationToken);
+            await dbContext.NotificationDeliveries
+                .Where(x => expiredIds.Contains(x.NotificationId))
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+        return await dbContext.Notifications
+            .Where(x => expiredIds.Contains(x.Id))
+            .ExecuteDeleteAsync(cancellationToken);
+    }
+
     public async Task<int> ProcessDueDeliveriesAsync(CancellationToken cancellationToken)
     {
         var now = timeProvider.Now;
@@ -262,13 +290,22 @@ internal sealed partial class NotificationProcessor(
                 var destination = delivery.Channel == NotificationChannel.Push
                     ? UnprotectPushDestination(delivery)
                     : delivery.DestinationReference;
+                // OTP privacy: the inbox row keeps the real code, but the push
+                // transport only ever sees generic text for DELIVERY_OTP_ISSUED.
+                // Other channels (SMS/WhatsApp/Email) keep existing rendering.
+                var (pushTitle, pushBody) = delivery.Channel == NotificationChannel.Push
+                    ? DeliveryOtpPushPrivacy.PushPresentation(
+                        delivery.Notification.EventType,
+                        delivery.Notification.Title,
+                        delivery.Notification.Body)
+                    : (delivery.Notification.Title ?? string.Empty, delivery.Notification.Body);
                 result = await GatewayFor(delivery.Channel).SendAsync(
                     new NotificationProviderMessage(
                         delivery.PublicId,
                         delivery.Channel,
                         destination,
-                        delivery.Notification.Title,
-                        delivery.Notification.Body,
+                        pushTitle,
+                        pushBody,
                         delivery.Notification.DeepLink,
                         new Dictionary<string, string>(StringComparer.Ordinal)
                         {

@@ -2,28 +2,33 @@ import 'dart:async';
 
 import 'package:doodh_direct_mobile/features/customer/current_location_provider.dart';
 import 'package:doodh_direct_mobile/features/customer/google_map_coordinate_picker.dart';
+import 'package:doodh_direct_mobile/features/customer/location_permission.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// The picker pre-checks the OS location status before delegating to the
-/// injected provider. Unit tests have no platform implementation (an
-/// unmocked `checkPermission` never completes in a widget test), so tests
-/// that exercise the provider path mock a granted status; rationale and
-/// denial sequencing is covered in `permission_onboarding_test.dart`.
-void _mockGrantedLocationPermission() {
-  const channel = MethodChannel('flutter.baseflow.com/geolocator');
-  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-      .setMockMethodCallHandler(channel, (call) async {
-        if (call.method == 'checkPermission') return 2; // whileInUse
-        return null;
-      });
-  addTearDown(
-    () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, null),
-  );
+/// Deterministic gate: the picker never touches platform channels in these
+/// tests. Permission sequencing (denial, retry, settings, resume) is
+/// covered in `location_permission_test.dart`.
+class _GrantedLocationPermissionService implements LocationPermissionService {
+  const _GrantedLocationPermissionService();
+
+  @override
+  Future<LocationGateStatus> checkStatus() async =>
+      LocationGateStatus.granted;
+
+  @override
+  Future<LocationGateStatus> requestAccess() async =>
+      LocationGateStatus.granted;
+
+  @override
+  Future<bool> isServiceEnabled() async => true;
+
+  @override
+  Future<void> openSettings() async {}
 }
+
+const _grantedLocationPermissions = _GrantedLocationPermissionService();
 
 void main() {
   testWidgets('shows a configuration error when Maps has no API key', (
@@ -33,6 +38,7 @@ void main() {
       MaterialApp(
         home: GoogleMapCoordinatePicker(
           onLocationSelected: (_) {},
+          locationPermissionService: _grantedLocationPermissions,
           mapsLoader: () => Future.error(
             StateError(
               'Google Maps API key is not configured for this Web build.',
@@ -56,6 +62,7 @@ void main() {
       MaterialApp(
         home: GoogleMapCoordinatePicker(
           onLocationSelected: (_) {},
+          locationPermissionService: _grantedLocationPermissions,
           mapsLoader: () => load.future,
         ),
       ),
@@ -78,6 +85,7 @@ void main() {
       MaterialApp(
         home: GoogleMapCoordinatePicker(
           onLocationSelected: (location) => selected = location,
+          locationPermissionService: _grantedLocationPermissions,
           mapsLoader: () async {},
           mapBuilder: (location, onLocationSelected, onCameraMove) {
             initialCameraTarget = location;
@@ -112,6 +120,7 @@ void main() {
         home: GoogleMapCoordinatePicker(
           initialLocation: savedLocation,
           onLocationSelected: (location) => selected = location,
+          locationPermissionService: _grantedLocationPermissions,
           currentLocationProvider: () async {
             providerCalls++;
             return const LatLng(28.6, 77.4);
@@ -141,7 +150,6 @@ void main() {
   });
 
   testWidgets('uses current location only after explicit action', (tester) async {
-    _mockGrantedLocationPermission();
     const currentLocation = LatLng(28.6129, 77.2295);
     LatLng? selected;
     var providerCalls = 0;
@@ -150,6 +158,7 @@ void main() {
       MaterialApp(
         home: GoogleMapCoordinatePicker(
           onLocationSelected: (location) => selected = location,
+          locationPermissionService: _grantedLocationPermissions,
           currentLocationProvider: () async {
             providerCalls++;
             return currentLocation;
@@ -175,11 +184,11 @@ void main() {
   testWidgets('shows a friendly message when location permission is denied', (
     tester,
   ) async {
-    _mockGrantedLocationPermission();
     await tester.pumpWidget(
       MaterialApp(
         home: GoogleMapCoordinatePicker(
           onLocationSelected: (_) {},
+          locationPermissionService: _grantedLocationPermissions,
           currentLocationProvider: () async {
             throw const CurrentLocationException(
               CurrentLocationFailure.permissionDenied,
@@ -204,11 +213,11 @@ void main() {
   testWidgets('rejects invalid coordinates from the location provider', (
     tester,
   ) async {
-    _mockGrantedLocationPermission();
     await tester.pumpWidget(
       MaterialApp(
         home: GoogleMapCoordinatePicker(
           onLocationSelected: (_) {},
+          locationPermissionService: _grantedLocationPermissions,
           currentLocationProvider: () async =>
               const LatLng(double.nan, 77.317),
           mapsLoader: () async {},
@@ -235,6 +244,7 @@ void main() {
       MaterialApp(
         home: GoogleMapCoordinatePicker(
           onLocationSelected: (_) {},
+          locationPermissionService: _grantedLocationPermissions,
           mapsLoader: () async {},
           mapBuilder: (_, _, _) => const SizedBox.expand(),
         ),

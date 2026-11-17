@@ -634,10 +634,6 @@ class _StaffMilkTestScreenState
   final _formKey = GlobalKey<FormState>();
   final _remarks = TextEditingController();
   _MilkTestImageCandidate? _selectedImage;
-  final List<_ReadingInput> _readings = [
-    _ReadingInput(code: 'FAT', name: 'Fat', unit: '%'),
-    _ReadingInput(code: 'SNF', name: 'SNF', unit: '%'),
-  ];
 
   @override
   void initState() {
@@ -648,9 +644,6 @@ class _StaffMilkTestScreenState
   @override
   void dispose() {
     _remarks.dispose();
-    for (final reading in _readings) {
-      reading.dispose();
-    }
     super.dispose();
   }
 
@@ -745,41 +738,18 @@ class _StaffMilkTestScreenState
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    'Readings',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium,
-                                  ),
-                                ),
-                                IconButton(
-                                  tooltip: 'Add reading',
-                                  onPressed: state.isSaving
-                                      ? null
-                                      : _addReading,
-                                  icon: const Icon(Icons.add_circle_outline),
-                                ),
-                              ],
-                            ),
-                            ..._readings.asMap().entries.map(
-                              (entry) => _ReadingFields(
-                                key: ValueKey(entry.value),
-                                input: entry.value,
-                                canRemove: _readings.length > 1,
-                                onRemove: () => _removeReading(entry.key),
-                              ),
-                            ),
                             TextFormField(
                               controller: _remarks,
                               maxLength: 500,
                               maxLines: 3,
                               decoration: const InputDecoration(
-                                labelText: 'Staff remarks (optional)',
+                                labelText: 'Staff remarks (required)',
                                 border: OutlineInputBorder(),
                               ),
+                              validator: (value) =>
+                                  value == null || value.trim().isEmpty
+                                      ? 'Staff remarks are required'
+                                      : null,
                             ),
                             const SizedBox(height: 12),
                             FilledButton.icon(
@@ -848,14 +818,6 @@ class _StaffMilkTestScreenState
               ),
       ),
     );
-  }
-
-  void _addReading() => setState(() => _readings.add(_ReadingInput()));
-
-  void _removeReading(int index) {
-    final removed = _readings.removeAt(index);
-    removed.dispose();
-    setState(() {});
   }
 
   Future<void> _pickAndUpload(String milkTestId, {String? replaceImageId}) async {
@@ -929,23 +891,14 @@ class _StaffMilkTestScreenState
 
   Future<void> _complete(String milkTestId) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    final parameters = _readings
-        .map(
-          (reading) => MilkTestParameter(
-            code: reading.code.text.trim(),
-            name: reading.name.text.trim(),
-            value: double.parse(reading.value.text.trim()),
-            unit: reading.unit.text.trim(),
-          ),
-        )
-        .toList(growable: false);
     final remarks = _remarks.text.trim();
+    if (remarks.isEmpty) return;
     final completed = await ref
         .read(milkTestControllerProvider.notifier)
         .complete(
           milkTestId,
-          parameters: parameters,
-          remarks: remarks.isEmpty ? null : remarks,
+          parameters: const <MilkTestParameter>[],
+          remarks: remarks,
         );
     if (completed && mounted) _showMessage('Milk test completed.');
   }
@@ -984,117 +937,6 @@ class _LocalMilkTestImagePreview extends StatelessWidget {
           child: Center(child: Text('Preview unavailable')),
         ),
       ),
-    ),
-  );
-}
-
-class _ReadingInput {
-  _ReadingInput({String code = '', String name = '', String unit = ''})
-    : code = TextEditingController(text: code),
-      name = TextEditingController(text: name),
-      value = TextEditingController(),
-      unit = TextEditingController(text: unit);
-
-  final TextEditingController code;
-  final TextEditingController name;
-  final TextEditingController value;
-  final TextEditingController unit;
-
-  void dispose() {
-    code.dispose();
-    name.dispose();
-    value.dispose();
-    unit.dispose();
-  }
-}
-
-class _ReadingFields extends StatelessWidget {
-  const _ReadingFields({
-    super.key,
-    required this.input,
-    required this.canRemove,
-    required this.onRemove,
-  });
-
-  final _ReadingInput input;
-  final bool canRemove;
-  final VoidCallback onRemove;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(bottom: 16),
-    child: Column(
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: input.code,
-                textCapitalization: TextCapitalization.characters,
-                decoration: const InputDecoration(
-                  labelText: 'Code',
-                  border: OutlineInputBorder(),
-                ),
-                validator: _required,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              flex: 2,
-              child: TextFormField(
-                controller: input.name,
-                decoration: const InputDecoration(
-                  labelText: 'Reading name',
-                  border: OutlineInputBorder(),
-                ),
-                validator: _required,
-              ),
-            ),
-            IconButton(
-              tooltip: 'Remove reading',
-              onPressed: canRemove ? onRemove : null,
-              icon: const Icon(Icons.remove_circle_outline),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              flex: 2,
-              child: TextFormField(
-                controller: input.value,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                  signed: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'Value',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) {
-                  if (value == null || double.tryParse(value.trim()) == null) {
-                    return 'Enter a number';
-                  }
-                  return null;
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: input.unit,
-                decoration: const InputDecoration(
-                  labelText: 'Unit',
-                  border: OutlineInputBorder(),
-                ),
-                validator: _required,
-              ),
-            ),
-          ],
-        ),
-      ],
     ),
   );
 }
@@ -1549,9 +1391,6 @@ class _ButtonProgress extends StatelessWidget {
     child: CircularProgressIndicator(strokeWidth: 2),
   );
 }
-
-String? _required(String? value) =>
-    value == null || value.trim().isEmpty ? 'Required' : null;
 
 /// Opens a full-screen, pinch-to-zoom viewer for a protected milk test image.
 ///

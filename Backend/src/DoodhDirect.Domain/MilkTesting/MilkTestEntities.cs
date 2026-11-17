@@ -120,10 +120,10 @@ public sealed class MilkTest : AuditableEntity
         {
             throw new ArgumentException("Completion cannot precede the test request.", nameof(completedAt));
         }
-        if (Parameters.Count == 0)
-        {
-            throw new InvalidOperationException("At least one valid reading is required before completing the test.");
-        }
+        // Readings are optional (the Perform Milk Test screen no longer
+        // collects them); staff remarks are enforced at the application
+        // service boundary, keeping this domain operation backward
+        // compatible with existing direct callers.
         if (Images.Count == 0)
         {
             throw new InvalidOperationException("At least one valid image is required before completing the test.");

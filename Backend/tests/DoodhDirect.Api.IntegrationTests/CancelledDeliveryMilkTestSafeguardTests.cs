@@ -86,7 +86,7 @@ public sealed class CancelledDeliveryMilkTestSafeguardTests
 
         var error = await Assert.ThrowsAsync<BusinessRuleException>(() => MilkService(harness).CompleteAsync(
             StaffMilkActor(harness), testId,
-            new CompleteMilkTestRequest([new MilkTestParameterRequest("FAT", "Fat", 4.2m, "%")], null),
+            new CompleteMilkTestRequest([new MilkTestParameterRequest("FAT", "Fat", 4.2m, "%")], "Test completed"),
             CancellationToken.None));
         Assert.Contains("cancelled", error.Message, StringComparison.OrdinalIgnoreCase);
 

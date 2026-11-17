@@ -188,6 +188,53 @@ public static class NotificationEventTypes
         Critical.Contains(eventType.Trim().ToUpperInvariant());
 }
 
+/// <summary>
+/// Lock-screen privacy guard for delivery OTP push notifications.
+/// The six-digit OTP stays available inside the authenticated app (inbox
+/// notification body rendered from the Push template), but FCM push
+/// title/body/data must never carry it. Push shows generic text directing
+/// the customer to open the app.
+/// </summary>
+public static class DeliveryOtpPushPrivacy
+{
+    public const string GenericTitle = "Delivery update";
+    public const string GenericBody = "Your delivery update is ready. Open DoodhDirect to view it securely.";
+
+    public static bool IsDeliveryOtpEvent(string? eventType) =>
+        string.Equals(
+            eventType?.Trim(),
+            NotificationEventTypes.DeliveryOtpIssued,
+            StringComparison.OrdinalIgnoreCase);
+
+    public static (string Title, string Body) PushPresentation(
+        string? eventType,
+        string? title,
+        string body) =>
+        IsDeliveryOtpEvent(eventType)
+            ? (GenericTitle, GenericBody)
+            : (title ?? string.Empty, body);
+
+    /// <summary>
+    /// Removes OTP-carrying entries from the FCM data payload. Currently the
+    /// pipeline only sends notificationId/eventType/deep links, but this
+    /// guards against future regressions that copy rendered variables.
+    /// </summary>
+    public static IReadOnlyDictionary<string, string> SanitizeData(
+        string? eventType,
+        IReadOnlyDictionary<string, string> data)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        if (!IsDeliveryOtpEvent(eventType))
+        {
+            return data;
+        }
+
+        return data
+            .Where(pair => !pair.Key.Contains("otp", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+    }
+}
+
 public sealed record NotificationActor(long UserId);
 
 public sealed record NotificationEventRequest(
@@ -347,6 +394,7 @@ public interface INotificationProcessor
 {
     Task<int> ProcessPendingEventsAsync(CancellationToken cancellationToken);
     Task<int> ProcessDueDeliveriesAsync(CancellationToken cancellationToken);
+    Task<int> PurgeExpiredInboxAsync(CancellationToken cancellationToken);
 }
 
 public interface IDevelopmentNotificationService

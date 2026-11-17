@@ -73,8 +73,9 @@ internal sealed class NotificationService(
         // Login success events are audit-level noise, not actionable inbox
         // content: exclude them (including rows stored before emission
         // stopped) so the customer inbox never shows "Authentication
-        // Succeeded" entries.
-        var query = dbContext.Notifications.AsNoTracking().Where(x => x.UserId == actor.UserId && x.EventType != NotificationEventTypes.AuthenticationSucceeded);
+        // Succeeded" entries. In-app notifications expire after 24 hours.
+        var cutoff = timeProvider.Now.AddHours(-24);
+        var query = dbContext.Notifications.AsNoTracking().Where(x => x.UserId == actor.UserId && x.EventType != NotificationEventTypes.AuthenticationSucceeded && x.CreatedAt >= cutoff);
         if (request.IsRead.HasValue)
         {
             query = request.IsRead.Value
@@ -107,8 +108,9 @@ internal sealed class NotificationService(
         CancellationToken cancellationToken)
     {
         ValidateActor(actor);
+        var cutoff = timeProvider.Now.AddHours(-24);
         var count = await dbContext.Notifications.CountAsync(
-            x => x.UserId == actor.UserId && x.ReadAt == null && x.EventType != NotificationEventTypes.AuthenticationSucceeded,
+            x => x.UserId == actor.UserId && x.ReadAt == null && x.EventType != NotificationEventTypes.AuthenticationSucceeded && x.CreatedAt >= cutoff,
             cancellationToken);
         return new NotificationUnreadCountResult(count);
     }

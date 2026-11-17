@@ -1,8 +1,7 @@
 import 'package:doodh_direct_mobile/core/theme/doodh_theme.dart';
 import 'package:doodh_direct_mobile/features/customer/current_location_provider.dart';
-import 'package:doodh_direct_mobile/features/notifications/permission_onboarding.dart';
+import 'package:doodh_direct_mobile/features/customer/location_permission.dart';
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 const addressSelectionFallback = LatLng(28.367, 77.317);
@@ -22,6 +21,8 @@ class GoogleMapCoordinatePicker extends StatefulWidget {
     required this.mapsLoader,
     this.currentLocationProvider = getCurrentLocation,
     this.mapBuilder,
+    this.locationPermissionService =
+        const GeolocatorLocationPermissionService(),
   });
 
   final LatLng? initialLocation;
@@ -37,12 +38,18 @@ class GoogleMapCoordinatePicker extends StatefulWidget {
   final CurrentLocationProvider currentLocationProvider;
   final CoordinateMapBuilder? mapBuilder;
 
+  /// Reads/requests foreground location access for the permission gate.
+  /// Injected so tests can script every gate status without platform
+  /// channels. The default uses Geolocator with foreground access only.
+  final LocationPermissionService locationPermissionService;
+
   @override
   State<GoogleMapCoordinatePicker> createState() =>
       _GoogleMapCoordinatePickerState();
 }
 
-class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker> {
+class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker>
+    with WidgetsBindingObserver {
   static int _mapInstanceCount = 0;
   static int _mapBuildCount = 0;
 
@@ -55,11 +62,68 @@ class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker> {
   bool _isLocating = false;
   String? _locationError;
 
+  /// Feature-triggered gate: checked (never requested) when the picker
+  /// opens. The interactive map is built only while granted.
+  LocationGateStatus _gateStatus = LocationGateStatus.checking;
+  bool _permissionRequestInFlight = false;
+  int _permissionAttempts = 0;
+
   @override
   void initState() {
     super.initState();
     _selectedLocation = widget.initialLocation ?? addressSelectionFallback;
     _mapsReady = widget.mapsLoader();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshGateStatus();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Returning from Settings re-checks the OS status: access granted there
+    // makes the interactive map available without another prompt.
+    if (state == AppLifecycleState.resumed) _refreshGateStatus();
+  }
+
+  /// Reads the OS status without prompting. Permission is requested only
+  /// from [_requestPermissionAccess], which runs solely after an explicit
+  /// allow/retry tap.
+  Future<void> _refreshGateStatus() async {
+    final status = await widget.locationPermissionService.checkStatus();
+    if (!mounted) return;
+    setState(() => _gateStatus = status);
+  }
+
+  /// Requests foreground access after an explicit user action. A denial
+  /// keeps the map unavailable with a non-blocking explanation and a retry
+  /// action; the OS dialog is never re-triggered automatically.
+  Future<void> _requestPermissionAccess() async {
+    if (_permissionRequestInFlight) return;
+    setState(() => _permissionRequestInFlight = true);
+    try {
+      final status = await widget.locationPermissionService.requestAccess();
+      if (!mounted) return;
+      setState(() {
+        _gateStatus = status;
+        _permissionAttempts++;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _permissionRequestInFlight = false);
+      }
+    }
+  }
+
+  Future<void> _openSettings() async {
+    await widget.locationPermissionService.openSettings();
+    // Platforms without a lifecycle pause never leave the app, so re-check
+    // now as well (resumed re-checks also run via the observer).
+    await _refreshGateStatus();
   }
 
   @override
@@ -86,6 +150,62 @@ class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker> {
               if (snapshot.hasError) {
                 _diagnostic('maps future error=${snapshot.error}');
                 return _MapStatePanel(message: '${snapshot.error}');
+              }
+              // The interactive map (taps, drags, camera moves, coordinate
+              // selection) is built only while permission is granted. Every
+              // other status keeps a non-blocking gate panel so the rest of
+              // the address form stays fully usable.
+              switch (_gateStatus) {
+                case LocationGateStatus.checking:
+                  return const Center(child: CircularProgressIndicator());
+                case LocationGateStatus.denied:
+                  return _PermissionGatePanel(
+                    icon: Icons.location_on_outlined,
+                    title: _permissionAttempts == 0
+                        ? 'Location access needed'
+                        : 'Map unavailable without location access',
+                    message: _permissionAttempts == 0
+                        ? 'Allow location access to show the interactive map '
+                              'and pick your delivery point. Your address '
+                              'fields work without it.'
+                        : 'Location access is still off, so the map stays '
+                              'unavailable and your saved location is '
+                              'unchanged. Retry whenever you are ready.',
+                    primaryLabel: _permissionAttempts == 0
+                        ? 'Allow location access'
+                        : 'Try again',
+                    busy: _permissionRequestInFlight,
+                    onPrimary: _requestPermissionAccess,
+                  );
+                case LocationGateStatus.permanentlyDenied:
+                  return _PermissionGatePanel(
+                    icon: Icons.location_off_outlined,
+                    title: 'Location is turned off',
+                    message:
+                        'System settings are blocking location for '
+                        'DoodhDirect, so the map is unavailable. Open '
+                        'settings to enable it, or keep filling your address '
+                        'details manually.',
+                    primaryLabel: 'Open settings',
+                    busy: false,
+                    onPrimary: _openSettings,
+                    secondaryLabel: 'Check again',
+                    onSecondary: _refreshGateStatus,
+                  );
+                case LocationGateStatus.unavailable:
+                  return _PermissionGatePanel(
+                    icon: Icons.location_off_outlined,
+                    title: 'Location unavailable',
+                    message:
+                        'Current location is not available on this device or '
+                        'browser, so the map cannot be shown. Your address '
+                        'details are unaffected.',
+                    primaryLabel: 'Check again',
+                    busy: false,
+                    onPrimary: _refreshGateStatus,
+                  );
+                case LocationGateStatus.granted:
+                  break;
               }
               if (!_mapReadyForLayout) {
                 _scheduleMapWhenHostIsReady();
@@ -238,10 +358,31 @@ class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker> {
   }
 
   Future<void> _useCurrentLocation() async {
-    // First-use permission flow scoped strictly to this picker: explain
-    // before the OS prompt, route permanent denial to settings, and never
-    // request location outside the address flow (no background location).
-    if (!await _ensureLocationPermission()) return;
+    // Rechecked on every tap: permission may have been revoked while the
+    // map was open, and location services are reported separately from
+    // permission denial.
+    bool serviceEnabled;
+    try {
+      serviceEnabled =
+          await widget.locationPermissionService.isServiceEnabled();
+    } on Object {
+      serviceEnabled = false;
+    }
+    if (!serviceEnabled) {
+      if (!mounted) return;
+      setState(() {
+        _locationError =
+            'Location services are turned off on this device. Turn them on, '
+            'then try again.';
+      });
+      return;
+    }
+    final status = await widget.locationPermissionService.checkStatus();
+    if (!mounted) return;
+    if (status != LocationGateStatus.granted) {
+      setState(() => _gateStatus = status);
+      return;
+    }
     setState(() {
       _isLocating = true;
       _locationError = null;
@@ -259,6 +400,12 @@ class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker> {
         ),
       );
     } on CurrentLocationException catch (error) {
+      // The provider never requests permission itself; a denial here means
+      // access was revoked mid-use, so fall back to the gate.
+      if (error.failure == CurrentLocationFailure.permissionDenied) {
+        await _refreshGateStatus();
+        if (!mounted) return;
+      }
       if (mounted) _showLocationError(error);
     } catch (_) {
       if (mounted) {
@@ -269,29 +416,6 @@ class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker> {
     } finally {
       if (mounted) setState(() => _isLocating = false);
     }
-  }
-
-  /// Returns true when the OS location request may proceed. Shows the
-  /// rationale sheet before a first-time prompt and the settings guidance
-  /// when permission is permanently denied; manual map selection always
-  /// remains available. An unreadable OS state (e.g. unit tests) falls
-  /// through so the injected provider decides.
-  Future<bool> _ensureLocationPermission() async {
-    LocationPermission? status;
-    try {
-      status = await Geolocator.checkPermission();
-    } on Object {
-      status = null;
-    }
-    if (!mounted) return false;
-    if (status == LocationPermission.deniedForever) {
-      await showLocationSettingsGuidance(context);
-      return false;
-    }
-    if (status == LocationPermission.denied) {
-      return showLocationRationale(context);
-    }
-    return true;
   }
 
   void _showLocationError(CurrentLocationException error) {
@@ -311,6 +435,80 @@ class _GoogleMapCoordinatePickerState extends State<GoogleMapCoordinatePicker> {
       debugPrint('[GoogleMapDiagnostic] $message');
       return true;
     }());
+  }
+}
+
+/// Non-blocking gate shown while the interactive map is unavailable.
+/// The panel only explains and offers explicit actions; it never triggers
+/// an OS prompt by itself and never blocks the surrounding address form.
+class _PermissionGatePanel extends StatelessWidget {
+  const _PermissionGatePanel({
+    required this.icon,
+    required this.title,
+    required this.message,
+    required this.primaryLabel,
+    required this.onPrimary,
+    required this.busy,
+    this.secondaryLabel,
+    this.onSecondary,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String primaryLabel;
+  final Future<void> Function() onPrimary;
+  final bool busy;
+  final String? secondaryLabel;
+  final Future<void> Function()? onSecondary;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Center(
+        child: SingleChildScrollView(
+          padding: DoodhSpacing.cardPadding,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 32, color: colors.onSurfaceVariant),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 12),
+              FilledButton(
+                onPressed: busy ? null : () => onPrimary(),
+                child: busy
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(primaryLabel),
+              ),
+              if (secondaryLabel != null && onSecondary != null)
+                TextButton(
+                  onPressed: () => onSecondary!(),
+                  child: Text(secondaryLabel!),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

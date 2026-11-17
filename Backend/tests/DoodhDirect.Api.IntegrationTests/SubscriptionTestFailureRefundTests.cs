@@ -185,7 +185,7 @@ public sealed class SubscriptionTestFailureRefundTests
             "test.jpg", "image/jpeg", CancellationToken.None);
         await milkService.CompleteAsync(
             staffActor, requested.MilkTestId,
-            new CompleteMilkTestRequest([new MilkTestParameterRequest("FAT", "Fat", 4.2m, "%")], null),
+            new CompleteMilkTestRequest([new MilkTestParameterRequest("FAT", "Fat", 4.2m, "%")], "Test completed"),
             CancellationToken.None);
         await milkService.RejectAsync(
             customerActor, requested.MilkTestId, new DecideMilkTestRequest("Milk was sour"), CancellationToken.None);

@@ -60,6 +60,7 @@ internal sealed class NotificationWorker(
                 var processor = scope.ServiceProvider.GetRequiredService<INotificationProcessor>();
                 var eventCount = await processor.ProcessPendingEventsAsync(stoppingToken);
                 var deliveryCount = await processor.ProcessDueDeliveriesAsync(stoppingToken);
+                await processor.PurgeExpiredInboxAsync(stoppingToken);
 
                 if (eventCount > 0 || deliveryCount > 0)
                 {

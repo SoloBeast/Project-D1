@@ -2321,11 +2321,33 @@ class _StaffOrderInspectionScreenState
                                   const Icon(Icons.local_drink_outlined),
                                   const SizedBox(width: 10),
                                   Expanded(
-                                    child: Text(
-                                      '${item.productName}\n${formatQuantity(item.quantity)}',
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          item.productName,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          '${item.sku} · ${formatQuantity(item.quantity)} ${item.unitOfMeasure} × ₹${item.unitPrice.toStringAsFixed(2)}',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall,
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  Text('₹${item.lineTotal.toStringAsFixed(2)}'),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '₹${item.lineTotal.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),

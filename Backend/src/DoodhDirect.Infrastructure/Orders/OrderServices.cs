@@ -187,7 +187,6 @@ public sealed class OrderService(
 
         var calculation = await CalculateAsync(customerId, request, cancellationToken);
         string? orderNumber = null;
-        string? notificationEventKey = null;
         List<string>? managerNotificationEventKeys = null;
         Order? order = null;
         try
@@ -260,16 +259,8 @@ public sealed class OrderService(
                 }
 
                 dbContext.Orders.Add(order);
-                notificationEventKey = $"order:{order.PublicId:N}:created";
-                notificationEventWriter.Add(new NotificationEventRequest(
-                    customerId,
-                    NotificationEventTypes.OrderCreated,
-                    notificationEventKey,
-                    new Dictionary<string, string>
-                    {
-                        ["message"] = $"Order {order.OrderNumber} has been created."
-                    },
-                    $"/orders/{order.PublicId}"));
+                // Customer inbox no longer receives an order-creation entry:
+                // only branch managers are notified of a newly placed order.
                 managerNotificationEventKeys = await AddManagerOrderPlacedEventsAsync(
                     calculation.Allocation.BranchId,
                     order,
@@ -290,16 +281,6 @@ public sealed class OrderService(
                 foreach (var charge in order.Charges)
                 {
                     dbContext.Entry(charge).State = EntityState.Detached;
-                }
-            }
-
-            if (notificationEventKey is not null)
-            {
-                var notificationEvent = dbContext.NotificationEvents.Local
-                    .SingleOrDefault(item => item.EventKey == notificationEventKey);
-                if (notificationEvent is not null)
-                {
-                    dbContext.Entry(notificationEvent).State = EntityState.Detached;
                 }
             }
 

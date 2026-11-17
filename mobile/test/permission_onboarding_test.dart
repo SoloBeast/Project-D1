@@ -5,16 +5,17 @@ import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/features/auth/auth_repository.dart';
 import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/customer/google_map_coordinate_picker.dart';
+import 'package:doodh_direct_mobile/features/customer/location_permission.dart';
 import 'package:doodh_direct_mobile/features/notifications/notification_controller.dart';
 import 'package:doodh_direct_mobile/features/notifications/notification_models.dart';
 import 'package:doodh_direct_mobile/features/notifications/notification_repository.dart';
 import 'package:doodh_direct_mobile/features/notifications/permission_onboarding.dart';
 import 'package:doodh_direct_mobile/features/notifications/push_notification_gateway.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 void main() {
@@ -173,25 +174,9 @@ void main() {
   });
 
   group('location permission in the address picker', () {
-    const channel = MethodChannel('flutter.baseflow.com/geolocator');
-
-    void mockPermission(int status) {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-            if (call.method == 'checkPermission') return status;
-            if (call.method == 'openAppSettings') return true;
-            return null;
-          });
-      addTearDown(
-        () => TestDefaultBinaryMessengerBinding
-            .instance
-            .defaultBinaryMessenger
-            .setMockMethodCallHandler(channel, null),
-      );
-    }
-
     Future<void> pumpPicker(
       WidgetTester tester, {
+      required _FakeLocationPermissionService permissions,
       required Future<LatLng> Function() provider,
       required void Function(LatLng) onSelected,
     }) async {
@@ -200,39 +185,73 @@ void main() {
           home: GoogleMapCoordinatePicker(
             onLocationSelected: onSelected,
             currentLocationProvider: provider,
+            locationPermissionService: permissions,
             mapsLoader: () async {},
             mapBuilder: (_, _, _) => const SizedBox.expand(),
           ),
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Use my current location'));
-      await tester.pumpAndSettle();
     }
 
-    testWidgets('explains before the first prompt and proceeds on approval', (
+    testWidgets('denied gate explains and requests only on explicit allow', (
       tester,
     ) async {
-      mockPermission(0); // LocationPermission.denied
+      final permissions = _FakeLocationPermissionService(
+        status: LocationGateStatus.denied,
+      );
       const current = LatLng(28.6129, 77.2295);
       LatLng? selected;
       var providerCalls = 0;
+      var mapBuilds = 0;
 
-      await pumpPicker(
-        tester,
-        provider: () async {
-          providerCalls++;
-          return current;
-        },
-        onSelected: (location) => selected = location,
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GoogleMapCoordinatePicker(
+            onLocationSelected: (location) => selected = location,
+            currentLocationProvider: () async {
+              providerCalls++;
+              return current;
+            },
+            locationPermissionService: permissions,
+            mapsLoader: () async {},
+            mapBuilder: (_, _, _) {
+              mapBuilds++;
+              return const SizedBox.expand();
+            },
+          ),
+        ),
       );
+      await tester.pumpAndSettle();
 
-      expect(
-        find.text('Use your current location?'),
-        findsOneWidget,
-      );
+      // The gate explains with an explicit action; nothing interactive is
+      // built and no OS request fires on open.
+      expect(find.text('Location access needed'), findsOneWidget);
+      expect(mapBuilds, 0);
+      expect(permissions.requestCalls, 0);
       expect(providerCalls, 0);
-      await tester.tap(find.text('Use my location'));
+      expect(selected, isNull);
+
+      await tester.tap(find.text('Allow location access'));
+      await tester.pumpAndSettle();
+
+      expect(permissions.requestCalls, 1);
+      // The scripted denial keeps the map unavailable with a retry action;
+      // the OS dialog is not re-triggered automatically.
+      expect(permissions.requestCalls, 1);
+      expect(find.text('Map unavailable without location access'), findsOneWidget);
+      expect(mapBuilds, 0);
+      expect(providerCalls, 0);
+
+      // An explicit retry issues exactly one more request, then the
+      // granted result opens the interactive map.
+      permissions.status = LocationGateStatus.granted;
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+
+      expect(permissions.requestCalls, 2);
+      expect(mapBuilds, greaterThan(0));
+      await tester.tap(find.text('Use my current location'));
       await tester.pumpAndSettle();
 
       expect(providerCalls, 1);
@@ -240,13 +259,16 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('manual choice skips the location request', (tester) async {
-      mockPermission(0); // LocationPermission.denied
+    testWidgets('ignoring the gate never requests or locates', (tester) async {
+      final permissions = _FakeLocationPermissionService(
+        status: LocationGateStatus.denied,
+      );
       var providerCalls = 0;
       LatLng? selected;
 
       await pumpPicker(
         tester,
+        permissions: permissions,
         provider: () async {
           providerCalls++;
           return const LatLng(28.6, 77.4);
@@ -254,23 +276,25 @@ void main() {
         onSelected: (location) => selected = location,
       );
 
-      await tester.tap(find.text('Choose manually'));
-      await tester.pumpAndSettle();
-
+      expect(find.text('Location access needed'), findsOneWidget);
+      expect(permissions.requestCalls, 0);
       expect(providerCalls, 0);
       expect(selected, isNull);
-      expect(find.text('Use my current location'), findsOneWidget);
+      expect(find.text('Use my current location'), findsNothing);
       expect(tester.takeException(), isNull);
     });
 
     testWidgets('permanent denial routes to settings, never to a request', (
       tester,
     ) async {
-      mockPermission(1); // LocationPermission.deniedForever
+      final permissions = _FakeLocationPermissionService(
+        status: LocationGateStatus.permanentlyDenied,
+      );
       var providerCalls = 0;
 
       await pumpPicker(
         tester,
+        permissions: permissions,
         provider: () async {
           providerCalls++;
           return const LatLng(28.6, 77.4);
@@ -280,25 +304,29 @@ void main() {
 
       expect(find.text('Location is turned off'), findsOneWidget);
       expect(providerCalls, 0);
+      expect(permissions.requestCalls, 0);
       await tester.tap(find.text('Open settings'));
       await tester.pumpAndSettle();
 
+      expect(permissions.openSettingsCalls, 1);
+      expect(permissions.requestCalls, 0);
       expect(providerCalls, 0);
-      expect(find.text('Location is turned off'), findsNothing);
-      expect(find.text('Use my current location'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('granted permission proceeds without any sheet', (
+    testWidgets('granted permission shows the map without any request', (
       tester,
     ) async {
-      mockPermission(2); // LocationPermission.whileInUse
+      final permissions = _FakeLocationPermissionService(
+        status: LocationGateStatus.granted,
+      );
       const current = LatLng(28.6129, 77.2295);
       LatLng? selected;
       var providerCalls = 0;
 
       await pumpPicker(
         tester,
+        permissions: permissions,
         provider: () async {
           providerCalls++;
           return current;
@@ -306,7 +334,11 @@ void main() {
         onSelected: (location) => selected = location,
       );
 
-      expect(find.text('Use your current location?'), findsNothing);
+      expect(find.text('Location access needed'), findsNothing);
+      expect(permissions.requestCalls, 0);
+      await tester.tap(find.text('Use my current location'));
+      await tester.pumpAndSettle();
+
       expect(providerCalls, 1);
       expect(selected, current);
       expect(tester.takeException(), isNull);
@@ -408,6 +440,10 @@ class _TestPushGateway implements PushNotificationGateway {
   Stream<void> get foregroundMessages => _foreground.stream;
 
   @override
+  Stream<RemoteMessage> get foregroundMessagePayloads =>
+      const Stream<RemoteMessage>.empty();
+
+  @override
   Future<bool> initialize() async => !unavailable;
 
   @override
@@ -450,6 +486,38 @@ class _TestNotificationRepository extends NotificationRepository {
 
   @override
   Future<int> getUnreadCount(String token) async => 0;
+}
+
+class _FakeLocationPermissionService implements LocationPermissionService {
+  _FakeLocationPermissionService({
+    this.status = LocationGateStatus.granted,
+  });
+
+  LocationGateStatus status;
+  bool serviceEnabled = true;
+  int checkCalls = 0;
+  int requestCalls = 0;
+  int openSettingsCalls = 0;
+
+  @override
+  Future<LocationGateStatus> checkStatus() async {
+    checkCalls++;
+    return status;
+  }
+
+  @override
+  Future<LocationGateStatus> requestAccess() async {
+    requestCalls++;
+    return status;
+  }
+
+  @override
+  Future<bool> isServiceEnabled() async => serviceEnabled;
+
+  @override
+  Future<void> openSettings() async {
+    openSettingsCalls++;
+  }
 }
 
 class _FakeSecureStorage extends FlutterSecureStorage {

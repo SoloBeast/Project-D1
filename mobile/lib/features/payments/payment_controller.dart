@@ -100,7 +100,17 @@ class PaymentController extends Notifier<PaymentState> {
   }
 
   void selectMethod(PaymentMethod method) {
-    state = state.copyWith(selectedMethod: method, clearError: true);
+    // Keep the wallet-first toggle consistent with an explicit Wallet
+    // tile choice so Pay never builds a Razorpay-only plan after the
+    // customer chose Wallet.
+    final useWallet = method == PaymentMethod.wallet
+        ? true
+        : state.useWalletBalance;
+    state = state.copyWith(
+      selectedMethod: method,
+      useWalletBalance: useWallet,
+      clearError: true,
+    );
   }
 
   /// Wallet-first opt-in toggle. Defaults OFF; switching starts a fresh

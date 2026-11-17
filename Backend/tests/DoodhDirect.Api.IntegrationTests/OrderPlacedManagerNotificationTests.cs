@@ -30,9 +30,10 @@ public sealed class OrderPlacedManagerNotificationTests
         var events = await harness.Db.NotificationEvents.AsNoTracking()
             .Where(x => x.EventType == NotificationEventTypes.OrderCreated)
             .ToListAsync();
-        // 1 customer + dairy manager + delivery manager (distinct users).
-        Assert.Equal(3, events.Count);
-        Assert.Contains(events, x => x.UserId == harness.Customer.Id && x.EventKey == $"order:{order.PublicId:N}:created");
+        // Only branch managers are notified; the customer inbox receives
+        // no order-creation entry.
+        Assert.Equal(2, events.Count);
+        Assert.DoesNotContain(events, x => x.UserId == harness.Customer.Id);
         var dairyEvent = Assert.Single(events, x => x.UserId == harness.DairyManager.Id);
         var deliveryEvent = Assert.Single(events, x => x.UserId == harness.DeliveryManager.Id);
         Assert.Equal($"order:{order.PublicId:N}:placed:staff:{harness.DairyManager.Id}", dairyEvent.EventKey);
@@ -56,8 +57,8 @@ public sealed class OrderPlacedManagerNotificationTests
             .ToListAsync();
         Assert.DoesNotContain(events, x => x.UserId == harness.OtherBranchManager!.Id);
         Assert.DoesNotContain(events, x => x.UserId == harness.InactiveManager!.Id);
-        // Only customer + 2 active allocated managers.
-        Assert.Equal(3, events.Count);
+        // Only the 2 active allocated managers (no customer entry).
+        Assert.Equal(2, events.Count);
     }
 
     [Fact]
@@ -73,9 +74,9 @@ public sealed class OrderPlacedManagerNotificationTests
         var events = await harness.Db.NotificationEvents.AsNoTracking()
             .Where(x => x.EventType == NotificationEventTypes.OrderCreated)
             .ToListAsync();
-        Assert.Equal(2, events.Count);
-        Assert.Single(events, x => x.UserId == harness.Customer.Id);
         Assert.Single(events, x => x.UserId == harness.DualRoleManager!.Id);
+        Assert.DoesNotContain(events, x => x.UserId == harness.Customer.Id);
+        Assert.Single(events);
     }
 
     [Fact]
@@ -95,7 +96,7 @@ public sealed class OrderPlacedManagerNotificationTests
 
         Assert.Equal(first.PublicId, second.PublicId);
         var count = await harness.Db.NotificationEvents.CountAsync(x => x.EventType == NotificationEventTypes.OrderCreated);
-        Assert.Equal(3, count);
+        Assert.Equal(2, count);
     }
 
     [Fact]

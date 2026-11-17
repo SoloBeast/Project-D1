@@ -642,29 +642,29 @@ class _RefundReplacementDetailBody extends ConsumerWidget {
   final RefundReplacementRequest request;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => ListView(
-    padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-    children: [
-      Row(
-        children: [
-          Expanded(
-            child: Text(
-              request.requestNumber,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-          ),
-          DoodhStatusPill(
-            label: request.status.label,
-            tone: _statusTone(request.status),
-          ),
-        ],
-      ),
-      const SizedBox(height: 4),
-      Text(
-        '${request.type.label} · ${request.source.label}',
-        style: Theme.of(context).textTheme.bodyMedium,
-      ),
-      const SizedBox(height: 16),
+  Widget build(BuildContext context, WidgetRef ref) => RefreshIndicator(
+    onRefresh: () => ref
+        .read(refundReplacementControllerProvider.notifier)
+        .loadCustomerRequest(request.requestId),
+    child: DoodhResponsive(
+      builder: (context, size) {
+        final narrow = size == DoodhWindowSize.compact;
+        final pagePadding = EdgeInsets.fromLTRB(
+          narrow ? 12 : 16,
+          12,
+          narrow ? 12 : 16,
+          32,
+        );
+        return ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: pagePadding,
+          children: [
+            _RequestHeroCard(request: request, narrow: narrow),
+            const SizedBox(height: 12),
+            _DetailSectionCard(
+              icon: Icons.receipt_long_outlined,
+              title: 'Delivery info',
+              children: [
       _InfoRow(
         icon: Icons.receipt_long_outlined,
         label: 'Order',
@@ -706,19 +706,29 @@ class _RefundReplacementDetailBody extends ConsumerWidget {
           label: 'Milk test',
           value: request.milkTestPublicId!,
         ),
-      const SizedBox(height: 16),
-      if (request.failureReasonSnapshot?.isNotEmpty ?? false)
-        _Remarks(
-          label: 'Delivery failure',
-          text: request.failureReasonSnapshot!,
-        ),
-      _Remarks(label: 'Reason', text: request.reason),
-      if (request.remarks?.isNotEmpty ?? false)
-        _Remarks(label: 'Your remarks', text: request.remarks!),
-      _CustomerChoicePanel(request: request),
-      const SizedBox(height: 8),
-      Text('Decision', style: Theme.of(context).textTheme.titleMedium),
-      const SizedBox(height: 8),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _DetailSectionCard(
+              icon: Icons.notes_outlined,
+              title: 'Remarks',
+              children: [
+                if (request.failureReasonSnapshot?.isNotEmpty ?? false)
+                  _Remarks(
+                    label: 'Delivery failure',
+                    text: request.failureReasonSnapshot!,
+                  ),
+                _Remarks(label: 'Reason', text: request.reason),
+                if (request.remarks?.isNotEmpty ?? false)
+                  _Remarks(label: 'Your remarks', text: request.remarks!),
+                _CustomerChoicePanel(request: request),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _DetailSectionCard(
+              icon: Icons.fact_check_outlined,
+              title: 'Decision',
+              children: [
       if (request.decidedAtUtc != null)
         _InfoRow(
           icon: request.status == RefundReplacementStatus.rejected
@@ -872,16 +882,158 @@ class _RefundReplacementDetailBody extends ConsumerWidget {
             text: request.completionRemarks!,
           ),
       ],
-      if (request.images.isNotEmpty) ...[
-        const SizedBox(height: 20),
-        Text('Proof images', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        _AuthenticatedImages(
-          requestId: request.requestId,
-          images: request.images,
-        ),
-      ],
-    ],
+              ],
+            ),
+            if (request.images.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _DetailSectionCard(
+                icon: Icons.photo_library_outlined,
+                title: 'Proof images',
+                children: [
+                  _AuthenticatedImages(
+                    requestId: request.requestId,
+                    images: request.images,
+                  ),
+                ],
+              ),
+            ],
+          ],
+        );
+      },
+    ),
+  );
+}
+
+/// Hero header for the customer request-detail page: teal card carrying
+/// the ticket number, type/source, and status — the same mobile-app look
+/// as the subscription detail hero.
+class _RequestHeroCard extends StatelessWidget {
+  const _RequestHeroCard({required this.request, required this.narrow});
+
+  final RefundReplacementRequest request;
+  final bool narrow;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DoodhCard(
+      color: DoodhColors.tealDark,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  request.requestNumber,
+                  maxLines: 2,
+                  softWrap: true,
+                  style: (narrow
+                          ? theme.textTheme.titleMedium
+                          : theme.textTheme.titleLarge)
+                      ?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        height: 1.25,
+                      ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: DoodhStatusPill(
+                  label: request.status.label,
+                  tone: _statusTone(request.status),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${request.type.label} · ${request.source.label}',
+            maxLines: 2,
+            softWrap: true,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: Colors.white70,
+              fontSize: narrow ? 12.5 : null,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _HeroMetaChip(
+                icon: Icons.event_available_outlined,
+                text: formatRefundReplacementDateTime(
+                  request.submittedAtUtc,
+                ),
+              ),
+              _HeroMetaChip(
+                icon: Icons.storefront_outlined,
+                text: '${request.branchName} (${request.branchCode})',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeroMetaChip extends StatelessWidget {
+  const _HeroMetaChip({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.14),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: Colors.white),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              text,
+              maxLines: 2,
+              softWrap: true,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Colors.white,
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Grouped section card for the customer request-detail page.
+class _DetailSectionCard extends StatelessWidget {
+  const _DetailSectionCard({
+    required this.icon,
+    required this.title,
+    required this.children,
+  });
+
+  final IconData icon;
+  final String title;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) => DoodhSectionCard(
+    icon: icon,
+    title: title,
+    children: children,
   );
 }
 
@@ -1239,19 +1391,41 @@ class _InfoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 6),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18, color: DoodhColors.muted),
-        const SizedBox(width: 8),
-        SizedBox(
-          width: 110,
-          child: Text(label, style: const TextStyle(color: DoodhColors.muted)),
-        ),
-        Expanded(child: Text(value)),
-        if (copyValue != null)
-          CopyReferenceButton(value: copyValue!, message: copyMessage),
-      ],
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        // 320px phones: shrink the label column and text so long branch
+        // names, dates and ticket numbers wrap instead of overflowing.
+        final narrow = constraints.maxWidth < 360;
+        final theme = Theme.of(context);
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 18, color: DoodhColors.muted),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: narrow ? 84 : 110,
+              child: Text(
+                label,
+                softWrap: true,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: DoodhColors.muted,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                value,
+                softWrap: true,
+                style: narrow
+                    ? theme.textTheme.bodyMedium?.copyWith(fontSize: 13)
+                    : theme.textTheme.bodyMedium,
+              ),
+            ),
+            if (copyValue != null)
+              CopyReferenceButton(value: copyValue!, message: copyMessage),
+          ],
+        );
+      },
     ),
   );
 }
@@ -1275,14 +1449,21 @@ class _LinkedRefundReplacementRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 6),
-    child: Row(
+    child: LayoutBuilder(
+      builder: (context, constraints) => Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Icon(icon, size: 18, color: DoodhColors.muted),
         const SizedBox(width: 8),
         SizedBox(
-          width: 110,
-          child: Text(label, style: const TextStyle(color: DoodhColors.muted)),
+          width: constraints.maxWidth < 360 ? 84 : 110,
+          child: Text(
+            label,
+            softWrap: true,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: DoodhColors.muted),
+          ),
         ),
         Expanded(
           child: InkWell(
@@ -1304,6 +1485,7 @@ class _LinkedRefundReplacementRow extends StatelessWidget {
           ),
         ),
       ],
+      ),
     ),
   );
 }

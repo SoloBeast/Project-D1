@@ -52,6 +52,7 @@ abstract interface class PushNotificationGateway {
   Stream<String> get tokenRefreshes;
   Stream<String> get openedDeepLinks;
   Stream<void> get foregroundMessages;
+  Stream<RemoteMessage> get foregroundMessagePayloads;
 
   Future<bool> initialize();
   Future<PushPermissionStatus> permissionStatus();
@@ -82,6 +83,14 @@ class FirebasePushNotificationGateway implements PushNotificationGateway {
   @override
   Stream<void> get foregroundMessages => _initialized
       ? FirebaseMessaging.onMessage.map<void>((_) {})
+      : const Stream.empty();
+
+  /// Raw foreground messages for local heads-up presentation. The existing
+  /// [foregroundMessages] stream is preserved for inbox refresh so background
+  /// handling and existing subscribers stay untouched.
+  @override
+  Stream<RemoteMessage> get foregroundMessagePayloads => _initialized
+      ? FirebaseMessaging.onMessage
       : const Stream.empty();
 
   /// Foreground policy: Firebase messages received while the app is open
@@ -172,6 +181,10 @@ class FirebasePushNotificationGateway implements PushNotificationGateway {
     AuthorizationStatus.authorized => PushPermissionStatus.authorized,
     AuthorizationStatus.provisional => PushPermissionStatus.provisional,
     AuthorizationStatus.denied => PushPermissionStatus.denied,
+    // Newer firebase_messaging_platform_interface versions split permanent
+    // denial out; both map to the existing denied UX (rationale stays
+    // dismissed, inbox keeps working).
+    AuthorizationStatus.deniedPermanently => PushPermissionStatus.denied,
     AuthorizationStatus.notDetermined => PushPermissionStatus.notDetermined,
   };
 

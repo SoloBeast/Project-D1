@@ -374,7 +374,7 @@ void main() {
       expect(find.byType(Image), findsOneWidget);
     });
 
-    testWidgets('validates reading fields before completion', (tester) async {
+    testWidgets('requires staff remarks before completion', (tester) async {
       final controller = _SeededMilkTestController(
         MilkTestState(staffTest: _staffTest(images: [testImage])),
       );
@@ -388,13 +388,11 @@ void main() {
       await tester.tap(find.text('Complete test'));
       await tester.pump();
 
-      expect(find.text('Enter a number'), findsNWidgets(2));
+      expect(find.text('Staff remarks are required'), findsOneWidget);
       expect(controller.completedMilkTestId, isNull);
     });
 
-    testWidgets('submits configured readings and remarks after validation', (
-      tester,
-    ) async {
+    testWidgets('submits mandatory remarks without readings', (tester) async {
       final controller = _SeededMilkTestController(
         MilkTestState(staffTest: _staffTest(images: [testImage])),
       );
@@ -404,11 +402,8 @@ void main() {
         controller,
       );
 
-      final fields = find.byType(TextFormField);
-      await tester.enterText(fields.at(2), '6.5');
-      await tester.enterText(fields.at(6), '8.7');
       await tester.enterText(
-        find.widgetWithText(TextFormField, 'Staff remarks (optional)'),
+        find.widgetWithText(TextFormField, 'Staff remarks (required)'),
         'Doorstep reading',
       );
       await tester.ensureVisible(find.text('Complete test'));
@@ -416,8 +411,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(controller.completedMilkTestId, 'test-1');
-      expect(controller.completedParameters, hasLength(2));
-      expect(controller.completedParameters.first.value, 6.5);
+      expect(controller.completedParameters, isEmpty);
       expect(controller.completedRemarks, 'Doorstep reading');
       expect(find.text('Milk test completed.'), findsOneWidget);
     });

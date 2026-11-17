@@ -1289,7 +1289,8 @@ public sealed class RefundReplacementService(
             // same rule: the remedy is the replacement delivery, not the
             // approval itself.
             var isRedeliveryRemedy =
-                (entity.Source == RefundReplacementSource.DeliveryFailed
+                ((entity.Source == RefundReplacementSource.DeliveryFailed
+                    || entity.Source == RefundReplacementSource.MilkTestRejected)
                     && entity.CustomerChoice == CustomerChoice.ReDelivery)
                 || (entity.Source == RefundReplacementSource.CustomerPostDelivery
                     && entity.CustomerChoice is null
@@ -3022,10 +3023,11 @@ public sealed class RefundReplacementService(
         CancellationToken cancellationToken)
     {
         // Replacements originate two ways: the failed-flow customer choice
-        // (DeliveryFailed + recorded ReDelivery choice) or a customer-raised
+        // (DeliveryFailed / MilkTestRejected + recorded ReDelivery choice) or a customer-raised
         // post-delivery complaint (CustomerPostDelivery + Replacement type
         // chosen at submit, still Pending). Anything else creates nothing.
-        var isFailedChoice = entity.Source == RefundReplacementSource.DeliveryFailed
+        var isFailedChoice = (entity.Source == RefundReplacementSource.DeliveryFailed
+                || entity.Source == RefundReplacementSource.MilkTestRejected)
             && entity.CustomerChoice == CustomerChoice.ReDelivery;
         var isPostDeliveryComplaint = entity.Source == RefundReplacementSource.CustomerPostDelivery
             && entity.CustomerChoice is null
@@ -3084,7 +3086,8 @@ public sealed class RefundReplacementService(
         RefundReplacementRequest entity,
         RefundReplacementStatus statusBeforeDecision)
     {
-        var isFailedChoice = entity.Source == RefundReplacementSource.DeliveryFailed
+        var isFailedChoice = (entity.Source == RefundReplacementSource.DeliveryFailed
+                || entity.Source == RefundReplacementSource.MilkTestRejected)
             && entity.SubscriptionDeliveryId is not null
             && entity.CustomerChoice == CustomerChoice.ReDelivery;
         var isPostDeliveryComplaint = entity.Source == RefundReplacementSource.CustomerPostDelivery
@@ -3146,7 +3149,8 @@ public sealed class RefundReplacementService(
                 cancellationToken)
             ?? throw new ConflictException("The failed delivery no longer belongs to a subscription.");
     }    private static bool IsFailedFlowChoice(RefundReplacementRequest entity) =>
-        entity.Source == RefundReplacementSource.DeliveryFailed
+        (entity.Source == RefundReplacementSource.DeliveryFailed
+            || entity.Source == RefundReplacementSource.MilkTestRejected)
         && entity.SubscriptionDeliveryId.HasValue
         && entity.CustomerChoice == CustomerChoice.ReDelivery;
 

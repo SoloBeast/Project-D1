@@ -239,9 +239,21 @@ class _PaymentMethodScreenState extends ConsumerState<PaymentMethodScreen> {
                   onPressed: paymentState.isLoading
                       ? null
                       : () async {
-                          final plan = await ref
-                              .read(paymentControllerProvider.notifier)
-                              .createPlanForOrder(order.publicId);
+                          final notifier = ref.read(
+                            paymentControllerProvider.notifier,
+                          );
+                          // A Wallet tile selection is an explicit wallet-pay
+                          // intent: apply the wallet before creating the
+                          // server plan so a wallet-sufficient order completes
+                          // without a Razorpay step.
+                          if (paymentState.selectedMethod ==
+                                  PaymentMethod.wallet &&
+                              !paymentState.useWalletBalance) {
+                            notifier.setUseWalletBalance(true);
+                          }
+                          final plan = await notifier.createPlanForOrder(
+                            order.publicId,
+                          );
                           if (!context.mounted || plan == null) return;
 
                           final payment = ref

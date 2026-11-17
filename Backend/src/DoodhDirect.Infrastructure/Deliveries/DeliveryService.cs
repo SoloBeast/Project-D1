@@ -857,7 +857,7 @@ public sealed class DeliveryService(
                 cancellationToken);
         if (ticket is null
             || ticket.Status != RefundReplacementStatus.Approved
-            || ticket.Source != RefundReplacementSource.DeliveryFailed
+            || ticket.Source is not (RefundReplacementSource.DeliveryFailed or RefundReplacementSource.MilkTestRejected)
             || ticket.CustomerChoice != CustomerChoice.ReDelivery)
         {
             return;

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:doodh_direct_mobile/core/device/device_metadata_service.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:doodh_direct_mobile/core/time/india_time.dart';
 import 'package:doodh_direct_mobile/core/network/api_client.dart';
 import 'package:doodh_direct_mobile/core/network/authenticated_api_client.dart';
@@ -8,6 +9,7 @@ import 'package:doodh_direct_mobile/features/auth/session_controller.dart';
 import 'package:doodh_direct_mobile/features/auth/session_state.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'foreground_notification_presenter.dart';
 import 'notification_models.dart';
 import 'notification_repository.dart';
 import 'permission_onboarding.dart';
@@ -24,6 +26,11 @@ final notificationRepositoryProvider = Provider<NotificationRepository>(
 final pushNotificationGatewayProvider = Provider<PushNotificationGateway>(
   (ref) => FirebasePushNotificationGateway(),
 );
+
+final foregroundNotificationPresenterProvider =
+    Provider<ForegroundNotificationPresenter>(
+      (ref) => LocalForegroundNotificationPresenter(),
+    );
 
 final notificationControllerProvider =
     NotifierProvider<NotificationController, NotificationState>(
@@ -99,6 +106,8 @@ class NotificationController extends Notifier<NotificationState> {
   StreamSubscription<String>? _tokenRefreshSubscription;
   StreamSubscription<String>? _openedDeepLinkSubscription;
   StreamSubscription<void>? _foregroundMessageSubscription;
+  StreamSubscription<RemoteMessage>? _foregroundPayloadSubscription;
+  StreamSubscription<String>? _presenterTapSubscription;
   String? _activeUserId;
   String? _registeredPushToken;
   bool _pushStreamsStarted = false;
@@ -110,6 +119,8 @@ class NotificationController extends Notifier<NotificationState> {
       ref.read(deviceMetadataServiceProvider);
   PushNotificationGateway get _pushGateway =>
       ref.read(pushNotificationGatewayProvider);
+  ForegroundNotificationPresenter get _pushPresenter =>
+      ref.read(foregroundNotificationPresenterProvider);
   String? get _accessToken =>
       ref.read(sessionControllerProvider).session?.accessToken;
 
@@ -315,6 +326,8 @@ class NotificationController extends Notifier<NotificationState> {
       }
 
       _startPushSubscriptions();
+      // Best-effort foreground heads-up setup: never prompts, never throws.
+      unawaited(_pushPresenter.initialize());
       final status = await _pushGateway.permissionStatus();
       if (!_isCurrent(userId, generation)) return;
       state = state.copyWith(permissionStatus: status);
@@ -351,6 +364,28 @@ class NotificationController extends Notifier<NotificationState> {
     _foregroundMessageSubscription = _pushGateway.foregroundMessages.listen(
       (_) => unawaited(refresh()),
     );
+    // Foreground heads-up display. The OS still owns background/terminated
+    // presentation of the FCM `notification` payload; this only covers the
+    // foreground case the OS never displays itself.
+    _foregroundPayloadSubscription = _pushGateway.foregroundMessagePayloads
+        .listen((message) => unawaited(_presentForegroundMessage(message)));
+    // Taps on foreground local notifications reuse the existing deep-link
+    // allowlist + pendingDeepLink navigation, exactly like FCM taps.
+    _presenterTapSubscription = _pushPresenter.tapDeepLinks.listen((link) {
+      final normalized = normalizeNotificationDeepLink(link);
+      if (_activeUserId != null && normalized != null) {
+        state = state.copyWith(pendingDeepLink: normalized);
+      }
+    });
+  }
+
+  Future<void> _presentForegroundMessage(RemoteMessage message) async {
+    final display = resolveForegroundDisplay(
+      title: message.notification?.title,
+      body: message.notification?.body,
+      data: message.data.map((key, value) => MapEntry(key, '$value')),
+    );
+    await _pushPresenter.show(display);
   }
 
   Future<void> _synchronizePushToken(String userId) async {
@@ -440,6 +475,8 @@ class NotificationController extends Notifier<NotificationState> {
     unawaited(_tokenRefreshSubscription?.cancel());
     unawaited(_openedDeepLinkSubscription?.cancel());
     unawaited(_foregroundMessageSubscription?.cancel());
+    unawaited(_foregroundPayloadSubscription?.cancel());
+    unawaited(_presenterTapSubscription?.cancel());
   }
 }
 

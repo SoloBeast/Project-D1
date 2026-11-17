@@ -8,6 +8,7 @@ import 'package:doodh_direct_mobile/features/notifications/notification_controll
 import 'package:doodh_direct_mobile/features/notifications/notification_models.dart';
 import 'package:doodh_direct_mobile/features/notifications/notification_repository.dart';
 import 'package:doodh_direct_mobile/features/notifications/push_notification_gateway.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -417,6 +418,7 @@ class _FakePushGateway implements PushNotificationGateway {
   final _tokens = StreamController<String>.broadcast();
   final _links = StreamController<String>.broadcast();
   final _foreground = StreamController<void>.broadcast();
+  final _foregroundPayloads = StreamController<RemoteMessage>.broadcast();
   int initializeCalls = 0;
   int requestPermissionCalls = 0;
 
@@ -425,6 +427,10 @@ class _FakePushGateway implements PushNotificationGateway {
 
   @override
   Stream<String> get openedDeepLinks => _links.stream;
+
+  @override
+  Stream<RemoteMessage> get foregroundMessagePayloads =>
+      _foregroundPayloads.stream;
 
   @override
   Stream<String> get tokenRefreshes => _tokens.stream;
@@ -453,11 +459,14 @@ class _FakePushGateway implements PushNotificationGateway {
   void emitToken(String token) => _tokens.add(token);
   void emitOpenedLink(String link) => _links.add(link);
   void emitForegroundMessage() => _foreground.add(null);
+  void emitForegroundPayload(RemoteMessage message) =>
+      _foregroundPayloads.add(message);
 
   Future<void> dispose() async {
     await _tokens.close();
     await _links.close();
     await _foreground.close();
+    await _foregroundPayloads.close();
   }
 }
 

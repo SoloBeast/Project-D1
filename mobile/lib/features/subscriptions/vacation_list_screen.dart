@@ -253,27 +253,12 @@ class _VacationListScreenState extends ConsumerState<VacationListScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: DoodhSpacing.pagePadding,
                 children: [
-                  SegmentedButton<_VacationTab>(
-                    segments: [
-                      ButtonSegment(
-                        value: _VacationTab.upcoming,
-                        label: Text('Upcoming (${upcoming.length})'),
-                        icon: const Icon(Icons.upcoming_outlined, size: 18),
-                      ),
-                      ButtonSegment(
-                        value: _VacationTab.present,
-                        label: Text('Present (${present.length})'),
-                        icon: const Icon(Icons.today_outlined, size: 18),
-                      ),
-                      ButtonSegment(
-                        value: _VacationTab.past,
-                        label: Text('Past (${past.length})'),
-                        icon: const Icon(Icons.history_outlined, size: 18),
-                      ),
-                    ],
-                    selected: {_tab},
-                    onSelectionChanged: (selection) =>
-                        setState(() => _tab = selection.single),
+                  _VacationTabBar(
+                    tab: _tab,
+                    upcomingCount: upcoming.length,
+                    presentCount: present.length,
+                    pastCount: past.length,
+                    onChanged: (value) => setState(() => _tab = value),
                   ),
                   const SizedBox(height: DoodhSpacing.md),
                   if (visible.isEmpty)
@@ -313,6 +298,146 @@ class _VacationListScreenState extends ConsumerState<VacationListScreen> {
   }
 }
 
+/// Fit-safe replacement for the three-tab [SegmentedButton].
+///
+/// The Material segmented button sizes each segment to its intrinsic label
+/// width, so `Upcoming (12)` + `Present (3)` + `Past (40)` overflows a
+/// 320–360px phone. This bar gives each tab an equal third of the width
+/// and scales the label down instead of overflowing. Labels keep the exact
+/// `<Name> (<count>)` text so semantics and existing tests are unchanged.
+class _VacationTabBar extends StatelessWidget {
+  const _VacationTabBar({
+    required this.tab,
+    required this.upcomingCount,
+    required this.presentCount,
+    required this.pastCount,
+    required this.onChanged,
+  });
+
+  final _VacationTab tab;
+  final int upcomingCount;
+  final int presentCount;
+  final int pastCount;
+  final ValueChanged<_VacationTab> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 380;
+        final fontSize = narrow ? 11.5 : 12.5;
+        final iconSize = narrow ? 15.0 : 16.0;
+        final horizontalPadding = narrow ? 2.0 : 4.0;
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.45,
+            ),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                for (final entry in [
+                  (_VacationTab.upcoming, 'Upcoming ($upcomingCount)', Icons.upcoming_outlined),
+                  (_VacationTab.present, 'Present ($presentCount)', Icons.today_outlined),
+                  (_VacationTab.past, 'Past ($pastCount)', Icons.history_outlined),
+                ])
+                  Expanded(
+                    child: _VacationTabButton(
+                      label: entry.$2,
+                      icon: entry.$3,
+                      selected: tab == entry.$1,
+                      fontSize: fontSize,
+                      iconSize: iconSize,
+                      horizontalPadding: horizontalPadding,
+                      onTap: () => onChanged(entry.$1),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _VacationTabButton extends StatelessWidget {
+  const _VacationTabButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.fontSize,
+    required this.iconSize,
+    required this.horizontalPadding,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final double fontSize;
+  final double iconSize;
+  final double horizontalPadding;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final foreground = selected
+        ? theme.colorScheme.onPrimary
+        : theme.colorScheme.onSurfaceVariant;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          constraints: const BoxConstraints(minHeight: 44),
+          padding: EdgeInsets.symmetric(
+            horizontal: horizontalPadding,
+            vertical: 8,
+          ),
+          decoration: BoxDecoration(
+            color: selected ? theme.colorScheme.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          alignment: Alignment.center,
+          // FittedBox shrinks long `Name (count)` labels on 320px
+          // phones instead of overflowing the row.
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: iconSize, color: foreground),
+                const SizedBox(width: 4),
+                Text(
+                  label,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.visible,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontSize: fontSize,
+                    fontWeight: FontWeight.w700,
+                    color: foreground,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _VacationRangeCard extends StatelessWidget {
   const _VacationRangeCard({required this.range, required this.tab});
 
@@ -338,11 +463,17 @@ class _VacationRangeCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   title,
+                  maxLines: 2,
+                  softWrap: true,
+                  overflow: TextOverflow.visible,
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
+                    fontSize: 15,
+                    height: 1.25,
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
               DoodhStatusPill(
                 label: switch (tab) {
                   _VacationTab.upcoming => 'Upcoming',

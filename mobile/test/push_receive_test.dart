@@ -40,6 +40,7 @@ void main() {
       await expectLater(gateway.tokenRefreshes, emitsDone);
       await expectLater(gateway.openedDeepLinks, emitsDone);
       await expectLater(gateway.foregroundMessages, emitsDone);
+      await expectLater(gateway.foregroundMessagePayloads, emitsDone);
     });
 
     test(

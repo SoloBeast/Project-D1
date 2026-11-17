@@ -181,7 +181,7 @@ public sealed class MilkTestServiceTests
     }
 
     [Fact]
-    public async Task Completion_requires_arrival_image_and_at_least_one_valid_unique_reading()
+    public async Task Completion_requires_arrival_image_remarks_and_unique_readings()
     {
         await using var harness = await MilkTestHarness.CreateAsync();
         var requested = await harness.RequestAsync();
@@ -205,8 +205,23 @@ public sealed class MilkTestServiceTests
             [
                 new("FAT", "Fat", 4.1m, "%"),
                 new("fat", "Fat duplicate", 4.2m, "%")
-            ], null),
+            ], "Test completed"),
             CancellationToken.None));
+        // Readings are optional but staff remarks are mandatory: verify on
+        // a fresh request so earlier failed attempts cannot leak tracked
+        // parameters into the assertion.
+        await using var fresh = await MilkTestHarness.CreateAsync();
+        var freshRequested = await fresh.RequestAsync();
+        await fresh.UploadAsync(freshRequested.MilkTestId);
+        await fresh.AdvanceToArrivedAsync();
+        var completed = await fresh.Service.CompleteAsync(
+            fresh.StaffActor(fresh.Staff),
+            freshRequested.MilkTestId,
+            new CompleteMilkTestRequest([], "Test completed"),
+            CancellationToken.None);
+        Assert.Equal(MilkTestStatus.Completed, completed.Status);
+        Assert.Empty(completed.Parameters);
+        Assert.Equal("Test completed", completed.StaffRemarks);
     }
 
     [Theory]
@@ -221,7 +236,7 @@ public sealed class MilkTestServiceTests
         await harness.AdvanceToArrivedAsync();
         var request = new CompleteMilkTestRequest(
             [new MilkTestParameterRequest("FAT", "Fat", decimal.Parse(rawValue, System.Globalization.CultureInfo.InvariantCulture), "%")],
-            null);
+            "Test completed");
 
         var exception = await Assert.ThrowsAsync<ValidationAppException>(() => harness.Service.CompleteAsync(
             harness.StaffActor(harness.Staff), requested.MilkTestId, request, CancellationToken.None));
@@ -240,7 +255,7 @@ public sealed class MilkTestServiceTests
         [
             new MilkTestParameterRequest("FAT", "Fat", 4.123456m, "%"),
             new MilkTestParameterRequest("LIMIT", "Device limit", 999999999999.999999m, "unit")
-        ], null);
+        ], "Test completed");
 
         var result = await harness.Service.CompleteAsync(
             harness.StaffActor(harness.Staff), requested.MilkTestId, request, CancellationToken.None);

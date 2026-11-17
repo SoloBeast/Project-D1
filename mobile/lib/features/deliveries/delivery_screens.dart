@@ -440,6 +440,18 @@ class _DeliveryInspectionScreenState
                             style: Theme.of(context).textTheme.bodySmall
                                 ?.copyWith(color: DoodhColors.muted),
                           ),
+                        _InspectionRow(
+                          icon: Icons.shopping_basket_outlined,
+                          label: 'Items',
+                          value:
+                              '${delivery.orderSummary!.totalQuantity.toStringAsFixed(2)} qty',
+                        ),
+                        _InspectionRow(
+                          icon: Icons.currency_rupee_outlined,
+                          label: 'Amount',
+                          value:
+                              '₹${delivery.orderSummary!.totalAmount.toStringAsFixed(2)}',
+                        ),
                       ],
                     ),
                   ],

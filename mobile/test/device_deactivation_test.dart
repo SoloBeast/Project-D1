@@ -13,6 +13,7 @@ import 'package:doodh_direct_mobile/features/orders/guest_cart_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
@@ -331,6 +332,10 @@ class _StubPushGateway implements PushNotificationGateway {
 
   @override
   Stream<void> get foregroundMessages => const Stream<void>.empty();
+
+  @override
+  Stream<RemoteMessage> get foregroundMessagePayloads =>
+      const Stream<RemoteMessage>.empty();
 
   @override
   Future<bool> initialize() async => true;

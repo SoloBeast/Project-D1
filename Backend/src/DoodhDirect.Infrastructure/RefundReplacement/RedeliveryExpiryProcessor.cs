@@ -43,7 +43,7 @@ public sealed class RedeliveryExpiryProcessor(
         var candidates = await UnnoticedCandidates()
             .AsNoTracking()
             .Where(x => x.Status == RefundReplacementStatus.AwaitingCustomerChoice
-                && x.Source == RefundReplacementSource.DeliveryFailed
+                && (x.Source == RefundReplacementSource.DeliveryFailed || x.Source == RefundReplacementSource.MilkTestRejected)
                 && x.SubscriptionDeliveryId != null
                 && x.CustomerChoice == CustomerChoice.ReDelivery
                 && x.CustomerChoiceAt != null

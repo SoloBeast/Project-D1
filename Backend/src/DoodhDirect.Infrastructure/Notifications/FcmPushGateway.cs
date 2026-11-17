@@ -266,13 +266,26 @@ internal sealed class FcmPushGateway(
 
     private static Dictionary<string, object> BuildPayload(NotificationProviderMessage message)
     {
-        var notification = new Dictionary<string, string> { ["body"] = message.Body };
-        if (!string.IsNullOrWhiteSpace(message.Title))
+        // Defense in depth: even a direct gateway caller must never put the
+        // delivery OTP on the lock screen. The processor already substitutes
+        // generic text; this enforces it again at the FCM boundary and drops
+        // any OTP-carrying data entries.
+        var eventType = message.Data.TryGetValue("eventType", out var dataEventType)
+            ? dataEventType
+            : null;
+        var (pushTitle, pushBody) = DeliveryOtpPushPrivacy.PushPresentation(
+            eventType,
+            message.Title,
+            message.Body);
+        var sanitized = DeliveryOtpPushPrivacy.SanitizeData(eventType, message.Data);
+
+        var notification = new Dictionary<string, string> { ["body"] = pushBody };
+        if (!string.IsNullOrWhiteSpace(pushTitle))
         {
-            notification["title"] = message.Title;
+            notification["title"] = pushTitle;
         }
 
-        var data = new Dictionary<string, string>(message.Data, StringComparer.Ordinal);
+        var data = new Dictionary<string, string>(sanitized, StringComparer.Ordinal);
         if (IsSafeDeepLink(message.DeepLink))
         {
             data["deepLink"] = message.DeepLink!;

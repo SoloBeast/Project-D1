@@ -18,7 +18,7 @@ class CurrentLocationException implements Exception {
 
   String get friendlyMessage => switch (failure) {
     CurrentLocationFailure.permissionDenied =>
-      'Location permission was denied. You can still select your location on the map.',
+      'Location permission was denied. Allow location access to use your current location.',
     CurrentLocationFailure.unavailable =>
       'Current location is unavailable on this device or browser.',
     CurrentLocationFailure.timeout =>
@@ -43,18 +43,22 @@ bool isValidCoordinate(LatLng location) =>
     location.longitude >= -180 &&
     location.longitude <= 180;
 
+/// Resolves the device's current location without ever requesting permission.
+///
+/// The map picker's permission gate owns the explicit allow/retry flow, so
+/// this provider only reads the OS status: any non-granted status surfaces
+/// as [CurrentLocationFailure.permissionDenied] and the gate explains next
+/// steps. Location services being disabled is reported separately as
+/// [CurrentLocationFailure.unavailable].
 Future<LatLng> getCurrentLocation() async {
   try {
     if (!await Geolocator.isLocationServiceEnabled()) {
       throw const CurrentLocationException(CurrentLocationFailure.unavailable);
     }
 
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
+    final permission = await Geolocator.checkPermission();
+    if (permission != LocationPermission.whileInUse &&
+        permission != LocationPermission.always) {
       throw const CurrentLocationException(
         CurrentLocationFailure.permissionDenied,
       );

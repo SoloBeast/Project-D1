@@ -15,6 +15,16 @@ mobile/.flutter-plugins-dependencies
 **/appsettings.*.Local.json
 secrets.json
 
+# Firebase service-account credentials and private keys (never commit).
+# Client descriptors (google-services.json / GoogleService-Info.plist) remain
+# local-only: the checked-in firebase_options.dart preserves the client
+# configuration without embedding service-account private keys.
+**/*service-account*.json
+**/*service_account*.json
+**/serviceAccountKey.json
+**/google-services.json
+**/GoogleService-Info.plist
+
 # Generated migration validation output
 artifacts/
 

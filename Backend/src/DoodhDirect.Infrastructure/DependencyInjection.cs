@@ -170,20 +170,15 @@ public static class DependencyInjection
         // instance. When unset, the ephemeral ring is kept for development only.
         var dataProtection = services.AddDataProtection()
             .SetApplicationName("DoodhDirect");
-        var keyDirectory = configuration["DataProtection:KeyDirectory"];
-        if (string.IsNullOrWhiteSpace(keyDirectory) && environment.IsDevelopment())
-        {
-            // Local development convenience default: a durable directory outside
-            // the repository, so bank-detail keys survive API restarts on a dev
-            // machine with zero per-machine configuration. Explicit configuration
-            // (including environment variables) always wins when present.
-            // Production and shared environments must set DataProtection:KeyDirectory
-            // to their own securely managed durable location; they never use this.
-            keyDirectory = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "DoodhDirect",
-                "DataProtection-Keys");
-        }
+        // Explicit configuration (including environment variables) always wins
+        // when present. Development with no explicit value keeps the existing
+        // LocalAppData fallback. Non-development with no explicit value falls
+        // back to the machine-wide persistent directory so protected FCM push
+        // tokens and bank details survive API restarts. See
+        // DataProtectionKeyDirectory for the resolution rules.
+        var keyDirectory = DataProtectionKeyDirectory.Resolve(
+            configuration["DataProtection:KeyDirectory"],
+            environment.IsDevelopment());
         if (!string.IsNullOrWhiteSpace(keyDirectory))
         {
             dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keyDirectory));

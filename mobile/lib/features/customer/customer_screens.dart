@@ -12,6 +12,7 @@ import 'package:doodh_direct_mobile/features/customer/client_configuration_repos
 import 'package:doodh_direct_mobile/features/customer/customer_controller.dart';
 import 'package:doodh_direct_mobile/features/customer/customer_models.dart';
 import 'package:doodh_direct_mobile/features/customer/google_map_coordinate_picker.dart';
+import 'package:doodh_direct_mobile/features/customer/location_permission.dart';
 import 'package:doodh_direct_mobile/features/customer/maps_script_loader.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1081,10 +1082,17 @@ class CustomerAddressEditScreen extends ConsumerStatefulWidget {
     super.key,
     this.addressId,
     this.checkoutMode = false,
+    this.locationPermissionService =
+        const GeolocatorLocationPermissionService(),
   });
 
   final String? addressId;
   final bool checkoutMode;
+
+  /// Gate for the embedded map picker. Defaults to the Geolocator-backed
+  /// foreground-only service; injected in tests to script denial without
+  /// platform channels.
+  final LocationPermissionService locationPermissionService;
 
   @override
   ConsumerState<CustomerAddressEditScreen> createState() =>
@@ -1221,6 +1229,8 @@ class _CustomerAddressEditScreenState
                 initialLocation: _initialMapLocation(),
                 onLocationSelected: _setMapLocation,
                 mapsLoader: _loadGoogleMaps,
+                locationPermissionService:
+                    widget.locationPermissionService,
               ),
               const SizedBox(height: DoodhSpacing.sm),
               DoodhButton(

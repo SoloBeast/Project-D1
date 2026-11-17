@@ -411,7 +411,7 @@ public sealed class DeliveryFailTicketTests
         await milkService.CompleteAsync(
             staffActor,
             requested.MilkTestId,
-            new CompleteMilkTestRequest([new MilkTestParameterRequest("FAT", "Fat", 4.2m, "%")], null),
+            new CompleteMilkTestRequest([new MilkTestParameterRequest("FAT", "Fat", 4.2m, "%")], "Test completed"),
             CancellationToken.None);
         var failedAt = harness.TimeProvider.Now;
         await milkService.RejectAsync(customerActor, requested.MilkTestId, new DecideMilkTestRequest("Milk was sour"), CancellationToken.None);
@@ -469,7 +469,7 @@ public sealed class DeliveryFailTicketTests
         await milkService.CompleteAsync(
             staffActor,
             requested.MilkTestId,
-            new CompleteMilkTestRequest([new MilkTestParameterRequest("FAT", "Fat", 4.2m, "%")], null),
+            new CompleteMilkTestRequest([new MilkTestParameterRequest("FAT", "Fat", 4.2m, "%")], "Test completed"),
             CancellationToken.None);
 
         // Simulate the staff-fail path winning the race: fail the delivery with

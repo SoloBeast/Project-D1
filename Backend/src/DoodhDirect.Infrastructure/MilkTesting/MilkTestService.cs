@@ -406,9 +406,12 @@ public sealed class MilkTestService(
                 throw new BusinessRuleException("The doorstep test can only be completed after delivery arrival.");
             }
 
-            foreach (var parameter in request.Parameters)
+            if (request.Parameters is not null)
             {
-                Mutate(() => milkTest.AddParameter(parameter.Code, parameter.Name, parameter.Value, parameter.Unit));
+                foreach (var parameter in request.Parameters)
+                {
+                    Mutate(() => milkTest.AddParameter(parameter.Code, parameter.Name, parameter.Value, parameter.Unit));
+                }
             }
             var now = timeProvider.Now;
             Mutate(() => milkTest.Complete(actor.UserId, now, request.Remarks));
@@ -633,14 +636,16 @@ public sealed class MilkTestService(
     private static void ValidateCompletionRequest(CompleteMilkTestRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (request.Parameters is null || request.Parameters.Count == 0)
+        // Readings section removed: parameters are optional legacy data and
+        // staff remarks are now mandatory.
+        if (string.IsNullOrWhiteSpace(request.Remarks))
         {
-            throw new ValidationAppException("At least one reading is required.", "parameters");
+            throw new ValidationAppException("Staff remarks are required.", "remarks");
         }
         ValidateLength(request.Remarks, "remarks", 1000);
 
         var codes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var parameter in request.Parameters)
+        foreach (var parameter in request.Parameters ?? Enumerable.Empty<MilkTestParameterRequest>())
         {
             if (parameter is null)
             {

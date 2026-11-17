@@ -11,8 +11,8 @@ dependencies:
   geolocator: ^14.0.2
   google_maps_flutter: ^2.18.0
   url_launcher: ^6.3.2
-  firebase_core: ^4.13.0
-  firebase_messaging: ^16.5.0
+  firebase_core: ^5.2.0
+  firebase_messaging: ^17.1.0
   flutter:
     sdk: flutter
   flutter_web_plugins:
@@ -26,6 +26,7 @@ dependencies:
   razorpay_flutter: ^1.4.0
   video_player: ^2.10.1
   web: ^1.1.1
+  flutter_local_notifications: ^23.0.2
 
 dev_dependencies:
   flutter_test:
